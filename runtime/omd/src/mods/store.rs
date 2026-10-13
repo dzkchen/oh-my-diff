@@ -180,6 +180,17 @@ pub(super) fn package_with_assets(
     Ok((package, source, hash, assets))
 }
 
+/// A package's assets as the runner receives them.
+pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
+    assets
+        .into_iter()
+        .map(|(name, text)| {
+            let sha256 = digest(text.as_bytes());
+            (name, serde_json::json!({"text": text, "sha256": sha256}))
+        })
+        .collect()
+}
+
 /// Reuses the last verified manifest and digest while every hashed file keeps its identity.
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
     match reused_package(path) {

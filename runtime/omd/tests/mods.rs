@@ -849,8 +849,10 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
     let mut manifest: Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["state_version"] = json!(2);
+    manifest["assets"] = json!(["helper.ts"]);
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    std::fs::write(path.join("index.ts"), "export default api => api.on('migrate', ({from,to}) => { api.state.set({count:api.state.get(),from,to}); })").unwrap();
+    std::fs::write(path.join("helper.ts"), "export const migrate = (count, from, to) => ({count,from,to});").unwrap();
+    std::fs::write(path.join("index.ts"), "import {migrate} from './helper.ts'; export default api => api.on('migrate', ({from,to}) => { api.state.set(migrate(api.state.get(),from,to)); })").unwrap();
     let sha = ModStore::inspect_package(&path).unwrap()["sha256"]
         .as_str()
         .unwrap()
@@ -868,6 +870,8 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
         serde_json::from_slice(&std::fs::read(receipt["backup"].as_str().unwrap()).unwrap())
             .unwrap();
     assert_eq!(backup, json!({"schema":1,"version":1,"value":1}));
+    let migrated: Value = serde_json::from_slice(&std::fs::read(temp.path().join("store/state-fixture.json")).unwrap()).unwrap();
+    assert_eq!(migrated["value"], json!({"count":1,"from":1,"to":2}));
     assert!(
         runtime
             .invoke(
@@ -1248,6 +1252,33 @@ fn exclusive_replacement_conflicts_fail_before_activation() {
     let results = runtime.event("routing", Value::Null);
     assert_eq!(results.len(), 1);
     assert_eq!(*results[0].1.as_ref().unwrap(), json!({"route":"sol"}));
+}
+
+#[test]
+fn history_replacement_receives_the_newest_items_that_fit_the_runner_request() {
+    let source = format!(
+        "const padding = '{}';\nexport default api => api.replace('history', event => {{ const indices = event.items.map(item => item.index); return {{first: indices[0], last: indices.at(-1), count: indices.length, ordered: indices.every((index, position) => position === 0 || index === indices[position - 1] + 1), padding: padding.length}}; }})",
+        "p".repeat(120_000)
+    );
+    let (temp, _, _) = fixture(&source, &["history"]);
+    let mut runtime = host(&temp);
+    for text in ["a".repeat(4000), "\u{1}".repeat(4000)] {
+        let items = (0..2100)
+            .map(|_| json!({"type":"message","role":"user","content":[{"type":"input_text","text":text}]}))
+            .collect::<Vec<_>>();
+        let view = codex_omd::history::view(&items);
+        let (_, reply) = runtime
+            .history(json!({"thread_id":"t","items":view}), || true)
+            .unwrap()
+            .unwrap();
+        let count = reply["count"].as_u64().unwrap();
+        assert_eq!(
+            (reply["last"].as_u64(), reply["ordered"].as_bool(), reply["padding"].as_u64()),
+            (Some(2099), Some(true), Some(120_000))
+        );
+        assert_eq!(reply["first"].as_u64(), Some(2100 - count));
+        assert!(count > 40 && count < 2048, "{count}");
+    }
 }
 
 #[test]
@@ -1836,6 +1867,50 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
         )
         .unwrap_err();
     assert!(error.to_string().contains("ui_state_limit"));
+}
+
+#[test]
+fn ui_state_write_survives_a_reload_during_its_command() {
+    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('keep', () => { const value = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set(value); return 'kept'; }); api.command('read', () => api.uiState.get()); };";
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
+    let runtime = std::sync::Mutex::new(host(&temp));
+    let during = |name: &str, change: &dyn Fn()| {
+        let generation = runtime.lock().unwrap().generation();
+        codex_omd::invoke_shared(
+            &runtime,
+            "fixture",
+            generation,
+            "command",
+            name,
+            Value::Null,
+            || true,
+            |_, _| {
+                change();
+                Ok(json!("contents"))
+            },
+            |_| {},
+        )
+    };
+    let read = || {
+        let mut host = runtime.lock().unwrap();
+        let generation = host.generation();
+        host.invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap()
+    };
+    let reload = || {
+        store.reload().unwrap();
+        runtime.lock().unwrap().reload().unwrap();
+    };
+    assert_eq!(during("apply", &reload).unwrap(), "applied");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    assert_eq!(during("keep", &reload).unwrap(), "kept");
+    assert_eq!(read(), json!({"open": true, "before": null}));
+    let error = during("apply", &|| {
+        runtime.lock().unwrap().set_checkout(temp.path());
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("callback_cancelled"), "{error}");
+    assert_eq!(read(), Value::Null);
 }
 
 #[test]
@@ -4748,11 +4823,10 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         Ok(json!({"output":"ran","success":true}))
     })
     .unwrap();
-    assert_eq!(drained.result["output"], "ran");
+    assert_eq!(drained.result["output"], "ran x");
     assert!(drained.trace.iter().any(|entry| entry["mod"] == "y"
         && entry["reason"] == "callback_authority_changed"));
-    assert!(drained.trace.iter().any(|entry| entry["mod"] == "x"
-        && entry["reason"].as_str().is_some_and(|reason| reason.starts_with("stale_mod_generation"))));
+    assert!(!drained.trace.iter().any(|entry| entry["mod"] == "x" && entry["reason"].is_string()));
     runtime.lock().unwrap().reload().unwrap();
     assert_eq!(
         dispatch(&|| true, &mut { ran }).unwrap().result["output"],

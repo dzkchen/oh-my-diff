@@ -94,7 +94,8 @@ disabled. Advisor every-turn selection requires its own explicit host policy and
 installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
-re-enabled when they were on), and adds newly bundled first-party packages disabled. Each installation keeps a copy of
+re-enabled when they were on, also when an earlier attempt stopped between replacing and re-trusting), and adds
+newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
 `--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Three plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
@@ -220,10 +221,15 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain. `install.sh uninstall` also removes every older installation, failed
+The mod store and Codex state remain. Direct installation refuses a launcher directory that already holds any of
+`codex`, `omd`, `omd-contract`, `omd-mod`, `omd-package` or `omd-mod-author`, dangling links included. Removal
+journals itself once its checks pass, so an interrupted `omd-package uninstall` finishes when run again and keeps
+any launcher replaced in the meantime. `install.sh uninstall` also removes every older installation, failed
 attempts, staged updates and session markers; it refuses, leaving the current installation intact, when an older
-one cannot be removed. The stores under `ROOT/stores` stay, with the `ROOT/catalog` copies that `/mods` Browse
-installs of OMD's own mods run from.
+one cannot be removed. Once removal of the current installation has started, an interruption leaves the upstream
+commands restored and the next installer command finishes the uninstall. The stores under `ROOT/stores` stay, with
+the `ROOT/catalog` copies that `/mods` Browse installs of OMD's own mods run from, and the `ROOT/.install.lock`
+file that serializes installer commands.
 
 ## Install and manage mods
 

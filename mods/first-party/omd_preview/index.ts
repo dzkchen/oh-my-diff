@@ -1,5 +1,5 @@
-import type { CommandResult, ComposerDraft, Json, ModAPI, RenderEvent, ResourceRef, TerminalComponent, TerminalRenderSite } from '../../api.d.ts';
-import { clamp, size, clean } from './text.ts';
+import type { CommandResult, ComposerDraft, Json, ModAPI, RenderEvent, ResourceRef, TerminalClient, TerminalComponent, TerminalRenderSite } from '../../api.d.ts';
+import { clamp, size, clean, cells } from './text.ts';
 import { SOURCE_BYTES, DRAWN_BYTES, diagram, fences, chunks, presentation, kindOf } from './mermaid.ts';
 
 const DIR = '.omd/preview';
@@ -8,11 +8,12 @@ const DIFF_BYTES = 48_000;
 const MAX_WATCHES = 8;
 const POLL_MS = 2_000;
 const MAX_IMAGES = 16;
-const SHOWN_IMAGES = 3;
+const TILE_ROWS = [2, 8];
+const TILE_MIN = 7;
 const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview diagrams [N] | /preview image [N] | /preview server [PORT] | /preview unwatch | /preview close';
 
 type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
-type Picture = { id: string; label: string; owner: string; image: ResourceRef | null };
+type Picture = { id: string; label: string; owner: string; image: ResourceRef | null; aspect: number };
 type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number };
 type Watches = { watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
@@ -25,7 +26,40 @@ const inlineKind = (path: string) => {
   return ['diff', 'patch'].includes(extension) ? 'diff' : extension;
 };
 const pictures = (draft: ComposerDraft): Picture[] => draft.attachments.filter(item => item.kind === 'image').slice(0, MAX_IMAGES)
-  .map(item => ({ id: item.id, label: clamp(clean(item.label).replace(/\n/g, ' '), 64).text || 'image', owner: item.owner, image: item.resource }));
+  .map(item => ({ id: item.id, label: clamp(clean(item.label).replace(/\n/g, ' '), 64).text || 'image', owner: item.owner, image: item.resource,
+    aspect: item.width && item.height ? item.width / item.height : 1 }));
+
+// Every draft image in one row: the tallest tile height at which all tiles fit, else the minimum height and as many as fit with a +N note; the row is wide enough that each tile's floored flex share holds its width.
+const strip = (images: Picture[], client: TerminalClient | null | undefined): TerminalComponent[] => {
+  const room = Math.max(TILE_MIN, (client?.columns ?? 80) - 4), ratio = client?.cell_px ? client.cell_px.height / client.cell_px.width : 2;
+  const tallest = Math.max(TILE_ROWS[0], Math.min(TILE_ROWS[1], Math.floor((client?.rows ?? 24) / 4)));
+  const absent = (picture: Picture) => `${picture.label}: no preview\nonly PNG and JPEG up to 8 MiB`;
+  const more = (count: number) => count < images.length ? `${count ? `+${images.length - count} more: ` : ''}/preview image ${count + 1} to ${images.length}` : '';
+  const cap = (count: number) => room - (more(count) ? cells(more(count)) + 1 : 0);
+  const width = (picture: Picture, rows: number, count: number) => picture.image ? Math.min(cap(count), Math.max(TILE_MIN, Math.ceil(rows * ratio * picture.aspect)))
+    : Math.max(...absent(picture).split('\n').map(cells));
+  const flex = (wide: number, widest: number) => Math.max(1, Math.round(12 * wide / widest));
+  const total = (rows: number, count: number) => {
+    const shown = images.slice(0, count), boxes = shown.filter(picture => picture.image).map(picture => width(picture, rows, count));
+    if (boxes.length && cap(count) < TILE_MIN) return Infinity;
+    const widest = Math.max(1, ...boxes), weight = boxes.reduce((sum, wide) => sum + flex(wide, widest), 0);
+    const share = Math.max(0, ...boxes.map(wide => Math.ceil(wide * weight / flex(wide, widest))));
+    return share + shown.filter(picture => !picture.image).reduce((sum, picture) => sum + width(picture, rows, count), 0) + count - 1 + (more(count) ? cells(more(count)) + 1 : 0);
+  };
+  let rows = tallest, count = images.length;
+  while (rows > TILE_ROWS[0] && total(rows, count) > room) rows -= 1;
+  while (count > 0 && total(rows, count) > room) count -= 1;
+  const wide = (picture: Picture) => width(picture, rows, count);
+  const widest = Math.max(1, ...images.slice(0, count).filter(picture => picture.image).map(wide));
+  const tiles = images.slice(0, count).map((picture, index): TerminalComponent => picture.image ? {
+    type: 'box', id: `omd_preview_tile_${index}`, label: `${picture.label} tile`, max_width: wide(picture), flex: flex(wide(picture), widest), children: [
+      { type: 'image', id: `omd_preview_thumb_${index}`, label: `${picture.label} thumbnail`, image: picture.image, alt: picture.label, height: rows, pointer: true },
+      { type: 'button', id: `omd_preview_open_${index}`, label: `Preview ${picture.label}`, text: `#${index + 1}`, action: { command: 'omd_preview:preview', args: `image ${index + 1}` } },
+    ] } : { type: 'text', id: `omd_preview_thumb_${index}`, label: picture.label, text: absent(picture), tone: 'muted' });
+  const note: TerminalComponent[] = more(count) ? [{ type: 'text', id: 'omd_preview_more', label: 'More images', text: more(count), tone: 'muted' }] : [];
+  return [{ type: 'box', id: 'omd_preview_strip', label: 'Draft image strip', style: { direction: 'row' }, children: [
+    { type: 'box', id: 'omd_preview_tiles', label: 'Draft image tiles', max_width: Math.min(room, total(rows, count)), style: { direction: 'row', gap: 1 }, children: [...tiles, ...note] }] }];
+};
 
 export default function activate(api: ModAPI) {
   const thumbnails = api.settings.thumbnails !== false;
@@ -251,13 +285,7 @@ export default function activate(api: ModAPI) {
     const sites: Partial<Record<'dialog' | 'above_composer', TerminalRenderSite>> = {};
     if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] };
     if (thumbnails && images.length) sites.above_composer = { mode: 'wrap', components: [{ type: 'slot' }, {
-      type: 'box', id: 'omd_preview_images', label: 'Draft images', title: `Draft image${images.length === 1 ? '' : 's'} (${images.length})`, children: [
-        ...images.slice(0, SHOWN_IMAGES).flatMap((picture, index): TerminalComponent[] => picture.image ? [
-          { type: 'image', id: `omd_preview_thumb_${index}`, label: `${picture.label} thumbnail`, image: picture.image, alt: picture.label, height: 3, pointer: true },
-          { type: 'button', id: `omd_preview_open_${index}`, label: `Preview ${picture.label}`, text: `Preview ${picture.label}`, action: { command: 'omd_preview:preview', args: `image ${index + 1}` } },
-        ] : [{ type: 'text', id: `omd_preview_thumb_${index}`, label: picture.label, text: `${picture.label}: no preview (only PNG and JPEG images up to 8 MiB)`, tone: 'muted' }]),
-        ...(images.length > SHOWN_IMAGES ? [{ type: 'text', id: 'omd_preview_more', label: 'More images', text: `+${images.length - SHOWN_IMAGES} more: /preview image ${SHOWN_IMAGES + 1} to ${images.length}`, tone: 'muted' } as TerminalComponent] : []),
-      ] }] };
+      type: 'box', id: 'omd_preview_images', label: 'Draft images', title: `Draft image${images.length === 1 ? '' : 's'} (${images.length})`, children: strip(images, event?.client) }] };
     return Object.keys(sites).length ? { sites } : null;
   });
 }

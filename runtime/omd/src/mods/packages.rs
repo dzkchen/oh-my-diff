@@ -104,7 +104,7 @@ impl ModStore {
             .iter()
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
-        let (package, source, hash) = store::package(path)?;
+        let (package, source, hash, assets) = store::package_with_assets(path)?;
         if hash != selection.sha256
             || selection.capabilities != package.capabilities
             || !package.capabilities.iter().any(|c| c == "store")
@@ -128,7 +128,7 @@ impl ModStore {
         let mut loaded = Loaded {
             package,
             source: source.into(),
-            assets: Arc::new(BTreeMap::new()),
+            assets: Arc::new(store::asset_map(assets)),
             request_metadata: Arc::new(OnceLock::new()),
             selection: selection.clone(),
             adapter: None,
@@ -136,6 +136,7 @@ impl ModStore {
             ui: None,
             ui_state: Value::Null,
             ui_revision: 0,
+            ui_clears: 0,
             command_view: None,
             registrations: Registrations::default(),
             source_use: ModSourceUse::default(),

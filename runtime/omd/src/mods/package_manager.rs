@@ -58,16 +58,7 @@ impl NpmConfig {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default();
         let expand = |value: &str| {
-            let mut expanded = value.trim().trim_matches('"').to_owned();
-            while let Some(start) = expanded.find("${") {
-                let Some(length) = expanded[start..].find('}') else {
-                    break;
-                };
-                let name = expanded[start + 2..start + length].to_owned();
-                let replacement = std::env::var(&name).unwrap_or_default();
-                expanded.replace_range(start..=start + length, &replacement);
-            }
-            expanded
+            interpolate(value.trim().trim_matches('"'), |name| std::env::var(name).ok())
         };
         let mut config = Self::default();
         for line in text.lines().map(str::trim) {
@@ -116,6 +107,19 @@ impl NpmConfig {
             .map(|(_, token)| token.as_str())
             .filter(|token| !token.is_empty())
     }
+}
+
+fn interpolate(value: &str, resolve: impl Fn(&str) -> Option<String>) -> String {
+    let (mut expanded, mut rest) = (String::new(), value);
+    while let Some(start) = rest.find("${") {
+        let Some(length) = rest[start..].find('}') else {
+            break;
+        };
+        expanded.push_str(&rest[..start]);
+        expanded.push_str(&resolve(&rest[start + 2..start + length]).unwrap_or_default());
+        rest = &rest[start + length + 1..];
+    }
+    expanded + rest
 }
 
 impl ModPackageSource {
@@ -1739,9 +1743,10 @@ impl ModStore {
                     } else {
                         format!("{subdirectory}/")
                     };
-                    let manifest = git_bytes(
+                    let manifest = git_blob(
                         &repository_path,
-                        &["show", &format!("{revision}:{prefix}mod.json")],
+                        &format!("{revision}:{prefix}mod.json"),
+                        8192,
                     )?;
                     std::fs::write(staging.join("mod.json"), &manifest)?;
                     let package: ModPackage = serde_json::from_slice(&manifest)?;
@@ -1750,9 +1755,10 @@ impl ModStore {
                         .chain(package.lifecycle.values())
                         .chain(package.assets.iter())
                     {
-                        let bytes = git_bytes(
+                        let bytes = git_blob(
                             &repository_path,
-                            &["show", &format!("{revision}:{prefix}{path}")],
+                            &format!("{revision}:{prefix}{path}"),
+                            store::PACKAGE_FILE_LIMIT as usize,
                         )?;
                         let target = staging.join(path);
                         if let Some(parent) = target.parent() {
@@ -2196,17 +2202,30 @@ fn git(repository: &Path, arguments: &[&str]) -> Result<String> {
     String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
 }
 
-fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+fn git_command(repository: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("--no-replace-objects")
         .arg("-C")
         .arg(repository)
-        .args(arguments)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()?;
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command
+}
+
+fn git_blob(repository: &Path, object: &str, limit: usize) -> Result<Vec<u8>> {
+    bounded_output(
+        git_command(repository).args(["show", object]),
+        None,
+        limit,
+        "repository_read_failed",
+    )
+}
+
+fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+    let output = git_command(repository).args(arguments).output()?;
     if !output.status.success() {
         return Err(failure(format!(
             "repository_read_failed: {}",
@@ -2399,19 +2418,22 @@ fn bounded_output(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        std::io::Write::write_all(&mut stdin, input.as_bytes())?;
-    }
     let mut bytes = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or_else(|| failure(code))?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > limit {
+    let read = (|| {
+        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            std::io::Write::write_all(&mut stdin, input.as_bytes())?;
+        }
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| failure(code))?
+            .take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+    })();
+    if read.is_err() || bytes.len() > limit {
         let _ = child.kill();
         let _ = child.wait();
+        read?;
         return Err(failure(format!("{code}: larger than {limit} bytes")));
     }
     let output = child.wait_with_output()?;
@@ -2706,6 +2728,28 @@ fn selected_settings(
 #[cfg(test)]
 mod repository_tests {
     use super::*;
+
+    #[test]
+    fn npmrc_interpolation_expands_only_original_references_once() {
+        let environment = BTreeMap::from([
+            ("LITERAL", "${TOKEN}"),
+            ("TOKEN", "secret"),
+            ("SELF", "${SELF}"),
+            ("A", "${B}"),
+            ("B", "${A}"),
+        ]);
+        let resolve = |name: &str| environment.get(name).map(|value| value.to_string());
+        for (value, expected) in [
+            ("${LITERAL}", "${TOKEN}"),
+            ("${TOKEN}-${LITERAL}", "secret-${TOKEN}"),
+            ("${MISSING}x${TOKEN}", "xsecret"),
+            ("${SELF}", "${SELF}"),
+            ("${A}:${B}", "${B}:${A}"),
+            ("a${TOKEN}${unclosed", "asecret${unclosed"),
+        ] {
+            assert_eq!(interpolate(value, resolve), expected, "{value}");
+        }
+    }
 
     #[test]
     fn online_repository_content_does_not_trust_cached_objects_or_origins() {

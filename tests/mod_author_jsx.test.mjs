@@ -91,6 +91,16 @@ export const tree = <box id="root" label="Root"><Row name="a" /></box>;
   assert.match(check(directory).output, /jsx_entrypoint_conflict: parts\/row\.ts was not generated from parts\/row\.tsx/);
 }));
 
+test('a .tsx asset keeps a hand-written index.ts in the type check', () => withProject('', { typecheck: true }, directory => {
+  rmSync(join(directory, 'index.tsx'));
+  mkdirSync(join(directory, 'parts'));
+  writeFileSync(join(directory, 'parts/row.tsx'), 'export const Row = ({ name }: { name: string }) => <line id={name} label={name}>{name}</line>;\n');
+  writeFileSync(join(directory, 'index.ts'), "export const count: number = 'one';\n");
+  const result = check(directory);
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /index\.ts.*TS2322/);
+}));
+
 test('scenario runs compile the index.tsx of every package they install', async () => {
   const stub = join(mkdtempSync(join(tmpdir(), 'omd-stub-')), 'omd-mod');
   writeFileSync(stub, '#!/bin/sh\nexit 1\n');

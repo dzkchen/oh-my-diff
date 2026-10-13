@@ -39,7 +39,7 @@ export function profileEntry(options, credentials) {
     return number;
   };
   return { name, protocol, url, model, credential: found.id, kind: found.kind, window: count(options.window, 'window', null),
-    reasoning: options.reasoning === true, cache_control: options.cache_control === true, max_output: count(options.max_output, 'max_output', 32000), paid };
+    reasoning: options.reasoning === true, cache_control: options.cache_control === true, text_only: options.text_only === true, max_output: count(options.max_output, 'max_output', 32000), paid };
 }
 
 export function routeFor(slug, profile, template, url) {
@@ -59,7 +59,8 @@ export function catalogEntry(slug, profile, bundled, index) {
   return { ...native ?? bundled[0], slug, display_name: `${profile.name} · ${profile.model}`,
     description: `${profile.protocol} profile through omd_profiles${profile.paid ? ' (paid API)' : ''}.`,
     context_window: window, max_context_window: window, auto_compact_token_limit: Math.floor(window * 0.9),
-    visibility: 'list', supported_in_api: true, priority: 70 + index, ...native ? {} : { web_search_tool_type: null } };
+    visibility: 'list', supported_in_api: true, priority: 70 + index, ...native ? {} : { web_search_tool_type: null },
+    ...profile.text_only ? { input_modalities: ['text'] } : {} };
 }
 
 async function setup(recordPath, optionText) {

@@ -4,8 +4,7 @@ use codex_extension_api::ToolOutputContributor;
 use codex_omd::ModStore;
 use std::path::Path;
 use std::path::PathBuf;
-
-static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+use crate::mods::DISPATCHER_TEST;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -570,6 +569,43 @@ async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
     .await
     .unwrap();
     assert_ne!(value["values"]["FIXTURE_VALUE"]["value"], "y".repeat(4096));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_module_instances_follow_the_published_view() {
+    let _guard = DISPATCHER_TEST.lock().await;
+    let Some(fixture) = fixture(&[Package {
+        id: "modules",
+        capabilities: &["terminal"],
+        manifest: json!({}),
+        source: "export default api => { for (const name of ['a', 'b']) api.component(name, {init: () => 0, key: n => n + 1, view: (n, ui) => [{type: 'text', id: 't', label: 'T', text: `${name}:${n}:${ui.props}`}]}); }",
+    }]) else {
+        return;
+    };
+    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let _registration = clients::install(&fixture.core, dispatcher).unwrap();
+    let publish = |component: &str, module: &str, props: &str| {
+        let terminal = serde_json::from_value(json!({"view": {"sites": {"sidebar": {"components": [
+            {"type": "module", "id": component, "label": "M", "module": module, "props": props}]}}},
+            "component_owners": {component: "modules"}}))
+        .unwrap();
+        fixture.core.views.base(&fixture.core.host, terminal, Value::Null, 0);
+    };
+    let step = |component: &str| {
+        clients::component_event("client", component, json!({"kind": "key", "key": "x", "text": "x"}))?;
+        clients::render("client", "module", json!({"component": component, "columns": 20, "rows": 1}))
+            .map(|step| step["tree"][0]["text"].clone())
+    };
+    for node in 0..5 {
+        let component = format!("node{node}");
+        publish(&component, "a", "p");
+        assert_eq!(step(&component), Ok(json!("a:1:p")), "{component}");
+    }
+    publish("node4", "a", "q");
+    assert_eq!(step("node4"), Ok(json!("a:2:q")));
+    publish("node4", "b", "q");
+    assert_eq!(step("node4"), Ok(json!("b:1:q")));
+    clients::detached("client");
 }
 
 #[tokio::test(flavor = "multi_thread")]

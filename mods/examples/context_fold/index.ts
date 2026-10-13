@@ -5,7 +5,7 @@ const LARGE = 16_384;
 
 export default function activate(api: ModAPI) {
   api.replace('history', event => {
-    const cutoff = event.items.length - KEEP;
+    const cutoff = (event.items.at(-1)?.index ?? 0) + 1 - KEEP;
     const replace = event.items
       .filter(item => item.index < cutoff && item.editable && item.type.endsWith('_output') && item.bytes > LARGE)
       .map(item => ({ index: item.index, text: `[folded ${item.bytes} bytes of ${item.call_id ?? 'tool'} output]` }));

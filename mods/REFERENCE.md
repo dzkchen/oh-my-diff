@@ -443,6 +443,7 @@ thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB;
 a full host evicts the oldest snapshot of the largest holder. Identical captures
 are deduplicated, and the registry clears on owner cleanup or session stop.
 Snapshots do not authorize reading denied paths.
+Reconstructed worktrees retain captured files even when snapshot ignore rules match them.
 
 `workspace.fingerprint {agent?, expected?}` takes the same arguments and
 permissions and returns only `{candidate_sha256}`, the digest `workspace.snapshot`
@@ -505,7 +506,7 @@ the host stays off with a notice in `/omd`. `omd-mod command
 STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A callback result,
 including its state, stays within 256 KiB. Package update, migration and rollback commands act on
-`"store"` state only.
+`"store"` state only. Migration handlers can import declared package assets by relative path.
 
 ### Reactive state (`reactive_state_v1`)
 
@@ -2272,7 +2273,7 @@ change, whoever changed them. Each attachment has a stable `id`, its placeholder
 `label`, its `owner` (`user` or the mod that attached it) and an immutable image
 `resource` bound to the reading mod, its source hash and repository, with package
 lifetime across configuration revisions and thread forks (PNG and JPEG up to 8 MiB; otherwise
-`null`). `composer.write {revision, edit?, cursor?, selection?, attach?,
+`null`), with the image's `width` and `height` in pixels when its header decodes. `composer.write {revision, edit?, cursor?, selection?, attach?,
 detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
 'splice', start, end, text}` (byte offsets on character boundaries), `cursor`
@@ -2455,7 +2456,9 @@ returns `timers`), and `time.sleep` returns at once.
 
 `replace('history')` receives a bounded view of each model request's items
 (`index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview and byte
-size and `images` count) and may return `{drop?, replace?, insert?}`. Messages,
+size and `images` count) and may return `{drop?, replace?, insert?}`. The view
+holds the newest items, at most 2048, that fit the callback's 1 MiB runner
+request, in order and keyed by their original `index`. Messages,
 tool outputs and tool call arguments can be replaced; replacing a message with
 images keeps only the new text. A reasoning item can be dropped only together
 with the item it precedes and an insert cannot separate them; call and output
@@ -2730,7 +2733,10 @@ any it refuses.
   successful validation and cancellation checks, with revision conflicts using
   the existing receipt-replay rules. Authority polling with unchanged configuration
   preserves UI state and command views. State is cleared on explicit reload, revocation,
-  package changes and session teardown, and is never written to disk. Durable
+  package changes and session teardown, and is never written to disk; a reload
+  during a command or component event (such as one its own `packages.apply`
+  caused) does not cancel it, and its `set` lands on the cleared state, even
+  with the value it read; a change of repository during it cancels it. Durable
   `api.state` is unchanged. Use UI state for open dialogs and filters, and durable
   state for preferences that must survive a restart.
 - Experimental command views: return `{terminal: patch}` with a `TerminalPatch`

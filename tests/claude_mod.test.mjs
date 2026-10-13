@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { once } from 'node:events';
 import activate, { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, runClaude, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -184,7 +184,6 @@ test('subscription windows, resets and billing source reach /status headers; fai
   assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-status': 'allowed' }), false);
   assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 1_000_000), true);
   assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 3_000_000), false);
-  assert.equal(stoppedForExtraUsage(overage), false);
   assert.equal(stoppedForExtraUsage(headers), false);
   const both = { ...overage, 'anthropic-ratelimit-unified-5h-reset': '2000', 'anthropic-ratelimit-unified-reset': '9000' };
   assert.equal(stoppedForExtraUsage(both, 3_000_000), false);
@@ -205,6 +204,59 @@ test('subscription windows, resets and billing source reach /status headers; fai
   assert.equal(upstreamFailure(404, {}, '{"error":{"type":"not_found_error","message":"model: claude-x"}}').code, 'claude_model_not_entitled');
   assert.match(upstreamFailure(403, {}, '{"error":{"message":"no access to model claude-x"}}', 'api').message, /Console workspace/);
   assert.equal(upstreamFailure(200, headers, ''), null);
+});
+
+test('reported extra usage keeps stopping requests when the reset is missing or malformed and says how it clears', () => {
+  const overage = { 'anthropic-ratelimit-unified-overage-in-use': 'true' };
+  const reset = value => ({ ...overage, 'anthropic-ratelimit-unified-reset': value });
+  assert.equal(stoppedForExtraUsage(overage, 5_000_000), true);
+  for (const bad of ['', 'soon', '0', '-5', 'NaN']) assert.equal(stoppedForExtraUsage(reset(bad), 5_000_000), true, bad);
+  assert.equal(stoppedForExtraUsage(reset('9000'), 5_000_000), true);
+  assert.equal(stoppedForExtraUsage(reset('2000'), 5_000_000), false);
+  assert.match(extraUsageStop(overage).message, /until the provider restarts or extra_usage is on/);
+  assert.doesNotMatch(extraUsageStop(overage).message, /resets/);
+  assert.match(extraUsageStop(reset('9000')).message, /resets 1970-01-01T02:30:00\.000Z.*until that reset/);
+});
+
+async function fakeCli(script) {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-run-'));
+  await writeFile(join(root, 'claude'), script, { mode: 0o700 });
+  return root;
+}
+
+const run = (claude, signal = new AbortController().signal, translated = null) => runClaude(prompt, { slug: model, cli: model,
+  efforts: [], thinking: false, window: 200000 }, claude, signal, () => {}, { translated }).then(() => null, error => error);
+
+test('cancelling at any point before the CLI starts never launches it and leaves nothing behind', async () => {
+  const scratch = async () => (await readdir('/private/tmp')).filter(name => name.startsWith('omd-claude-'));
+  const before = new Set(await scratch());
+  const root = await fakeCli('#!/bin/sh\ntouch "$(dirname "$0")/launched"\n');
+  try {
+    for (const abortAt of [1, 2, 3, 4]) {
+      let reads = 0;
+      const signal = { get aborted() { return ++reads >= abortAt; }, addEventListener() {}, removeEventListener() {} };
+      assert.equal((await run(join(root, 'claude'), signal))?.message, 'claude_request_cancelled', `abort at check ${abortAt}`);
+      await assert.rejects(stat(join(root, 'launched')), { code: 'ENOENT' }, `abort at check ${abortAt}`);
+    }
+    for (let attempt = 0; attempt < 50 && (await scratch()).some(name => !before.has(name)); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.deepEqual((await scratch()).filter(name => !before.has(name)), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a missing CLI fails the request instead of crashing the process', async () => {
+  assert.equal((await run('/nonexistent/omd-claude'))?.code, 'ENOENT');
+});
+
+test('a CLI that exits during history replay fails the request instead of crashing the process', async () => {
+  const root = await fakeCli('#!/bin/sh\nexec 0<&-\nsleep 0.3\n');
+  try {
+    const frames = Array.from({ length: 4 }, () => ({ type: 'user', message: { role: 'user', content: 'x'.repeat(4 * 1024 * 1024) } }));
+    const outcome = await run(join(root, 'claude'), undefined, { manifest: [], extra: {}, system: '', frames, reverse: new Map() });
+    assert.equal(outcome?.message, 'claude_history_replay_exited');
+    await new Promise(resolve => setTimeout(resolve, 200));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('Claude stream capture preserves UTF-8 across network chunks', () => {

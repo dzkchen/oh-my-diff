@@ -122,3 +122,42 @@ fn thread_scope_is_per_thread_forks_by_copy_and_is_removed_with_the_thread() {
         "ship"
     );
 }
+
+#[test]
+fn a_failed_fork_publishes_nothing_and_never_merges_into_an_existing_thread() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().canonicalize().unwrap();
+    let threads = data.join("data/threads");
+    for owner in ["a", "b"] {
+        std::fs::create_dir_all(threads.join("parent").join(owner)).unwrap();
+        std::fs::write(threads.join("parent").join(owner).join("store.json"), owner).unwrap();
+    }
+    let unreadable = threads.join("parent/b/store.json");
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let failed = fork_thread_data(&data, "parent", "child");
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(failed.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+    let entries = || {
+        let mut names = std::fs::read_dir(&threads)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    assert_eq!(entries(), ["parent"]);
+    assert!(fork_thread_data(&data, "parent", "child").unwrap());
+    assert_eq!(std::fs::read(threads.join("child/b/store.json")).unwrap(), b"b");
+    std::fs::create_dir_all(threads.join("empty")).unwrap();
+    std::fs::create_dir_all(threads.join("full/a")).unwrap();
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let repeated = ["child", "empty", "full"].map(|existing| fork_thread_data(&data, "parent", existing));
+    std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    for result in repeated {
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+    }
+    assert_eq!(entries(), ["child", "empty", "full", "parent"]);
+    assert_eq!(std::fs::read_dir(threads.join("empty")).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(threads.join("full/a")).unwrap().count(), 0);
+}

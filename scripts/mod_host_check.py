@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples"]
+SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples", ROOT / "mods/ports"]
 TUI_OPERATIONS = {
     "exec.run", "exec.output_page", "workspace.read", "workspace.list", "workspace.stat",
     "workspace.check_access", "workspace.transaction", "workspace.backup", "workspace.restore",

@@ -41,6 +41,7 @@ POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", 
 RELEASE_URL = ""
 RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
+UNINSTALL_JOURNAL = ".uninstall.json"
 UPSTREAM_MINOR = "0.162"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
@@ -247,7 +248,7 @@ def extract(archive_path, destination):
         if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
             fail("release archive exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or ".." in Path(item.name).parts for item in members):
+               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
             fail("release archive contains an unsafe member")
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             fail("release archive member exceeds byte limit")
@@ -354,7 +355,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         journaled(root, generation, args.session, None if store.exists() else profile)
         generation.mkdir(parents=True)
         command = [sys.executable, "-m", "scripts.lean_package", "install",
-                   "--archive", archive, "--sha256", expected, "--upstream", upstream["path"],
+                   "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
                    "--bin-dir", generation / "bin", "--store", store, "--node", node]
         if store.exists():
@@ -401,7 +402,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             if old in kept or not (old / "receipt.json").is_file():
                 continue
             try:
-                remove_generation(old, Path(upstream["path"]), args.bin_dir)
+                remove_generation(old, Path(upstream["path"]), args.bin_dir, "--keep-broker")
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
@@ -450,11 +451,26 @@ def recover(args, root, current):
     journal.unlink()
 
 
-def remove_generation(generation, upstream, bin_dir):
-    package(generation, upstream, bin_dir, "uninstall", "--keep-broker")
-    (generation / "receipt.json").unlink()
-    (generation / "bin").rmdir()
-    generation.rmdir()
+def removing(generation):
+    prefix = generation / "prefix"
+    return (prefix / UNINSTALL_JOURNAL).is_file() or not prefix.is_dir() or not any(prefix.iterdir())
+
+
+# Once the package uninstall journals, the prefix holds only validated files and removal only rolls forward.
+def remove_generation(generation, upstream, bin_dir, *flags):
+    prefix = generation / "prefix"
+    if not removing(generation):
+        package(generation, upstream, bin_dir, "uninstall", *flags)
+    if (prefix / UNINSTALL_JOURNAL).is_file():
+        shutil.rmtree(prefix)
+    elif prefix.is_dir():
+        prefix.rmdir()
+    for name in LINKS:
+        (generation / "bin" / name).unlink(missing_ok=True)
+    (generation / "receipt.json").unlink(missing_ok=True)
+    for directory in (generation / "bin", generation):
+        if directory.is_dir():
+            directory.rmdir()
 
 
 def discard(generation, upstream, bin_dir):
@@ -514,31 +530,51 @@ def uninstall(args, root, bin_dir, current):
     generations = sorted((root / "releases").iterdir())
     generations = [item for item in generations if (item / "receipt.json").is_file()]
     for generation in generations:
-        status(generation, upstream, bin_dir)
+        if not removing(generation):
+            status(generation, upstream, bin_dir)
     failures = []
     for generation in [item for item in generations if item != current]:
         try:
-            remove_generation(generation, upstream, bin_dir)
+            remove_generation(generation, upstream, bin_dir, "--keep-broker")
         except (OSError, ValueError) as error:
             failures.append(f"{generation.name}: {error}")
     (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
+    write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
     restore_links(root, bin_dir)
     try:
-        package(current, upstream, bin_dir, "uninstall")
+        remove_generation(current, upstream, bin_dir)
     except BaseException:
-        set_links(root, bin_dir)
+        if not removing(current):
+            set_links(root, bin_dir)
+            (root / "update/journal.json").unlink()
         raise
-    (current / "receipt.json").unlink()
-    (current / "bin").rmdir()
-    current.rmdir()
-    (root / "current").unlink()
+    print(json.dumps(uninstalled(root) | {"restored_upstream": str(upstream)}, indent=2))
+
+
+def uninstalled(root):
+    (root / "current").unlink(missing_ok=True)
     for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
         shutil.rmtree(leftover, ignore_errors=True)
-    (root / ".install.lock").unlink(missing_ok=True)
-    print(json.dumps({"uninstalled": True, "restored_upstream": str(upstream),
-                      "preserved_stores": str(root / "stores")}, indent=2))
+    return {"uninstalled": True, "preserved_stores": str(root / "stores")}
+
+
+def resume_uninstall(args, root):
+    journal = root / "update/journal.json"
+    name = read_json(journal, {}).get("uninstall") if journal.exists() else None
+    if name is None:
+        return None
+    if not (isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name)):
+        fail("unrecognized uninstall journal")
+    generation = root / "releases" / name
+    if not removing(generation):
+        set_links(root, args.bin_dir)
+        journal.unlink()
+        return None
+    restore_links(root, args.bin_dir)
+    remove_generation(generation, None, args.bin_dir)
+    return uninstalled(root)
 
 
 def update_dir(root):
@@ -979,9 +1015,10 @@ def main():
         parser.error("only update takes an action")
     args.root = args.root.expanduser().resolve()
     root = args.root
-    active = pointer(root, "current") if root.is_dir() else None
-    args.bin_dir = (args.bin_dir or Path(receipt(active).get("bin_dir") or Path.home() / ".local/bin") if active
-                    else args.bin_dir or Path.home() / ".local/bin").expanduser().resolve()
+    pending = read_json(root / "update/journal.json", {}) if root.is_dir() else {}
+    active = None if "uninstall" in pending or not root.is_dir() else pointer(root, "current")
+    recorded = pending.get("bin_dir") if "uninstall" in pending else receipt(active).get("bin_dir") if active else None
+    args.bin_dir = Path(args.bin_dir or recorded or Path.home() / ".local/bin").expanduser().resolve()
     if root == Path(root.anchor) or args.bin_dir == Path(args.bin_dir.anchor):
         fail("installation paths must not be filesystem roots")
     home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
@@ -994,9 +1031,12 @@ def main():
         return tick(args, root, active)
     root.mkdir(parents=True, exist_ok=True)
     with flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…"):
+        finished = resume_uninstall(args, root)
         current = pointer(root, "current")
         recover(args, root, current)
-        if args.command == "launch":
+        if args.command == "uninstall" and finished:
+            print(json.dumps(finished, indent=2))
+        elif args.command == "launch":
             if current:
                 launch(args, root, current)
         elif args.command == "update" and args.action != "rollback":
