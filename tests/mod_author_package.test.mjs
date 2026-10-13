@@ -284,7 +284,7 @@ test('fixture-rendered scaffold, typed tool, UI, guard and policy tier work offl
     mkdirSync(join(project, 'node_modules/@oh-my-diff'));
     symlinkSync(mods, join(project, 'node_modules/@oh-my-diff/mod-api'));
     symlinkSync(join(mods, 'node_modules/typescript'), join(project, 'node_modules/typescript'));
-    symlinkSync(join(mods, 'node_modules/.bin/tsc'), join(project, 'node_modules/.bin/tsc'));
+    symlinkSync(join(mods, 'node_modules/typescript/bin/tsc'), join(project, 'node_modules/.bin/tsc'));
     const manifest = JSON.parse(readFileSync(join(project, 'mod.json'), 'utf8'));
     writeFileSync(join(project, 'mod.json'), JSON.stringify({ ...manifest, capabilities: ['commands', 'interception', 'terminal', 'store', 'exec'], exec_environment: ['MODE'] }));
     const policy = join(root, 'policy');

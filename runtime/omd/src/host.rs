@@ -244,20 +244,49 @@ impl Authority for ExternalRoot {
     }
 }
 
+pub fn validate_environment_read(arguments: &Value) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { names: Vec<String> }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
+    if input.names.is_empty() || input.names.len() > 16 { return Err("environment_names_invalid".into()); }
+    Ok(input.names)
+}
+
+pub fn validate_environment_set(arguments: &Value) -> Result<(String, Option<String>), String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { name: String, value: Value }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|_| "environment_arguments_invalid")?;
+    if !environment::environment_name_valid(&input.name) { return Err("environment_name_invalid".into()); }
+    let value = match input.value {
+        Value::Null => None,
+        Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
+        _ => return Err("environment_value_invalid".into()),
+    };
+    Ok((input.name, value))
+}
+
+pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(String, u64), String> {
+    if operation == "events.cancel" {
+        return arguments["key"].as_str().map(|key| (key.to_owned(), 0)).ok_or_else(|| "timer_invalid".into());
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { key: String, delay_ms: u64 }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
+    if input.key.is_empty() || input.key.len() > 64 || !(16..=86_400_000).contains(&input.delay_ms) {
+        return Err("timer_invalid".into());
+    }
+    Ok((input.key, input.delay_ms))
+}
+
 fn environment(
     state: Option<&Environment>,
     caller: &Caller<'_>,
     arguments: Value,
 ) -> Result<Value, String> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Input {
-        names: Vec<String>,
-    }
-    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    if input.names.is_empty() || input.names.len() > 16 {
-        return Err("environment_names_invalid".into());
-    }
+    let names = validate_environment_read(&arguments)?;
     let mut values = serde_json::Map::new();
     let overrides = state
         .map(|state| {
@@ -270,7 +299,7 @@ fn environment(
         })
         .transpose()?
         .unwrap_or_default();
-    for name in input.names {
+    for name in names {
         if !caller.exec_environment.contains(&name) {
             return Err(format!("exec_environment_undeclared: {name}"));
         }

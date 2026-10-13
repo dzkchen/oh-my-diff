@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "host_operations": {
-    "terminal.notice": [{"result": {"id": "approval_desk"}}]
+    "terminal.notice": [{"result": {"shown": true}}]
   },
   "steps": [
     {"type": "event", "event": "approval",

@@ -56,10 +56,11 @@
   ],
   "scripts": {
     "test": "node ../scripts/mod_test_suite.mjs",
-    "check": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.author.json && node ../scripts/mod_typecheck_inventory.mjs && node ../scripts/mod_operation_schema.mjs --check",
     "package": "pnpm pack --pack-destination dist"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "typescript": "5.9.3"
   }
 }
