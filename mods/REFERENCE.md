@@ -2226,7 +2226,7 @@ change, whoever changed them. Each attachment has a stable `id`, its placeholder
 `label`, its `owner` (`user` or the mod that attached it) and an immutable image
 `resource` bound to the reading mod, its source hash and repository, with package
 lifetime across configuration revisions and thread forks (PNG and JPEG up to 8 MiB; otherwise
-`null`). `composer.write {revision, edit?, cursor?, selection?, attach?,
+`null`), with the image's `width` and `height` in pixels when its header decodes. `composer.write {revision, edit?, cursor?, selection?, attach?,
 detach?}` applies only to that revision and fails with `stale_revision`
 otherwise: `edit` is `{kind: 'fill' | 'insert' | 'append', text}` or `{kind:
 'splice', start, end, text}` (byte offsets on character boundaries), `cursor`

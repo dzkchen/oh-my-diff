@@ -524,7 +524,11 @@ def install(args):
         trusted, enabled = [], []
         curated = {entry["id"]: entry for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
                    if entry["extension_type"] == "mod" and entry["support_status"] in ("reviewed_candidate", "supported")}
-        catalog = {}
+        catalog = {identifier: [{"version": entry["version"], "integrity": entry["published"]["sha256"],
+                                 "source": {"kind": "repository", "repository": entry["published"]["repository"],
+                                            "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
+                                 "description": entry["capability"], "support": entry["support_status"]}]
+                   for identifier, entry in curated.items() if "published" in entry}
         for identifier in PACKAGES:
             package = packages[identifier]
             for name in package["files"]:

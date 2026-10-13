@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import re
+import subprocess
 from pathlib import Path
 
 
@@ -71,6 +73,12 @@ def check():
                 raise ValueError(f"{entry['id']}: mod manifest differs")
             if manifest["api"] not in entry["compatibility"]:
                 raise ValueError(f"{entry['id']}: mod API differs")
+            if published := entry.get("published"):
+                if not (published["repository"].startswith("https://") and re.fullmatch(r"[0-9a-f]{40}", published["revision"])
+                        and re.fullmatch(r"[0-9a-f]{64}", published["sha256"])):
+                    raise ValueError(f"{entry['id']}: invalid published source")
+                if subprocess.run(["git", "diff", "--quiet", published["revision"], "--", entry["source"]], cwd=ROOT).returncode:
+                    raise ValueError(f"{entry['id']}: source differs from its published revision")
         elif entry["extension_type"] == "plugin":
             manifest = json.loads((source / ".codex-plugin/plugin.json").read_text())
             if (entry["id"], entry["version"], entry["license"]) != (

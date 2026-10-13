@@ -313,7 +313,7 @@ export type CompactionResult = { summary: string | null; history: HistoryItem[];
 export type ComposerEdit = { kind: 'fill' | 'insert' | 'append'; text: string } | { kind: 'splice'; text: string; start: number; end: number };
 export type ComposerDraft = { text: string; cursor: number; selection: { start: number; end: number } | null; revision: number;
   /** `label` is the text placeholder; image resources keep mod/source/repository binding across config changes and forks; unsupported media is null. */
-  attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null }[];
+  attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null; width?: number; height?: number }[];
   suggestion: { owner: string; id: string } | null };
 export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'PermissionRequest' | 'PermissionDenied'
   | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Setup' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop'

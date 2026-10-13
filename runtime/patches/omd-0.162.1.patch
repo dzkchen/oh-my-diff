@@ -143092,10 +143092,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..13e7881b2
+index 000000000..564955557
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2124 @@
+@@ -0,0 +1,2135 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -143312,6 +143312,10 @@ index 000000000..13e7881b2
 +        let count = seen.entry(sha256.clone()).or_default();
 +        *count += 1;
 +        attachment["id"] = json!(format!("img-{}-{count}", &sha256[..12]));
++        if let Some((width, height)) = crate::mod_components::dimensions(&bytes) {
++            attachment["width"] = json!(width);
++            attachment["height"] = json!(height);
++        }
 +        let (mut host, _) = crate::mod_surface::resource_binding(caller, thread)?;
 +        host.binding.thread = "package".into();
 +        host.binding.generation = 0;
@@ -144941,13 +144945,20 @@ index 000000000..13e7881b2
 +            policy: codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
 +        });
 +        let image = root.join("image.png");
-+        let bytes = b"\x89PNG\r\n\x1a\nrest";
-+        std::fs::write(&image, bytes).unwrap();
++        let mut bytes = Vec::new();
++        image::RgbaImage::new(3, 2)
++            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
++            .unwrap();
++        std::fs::write(&image, &bytes).unwrap();
 +        let mut draft =
 +            json!({"attachments": [{"path": image, "label": "image", "owner": "user"}]});
 +        draft_resources("capture_fixture", Some("thread-a"), &mut draft).unwrap();
 +        let reference = draft["attachments"][0]["resource"].clone();
 +        assert!(draft["attachments"][0].get("path").is_none());
++        assert_eq!(
++            (&draft["attachments"][0]["width"], &draft["attachments"][0]["height"]),
++            (&json!(3), &json!(2))
++        );
 +        std::fs::remove_file(&image).unwrap();
 +        store.enable(&package, true).unwrap();
 +        for thread in ["thread-a", "thread-b"] {

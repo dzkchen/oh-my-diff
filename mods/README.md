@@ -50,6 +50,27 @@ demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
 rationale for every package.
 
+## Installing a published mod
+
+The curated index lists published mods by ID, each pinned to a Git commit and
+to the package hash `omd-mod inspect` reports. One command installs one, from a
+shell or inside a session:
+
+```sh
+omd mods catalog                 # browse the curated index
+omd install token_weather        # resolve, review the grants, approve
+omd mods enable token_weather    # installs start off
+```
+
+In a session, `/mods install token_weather` opens the same review; approve it,
+then turn the mod on from its `/mods` row. A Git reference installs without the
+index: `omd install 'git+https://github.com/author/repo#COMMIT:path/to/mod'`.
+Either way the host locks the revision to its commit and refuses a package
+whose hash differs from the index (`package_integrity_failure`) or whose `api`
+it does not support (`incompatible_api`). The Claude Code ports in
+[`ports/`](ports) (`burn_meter`, `token_weather` and `blast_radius`) are
+published this way, written against this public API only.
+
 ## Testing a mod
 
 `pnpm test` runs the mod in the real host offline: the `omd-mod` engine loads
