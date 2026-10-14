@@ -7,12 +7,12 @@ import subprocess
 import tarfile
 
 from scripts import install_support as support
-from scripts import full_mods_lock, lean_profiles, build_provenance
+from scripts import mods_lock, profiles, build_provenance
 from scripts.build_provenance import BINARIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "runtime/lean-release.lock.json"
+OUTPUT = ROOT / "runtime/release.lock.json"
 VERSION = "0.1.0-alpha.1"
 TARGET = "aarch64-apple-darwin"
 HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
@@ -21,16 +21,15 @@ AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/build_provenance.py",
     "plugins/release-files.json",
-    "scripts/lean_profiles.py", "scripts/lean_release_lock.py",
-    "scripts/lean_package.py", "scripts/install_support.py",
-    "scripts/preview_lock.py", "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
-    "upstream.lock.json", "runtime/patches/manifest.json",
-    "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
+    "scripts/profiles.py", "scripts/release_lock.py",
+    "scripts/package.py", "scripts/install_support.py",
+    "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
+    "upstream.lock.json", "runtime/patches/manifest.json", "runtime/plugins.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
-    "LEAN_PROFILES.md", "install.sh",
-    "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
-) + full_mods_lock.sources()
+    "INSTALL.md", "install.sh",
+    "scripts/mods_lock.py", "runtime/mods.lock.json",
+) + mods_lock.sources()
 
 
 def sign(path):
@@ -66,15 +65,14 @@ def build(artifact_dir, package_mode=False):
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
-    preview = support.preview_sources(support.preview_lock())
-    full = full_mods_lock.load()
-    if not package_mode and full != full_mods_lock.build():
-        raise ValueError("OMD+ mod lock differs from pinned sources")
+    mods = support.mods_lock()
+    if not package_mode and mods != mods_lock.build():
+        raise ValueError("first-party mod lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
     version = upstream["tag"].removeprefix("rust-v")
     if (index["release_pin"]["codex"] != version
-            or index["release_pin"]["mod_api"] != preview["mod_api"]
-            or index["release_pin"]["node"] != preview["node"]):
+            or index["release_pin"]["mod_api"] != mods["mod_api"]
+            or index["release_pin"]["node"] != mods["node"]):
         raise ValueError("curated catalog does not match the active release pin")
     plugins = sorted(support.plugin_sources()["plugins"])
     artifacts = {}
@@ -107,7 +105,7 @@ def build(artifact_dir, package_mode=False):
         raise ValueError("release binary does not match the active upstream pin")
     return {
         "schema": 1,
-        "product": lean_profiles.PRODUCT,
+        "product": profiles.PRODUCT,
         "version": VERSION,
         "upstream_tag": upstream["tag"],
         "upstream_commit": upstream["commit"],
@@ -115,21 +113,21 @@ def build(artifact_dir, package_mode=False):
         "rust_toolchain": upstream["rust_toolchain"],
         "normalized_cargo_lock_sha256": upstream["normalized_cargo_lock_sha256"],
         "runtime_patch_sha256": patch["patch"]["sha256"],
-        "mod_api": preview["mod_api"],
-        "node": preview["node"],
+        "mod_api": mods["mod_api"],
+        "node": mods["node"],
         "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "build_provenance": provenance,
-        "platform_tools": list(lean_profiles.HOST_TOOLS),
+        "platform_tools": list(profiles.HOST_TOOLS),
         "profiles": {
-            "platform": {"label": lean_profiles.PROFILE_LABELS["platform"],
-                         "first_party_installed": list(lean_profiles.PLATFORM_PACKAGES),
-                         "first_party_default_active": list(lean_profiles.PLATFORM_PACKAGES), "plugin_sources": []},
-            "full": {"label": lean_profiles.PROFILE_LABELS["full"], "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": sorted(lean_profiles.DEFAULT_ACTIVE),
+            "platform": {"label": profiles.PROFILE_LABELS["platform"],
+                         "first_party_installed": list(profiles.PLATFORM_PACKAGES),
+                         "first_party_default_active": list(profiles.PLATFORM_PACKAGES), "plugin_sources": []},
+            "full": {"label": profiles.PROFILE_LABELS["full"], "first_party_installed": sorted(mods["packages"]),
+                     "first_party_default_active": sorted(profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },
-        "qualification": "development package candidate; supported collection and default pending",
+        "qualification": "development package; supported collection and default pending",
     }
 
 
@@ -140,7 +138,7 @@ def main():
     parser.add_argument("--package-mode", action="store_true")
     args = parser.parse_args()
     support.check_or_write(OUTPUT, json.dumps(build(args.artifact_dir.resolve(), args.package_mode), indent=2, sort_keys=True) + "\n",
-                           args.write, "lean release lock differs from exact artifacts and sources")
+                           args.write, "release lock differs from exact artifacts and sources")
 
 
 if __name__ == "__main__":

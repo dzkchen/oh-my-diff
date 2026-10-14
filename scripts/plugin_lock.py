@@ -6,7 +6,7 @@ from pathlib import Path
 from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = ROOT / "runtime/plugin-v1.lock.json"
+LOCK = ROOT / "runtime/plugins.lock.json"
 
 
 def build():

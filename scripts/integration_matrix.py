@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from scripts import lean_profiles, install_support, execution_evidence
+from scripts import profiles, install_support, execution_evidence
 from scripts.execution_evidence import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,23 +35,23 @@ def sources():
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    packages = {**preview["packages"], **json.loads((ROOT / "runtime/full-mods.lock.json").read_text())["packages"]}
     plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
+    mods = install_support.mods_lock()
+    packages = mods["packages"]
     view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
     site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
-        "preview": preview,
+        "mods": mods,
         "plugin": plugin,
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
-        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[(.*?)\]\.contains\(&name\)', site_validation).group(1)),
+        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[([^\]]*)\]\s*\.contains\(&name\)', site_validation).group(1)),
         "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
                     for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
                                       ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),
@@ -59,12 +59,12 @@ def sources():
         "terminal_operations": [name for name in re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))
                                 if name.startswith(("terminal.", "composer.", "builtins."))],
         "first_party_packages": {name: {key: packages[name][key] for key in ("version", "source")}
-                                 for name in lean_profiles.PACKAGES},
-        "profiles": {name: {"label": label, "first_party_installed": list(lean_profiles.profile_packages(name)),
-                            "first_party_default_active": sorted(set(lean_profiles.profile_packages(name))
-                                                                 & set(lean_profiles.DEFAULT_ACTIVE)),
+                                 for name in profiles.PACKAGES},
+        "profiles": {name: {"label": label, "first_party_installed": list(profiles.profile_packages(name)),
+                            "first_party_default_active": sorted(set(profiles.profile_packages(name))
+                                                                 & set(profiles.DEFAULT_ACTIVE)),
                             "plugin_sources": plugins if name == "full" else []}
-                     for name, label in lean_profiles.PROFILE_LABELS.items()},
+                     for name, label in profiles.PROFILE_LABELS.items()},
         "apis": [
             api if row == "MOD_API_VERSION" else row.strip('"')
             for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
@@ -93,7 +93,7 @@ def check(matrix):
         "upstream_tag": source["upstream"]["tag"],
         "upstream_commit": source["upstream"]["commit"],
         "target": source["upstream"]["verified_target"],
-        "node": source["preview"]["node"],
+        "node": source["mods"]["node"],
     }
     for key, value in expected.items():
         if release.get(key) != value:
@@ -138,10 +138,11 @@ def check(matrix):
         component = plugin_id.replace("-", "_")
         claim(component, "version", plugin["version"])
         claim(component, "extension_type", plugin["extension_types"])
-    for name, package in source["preview"]["packages"].items():
-        claim(name, "version", package["version"])
-        claim(name, "extension_type", package["extension_type"])
-        claim(name, "capabilities", sorted(package["capabilities"]))
+    for name, package in source["mods"]["packages"].items():
+        if name in components:
+            claim(name, "version", package["version"])
+            claim(name, "extension_type", package["extension_type"])
+            claim(name, "capabilities", sorted(package["capabilities"]))
         if not set(package["capabilities"]) <= source["capabilities"]:
             problems.append(f"{name}: capabilities outside the published API")
     for language, servers in source["languages"].items():
@@ -185,7 +186,7 @@ def check(matrix):
         if not entry.get("retained_for") or not entry.get("evidence"):
             problems.append(f"regression case {entry['id']}: missing retained versions or evidence")
         for version in entry.get("retained_for", []):
-            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["preview"]["node"]]
+            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["mods"]["node"]]
             if version not in known:
                 problems.append(f"regression case {entry['id']}: {version} is not a supported version row")
 
@@ -226,7 +227,7 @@ def launch_problems(entries, source):
         if name in seen:
             problems.append(f"launch: duplicate entry {name}")
         seen.add(name)
-        if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
+        if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(profiles.PROFILE_LABELS) or not entry.get("profiles"):
             problems.append(f"launch {name}: needs a launch tier and profiles")
         if not (ROOT / entry["path"]).exists():
             problems.append(f"launch {name}: path {entry['path']} is missing")
@@ -234,9 +235,9 @@ def launch_problems(entries, source):
             launched[entry["kind"]].add(name)
         if entry.get("tier") == "default-active":
             active.add(name)
-    if launched["mod"] != set(lean_profiles.PACKAGES):
+    if launched["mod"] != set(profiles.PACKAGES):
         problems.append("launch mods differ from the selected package source inventory")
-    if active != set(lean_profiles.DEFAULT_ACTIVE):
+    if active != set(profiles.DEFAULT_ACTIVE):
         problems.append("launch default-active mods differ from the fresh-install default selection")
     if launched["plugin"] != set(source["plugin"]["plugins"]):
         problems.append("launch plugins differ from the plugin lock")
@@ -314,7 +315,7 @@ def render(matrix):
     out += [
         "## Launch collection", "",
         table([(f"`{entry['id']}`", entry["kind"], entry["tier"],
-                " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"]), f"`{entry['path']}`")
+                " + ".join(profiles.PROFILE_LABELS[profile] for profile in entry["profiles"]), f"`{entry['path']}`")
                for entry in matrix["launch"]], ["Package", "Kind", "Tier", "Profiles", "Path"]), "",
     ]
     for area, title in AREAS.items():

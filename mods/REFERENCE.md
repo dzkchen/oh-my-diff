@@ -753,9 +753,16 @@ proves only what its policies detect.
 
 ### Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}})`, registered during
-activation, hides slash commands and disables collaboration modes from the next
-idle boundary until the mod is disabled, unloaded or fails. `/quit`,
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`,
+registered during activation, hides slash commands, disables collaboration
+modes and turns off native surfaces from the next idle boundary until the mod
+is disabled, unloaded or fails. Controls belong to the directory OMD was
+launched in and cover every thread of that session, including threads in its
+worktrees. `surfaces: {disable: ['status_line']}` turns
+off the upstream `/statusline` row at its source: its configured items are
+neither computed nor polled and reserve no height, the user's `tui.status_line`
+setting is untouched, and the row still draws when other mods publish `status`
+segments. `/quit`,
 `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode
 cannot be removed. A turn that requests a disabled mode runs in the default mode
 with that mode's instructions cleared and a warning (a `warning` notification
@@ -1456,8 +1463,10 @@ turn by itself; only `turns.queue` under an `autonomous` grant can.
 `ready` once enrolled; secrets are listed only to the mod that owns them.
 `credentials.request` opens native flows from user contexts: ChatGPT sign-in,
 masked API-key entry, refresh and removal, and `{kind: 'secret', label,
-origin}` for an origin-bound secret owned by the calling mod. A mod can remove
-only its own secrets, and the confirmation names the profile's kind and label. Route entries
+origin}` for an origin-bound secret owned by the calling mod. Labels are unique in
+the store, so enrolling an existing label fails with `credential_profile_label_exists`;
+`{action: 'refresh', profile}` on the mod's own secret asks for a new value and replaces it.
+A mod can remove only its own secrets, and the confirmation names the profile's kind and label. Route entries
 may name a `credential`; its token replaces the request's authorization after
 upstream auth, and a missing or expired credential blocks the request.
 `routes.select {route, scope}` applies a configured route at the next request
@@ -1974,7 +1983,8 @@ Operations:
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
-  `approval.*`) and routes a built-in command to a mod command.
+  `approval.*`) and routes a built-in command to a mod command; the slash
+  popup lists the built-in with that command's description and arguments.
 
 ### External clients (`omd-client/1`)
 
@@ -3331,7 +3341,12 @@ segments apply to scrollback. When any mod's view
 sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
 omits the sidebar, header and named sites; dialogs, status segments, mod
 progress and diagnostics, the composer, approvals and scrollback remain, and
-the owned fullscreen viewport is unchanged. The `terminal` input carries a read-only `identity`
+the owned fullscreen viewport is unchanged. The `above_composer` and
+`below_composer` sites draw in both modes, host-sized to their wrapped
+components, directly above and below the bottom pane (composer, native hints
+and status row), with styles, links and focusable controls; `below_composer`
+is clipped to 6 rows and scrolls to the focused control. Both are hidden while
+an approval or popup replaces the composer. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or
 `unreported`), effective `mode` (`omd`), and installed,

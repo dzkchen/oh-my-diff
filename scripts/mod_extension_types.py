@@ -9,7 +9,7 @@ from scripts import install_support as support
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
 DOCUMENT = ROOT / "mods/EXTENSION_TYPES.md"
-ROLES = {"bundled", "candidate", "author_example", "conformance_fixture"}
+ROLES = {"bundled", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
 PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party")
 
@@ -60,13 +60,12 @@ def check(registry):
             problems.append(f"{label}: missing mod rationale")
 
     bundled = {package["path"]: package for package in packages if package["role"] == "bundled"}
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    locked = {package["source"]: package for package in preview["packages"].values()}
+    locked = {package["source"]: package for package in support.mods_lock()["packages"].values()}
     if set(bundled) != set(locked):
-        problems.append("bundled classifications differ from runtime/preview-v1.lock.json")
+        problems.append("bundled classifications differ from runtime/mods.lock.json")
     for path, package in bundled.items():
         if locked.get(path, {}).get("extension_type") != package["extension_type"]:
-            problems.append(f"{path}: preview lock extension type differs")
+            problems.append(f"{path}: mods lock extension type differs")
 
     published = {
         Path(package["path"]).name
@@ -106,13 +105,12 @@ def render(registry):
         registry["rule"],
         "",
         "A conformance fixture is retained source and executable coverage, not a package offered",
-        "to users. The author SDK packs only author examples. The current private-preview bundle",
-        "contains only the packages labeled `bundled` below.",
+        "to users. The author SDK packs only author examples. The first-party mod lock",
+        "(`runtime/mods.lock.json`) pins only the packages labeled `bundled` below.",
         "",
     ]
     sections = (
         ("Bundled packages", "bundled"),
-        ("Unqualified first-party candidates", "candidate"),
         ("Author examples", "author_example"),
         ("Conformance fixtures", "conformance_fixture"),
     )
@@ -136,7 +134,7 @@ def render(registry):
         "",
         "The small context, counter, guard, interception, service, reader, and tool cases remain",
         "available to repository conformance checks. They are not copied by `omd-mod-author examples`,",
-        "not packed as SDK examples, and not part of the private-preview bundle.",
+        "not packed as SDK examples, and not part of the first-party mod lock.",
         "",
     ])
     return "\n".join(out)

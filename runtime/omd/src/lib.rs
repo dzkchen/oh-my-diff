@@ -39,7 +39,7 @@ pub use admission::TaskCostCapture;
 pub use admission::VersionMarker;
 pub use admission::WorkerLimits;
 pub use admission::WorkerStatus;
-pub use builtins::BUILTINS_SNAPSHOT;
+pub use builtins::builtins_snapshot;
 pub use builtins::BuiltinControls;
 pub use builtins::BuiltinSnapshot;
 pub use builtins::PROTECTED_COMMANDS;

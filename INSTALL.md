@@ -1,4 +1,4 @@
-# OMD Core and OMD+ candidate profiles
+# Installing OMD Core and OMD+
 
 Both profiles use one `install.sh` curl entry point and the same patched host and
 author tools. OMD Core supplies the modding ecosystem for user-selected
@@ -9,24 +9,23 @@ extensions; OMD+ also contains the selected first-party collection.
 | OMD Core | `--profile platform` | `OMD_INSTALL_PROFILE=platform_only` |
 | OMD+ | `--profile full` | `OMD_INSTALL_PROFILE=full` |
 
-These internal selectors, installation paths, schema-1 records and lock filenames
-remain unchanged. They identify the same profiles; the public labels and status
-metadata use OMD Core and OMD+. No unreleased-format migration is needed.
+The selectors are internal names; the public labels and status metadata use
+OMD Core and OMD+.
 
-These are local Apple Silicon candidate profiles for the active Codex `0.162.1`
+These are local Apple Silicon profiles for the active Codex `0.162.1`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
 executables from `upstream.lock.json` and `runtime/patches/manifest.json`: check
 out the pinned Codex tag, run `scripts/normalize_upstream_lock.py` and
 `scripts/apply_runtime_patch.py` on it, `cargo build --release` the six binaries,
-and sign and pack them with `scripts/lean_release_lock.py`. Use Node 24.18 or a
+and sign and pack them with `scripts/release_lock.py`. Use Node 24.18 or a
 later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 Verify the host and SDK artifacts with
-`python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
+`python3 -m scripts.release_lock --artifact-dir /path/to/release`.
 
 Release artifacts require `build-provenance.json`, written by the build workflow
 after a successful build from the verified patch and dependency lock. It binds
@@ -38,9 +37,9 @@ This is a local build record, not an independently signed builder attestation.
 To create a checksum-bound prebuilt archive and install either profile locally:
 
 ```sh
-python3 -m scripts.lean_package pack --artifact-dir /path/to/release --output /path/to/omd-package.tar.xz
-python3 -m scripts.lean_package install --archive /path/to/omd-package.tar.xz --sha256 PRINTED_SHA256 \
-  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-candidate \
+python3 -m scripts.package pack --artifact-dir /path/to/release --output /path/to/omd-package.tar.xz
+python3 -m scripts.package install --archive /path/to/omd-package.tar.xz --sha256 PRINTED_SHA256 \
+  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-prefix \
   --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
 ```
 
@@ -48,14 +47,14 @@ Use `--profile full` for the provisional OMD+ collection. The archive is
 verified before installation. For an automated patch-and-build install:
 
 ```sh
-python3 -m scripts.lean_package source-install \
+python3 -m scripts.package source-install \
   --repository /absolute/local/codex-mirror --author-archive /path/to/release/mod-api.tgz \
   --output-archive /path/to/source-built-omd-package.tar.xz \
-  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-candidate \
+  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-prefix \
   --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
 ```
 
-Use `--profile full` for the OMD+ candidate. An
+Use `--profile full` for OMD+. An
 optional `--target-dir` retains a separate Cargo build cache. The source route
 verifies the upstream commit, normalizes the lock, applies the hash-checked
 patch, and builds the matching binaries. It requires Rust 1.95.0 and the pinned
@@ -71,7 +70,7 @@ patched build and separate writable installation directories:
 
 ```sh
 NODE_PATH="$(mise which node)"
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin install \
+python3 -m scripts.profiles --prefix /path/to/omd-prefix --bin-dir /path/to/omd-bin install \
   --profile platform --binary /path/to/patched/codex --manager /path/to/patched/omd-mod \
   --omd /path/to/patched/omd --omd-contract /path/to/patched/omd-contract \
   --author-archive /path/to/release/mod-api.tgz \
@@ -84,7 +83,7 @@ with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
 `omd_inspector`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
-`omd_plan_removal`, `omd_tool_lines` and `omd_plan_panel`; Codex's
+`omd_plan_removal`, `omd_statusline`, `omd_tool_lines` and `omd_plan_panel`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
 the privacy policy, the usage HUD and `/continue` (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
@@ -97,7 +96,7 @@ re-enabled when they were on, also when an earlier attempt stopped between repla
 newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
 `--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Three plugin source packages are available in
-`/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
+`/path/to/omd-prefix/bundles/oh-my-diff`; none is installed into Codex or
 started. The upstream `codex-code-mode-host`, built from the same pinned tree,
 is installed beside `codex`, because current models run shell commands through
 it. External language servers, Python, Bun and other sidecars are absent from
@@ -204,7 +203,7 @@ repair or disable, not evidence that its behavior ran successfully.
 An existing compatible store can be attached with `--attach-store` during a
 new installation. Attaching replaces changed first-party package sources with the new installation's
 and preserves each existing enabled or disabled choice. Use a separate prefix
-and launcher directory for a side-by-side candidate upgrade. Removal deletes
+and launcher directory for a side-by-side upgrade. Removal deletes
 only the managed launcher and installation prefix:
 
 ```sh
@@ -288,7 +287,7 @@ provider acts with its own authority for any caller.
 
 Installations made with `install.sh` update themselves through the same verified transaction. Each release on
 GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-release.json` manifest that
-`lean_package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
+`scripts.package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
 release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
 it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
 requirement. Until a release is published, checks report that none is available.

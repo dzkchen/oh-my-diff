@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from scripts.preview_lock import package_digest
+from scripts.install_support import package_digest
 
 
 ROOT = Path(__file__).resolve().parents[1]

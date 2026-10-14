@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from scripts import build_provenance as provenance
-from scripts import lean_release_lock
+from scripts import release_lock
 
 
 class BuildProvenanceTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class BuildProvenanceTests(unittest.TestCase):
     def test_release_rejects_artifacts_without_a_build_record(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "build provenance"):
-                lean_release_lock.build(Path(temporary))
+                release_lock.build(Path(temporary))
 
     def test_build_record_binds_inputs_unsigned_and_signed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

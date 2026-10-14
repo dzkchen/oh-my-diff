@@ -45,7 +45,7 @@ class IntegrationMatrixTests(unittest.TestCase):
             lock = integration_matrix.install_support.plugin_lock()
             for field in ("schema", "product"):
                 invalid = {**lock, field: "unknown"}
-                (root / "runtime/plugin-v1.lock.json").write_text(json.dumps(invalid))
+                (root / "runtime/plugins.lock.json").write_text(json.dumps(invalid))
                 with self.subTest(field=field), patch.object(integration_matrix.install_support, "ROOT", root):
                     with self.assertRaisesRegex(ValueError, "unrecognized bundled plugin lock"):
                         integration_matrix.sources()

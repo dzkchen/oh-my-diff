@@ -75,7 +75,7 @@ def broker_deployed():
 
 
 def package(generation, upstream, bin_dir, *arguments):
-    return run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", generation / "prefix",
+    return run([sys.executable, "-m", "scripts.profiles", "--prefix", generation / "prefix",
                 "--bin-dir", generation / "bin", *arguments],
                cwd=generation / "prefix/management", env=environment(upstream, bin_dir))
 
@@ -187,10 +187,10 @@ def profile_choice(args):
         return args.profile
     try:
         with open("/dev/tty", "r+") as terminal:
-            terminal.write("Oh My Diff candidate\n"
+            terminal.write("Oh My Diff\n"
                            "1) OMD Core: patched Codex, mod manager, typed author tools; the logo, mod manager and update mods are active.\n"
-                           "2) OMD+: the selected first-party collection and staged plugin sources.\n"
-                           "   The inspector, workspace, logo, model picker, mod manager, update and plan removal mods are active on a fresh install. Other mods require your explicit activation.\n"
+                           "2) OMD+: OMD Core plus the first-party mod collection and bundled plugins.\n"
+                           "   Its default mods are active on a fresh install; the rest require your explicit activation (see INSTALL.md).\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()
@@ -354,7 +354,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
         generation.mkdir(parents=True)
-        command = [sys.executable, "-m", "scripts.lean_package", "install",
+        command = [sys.executable, "-m", "scripts.package", "install",
                    "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
                    "--bin-dir", generation / "bin", "--store", store, "--node", node]

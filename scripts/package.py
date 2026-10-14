@@ -8,7 +8,7 @@ import sys
 import tarfile
 import tempfile
 
-from scripts import lean_release_lock as release
+from scripts import release_lock as release
 from scripts import install_support as support
 
 
@@ -20,13 +20,10 @@ RELEASE_MANIFEST = "omd-release.json"
 
 def copy_sources(destination):
     plugin = support.plugin_sources()
-    preview = support.preview_sources(support.preview_lock())
     listed = set(release.SOURCES)
-    listed.update(("runtime/lean-release.lock.json", plugin["guide"]["path"],
+    listed.update(("runtime/release.lock.json", plugin["guide"]["path"],
                    json.loads((ROOT / "runtime/patches/manifest.json").read_text())["patch"]["path"]))
     listed.update(f"{plugin['source']}/{name}" for name in plugin["files"])
-    for package in preview["packages"].values():
-        listed.update(f"{package['source']}/{name}" for name in package["files"])
     for name in sorted(listed):
         source = ROOT / name
         target = destination / name
@@ -52,7 +49,7 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
         payload.mkdir()
         copy_sources(payload)
         if source_rebuild:
-            support.atomic_text(payload / "runtime/lean-release.lock.json", expected)
+            support.atomic_text(payload / "runtime/release.lock.json", expected)
         binaries = payload / "artifacts"
         binaries.mkdir()
         for name in release.BINARIES + (release.AUTHOR_ARCHIVE, release.build_provenance.RECORD):
@@ -123,9 +120,9 @@ def install_payload(payload, args):
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if not support.compatible_upstream(upstream["version"], expected_version):
         raise ValueError("upstream fallback does not match the package's Codex minor version")
-    support.run([sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
+    support.run([sys.executable, "-m", "scripts.release_lock", "--artifact-dir", payload / "artifacts",
                  "--package-mode"], cwd=payload, capture=False)
-    command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
+    command = [sys.executable, "-m", "scripts.profiles", "--prefix", args.prefix,
                "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
                "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
                "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
@@ -183,7 +180,7 @@ def source_build(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build, package and install the local OMD Core and OMD+ candidate")
+    parser = argparse.ArgumentParser(description="Build, package and install OMD Core and OMD+")
     commands = parser.add_subparsers(dest="command", required=True)
     pack = commands.add_parser("pack")
     pack.add_argument("--artifact-dir", type=Path, required=True)

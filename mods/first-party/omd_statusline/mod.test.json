@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1800000000000,
+  "host_operations": {
+    "session.info": [{"result": {"thread_id": "status-fixture", "root": "/repo", "cwd": "/repo", "codex_version": "0.162.1", "model": "gpt-6.1-sol", "provider": "openai", "route": null, "turns_started": 0}}],
+    "app.request": [
+      {"result": {"config": {"model_reasoning_effort": "high", "model_context_window": 272000}}},
+      {"result": {"rateLimits": {"primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1800007200}}}}
+    ],
+    "exec.run": [{"result": {"exit_code": 0, "signal": null, "timed_out": false, "stdout": "/repo/.git\n/repo/.git\n/repo\n@@\nhttps://github.com/dzkchen/oh-my-diff.git\n@@\n@@\n# branch.oid 0123456789abcdef\u0000# branch.head main\u0000? notes.txt\u0000", "stderr": "", "stdout_sha256": "", "stdout_bytes": 0, "output_artifact": null, "stdout_truncated": false, "stdout_preview_truncated": false, "stderr_truncated": false, "stderr_preview_truncated": false, "duration_ms": 5, "program": {"path": "/bin/sh", "sha256": ""}, "guards_verified": 0}}],
+    "credentials.list": [{"result": []}]
+  },
+  "steps": [
+    {"type": "terminal_mount", "mod": "omd_statusline", "payload": {"event": "startup", "ledger": null, "presentation": {"thread_id": null, "phase": "fresh"}, "client": {"kind": "terminal", "graphics": "text", "pointer": "none", "reduced_motion": true, "cell_px": null, "columns": 100, "rows": 30}, "clients": []}},
+    {"type": "event", "event": "start", "payload": {"thread_id": "status-fixture"}},
+    {"type": "advance_time", "ms": 2000},
+    {"type": "event", "event": "model_response", "payload": {"request_id": "r1", "attempt": 1, "ledger_request": null, "scope": {"thread_id": "status-fixture", "agent_id": null, "kind": "main"}, "route": "codex", "provider": "openai", "credential": "chatgpt", "requested_model": "gpt-6.1-sol", "served_model": "gpt-6.1-sol", "status": "completed", "stop_reason": "end_turn", "output": {"text": "", "tool_calls": []}, "usage": {"input_tokens": 100000, "input_tokens_details": {"cached_tokens": 80000}, "output_tokens": 2000}, "cache": {"read_tokens": 80000, "write_tokens": null}, "cost": {"microusd": null, "basis": "included_subscription"}, "context_window": 272000, "timing": {"started_at_ms": 1799999990000, "first_event_ms": 200, "duration_ms": 1000}, "synthetic": null, "error": null}},
+    {"type": "terminal_mount", "mod": "omd_statusline", "payload": {"event": "idle", "ledger": {"thread_id": "status-fixture", "cwd": "/repo", "cost": null}, "client": {"kind": "terminal", "graphics": "text", "pointer": "none", "reduced_motion": true, "cell_px": null, "columns": 100, "rows": 30}, "clients": []}}
+  ]
+}

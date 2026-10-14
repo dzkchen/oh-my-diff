@@ -1,6 +1,7 @@
 use super::Result;
 use super::failure;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -281,7 +282,9 @@ static MOUNTED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
 static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new()), Condvar::new());
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
-static REUSED_RUNNERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
+const REUSED_RUNNERS: usize = 2;
+const MAX_REUSED_RUNNERS: usize = 8;
+static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
 struct Stepping(Option<String>);
@@ -473,10 +476,28 @@ where
     Ok(value)
 }
 
-/// Keeps a reused runner for each package whose `terminal` handler runs on every view, so one view
-/// never evicts another package's runner.
-pub(super) fn reserve_reused(packages: usize) {
-    REUSED_RUNNERS.fetch_max(packages, std::sync::atomic::Ordering::Relaxed);
+/// Keeps one warm callback runner per active package with a `terminal` handler, so view refreshes
+/// don't evict each other's runners and a command finds its package's runner warm. Every host in
+/// the process shares the pool, so it fits the host with the most handlers; `None` forgets a host.
+pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
+    let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
+    match terminal_handlers {
+        Some(count) => sizes.insert(host, count),
+        None => sizes.remove(&host),
+    };
+}
+
+fn reused_pool() -> usize {
+    reused_size(&REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+fn reused_size(sizes: &BTreeMap<u64, usize>) -> usize {
+    sizes
+        .values()
+        .max()
+        .copied()
+        .unwrap_or_default()
+        .clamp(REUSED_RUNNERS, MAX_REUSED_RUNNERS)
 }
 
 fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
@@ -493,7 +514,7 @@ fn pool(mut runner: Warm) {
     let size = match kind {
         (_, Some(_)) => usize::MAX,
         (true, None) => WARM_RUNNERS,
-        (false, None) => REUSED_RUNNERS.load(std::sync::atomic::Ordering::Relaxed),
+        (false, None) => reused_pool(),
     };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {

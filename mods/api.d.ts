@@ -179,7 +179,7 @@ export type TerminalComponent =
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
   | { type: 'native'; style?: TerminalStyle };
 export type TerminalRange = { start: number; end: number };
-export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
+export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'below_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
   | { content: 'transcript' | 'composer' }
   | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle }
@@ -587,7 +587,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state; see REFERENCE.md. */
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';

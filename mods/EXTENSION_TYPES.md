@@ -5,23 +5,19 @@
 Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.
 
 A conformance fixture is retained source and executable coverage, not a package offered
-to users. The author SDK packs only author examples. The current private-preview bundle
-contains only the packages labeled `bundled` below.
+to users. The author SDK packs only author examples. The first-party mod lock
+(`runtime/mods.lock.json`) pins only the packages labeled `bundled` below.
 
 ## Bundled packages
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
 | `omd_workflow@0.2.0-preview.2` | `mod` | `mods/first-party/omd_workflow` | Owns live workflow selection, contract gates, candidate checks, and task decisions through generic host services and bounded receipts. |
-
-## Unqualified first-party candidates
-
-| Package | Extension type | Source | Why a mod is required for this behavior |
-| --- | --- | --- | --- |
 | `omd_claude_cli@0.2.0-preview.3` | `mod` | `mods/first-party/omd_claude_cli` | Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation. |
 | `omd_inspector@0.2.0-preview.1` | `mod` | `mods/first-party/omd_inspector` | Replaces the live terminal inspector dialog and refresh actions while reading generic task, contract, ledger, and install identity state. |
 | `omd_logo@0.2.0-preview.1` | `mod` | `mods/first-party/omd_logo` | Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity. |
 | `omd_model_picker@0.3.0-preview.2` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
+| `omd_statusline@0.1.0-preview.1` | `mod` | `mods/first-party/omd_statusline` | Draws a configurable status line in the generic below- or above-composer site from public telemetry, exec and HTTP grants; it turns off the native status row through built-in controls only while active; active by default in OMD+. |
 | `omd_tool_lines@0.1.0-preview.1` | `mod` | `mods/first-party/omd_tool_lines` | Owns a render hook on the generic tool_call site that draws one line per agent tool call; the host keeps the native row, its expansion and copy; active by default in OMD+. |
 | `omd_plan_panel@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_panel` | Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool. |
 | `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | A user-typed /continue command that submits a resume instruction with the host-recorded turn activity. |
@@ -126,4 +122,4 @@ contains only the packages labeled `bundled` below.
 
 The small context, counter, guard, interception, service, reader, and tool cases remain
 available to repository conformance checks. They are not copied by `omd-mod-author examples`,
-not packed as SDK examples, and not part of the private-preview bundle.
+not packed as SDK examples, and not part of the first-party mod lock.
