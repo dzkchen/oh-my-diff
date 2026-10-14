@@ -614,10 +614,10 @@
       "boundaries": [
         "streaming_reload"
       ],
-      "result": "An edited mod is swapped only at the next generation: the in-flight tool call keeps its source and forwards each progress update once, the stream middleware keeps its old transform until reload, stale generations are rejected and the replacement owner is unchanged.",
+      "result": "Unchanged in-flight tool sources may complete and forward progress once. Changed or disabled sources cannot commit callback results or state; the next boundary activates the new source, stale local generations are rejected and the replacement owner is unchanged.",
       "evidence": [
-        "rust:omd/tests/integration.rs::reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one",
-        "rust:omd/tests/mods.rs::disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
+        "rust:omd/tests/integration.rs::reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_generation",
+        "rust:omd/tests/mods.rs::disabling_during_native_work_rejects_completion_and_next_generation"
       ]
     },
     {

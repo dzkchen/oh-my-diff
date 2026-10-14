@@ -98,6 +98,7 @@ impl Views {
         if let Ok(mut published) = self.published.lock() {
             *published = Some(Arc::new(state.snapshot.clone()));
         }
+        super::clients::reconcile(self, &state.snapshot);
         codex_omd::client_surface::redraw();
     }
 

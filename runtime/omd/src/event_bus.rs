@@ -1,12 +1,16 @@
 use crate::app_routes::subscribed;
 use serde_json::Value;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 pub const CHANNEL_QUEUE_EVENTS: usize = 256;
 pub const CHANNEL_QUEUE_BYTES: usize = 1 << 20;
 pub const CHANNEL_EVENT_BYTES: usize = 64 * 1024;
+pub const CHANNELS_PER_PUBLISHER: usize = 256;
+pub const CHANNEL_SEQUENCES: usize = 4096;
+pub const CHANNEL_PUBLISHER_IDLE: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelEvent {
@@ -32,9 +36,14 @@ struct Subscriber {
     dropped: u64,
 }
 
+struct PublisherSequences {
+    used: Instant,
+    channels: BTreeMap<String, u64>,
+}
+
 pub struct EventBus {
     subscribers: BTreeMap<String, Subscriber>,
-    sequences: BTreeMap<String, u64>,
+    sequences: BTreeMap<String, PublisherSequences>,
     max_events: usize,
     max_bytes: usize,
 }
@@ -98,6 +107,18 @@ impl EventBus {
         correlation: Option<String>,
         thread: &str,
     ) -> io::Result<Delivery> {
+        self.publish_at(publisher, name, data, correlation, thread, Instant::now())
+    }
+
+    fn publish_at(
+        &mut self,
+        publisher: &str,
+        name: &str,
+        data: Value,
+        correlation: Option<String>,
+        thread: &str,
+        now: Instant,
+    ) -> io::Result<Delivery> {
         if !valid_name(name) {
             return Err(io::Error::other(format!("channel_name_invalid: {name}")));
         }
@@ -108,8 +129,27 @@ impl EventBus {
         if correlation.as_ref().is_some_and(|c| c.len() > 256) {
             return Err(io::Error::other("channel_correlation_too_large"));
         }
+        let queued = self.subscribers.values()
+            .flat_map(|subscriber| subscriber.queue.iter().map(|(event, _)| event.publisher.as_str()))
+            .collect::<BTreeSet<_>>();
+        self.sequences.retain(|publisher, sequences| {
+            now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
+                || queued.contains(publisher.as_str())
+        });
+        let current = self.sequences.get(publisher);
+        if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
+            && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
+                || self.sequences.values().map(|sequences| sequences.channels.len()).sum::<usize>() >= CHANNEL_SEQUENCES)
+        {
+            return Err(io::Error::other("channel_sequence_limit"));
+        }
         let channel = format!("{publisher}/{name}");
-        let sequence = self.sequences.entry(channel.clone()).or_default();
+        let publisher_sequences = self.sequences.entry(publisher.to_owned()).or_insert_with(|| PublisherSequences {
+            used: now,
+            channels: BTreeMap::new(),
+        });
+        publisher_sequences.used = now;
+        let sequence = publisher_sequences.channels.entry(name.to_owned()).or_default();
         *sequence += 1;
         let event = ChannelEvent {
             publisher: publisher.to_owned(),

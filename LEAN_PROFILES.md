@@ -29,6 +29,13 @@ The historical `0.155.1` candidate and private build remain frozen. Verify the
 current host and SDK artifacts with
 `python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
 
+Release artifacts require `build-provenance.json`, written by the build workflow
+after a successful build from the verified patch and dependency lock. It binds
+the compiler, build arguments, configuration and unsigned binary hashes to the
+signed binary hashes. Packaging includes and verifies this record. Old binaries
+without a record must be rebuilt; generating a release lock cannot certify them.
+This is a local build record, not an independently signed builder attestation.
+
 To create a checksum-bound prebuilt archive and install either profile locally:
 
 ```sh
@@ -87,7 +94,8 @@ disabled. Advisor every-turn selection requires its own explicit host policy and
 installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
-re-enabled when they were on), and adds newly bundled first-party packages disabled. Each installation keeps a copy of
+re-enabled when they were on, also when an earlier attempt stopped between replacing and re-trusting), and adds
+newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
 `--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Three plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
@@ -168,7 +176,7 @@ remain separate gates.
 
 The OMD+ profile includes inactive `omd_claude_cli` and `omd_profiles` route mods.
 `omd_claude_cli` uses the official Claude CLI's logged-in
-`claude.ai` Pro or Max subscription; `omd_profiles` switches between ChatGPT
+`claude.ai` Pro, Max, Team or Enterprise plan, or with `--billing api` its Anthropic Console login; `omd_profiles` switches between ChatGPT
 accounts, API keys and compatible providers
 ([details](mods/first-party/omd_profiles/README.md)). Set a route up once, then launch sessions on it:
 
@@ -188,8 +196,9 @@ enables the mod and makes the managed `codex` launcher define the provider.
 Launching adds the provider, model and catalog to an ordinary OMD+ session, so
 enabled mods, their data, `/status` and resume work as usual; `--model` takes a
 slug, family shortcut or profile name and further arguments go to `codex`. The Claude route
-requires official Claude CLI `2.1.285` and rejects inherited API-key and cloud
-overrides; there is no API-key fallback. The native host keeps process
+requires official Claude CLI `2.1.296` and keeps inherited API-key and cloud
+overrides away from it; the billing source chosen at setup is enforced on every request, with no
+fallback between plan limits and API credits. The native host keeps process
 authority, tool execution, approvals and usage accounting; each Claude model
 call admits one upstream request. `ask_claude: true` gives other leads an
 opt-in Claude delegation tool. The package READMEs list each route's limits.
@@ -211,10 +220,15 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain. `install.sh uninstall` also removes every older installation, failed
+The mod store and Codex state remain. Direct installation refuses a launcher directory that already holds any of
+`codex`, `omd`, `omd-contract`, `omd-mod`, `omd-package` or `omd-mod-author`, dangling links included. Removal
+journals itself once its checks pass, so an interrupted `omd-package uninstall` finishes when run again and keeps
+any launcher replaced in the meantime. `install.sh uninstall` also removes every older installation, failed
 attempts, staged updates and session markers; it refuses, leaving the current installation intact, when an older
-one cannot be removed. The stores under `ROOT/stores` stay, with the `ROOT/catalog` copies that `/mods` Browse
-installs of OMD's own mods run from.
+one cannot be removed. Once removal of the current installation has started, an interruption leaves the upstream
+commands restored and the next installer command finishes the uninstall. The stores under `ROOT/stores` stay, with
+the `ROOT/catalog` copies that `/mods` Browse installs of OMD's own mods run from, and the `ROOT/.install.lock`
+file that serializes installer commands.
 
 ## Install and manage mods
 

@@ -53,6 +53,55 @@ struct Document {
     entries: BTreeMap<String, Entry>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Input {
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    expected_generation: Option<u64>,
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default = "repository_scope")]
+    scope: String,
+}
+fn repository_scope() -> String {
+    "repository".into()
+}
+
+fn parse_request(operation: &str, arguments: &Value) -> io::Result<Input> {
+    let input: Input = serde_json::from_value(arguments.clone())?;
+    if !matches!(input.scope.as_str(), "repository" | "user" | "thread") {
+        return Err(failure("store_scope_invalid"));
+    }
+    if matches!(operation, "store.get" | "store.put" | "store.delete") && !input.key.as_deref().is_some_and(key) {
+        return Err(failure("store_key_invalid"));
+    }
+    match operation {
+        "store.put" => {
+            let value = input.value.as_ref().ok_or_else(|| failure("store_value_required"))?;
+            if serde_json::to_vec(value)?.len() > VALUE_BYTES { return Err(failure("store_value_limit")); }
+            if arguments.get("expected_revision").is_none() { return Err(failure("store_expected_revision_required")); }
+        }
+        "store.delete" if input.expected_revision.is_none() => return Err(failure("store_expected_revision_required")),
+        "store.reset" if input.expected_generation.is_none() => return Err(failure("store_expected_generation_required")),
+        _ => {}
+    }
+    Ok(input)
+}
+
+pub(crate) fn validate_request(operation: &str, arguments: &Value) -> io::Result<()> {
+    parse_request(operation, arguments).map(|_| ())
+}
+
 pub struct DataStore<'a> {
     pub root: &'a Path,
     pub repository_key: &'a str,
@@ -137,9 +186,20 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
     match fs::symlink_metadata(&source) {
         Ok(metadata) if metadata.is_dir() => {
             if target.try_exists()? {
-                return Err(failure("store_thread_exists"));
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
             }
-            copy_regular_tree(&source, &target).map(|()| true)
+            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
+            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
+            copy_regular_tree(&source, stage.path())?;
+            // A writer may create the target directory meanwhile; an exclusive rename never replaces even an empty one.
+            crate::workspace::rename_exclusive(
+                rustix::fs::CWD,
+                stage.path(),
+                rustix::fs::CWD,
+                target.as_path(),
+            )?;
+            let _ = stage.keep();
+            Ok(true)
         }
         Ok(_) => Err(failure("store_directory_invalid")),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -258,39 +318,9 @@ impl DataStore<'_> {
     }
 
     pub fn call(&self, operation: &str, arguments: Value) -> io::Result<Value> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Input {
-            #[serde(default)]
-            key: Option<String>,
-            #[serde(default)]
-            value: Option<Value>,
-            #[serde(default)]
-            expected_revision: Option<u64>,
-            #[serde(default)]
-            expected_generation: Option<u64>,
-            #[serde(default)]
-            prefix: Option<String>,
-            #[serde(default)]
-            cursor: Option<String>,
-            #[serde(default)]
-            limit: Option<usize>,
-            #[serde(default = "repository_scope")]
-            scope: String,
-        }
-        fn repository_scope() -> String {
-            "repository".into()
-        }
-        let revision_supplied = arguments
-            .as_object()
-            .is_some_and(|object| object.contains_key("expected_revision"));
-        let input: Input = serde_json::from_value(arguments)?;
+        let input = parse_request(operation, &arguments)?;
         let checked_key = || {
-            input
-                .key
-                .as_deref()
-                .filter(|value| key(value))
-                .ok_or_else(|| failure("store_key_invalid"))
+            input.key.as_deref().ok_or_else(|| failure("store_key_invalid"))
         };
         match operation {
             "store.get" => {
@@ -307,12 +337,6 @@ impl DataStore<'_> {
                     .value
                     .clone()
                     .ok_or_else(|| failure("store_value_required"))?;
-                if serde_json::to_vec(&value)?.len() > VALUE_BYTES {
-                    return Err(failure("store_value_limit"));
-                }
-                if !revision_supplied {
-                    return Err(failure("store_expected_revision_required"));
-                }
                 let expected = input.expected_revision;
                 let provenance = StoreProvenance {
                     at: now(),

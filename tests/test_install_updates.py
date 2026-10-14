@@ -3,7 +3,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -322,6 +324,8 @@ class UpdateSelection(unittest.TestCase):
 
                 def killed(*arguments, **keywords):
                     command = arguments[0]
+                    self.assertEqual((command[command.index("--payload") + 1], keywords["cwd"]), (root, root))
+                    self.assertNotIn("--archive", command)
                     Path(command[command.index("--prefix") + 1]).mkdir()
                     store.mkdir(parents=True, exist_ok=True)
                     raise KeyboardInterrupt
@@ -343,6 +347,7 @@ class UpdateSelection(unittest.TestCase):
         for generation in (self.current, older):
             (generation / "bin").mkdir(parents=True, exist_ok=True)
             (generation / "prefix").mkdir(exist_ok=True)
+            (generation / "prefix/install.json").touch()
             (generation / "receipt.json").write_text("{}")
         (older / "prefix/personal.txt").write_text("keep")
         (self.root / "previous").symlink_to(older)
@@ -352,7 +357,6 @@ class UpdateSelection(unittest.TestCase):
         (self.root / "update/staged").mkdir(parents=True)
         (self.root / "update/staged/package.tar.xz").touch()
         (self.root / "sessions").mkdir()
-        (self.root / ".install.lock").touch()
         (self.root / "catalog").mkdir()
 
         def package(generation, upstream, directory, *arguments):
@@ -361,16 +365,109 @@ class UpdateSelection(unittest.TestCase):
             shutil.rmtree(generation / "prefix")
 
         args = types.SimpleNamespace(session=None)
-        with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
-                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
-            with self.assertRaisesRegex(ValueError, "unmanaged files"):
+        holder = self.module.flocked(self.root / ".install.lock")
+        waiter = open(self.root / ".install.lock", "a+")
+        waited = threading.Thread(target=self.module.fcntl.flock, args=(waiter, self.module.fcntl.LOCK_EX))
+        waited.start()
+        try:
+            with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                    patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+                with self.assertRaisesRegex(ValueError, "unmanaged files"):
+                    self.module.uninstall(args, self.root, bin_dir, self.current)
+                self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
+                (older / "prefix/personal.txt").unlink()
                 self.module.uninstall(args, self.root, bin_dir, self.current)
-            self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
-            (older / "prefix/personal.txt").unlink()
-            self.module.uninstall(args, self.root, bin_dir, self.current)
-        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["bin", "catalog", "releases", "stores"])
+            self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the holder")
+            holder.close()
+            waited.join(5)
+            self.assertFalse(waited.is_alive())
+            self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the waiter")
+            self.assertEqual(os.fstat(waiter.fileno()).st_ino, (self.root / ".install.lock").stat().st_ino)
+        finally:
+            holder.close()
+            waiter.close()
+            waited.join(5)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "catalog", "releases", "stores"])
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+
+    def test_interrupted_uninstall_finishes_on_the_next_start(self):
+        real_unlink, real_rmdir = Path.unlink, Path.rmdir
+        for point in ("launcher", "prefix", "receipt", "generation", "pointer"):
+            with self.subTest(point=point), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                root = Path(temporary)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                (bin_dir / "codex").write_text("upstream codex")
+                (bin_dir / "omd-mod").symlink_to(root / "upstream-omd-mod")
+                current = root / "releases" / ("1" * 32)
+                (current / "bin").mkdir(parents=True)
+                (current / "prefix/management").mkdir(parents=True)
+                (current / "prefix/install.json").write_text("{}")
+                for name in self.module.LINKS:
+                    (current / "bin" / name).write_text(name)
+                (current / "receipt.json").write_text(json.dumps({"schema": 1, "generation": current.name, "bin_dir": str(bin_dir)}))
+                (root / "current").symlink_to(current)
+                (root / "stores/platform").mkdir(parents=True)
+                (root / "stores/platform/mods.json").write_text("{}")
+                self.module.set_links(root, bin_dir)
+
+                def package(generation, upstream, directory, *arguments):
+                    prefix = generation / "prefix"
+                    (prefix / ".uninstall.json").write_text("{}")
+                    (generation / "bin/codex").unlink()
+                    if point == "launcher":
+                        raise OSError("interrupted")
+                    shutil.rmtree(prefix)
+
+                def unlink(path, *arguments, **keywords):
+                    if point == "receipt" and path.name == "receipt.json" or point == "pointer" and path == root / "current":
+                        raise OSError("interrupted")
+                    real_unlink(path, *arguments, **keywords)
+
+                def rmdir(path):
+                    if point == "prefix" and path.name == "bin" or point == "generation" and path == current:
+                        raise OSError("interrupted")
+                    real_rmdir(path)
+
+                args = types.SimpleNamespace(session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
+                                             action=None, value=None)
+                with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                        patch.object(self.module, "broker_deployed", return_value=False), \
+                        patch.object(Path, "unlink", unlink), patch.object(Path, "rmdir", rmdir), \
+                        self.assertRaisesRegex(OSError, "interrupted"):
+                    self.module.uninstall(args, root, bin_dir, current)
+                self.assertTrue((root / "update/journal.json").is_file())
+                self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
+                printed = []
+                with patch.object(sys, "argv", ["install.sh", "uninstall", "--root", str(root)]), \
+                        patch.object(self.module, "package", side_effect=AssertionError("package code is not needed")), \
+                        patch("builtins.print", side_effect=printed.append):
+                    self.module.main()
+                self.assertTrue(json.loads(printed[0])["uninstalled"])
+                self.assertEqual(sorted(path.name for path in root.iterdir()), [".install.lock", "bin", "releases", "stores"])
+                self.assertEqual(list((root / "releases").iterdir()), [])
+                self.assertEqual((root / "stores/platform/mods.json").read_text(), "{}")
+                self.assertEqual(sorted(path.name for path in bin_dir.iterdir()), ["codex", "omd-mod"])
+                self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
+                self.assertEqual(os.readlink(bin_dir / "omd-mod"), str(root / "upstream-omd-mod"))
+
+    def test_uninstall_journal_for_an_unjournaled_nonempty_prefix_relinks_instead_of_retrying(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "codex").write_text("upstream codex")
+        (self.current / "bin").mkdir(parents=True, exist_ok=True)
+        (self.current / "prefix/install.json").unlink()
+        (self.current / "prefix/stray.txt").write_text("stray")
+        for name in self.module.LINKS:
+            (self.current / "bin" / name).write_text(name)
+        self.module.write_json(self.module.update_dir(self.root) / "journal.json",
+                               {"uninstall": self.current.name, "bin_dir": str(bin_dir)})
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        self.assertIsNone(self.module.resume_uninstall(args, self.root))
+        self.assertFalse((self.root / "update/journal.json").exists())
+        self.assertTrue(self.module.managed(self.root, bin_dir / "codex", "codex"))
+        self.assertEqual((self.current / "prefix/stray.txt").read_text(), "stray")
 
     def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
         module = installer()

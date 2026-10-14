@@ -16,7 +16,7 @@ function project(source, { typescript = true, typecheck = false } = {}) {
   if (typescript) symlinkSync(join(mods, 'node_modules/typescript'), join(directory, 'node_modules/typescript'));
   if (typecheck) {
     mkdirSync(join(directory, 'node_modules/.bin'));
-    symlinkSync(join(mods, 'node_modules/.bin/tsc'), join(directory, 'node_modules/.bin/tsc'));
+    symlinkSync(join(mods, 'node_modules/typescript/bin/tsc'), join(directory, 'node_modules/.bin/tsc'));
     symlinkSync(mods, join(directory, 'node_modules/@oh-my-diff/mod-api'));
     writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true, allowImportingTsExtensions: true, jsx: 'react-jsx', jsxImportSource: '@oh-my-diff/mod-api', types: [] },
@@ -89,6 +89,16 @@ export const tree = <box id="root" label="Root"><Row name="a" /></box>;
   assert.deepEqual(tree, { type: 'box', id: 'root', label: 'Root', children: [{ type: 'line', id: 'a', label: 'a', spans: [{ text: 'a' }] }] });
   writeFileSync(join(directory, 'parts/row.ts'), 'export const Row = () => null;\n');
   assert.match(check(directory).output, /jsx_entrypoint_conflict: parts\/row\.ts was not generated from parts\/row\.tsx/);
+}));
+
+test('a .tsx asset keeps a hand-written index.ts in the type check', () => withProject('', { typecheck: true }, directory => {
+  rmSync(join(directory, 'index.tsx'));
+  mkdirSync(join(directory, 'parts'));
+  writeFileSync(join(directory, 'parts/row.tsx'), 'export const Row = ({ name }: { name: string }) => <line id={name} label={name}>{name}</line>;\n');
+  writeFileSync(join(directory, 'index.ts'), "export const count: number = 'one';\n");
+  const result = check(directory);
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /index\.ts.*TS2322/);
 }));
 
 test('scenario runs compile the index.tsx of every package they install', async () => {

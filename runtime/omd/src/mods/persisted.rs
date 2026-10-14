@@ -116,38 +116,44 @@ pub fn persist_texts(
     runtime: &Mutex<ModHost>,
     thread: &str,
     entries: &[Value],
+    active: impl Fn() -> bool,
 ) -> std::result::Result<Option<PersistedRewrite>, ()> {
+    if !active() {
+        return Err(());
+    }
     let _thread = StateThread::enter(Some(thread.to_owned()));
-    let required = {
-        let mut runtime = runtime.lock().map_err(|_| ())?;
-        runtime.turn_boundary();
-        match runtime.intercepts("history_persist") {
-            Some(required) => required,
-            None => return Ok(None),
-        }
+    let mut runtime = runtime.lock().map_err(|_| ())?;
+    runtime.refresh_guarded(&active).map_err(|_| ())?;
+    let required = match runtime.intercepts("history_persist") {
+        Some(required) => required,
+        None => return Ok(None),
     };
     let mut texts = vec![String::new(); entries.len()];
     let mut withheld = vec![false; entries.len()];
     let mut by = Vec::new();
     for chunk in persist_chunks(entries) {
+        if !active() {
+            return Err(());
+        }
         let values = chunk
             .iter()
             .map(|(_, entry)| entry.clone())
             .collect::<Vec<_>>();
-        let chain = intercept_shared(
-            runtime,
-            "history_persist",
-            required,
-            json!({"thread_id":thread,"entries":values}),
-            json!({"caller":"host","thread_id":thread}),
-            || true,
-            |_, call| {
+        let chain = chain::intercept(
+            &mut Access::Held(&mut runtime),
+            &mut |_, call| {
                 Err(std::io::Error::other(format!(
                     "host_operation_unavailable: history_persist interceptors run while history is persisted ({})",
                     call.operation
                 )))
             },
-            |input| Ok(json!({"entries": input["entries"]})),
+            &mut chain::Core::Call(&mut |input| Ok(json!({"entries": input["entries"]}))),
+            "history_persist",
+            required,
+            json!({"thread_id":thread,"entries":values}),
+            json!({"caller":"host","thread_id":thread}),
+            &active,
+            &InvocationScope::default(),
         )
         .ok();
         let rewritten = chain
@@ -173,6 +179,9 @@ pub fn persist_texts(
         if changed && let Some(chain) = &chain {
             by.extend(persist_changed_by(&chain.trace));
         }
+    }
+    if !active() {
+        return Err(());
     }
     for (text, withheld) in texts.iter_mut().zip(&withheld) {
         if *withheld {

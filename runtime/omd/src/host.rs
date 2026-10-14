@@ -157,12 +157,69 @@ pub type SessionDispatcher = Arc<
         + Sync,
 >;
 
-static SESSION_DISPATCHER: Mutex<Option<SessionDispatcher>> = Mutex::new(None);
+static SESSION_DISPATCHER: Mutex<Option<(Arc<()>, Option<SessionDispatcher>)>> = Mutex::new(None);
+
+pub struct SessionRegistration(Arc<()>);
+
+impl SessionRegistration {
+    pub fn install(&self, dispatcher: SessionDispatcher) -> std::io::Result<()> {
+        let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+        match installed.as_mut() {
+            Some((owner, slot)) if Arc::ptr_eq(owner, &self.0) && slot.is_none() => {
+                *slot = Some(dispatcher);
+                Ok(())
+            }
+            _ => Err(std::io::Error::other("host_installation_stale")),
+        }
+    }
+}
+
+impl Drop for SessionRegistration {
+    fn drop(&mut self) {
+        let mut installed = SESSION_DISPATCHER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if installed.as_ref().is_some_and(|(owner, _)| Arc::ptr_eq(owner, &self.0)) {
+            *installed = None;
+        }
+    }
+}
 
 /// Lets callbacks outside the session (terminal commands) reach the session's model operations.
-pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
-    if let Ok(mut installed) = SESSION_DISPATCHER.lock() {
-        *installed = Some(dispatcher);
+pub fn install_session_dispatcher(dispatcher: SessionDispatcher) -> std::io::Result<SessionRegistration> {
+    let registration = reserve_session_dispatcher()?;
+    registration.install(dispatcher)?;
+    Ok(registration)
+}
+
+pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
+    let mut installed = SESSION_DISPATCHER.lock().map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+    if installed.is_some() {
+        return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "host_already_installed"));
+    }
+    let owner = Arc::new(());
+    *installed = Some((owner.clone(), None));
+    Ok(SessionRegistration(owner))
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+
+    #[test]
+    fn singleton_rejects_replacement_and_stale_teardown() {
+        let dispatcher = || Arc::new(|_: &str, _: &str, _: Option<&str>, _: Option<&Value>, _: crate::ModHostCall, _: &dyn Fn() -> bool| Ok(Value::Null)) as SessionDispatcher;
+        let pending = reserve_session_dispatcher().unwrap();
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(pending);
+        let first = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists));
+        let stale = SessionRegistration(first.0.clone());
+        drop(first);
+        let second = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(stale.install(dispatcher()).is_err());
+        drop(stale);
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(second);
+        assert!(install_session_dispatcher(dispatcher()).is_ok());
     }
 }
 
@@ -177,7 +234,7 @@ pub fn session_call(
     let dispatcher = SESSION_DISPATCHER
         .lock()
         .ok()
-        .and_then(|installed| installed.clone())
+        .and_then(|installed| installed.as_ref().and_then(|(_, dispatcher)| dispatcher.clone()))
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;
@@ -244,20 +301,49 @@ impl Authority for ExternalRoot {
     }
 }
 
+pub fn validate_environment_read(arguments: &Value) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { names: Vec<String> }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
+    if input.names.is_empty() || input.names.len() > 16 { return Err("environment_names_invalid".into()); }
+    Ok(input.names)
+}
+
+pub fn validate_environment_set(arguments: &Value) -> Result<(String, Option<String>), String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { name: String, value: Value }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|_| "environment_arguments_invalid")?;
+    if !environment::environment_name_valid(&input.name) { return Err("environment_name_invalid".into()); }
+    let value = match input.value {
+        Value::Null => None,
+        Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
+        _ => return Err("environment_value_invalid".into()),
+    };
+    Ok((input.name, value))
+}
+
+pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(String, u64), String> {
+    if operation == "events.cancel" {
+        return arguments["key"].as_str().map(|key| (key.to_owned(), 0)).ok_or_else(|| "timer_invalid".into());
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input { key: String, delay_ms: u64 }
+    let input: Input = serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
+    if input.key.is_empty() || input.key.len() > 64 || !(16..=86_400_000).contains(&input.delay_ms) {
+        return Err("timer_invalid".into());
+    }
+    Ok((input.key, input.delay_ms))
+}
+
 fn environment(
     state: Option<&Environment>,
     caller: &Caller<'_>,
     arguments: Value,
 ) -> Result<Value, String> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Input {
-        names: Vec<String>,
-    }
-    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    if input.names.is_empty() || input.names.len() > 16 {
-        return Err("environment_names_invalid".into());
-    }
+    let names = validate_environment_read(&arguments)?;
     let mut values = serde_json::Map::new();
     let overrides = state
         .map(|state| {
@@ -270,7 +356,7 @@ fn environment(
         })
         .transpose()?
         .unwrap_or_default();
-    for name in input.names {
+    for name in names {
         if !caller.exec_environment.contains(&name) {
             return Err(format!("exec_environment_undeclared: {name}"));
         }

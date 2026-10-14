@@ -42,10 +42,27 @@ const HOST_FEATURES: &[&str] = &[
 ];
 
 #[test]
+fn missing_node_is_a_failure() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "host_feature_examples_load_and_register_together",
+            "--nocapture",
+        ])
+        .env_remove("OMD_TEST_NODE")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "missing Node must fail the required suite"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("OMD_TEST_NODE"));
+}
+
+#[test]
 fn host_feature_examples_load_and_register_together() {
-    let Some(node) = std::env::var_os("OMD_TEST_NODE") else {
-        return;
-    };
+    let node = std::env::var_os("OMD_TEST_NODE")
+        .expect("OMD_TEST_NODE required; sandbox tests must actually execute");
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples");
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

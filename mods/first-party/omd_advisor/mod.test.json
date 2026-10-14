@@ -9,7 +9,7 @@
     "evidence.read": [
       {
         "result": {
-          "reference": "evidence:1",
+          "reference": { "reference": "evidence:1", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
           "text": "{\"turn_id\": \"turn-1\", \"thread_id\": \"fixture-thread\", \"workspace_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"records\": [{\"item\": 1, \"role\": \"user\", \"text\": \"Make uploads reliable\"}, {\"item\": 2, \"role\": \"assistant\", \"text\": \"I raised the upload retry limit to unlimited, so failed uploads now retry forever. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. \"}]}",
           "cursor": null,
           "bytes": 1

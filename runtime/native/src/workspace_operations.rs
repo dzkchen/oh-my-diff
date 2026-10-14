@@ -64,6 +64,23 @@ pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::
 
 impl WorkspaceAuthority {
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
+        let environments = call
+            .environments
+            .iter()
+            .map(|environment| codex_extension_api::TurnInputEnvironment {
+                environment_id: environment.environment_id.clone(),
+                cwd: environment.cwd.clone(),
+                is_primary: false,
+                fs: environment.fs(),
+            })
+            .collect::<Vec<_>>();
+        Self::for_environments(lead, &environments).await
+    }
+
+    pub async fn for_environments(
+        lead: &crate::Lead,
+        environment: &[codex_extension_api::TurnInputEnvironment<'_>],
+    ) -> Result<Self, String> {
         let host = &lead.host;
         let manager = host
             .manager
@@ -75,7 +92,6 @@ impl WorkspaceAuthority {
             .map_err(|e| e.to_string())?
             .config()
             .await;
-        let environment = call.environments.as_slice();
         if environment.len() != 1
             || environment[0].environment_id != "local"
             || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
@@ -84,7 +100,7 @@ impl WorkspaceAuthority {
             return Err("workspace_operation_requires_local_repository".into());
         }
         let context = environment[0]
-            .fs()
+            .fs
             .cache_key()
             .sandbox_context()
             .cloned()

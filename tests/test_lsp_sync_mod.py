@@ -326,6 +326,8 @@ while True:
         publish()
     elif method == "textDocument/didChange":
         documents[params["textDocument"]["uri"]] = (params["textDocument"]["version"], params["contentChanges"][0]["text"])
+        if "ASK" in params["contentChanges"][0]["text"]:
+            send({"jsonrpc": "2.0", "id": 99, "method": "workspace/configuration", "params": {"items": [{}] * 14000}})
         publish()
 """
 
@@ -355,8 +357,9 @@ while True:
         reply({"capabilities": {"hoverProvider": True, "documentSymbolProvider": True, "documentFormattingProvider": True, "codeActionProvider": True}})
     elif method == "textDocument/didOpen":
         document = params["textDocument"]
-        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": document["uri"], "version": document["version"],
-              "diagnostics": [{"range": span(2, 4, 8), "severity": 1, "message": "size is unused"}]}})
+        if not document["uri"].endswith("/quiet.py"):
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": document["uri"], "version": document["version"],
+                  "diagnostics": [] if document["uri"].endswith("/clean.py") else [{"range": span(2, 4, 8), "severity": 1, "message": "size is unused"}]}})
     elif method == "textDocument/hover":
         reply({"contents": [{"language": "python", "value": "value: int"}, "Module constant"]})
     elif method == "textDocument/documentSymbol":
@@ -467,6 +470,65 @@ class LspSyncModTest(unittest.TestCase):
                 state["servers"]["python"]["diagnostics"].update({f"f{n}.py": {"count": 50, "version": None, "errors": [f"{line}:1 {'x' * 200}" for line in range(50)]} for n in range(20)})
                 query(op="hover", path="box.py", line=1, character=1)
                 self.assertLessEqual(len(json.dumps(state, separators=(",", ":"))), 65536)
+            finally:
+                host.close()
+
+    def test_diagnostics_query_separates_failure_pending_and_published_empty(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+
+        class LostHost(Host):
+            def call(self, call):
+                if call["operation"] == "process.exchange" and call["arguments"].get("wait_ms") == 250:
+                    raise HostFailure("process_not_found: python")
+                return super().call(call)
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "view_server.py"
+            server.write_text(VIEW_SERVER)
+            for name in ("quiet.py", "clean.py"):
+                (repository / name).write_text("value = 1\n")
+            for host_type, name, expected in [(LostHost, "quiet.py", ("error", "process not found: python")),
+                                              (Host, "quiet.py", ("error", "diagnostics pending: the language server has not published diagnostics for this file yet; try again")),
+                                              (Host, "clean.py", ("ready", "No results"))]:
+                with self.subTest(host=host_type.__name__, path=name):
+                    host = host_type(repository, str(server))
+                    try:
+                        answer = run(node, "service", {"op": "diagnostics", "path": name}, None, host, "omd.lsp.query")["value"]
+                        self.assertEqual((answer["status"], answer["message"], answer["items"]), (*expected, []))
+                    finally:
+                        host.close()
+
+    def test_budget_failure_after_did_change_restarts_the_server_instead_of_rolling_back(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "diagnostic_server.py"
+            server.write_text(DIAGNOSTIC_SERVER)
+            (repository / "a.py").write_text("value = 1\n")
+            host = Host(repository, str(server))
+            change = lambda: {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                              "changes": [{"path": "a.py", "before": None, "after": digest((repository / "a.py").read_bytes())}]}
+            try:
+                state = run(node, "workspace_change", change(), None, host)["state"]
+                time.sleep(1)
+                host.frames(100)
+                (repository / "a.py").write_text("value = 2  # ASK\n")
+                state = run(node, "workspace_change", change(), state, host)["state"]
+                python = state["servers"]["python"]
+                self.assertEqual([message["params"]["textDocument"]["version"] for message in host.sent if message.get("method") == "textDocument/didChange"], [2])
+                self.assertEqual((python["running"], python["status"], python["reason"]), (False, "stale", "callback_budget"))
+                self.assertIsNone(host.child)
+                (repository / "a.py").write_text("value = 3\n")
+                python = run(node, "workspace_change", change(), state, host)["state"]["servers"]["python"]
+                self.assertEqual((python["running"], python["status"], python["documents"]["a.py"]["version"]), (True, "synced", 1))
+                self.assertEqual(host.operations.count("process.start"), 2)
             finally:
                 host.close()
 

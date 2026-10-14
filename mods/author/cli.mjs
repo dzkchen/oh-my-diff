@@ -19,13 +19,14 @@ const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request', 'release_check', 'snapshot_review', 'render_hooks', 'reactive_dashboard'];
 
+/** @returns {never} */
 function fail(message) {
   throw new Error(message);
 }
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: options.cwd, encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit' });
-  if (result.error?.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
+  if (result.error && 'code' in result.error && result.error.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
   if (result.error) throw result.error;
   if (result.status !== 0) fail((result.stderr || result.stdout || `${program} failed`).trim());
   return options.capture ? result.stdout.trim() : '';
@@ -251,14 +252,17 @@ function jsxSources(directory, folder = '') {
 function compileJsx(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return;
-  let ts;
+  const ts = typescript(directory);
+  for (const source of sources) compileJsxFile(ts, directory, source);
+}
+
+function typescript(directory) {
   try {
-    ts = createRequire(join(directory, 'package.json'))('typescript');
+    return createRequire(join(directory, 'package.json'))('typescript');
   } catch (error) {
-    if (error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
+    if (error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
     throw error;
   }
-  for (const source of sources) compileJsxFile(ts, directory, source);
 }
 
 function compileJsxFile(ts, directory, source) {
@@ -300,8 +304,12 @@ function checkProject(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
   // TypeScript drops a .tsx from a program that also lists its generated .ts, so check the sources rather than their output.
+  const ts = typescript(directory);
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
+  const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
+  const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
   const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: sources }));
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
   try {
     command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
   } finally {
@@ -429,7 +437,7 @@ function watchProject(directory, store, once) {
     try {
       reload();
     } catch (error) {
-      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error.message })}\n`);
+      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error instanceof Error ? error.message : String(error) })}\n`);
     }
   };
   let pending;

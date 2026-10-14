@@ -972,6 +972,49 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
 }
 
 #[test]
+fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repository = root.join("repository");
+    std::fs::create_dir(&repository).unwrap();
+    let package = mod_package(&repository, "large", "1.0.0", &[], json!([]));
+    edit_manifest(&package, |manifest| {
+        manifest["provenance"]["source"] = json!(repository.display().to_string())
+    });
+    git(&repository, &["init"]);
+    git(
+        &repository,
+        &["config", "user.email", "fixture@example.com"],
+    );
+    git(&repository, &["config", "user.name", "Fixture"]);
+    let store = store(&temp);
+    let mut refusals = Vec::new();
+    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+        let path = package.join(file);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.resize(4 << 20, b'\n');
+        std::fs::write(&path, bytes).unwrap();
+        git(&repository, &["add", "."]);
+        git(&repository, &["commit", "-m", file]);
+        let install = ModInstallRequest {
+            source: ModPackageSource::Repository {
+                repository: repository.display().to_string(),
+                revision: git_output(&repository, &["rev-parse", "HEAD"]),
+                subdirectory: "large".into(),
+            },
+            ..request(&package, &[])
+        };
+        refusals.push((refusal(&store, install), limit));
+    }
+    for (refusal, limit) in refusals {
+        assert!(
+            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
+            "{refusal}"
+        );
+    }
+}
+
+#[test]
 fn lifecycle_scripts_are_exactly_trusted_and_host_sandboxed() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

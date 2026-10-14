@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Check the maintained integration coverage matrix against the shipped sources and its evidence."""
+"""Check the integration source inventory; optionally require release execution receipts."""
+import argparse
 import json
 import re
 import sys
 from pathlib import Path
 
 try:
-    from scripts import lean_profiles, install_support
+    from scripts import lean_profiles, install_support, execution_evidence
 except ModuleNotFoundError:
     import lean_profiles
     import install_support
+    import execution_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
@@ -77,6 +79,7 @@ def sources():
 
 
 def resolve(reference):
+    """Resolve source inventory only; this does not discover or execute a test."""
     kind, _, name = reference.partition(":")
     if kind == "rust":
         path, _, function = name.partition("::")
@@ -92,6 +95,11 @@ def resolve(reference):
     if kind == "script":
         return (ROOT / name).exists()
     return False
+
+
+def release_evidence(matrix):
+    return {reference for entry in matrix["combinations"] + matrix["regression"]
+            for reference in entry["evidence"]}
 
 
 def check(matrix):
@@ -306,7 +314,10 @@ def render(matrix):
         f"Accumulated integration coverage for the {release['upstream_tag']} pinned runtime as of",
         f"{matrix['as_of']}. Each component names its owner, version, retained fixtures, limits,",
         "and removal path. Fixture references are cumulative; this source check does not rerun",
-        "them or qualify the full release candidate. The matrix is checked against the",
+        "them or verify test discovery, execution, assertions, or the full release candidate.",
+        "Release qualification requires `--release --executed-evidence RECEIPT` for all",
+        "combination and regression evidence at the clean validated revision; see `integration/EVIDENCE.md`.",
+        "The matrix is checked against the",
         "shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language",
         "or evidence reference that disagrees with the runtime fails the check.",
         "",
@@ -383,7 +394,7 @@ def render(matrix):
             ["Boundary", "What it covers", "Shared resource or event"],
         ),
         "",
-        "## Exercised combinations",
+        "## Combination evidence inventory",
         "",
         table(
             [
@@ -396,7 +407,7 @@ def render(matrix):
                 )
                 for entry in matrix["combinations"]
             ],
-            ["Combination", "Components", "Boundaries", "Result", "Executable evidence"],
+            ["Combination", "Components", "Boundaries", "Recorded result (not verified here)", "Source evidence inventory"],
         ),
         "",
         "## Retained regression cases",
@@ -411,12 +422,12 @@ def render(matrix):
                 )
                 for entry in matrix["regression"]
             ],
-            ["Case", "Retained for", "What stays covered", "Executable evidence"],
+            ["Case", "Retained for", "Claimed behavior", "Source evidence inventory"],
         ),
         "",
-        "## Tested versus untested",
+        "## Inventoried versus untested",
         "",
-        f"Tested: {len(matrix['combinations'])} combinations across {len(matrix['boundaries'])} shared boundaries and "
+        f"Inventoried: {len(matrix['combinations'])} combinations across {len(matrix['boundaries'])} shared boundaries and "
         f"{len(matrix['components'])} maintained components, plus {len(matrix['regression'])} regression cases "
         "retained across versions.",
         "",
@@ -436,13 +447,20 @@ def render(matrix):
     return "\n".join(out)
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true")
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    args = parser.parse_args(argv)
     matrix = json.loads(MATRIX.read_text())
     problems = check(matrix)
+    if args.release or args.executed_evidence:
+        problems += execution_evidence.verify(release_evidence(matrix), args.executed_evidence)
     if problems:
         raise SystemExit("\n".join(problems))
     rendered = render(matrix)
-    if "--write" in sys.argv[1:]:
+    if args.write:
         DOCUMENT.write_text(rendered)
         print(f"wrote {DOCUMENT.relative_to(ROOT)}")
     elif DOCUMENT.read_text() != rendered:
@@ -451,11 +469,12 @@ def main():
         raise SystemExit("\n".join(problems))
     print(
         f"integration matrix {matrix['as_of']}: {len(matrix['components'])} maintained components, "
-        f"{len(matrix['combinations'])} exercised combinations over {len(matrix['boundaries'])} shared "
+        f"{len(matrix['combinations'])} inventoried combinations over {len(matrix['boundaries'])} shared "
         f"boundaries, {len(matrix['regression'])} retained regression cases, "
-        f"{len(matrix['untested'])} recorded untested combinations"
+        f"{len(matrix['untested'])} recorded untested combinations; "
+        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

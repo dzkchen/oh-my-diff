@@ -48,7 +48,7 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
     frozen = json.loads(release.OUTPUT.read_text())
     if source_rebuild:
         for name in set(record) | set(frozen):
-            if name != "artifacts" and record.get(name) != frozen.get(name):
+            if name not in ("artifacts", "build_provenance") and record.get(name) != frozen.get(name):
                 raise ValueError("source package differs from the prebuilt source and profile manifest")
     elif record != frozen:
         raise ValueError("release lock differs from exact artifacts and sources")
@@ -64,7 +64,7 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
             support.atomic_text(payload / "runtime/lean-release.lock.json", expected)
         binaries = payload / "artifacts"
         binaries.mkdir()
-        for name in release.BINARIES + (release.AUTHOR_ARCHIVE,):
+        for name in release.BINARIES + (release.AUTHOR_ARCHIVE, release.build_provenance.RECORD):
             shutil.copy2(artifact_dir / name, binaries / name)
         files = {path.relative_to(payload).as_posix():
                  {"sha256": support.digest(path), "bytes": path.stat().st_size}
@@ -99,12 +99,15 @@ def checked_extract(archive_path, expected, destination):
         if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
             raise ValueError("prebuilt package exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in Path(item.name).parts) for item in members):
+               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
             raise ValueError("unsafe package member")
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             raise ValueError("prebuilt package member exceeds byte limit")
         archive.extractall(destination, filter="data")
-    payload = destination / "payload"
+    return verified_payload(destination / "payload")
+
+
+def verified_payload(payload):
     manifest = json.loads((payload / "package-manifest.json").read_text())
     actual = {path.relative_to(payload).as_posix() for path in payload.rglob("*") if path.is_file()}
     expected_files = manifest["files"]
@@ -118,28 +121,32 @@ def checked_extract(archive_path, expected, destination):
 
 
 def install_archive(args):
-    archive_path = Path(args.archive).resolve()
+    if getattr(args, "payload", None):
+        return install_payload(verified_payload(Path(args.payload).resolve()), args)
+    with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
+        install_payload(checked_extract(Path(args.archive).resolve(), args.sha256, Path(temporary)), args)
+
+
+def install_payload(payload, args):
     upstream = support.binary_identity(args.upstream)
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if not support.compatible_upstream(upstream["version"], expected_version):
         raise ValueError("upstream fallback does not match the package's Codex minor version")
-    with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
-        payload = checked_extract(archive_path, args.sha256, Path(temporary))
-        run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
-            "--package-mode",
-            cwd=payload)
-        command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
-                   "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
-                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
-                   "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
-                   "--store", args.store]
-        if args.attach_store:
-            command.append("--attach-store")
-        if getattr(args, "previous", None):
-            command += ["--previous", args.previous]
-        environment = os.environ.copy()
-        environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
-        run(*command, cwd=payload, env=environment)
+    run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
+        "--package-mode",
+        cwd=payload)
+    command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
+               "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
+               "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
+               "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
+               "--store", args.store]
+    if args.attach_store:
+        command.append("--attach-store")
+    if getattr(args, "previous", None):
+        command += ["--previous", args.previous]
+    environment = os.environ.copy()
+    environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
+    run(*command, cwd=payload, env=environment)
 
 
 def source_build(args):
@@ -155,16 +162,25 @@ def source_build(args):
         target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
-        run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
+        arguments = ["build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker",
-            cwd=checkout / "codex-rs", env=environment)
+            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
+        before = release.build_provenance.inputs(checkout, arguments, environment)
+        (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
+        run("cargo", f"+{upstream['rust_toolchain']}", *arguments, cwd=checkout / "codex-rs", env=environment)
+        release.build_provenance.record_build(target / "release", before,
+            release.build_provenance.inputs(checkout, arguments, environment))
+        unsigned = release.build_provenance.verify(target / "release", signed=False, expected_inputs=before)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()
         for name in release.BINARIES:
             shutil.copy2(target / "release" / name, artifacts / name)
+        if release.build_provenance.hashes(artifacts) != unsigned["unsigned"]:
+            raise ValueError("release artifacts changed during copying")
+        for name in release.BINARIES:
             if name in release.HARDENED:
                 release.sign(artifacts / name)
+        release.build_provenance.record_signing(artifacts, unsigned)
         shutil.copy2(args.author_archive, artifacts / release.AUTHOR_ARCHIVE)
         archive = args.output_archive.resolve() if args.output_archive else Path(temporary) / "package.tar.xz"
         packed = archive_payload(artifacts, archive, source_rebuild=True)
@@ -182,8 +198,10 @@ def main():
     pack.add_argument("--artifact-dir", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
     install = commands.add_parser("install")
-    install.add_argument("--archive", type=Path, required=True)
-    install.add_argument("--sha256", required=True)
+    source_group = install.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--archive", type=Path)
+    source_group.add_argument("--payload", type=Path, help=argparse.SUPPRESS)
+    install.add_argument("--sha256")
     install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
     source = commands.add_parser("source-install")
     source.add_argument("--repository", required=True)
@@ -200,6 +218,8 @@ def main():
         command.add_argument("--node", type=Path, required=True)
         command.add_argument("--attach-store", action="store_true")
     args = parser.parse_args()
+    if args.command == "install" and args.archive and not args.sha256:
+        parser.error("--archive needs --sha256")
     if args.command == "pack":
         print(json.dumps(archive_payload(args.artifact_dir.resolve(), args.output), indent=2))
     elif args.command == "install":

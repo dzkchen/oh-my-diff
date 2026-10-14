@@ -19,9 +19,13 @@ shows the draft's pasted images above the composer.
 ```
 
 The bundled renderer (`render.mjs`, a package asset) runs in `node` from `PATH`
-through `exec.run` and writes `.omd/preview/NAME.html` in the repository, so
-file size is not limited by the mod callback budget (files up to 5 MB;
-responses up to about 48 KB). Markdown is converted in the package: headings,
+through `exec.run` and writes `.omd/preview/response.html` for a response and
+`.omd/preview/files/PATH.html` for a file, mirroring the repository-relative
+path so different files never share a page. File size is not limited by
+the mod callback budget (files up to 5 MB; responses up to about 48 KB). The
+renderer refuses a link or file in place of an output directory and publishes
+each page by renaming a freshly created file over it, so a planted link is
+replaced rather than written through. Markdown is converted in the package: headings,
 emphasis, links, images, lists and task lists, block quotes, tables, fenced and
 indented code, `$…$` and `$$…$$` math and `mermaid` fences. Raw HTML in the
 source is escaped, links and images keep only http(s), mailto, anchor and
@@ -33,14 +37,20 @@ or Mermaid 12.0.0 from jsDelivr with SRI hashes only when it uses them; offline,
 code stays plain and math and diagrams stay as source. The page follows the
 browser's light or dark theme.
 
-`--watch` records the file and checks its hash every two seconds on a host
+`--watch` records the file in repository-scoped mod storage, so each
+repository keeps its own watches, and checks its hash every two seconds on a host
 timer, so edits by the agent, commands or other programs re-render it, also in
-gitignored directories such as `.omd/notes`; the open page reloads every two
-seconds, keeping its scroll position. `[[Note]]`, `[[Note|label]]` and
+gitignored directories such as `.omd/notes`; a failed render is retried after
+the file's next change, and the open page reloads every two seconds, keeping its scroll position.
+A watch that cannot be saved (for example after a concurrent change) is reported
+as not watched. `[[Note]]`, `[[Note|label]]` and
 `[[Note#heading]]` wiki links render as links to `Note.md` beside the file. `--inline` shows Markdown, code and diffs
 with the terminal's own components in a scrollable dialog (the first 4 KB of
-Markdown or code and 48 KB of a diff, with CRLF, tabs and terminal escapes
-normalized); images and math render only in the browser. A declined
+Markdown or code and 48 KB of a diff, read with `head -c` so only that prefix
+enters the callback, with CRLF, tabs and terminal escapes normalized, and a
+note whenever the file continues past what is shown); a prefix that is not
+UTF-8 text or whose JSON escaping would exceed the callback's receipt budget is
+refused with the browser preview as the fallback. Images and math render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
 
 ## Mermaid diagrams in responses
@@ -73,9 +83,12 @@ disabling the mod restores the native drawing at once.
 ## Draft image thumbnails
 
 With `thumbnails` (default on) the mod reads the draft after every composer
-change and shows its PNG and JPEG attachments above the composer: up to three
-3-row thumbnails with their placeholder labels, each with a Preview button
-(click the thumbnail too), and a count of the rest. The images come from the
+change and shows every PNG and JPEG attachment above the composer in one row:
+each tile keeps its image's shape (from the pixel size `composer.read`
+reports), and the tiles shrink together, from 8 rows (at most a quarter of the
+terminal) down to 2, until the row fits the width; when even 2-row tiles do not
+fit, the row ends with `+N more: /preview image K to M`, the command that opens
+the hidden ones. Each tile has a `#N` Preview button (click the thumbnail too). The images come from the
 host's draft attachment resources (`composer.read`), never from another
 program's cache; other formats or files over 8 MiB show a text tile. Pasting,
 removing or replacing an image, switching drafts and submitting update or clear

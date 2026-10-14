@@ -790,3 +790,25 @@ fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
     assert!(decode_image(b"GIF89a").is_err());
     assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 }
+
+#[test]
+fn raster_reply_classification_is_independent_of_wording() {
+    for (kind, message) in [
+        (BlitErrorKind::Retryable, "please try again"),
+        (BlitErrorKind::Revoked, "permission removed"),
+        (BlitErrorKind::Fatal, "callback_unknown_error"),
+    ] {
+        let (reply, receiver) = sync_channel(1);
+        let lifetime = CallLifetime::default();
+        let call = SurfaceCall {
+            validity: Validity(Arc::new(|| true)),
+            caller: "m".into(), operation: "terminal.blit".into(), arguments: Value::Null,
+            context: InvocationContext::Event, remote: false, thread: None, authority: None,
+            confirm: None, reply, lifetime: lifetime.clone(),
+        };
+        call.reply_blit(Err(BlitError::new(kind, message)));
+        let error = wait_classified(PendingReply { receiver, lifetime }, &|| true, None).unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.message, message);
+    }
+}

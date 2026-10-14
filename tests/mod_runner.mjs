@@ -82,8 +82,11 @@ export function runnerSync(request) {
   }
 }
 
+export const HOST_RECEIPT_BYTES = 131_072;
+
 export function callback(request, host, receipts, { capture = error => !error.crash } = {}) {
   const worker = take(request);
+  let spent = Buffer.byteLength(JSON.stringify(receipts));
   try {
     writeSync(worker.input, JSON.stringify({ ...request, receipts, interactive: true }) + '\n');
     for (;;) {
@@ -98,7 +101,14 @@ export function callback(request, host, receipts, { capture = error => !error.cr
         if (!capture(error)) throw error;
         receipt = { error: error.message };
       }
+      let bytes = Buffer.byteLength(JSON.stringify({ call: frame.call, ...receipt }));
+      if (bytes > HOST_RECEIPT_BYTES - spent) {
+        receipt = { error: `host_result_limit: the ${bytes}-byte result exceeds the ${HOST_RECEIPT_BYTES - spent} bytes left in this callback; the operation ran, request a smaller page or an artifact` };
+        bytes = Buffer.byteLength(JSON.stringify({ call: frame.call, ...receipt }));
+      }
+      spent += bytes + (receipts.length ? 1 : 0);
       receipts.push({ call: frame.call, ...receipt });
+      if (spent > HOST_RECEIPT_BYTES) throw new Error('host_receipt_limit');
       writeSync(worker.input, JSON.stringify(receipt) + '\n');
     }
   } finally {

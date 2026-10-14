@@ -16,7 +16,7 @@ function run(input, host = unexpected) {
       settings: {}, state: null, surface, hook_budget_ms: 2000, receipts, ...input };
     const output = JSON.parse(runnerSync(request).stdout);
     if (output.error) throw new Error(output.error);
-    if (!output.host_call) return output;
+    if (!output.host_call) return { ...output, ui_state: JSON.parse(output.ui_state) };
     try {
       receipts.push({ call: output.host_call, value: host(output.host_call) });
     } catch (error) {

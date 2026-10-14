@@ -11,12 +11,26 @@ use codex_omd::resource_data::ResourceRef;
 const RESETTABLE: &[&str] = &["host.json", "mods.json"];
 
 struct Installed {
+    owner: Arc<()>,
     core: std::sync::Weak<Core>,
-    handle: Option<tokio::runtime::Handle>,
     _roster: codex_omd::client_surface::Registration,
 }
 
 static INSTALLED: Mutex<Option<Installed>> = Mutex::new(None);
+
+pub(super) struct Registration {
+    owner: Arc<()>,
+    _dispatcher: codex_omd::host::SessionRegistration,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut installed = INSTALLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if installed.as_ref().is_some_and(|current| Arc::ptr_eq(&current.owner, &self.owner)) {
+            *installed = None;
+        }
+    }
+}
 
 /// Runs requested work on one thread at a time; requests during a run cause one trailing run.
 struct Coalesce {
@@ -54,25 +68,27 @@ impl Coalesce {
 
 static REPUBLISH: Coalesce = Coalesce::new();
 
-pub(super) fn install(core: &Arc<Core>) {
-    let weak = Arc::downgrade(core);
-    let roster = codex_omd::client_surface::register_observer(Arc::new(move |observed| {
+pub(super) fn install(core: &Arc<Core>, dispatcher: codex_omd::host::SessionRegistration) -> Result<Registration, String> {
+    let mut installed = INSTALLED.lock().map_err(|_| "host_installation_poisoned")?;
+    if installed.is_some() {
+        return Err("host_already_installed".into());
+    }
+    let owner = Arc::new(());
+    let roster = codex_omd::client_surface::register_observer(Arc::new(|observed| {
         if matches!(observed, codex_omd::client_surface::Observed::Roster) {
-            let weak = weak.clone();
-            REPUBLISH.request(move || {
-                if let Some(core) = weak.upgrade() {
+            REPUBLISH.request(|| {
+                if let Ok(core) = self::core() {
                     republish(&core);
                 }
             });
         }
     }));
-    if let Ok(mut installed) = INSTALLED.lock() {
-        *installed = Some(Installed {
+    *installed = Some(Installed {
+            owner: owner.clone(),
             core: Arc::downgrade(core),
-            handle: tokio::runtime::Handle::try_current().ok(),
             _roster: roster,
         });
-    }
+    Ok(Registration { owner, _dispatcher: dispatcher })
 }
 
 /// Renders the view again so mods see the changed roster, keeping the last published event.
@@ -107,21 +123,17 @@ fn session(core: &Core) -> Result<Lead, String> {
         .ok_or_else(|| "session_unavailable: no thread is running in this host".to_owned())
 }
 
-fn block<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
+fn block<T>(core: &Core, future: impl std::future::Future<Output = T>) -> Result<T, String> {
+    let owner = core.session_runtime.as_ref().ok_or("host_operation_unavailable: no session runtime")?;
     match tokio::runtime::Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            Ok(tokio::task::block_in_place(|| handle.block_on(future)))
+            Ok(tokio::task::block_in_place(|| owner.block_on(future)))
         }
         Ok(_) => Err(
             "host_operation_unavailable: client calls need the multi-threaded session runtime"
                 .into(),
         ),
-        Err(_) => INSTALLED
-            .lock()
-            .ok()
-            .and_then(|installed| installed.as_ref()?.handle.clone())
-            .map(|handle| handle.block_on(future))
-            .ok_or_else(|| "host_operation_unavailable: no session runtime".into()),
+        Err(_) => Ok(owner.block_on(future)),
     }
 }
 
@@ -216,8 +228,47 @@ fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String
         .collect())
 }
 
-/// Each client's module instances and the size it last rendered them at.
-static MODULE_SIZES: Mutex<BTreeMap<(String, String), (u64, u64)>> = Mutex::new(BTreeMap::new());
+/// A client's module instance: the owner and module the view gave it, the size it last rendered it
+/// at, and whether a newer view revoked it.
+struct Module {
+    owner: String,
+    module: String,
+    size: (u64, u64),
+    revoked: Arc<AtomicBool>,
+}
+
+/// Each client's module instances by client and view component.
+static MODULES: Mutex<BTreeMap<(String, String), Module>> = Mutex::new(BTreeMap::new());
+
+fn instance(client: &str, component: &str) -> String {
+    format!("client.{client}.{component}")
+}
+
+fn revoke(client: &str, component: &str, module: &Module) {
+    module.revoked.store(true, Ordering::Release);
+    codex_omd::client_component_unmount(client, &module.owner, &instance(client, component));
+}
+
+/// Unmounts the client module instances the published view no longer gives the same owner and module.
+pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
+    if !core().is_ok_and(|core| std::ptr::eq(&*core.views, views)) {
+        return;
+    }
+    let Ok(mut modules) = MODULES.lock() else {
+        return;
+    };
+    modules.retain(|(client, component), module| {
+        let current = snapshot.component_owners.get(component) == Some(&module.owner)
+            && snapshot
+                .view
+                .module(component)
+                .is_some_and(|(name, _)| name == module.module);
+        if !current {
+            revoke(client, component, module);
+        }
+        current
+    });
+}
 /// Undelivered `component_post` payloads by owner, the latest per client instance.
 static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
@@ -232,30 +283,48 @@ fn module_step(
 ) -> Result<Value, String> {
     static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let core = core()?;
-    let snapshot = snapshot(&core)?;
-    let owner = owner(&snapshot, component)?.to_owned();
-    let (module, props) = snapshot
-        .view
-        .module(component)
-        .ok_or_else(|| format!("view_stale: {component}"))?;
-    let (columns, rows) = {
-        let mut sizes = MODULE_SIZES.lock().map_err(|_| "mod_runtime_poisoned")?;
-        let size = size.unwrap_or_else(|| {
-            sizes
-                .get(&(client.to_owned(), component.to_owned()))
-                .copied()
-                .unwrap_or((80, 0))
+    // Read under the instance table so a publication that lands after this read reconciles this entry.
+    let (owner, module, props, (columns, rows), revoked) = {
+        let mut modules = MODULES.lock().map_err(|_| "mod_runtime_poisoned")?;
+        let snapshot = snapshot(&core)?;
+        let owner = owner(&snapshot, component)?.to_owned();
+        let (module, props) = snapshot
+            .view
+            .module(component)
+            .ok_or_else(|| format!("view_stale: {component}"))?;
+        let key = (client.to_owned(), component.to_owned());
+        let previous = modules.remove(&key);
+        let size = size
+            .or(previous.as_ref().map(|previous| previous.size))
+            .unwrap_or((80, 0));
+        let revoked = match previous {
+            Some(previous) if previous.owner == owner && previous.module == module => previous.revoked,
+            Some(previous) => {
+                revoke(client, component, &previous);
+                Arc::default()
+            }
+            None => Arc::default(),
+        };
+        modules.insert(key, Module {
+            owner: owner.clone(),
+            module: module.to_owned(),
+            size,
+            revoked: revoked.clone(),
         });
-        sizes.insert((client.to_owned(), component.to_owned()), size);
-        size
+        (owner, module.to_owned(), props.clone(), size, revoked)
     };
     let _thread =
         codex_omd::StateThread::enter(core.expansion.current().map(|lead| lead.thread.to_string()));
-    let frame = json!({"instance": format!("client.{client}.{component}"), "client": client,
+    let frame = json!({"instance": instance(client, component), "client": client,
         "props": props, "now": CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64,
         "columns": columns, "rows": rows, "events": events});
-    let step = codex_omd::component_shared(&core.runtime, &owner, module, frame, || true)
-        .map_err(|error| error.to_string())?;
+    let step = codex_omd::component_shared(&core.runtime, &owner, &module, frame, || {
+        !revoked.load(Ordering::Acquire)
+    });
+    if revoked.load(Ordering::Acquire) {
+        return Err(format!("view_stale: {component}"));
+    }
+    let step = step.map_err(|error| error.to_string())?;
     if let Some(post) = step["post"].as_object() {
         let payload = json!({"component": component, "module": module, "client": client,
             "data": post["data"]});
@@ -294,7 +363,7 @@ fn deliver_posts() {
                 permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
                 ..lead
             };
-            let _ = block(expansion::REMOTE.scope(
+            let _ = block(&core, expansion::REMOTE.scope(
                 true,
                 expansion::invoke_one(&core, &lead, owner, "component_post", payload),
             ));
@@ -304,8 +373,13 @@ fn deliver_posts() {
 
 /// Unmounts a detached client's module instances.
 pub fn detached(client: &str) {
-    if let Ok(mut sizes) = MODULE_SIZES.lock() {
-        sizes.retain(|(owner, _), _| owner != client);
+    if let Ok(mut modules) = MODULES.lock() {
+        modules.retain(|(owner, _), module| {
+            if owner == client {
+                module.revoked.store(true, Ordering::Release);
+            }
+            owner != client
+        });
     }
     codex_omd::component_detach(client);
 }
@@ -335,7 +409,7 @@ pub fn component_event(client: &str, component: &str, event: Value) -> Result<Va
         permission_profile: Arc::new(Mutex::new(PermissionProfile::read_only())),
         ..lead
     };
-    block(expansion::REMOTE.scope(
+    block(&core, expansion::REMOTE.scope(
         true,
         expansion::invoke_one(
             &core,
@@ -437,7 +511,7 @@ pub fn action(
             result
         },
     );
-    let result = block(expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
+    let result = block(&core, expansion::REMOTE.scope(true, run))?.ok_or("mod_runtime_poisoned")??;
     Ok(json!({"status": "completed", "result": result["result"]}))
 }
 

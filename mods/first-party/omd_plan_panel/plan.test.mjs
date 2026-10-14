@@ -11,7 +11,7 @@ function run(event, payload, state, name = '', ui_state = null) {
   const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, ui_state, settings: { rows: 6 }, event, name, payload, surface, hook_budget_ms: 2000 };
   const output = JSON.parse(runnerSync(request).stdout);
   if (output.error) throw new Error(output.error);
-  return output;
+  return { ...output, ui_state: JSON.parse(output.ui_state) };
 }
 const notify = (state, method, thread, plan) => run('app_notification', { method, params: { threadId: thread, turnId: 't', plan }, thread_id: thread, coalesced: 0, dropped: 0 }, state).state;
 const panel = (state, thread = 'lead', ui = null) => run('terminal', { event: 'idle', ledger: { thread_id: thread, cwd: '/repo', cost: null } }, state, '', ui).value
