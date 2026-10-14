@@ -16,6 +16,8 @@ use std::process::Stdio;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::PoisonError;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
@@ -282,6 +284,8 @@ static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new(
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
 const REUSED_RUNNERS: usize = 2;
+const MAX_REUSED_RUNNERS: usize = 8;
+static REUSED_POOL: AtomicUsize = AtomicUsize::new(REUSED_RUNNERS);
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
 struct Stepping(Option<String>);
@@ -473,6 +477,15 @@ where
     Ok(value)
 }
 
+/// Keeps one warm callback runner per active package with a `terminal` handler, so view refreshes
+/// don't evict each other's runners and a command finds its package's runner warm.
+pub(super) fn size_reused_pool(terminal_handlers: usize) {
+    REUSED_POOL.store(
+        terminal_handlers.clamp(REUSED_RUNNERS, MAX_REUSED_RUNNERS),
+        Ordering::Relaxed,
+    );
+}
+
 fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
     WARM.lock()
         .map(|mut runners| runners.extract_if(.., retire).collect())
@@ -487,7 +500,7 @@ fn pool(mut runner: Warm) {
     let size = match kind {
         (_, Some(_)) => usize::MAX,
         (true, None) => WARM_RUNNERS,
-        (false, None) => REUSED_RUNNERS,
+        (false, None) => REUSED_POOL.load(Ordering::Relaxed),
     };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {

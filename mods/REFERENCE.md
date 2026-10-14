@@ -753,9 +753,14 @@ proves only what its policies detect.
 
 ### Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}})`, registered during
-activation, hides slash commands and disables collaboration modes from the next
-idle boundary until the mod is disabled, unloaded or fails. `/quit`,
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`,
+registered during activation, hides slash commands, disables collaboration
+modes and turns off native surfaces from the next idle boundary until the mod
+is disabled, unloaded or fails. `surfaces: {disable: ['status_line']}` turns
+off the upstream `/statusline` row at its source: its configured items are
+neither computed nor polled and reserve no height, the user's `tui.status_line`
+setting is untouched, and the row still draws when other mods publish `status`
+segments. `/quit`,
 `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode
 cannot be removed. A turn that requests a disabled mode runs in the default mode
 with that mode's instructions cleared and a warning (a `warning` notification
@@ -3324,7 +3329,12 @@ segments apply to scrollback. When any mod's view
 sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
 omits the sidebar, header and named sites; dialogs, status segments, mod
 progress and diagnostics, the composer, approvals and scrollback remain, and
-the owned fullscreen viewport is unchanged. The `terminal` input carries a read-only `identity`
+the owned fullscreen viewport is unchanged. The `above_composer` and
+`below_composer` sites draw in both modes, host-sized to their wrapped
+components, directly above and below the bottom pane (composer, native hints
+and status row), with styles, links and focusable controls; `below_composer`
+is clipped to 6 rows and scrolls to the focused control. Both are hidden while
+an approval or popup replaces the composer. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or
 `unreported`), effective `mode` (`omd`), and installed,

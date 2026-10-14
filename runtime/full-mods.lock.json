@@ -281,6 +281,37 @@
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.2"
     },
+    "omd_statusline": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "terminal",
+        "store",
+        "commands",
+        "events",
+        "lifecycle",
+        "model",
+        "middleware",
+        "threads",
+        "config",
+        "account",
+        "inventory",
+        "exec",
+        "http",
+        "credentials",
+        "builtins"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "6d0d014b5514f2ab957ded51e4b75fda6a1792159720ebef81e2af528efbf388",
+        "mod.json": "e5a79280d59ae47b25c3fad63c131493c6c07bdb87b944c73f5e35fb77b1dac2",
+        "segments.ts": "ce47347ed722fc86e5ac6e55bbeee9b89b086f5494d5cfb7aa852797762a73f1",
+        "sources.ts": "a0fc98efe01d87ef7a8b74da00f77b2713e4891fc41d386b3120de2979d3e15d"
+      },
+      "id": "omd_statusline",
+      "package_sha256": "87839d35a49f4828d8c628c92aaa54056c024bf7f831a2a47073a55f48aad4f3",
+      "source": "mods/first-party/omd_statusline",
+      "version": "0.1.0-preview.1"
+    },
     "omd_tool_lines": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

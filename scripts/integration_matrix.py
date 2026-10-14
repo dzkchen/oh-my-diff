@@ -55,7 +55,7 @@ def sources():
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
-        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[(.*?)\]\.contains\(&name\)', site_validation).group(1)),
+        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[([^\]]*)\]\s*\.contains\(&name\)', site_validation).group(1)),
         "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
                     for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
                                       ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),

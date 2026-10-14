@@ -118,6 +118,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_statusline",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Configurable status line below or above the composer with Git, pull request, CI and script segments",
+      "source": "mods/first-party/omd_statusline",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; structured_access_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_plan_removal",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

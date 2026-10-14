@@ -366,6 +366,7 @@ Frozen means held for the launch candidate; the API version remains experimental
 | view_fields:title | frozen | `mods/examples/terminal/index.ts`; terminal.view |
 | view_fields:welcome | frozen | `mods/first-party/omd_logo/index.ts`; terminal.view |
 | view_sites:above_composer | frozen | `mods/examples/terminal/index.ts`; terminal.view |
+| view_sites:below_composer | experimental | Added for the status line in this release; ships experimental and freezes after a release with its first-party consumer. |
 | view_sites:dialog | frozen | `mods/examples/terminal/index.ts`; terminal.view |
 | view_sites:header | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
 | view_sites:owner/name | frozen | `mods/examples/layout_explorer/index.ts`; terminal.surface |

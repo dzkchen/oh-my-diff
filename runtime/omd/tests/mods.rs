@@ -1905,6 +1905,12 @@ fn ui_state_write_survives_a_reload_during_its_command() {
     assert_eq!(read(), json!({"open": true, "before": null}));
     assert_eq!(during("keep", &reload).unwrap(), "kept");
     assert_eq!(read(), json!({"open": true, "before": null}));
+    let settings = || {
+        codex_omd::write_settings(&store, "fixture", &json!({"placement": "above"})).unwrap();
+        reload();
+    };
+    assert_eq!(during("apply", &settings).unwrap(), "applied");
+    assert_eq!(read(), json!({"open": true, "before": {"open": true, "before": null}}));
     let error = during("apply", &|| {
         runtime.lock().unwrap().set_checkout(temp.path());
     })

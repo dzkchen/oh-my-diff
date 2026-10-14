@@ -1784,7 +1784,15 @@ fn valid_site(name: &str) -> bool {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
             })
     };
-    ["sidebar", "header", "above_composer", "dialog", "welcome"].contains(&name)
+    [
+        "sidebar",
+        "header",
+        "above_composer",
+        "below_composer",
+        "dialog",
+        "welcome",
+    ]
+    .contains(&name)
         || name
             .split_once('/')
             .is_some_and(|(owner, site)| part(owner, 24) && part(site, 32))

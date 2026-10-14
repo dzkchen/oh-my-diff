@@ -3656,6 +3656,12 @@ impl ModHost {
     }
 
     fn publish_surfaces(&self) {
+        process::size_reused_pool(
+            self.loaded
+                .keys()
+                .filter(|id| self.registered(id, "terminal"))
+                .count(),
+        );
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -5066,11 +5072,15 @@ impl ModHost {
     }
 
     fn ui_key(&self, loaded: &Loaded, thread: Option<&str>) -> String {
+        let mut selection = json!(loaded.selection);
+        if let Some(selection) = selection.as_object_mut() {
+            selection.remove("settings");
+        }
         format!(
             "{}:{}",
             self.store.root.display(),
             digest(
-                json!([self.project, thread, loaded.selection, loaded.adapter])
+                json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
             )
