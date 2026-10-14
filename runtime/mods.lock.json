@@ -1,5 +1,6 @@
 {
   "mod_api": "0.2.0-experimental.5",
+  "node": "24.18.0",
   "packages": {
     "omd_advisor": {
       "api": "0.2.0-experimental.5",
@@ -374,7 +375,36 @@
       "package_sha256": "418f218d3ced1baa304d7ccbf21e997c1875cc4aa0e5bd45a4b94c1dbec4d1b5",
       "source": "mods/first-party/omd_usage",
       "version": "0.1.0-preview.1"
+    },
+    "omd_workflow": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "agents",
+        "commands",
+        "context",
+        "contracts",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "model",
+        "services",
+        "store",
+        "tools",
+        "middleware",
+        "interception",
+        "lifecycle"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "218853be78c4bd47208cd1083f0c84cf78d3a897724f25e197eb7394b0a28759",
+        "mod.json": "c628972d085c36d327ad864b931bb0f86194e239860f73f8f163ffcc3ad7847a"
+      },
+      "id": "omd_workflow",
+      "package_sha256": "4d5dfea17c106bc43b9e9ca134aceb29a8c47d5830176f1b86a019a4e4cc5dea",
+      "source": "mods/first-party/omd_workflow",
+      "version": "0.2.0-preview.2"
     }
   },
+  "product": "oh-my-diff-mods-v1",
   "schema": 1
 }

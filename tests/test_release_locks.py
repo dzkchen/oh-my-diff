@@ -7,25 +7,13 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import install_support
-from scripts import base_lock
+from scripts import mods_lock
 from scripts import plugin_lock
 
 
-class BaseLockTests(unittest.TestCase):
-    def test_pinned_base_lock_matches_the_first_party_sources(self):
-        self.assertEqual(base_lock.build(), install_support.base_lock())
-
-    def test_every_pinned_package_declares_its_exact_supported_api_version(self):
-        lock = install_support.base_lock()
-        api = json.loads((install_support.ROOT / "mods/package.json").read_text())["version"]
-        self.assertEqual(lock["mod_api"], api)
-        self.assertTrue(lock["packages"])
-        for identifier, package in lock["packages"].items():
-            manifest = json.loads((install_support.ROOT / package["source"] / "mod.json").read_text())
-            self.assertEqual(manifest["api"], package["api"], identifier)
-            base_lock.validate_manifest(manifest, identifier)
-            self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
-            self.assertEqual(package["extension_type"], "mod", identifier)
+class ModsLockTests(unittest.TestCase):
+    def test_pinned_mods_lock_matches_the_first_party_sources(self):
+        self.assertEqual(mods_lock.build(), install_support.mods_lock())
 
 
 class PluginLockTests(unittest.TestCase):

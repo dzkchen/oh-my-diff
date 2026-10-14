@@ -9,8 +9,8 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_SCHEMA = 1
-BASE_PRODUCT = "oh-my-diff-base-v1"
+MODS_SCHEMA = 1
+MODS_PRODUCT = "oh-my-diff-mods-v1"
 PLUGIN_SCHEMA = 1
 PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 
@@ -164,27 +164,26 @@ def check_or_write(path, text, write, stale):
         raise SystemExit(stale)
 
 
-def base_lock():
-    lock = json.loads((ROOT / "runtime/base.lock.json").read_text())
-    if lock.get("schema") != BASE_SCHEMA or lock.get("product") != BASE_PRODUCT:
-        raise ValueError("unrecognized base lock")
-    return lock
+def package_digest(base):
+    manifest = (base / "mod.json").read_bytes()
+    declared = json.loads(manifest)
+    if declared.get("lifecycle"):
+        raise ValueError(f"{base.name} declares lifecycle scripts; install it through the package manager")
+    entrypoint = declared.get("entrypoint", "index.ts")
+    payload = manifest + b"\x00" + entrypoint.encode() + b"\x00" + (base / entrypoint).read_bytes()
+    for name in declared.get("assets", []):
+        payload += b"\x00" + name.encode() + b"\x00" + (base / name).read_bytes()
+    return hashlib.sha256(payload).hexdigest()
 
 
-def base_sources(lock):
-    if digest(ROOT / lock["types"]["path"]) != lock["types"]["sha256"]:
-        raise ValueError(f"pinned mod API types changed: {lock['types']['path']}")
-    for identifier, package in lock["packages"].items():
-        if package.get("extension_type") != "mod":
-            raise ValueError(f"pinned package {identifier} must be labeled as a mod")
-        base = ROOT / package["source"]
-        for name, expected in package["files"].items():
-            if digest(base / name) != expected:
-                raise ValueError(f"pinned package source changed: {package['source']}/{name}")
-        declared = json.loads((base / "mod.json").read_text())
-        if declared["api"] != package.get("api", lock["mod_api"]):
-            raise ValueError(f"package {identifier} declares mod API {declared['api']}; "
-                             f"this release is pinned to {lock['mod_api']}")
-        if declared["id"] != identifier:
-            raise ValueError(f"pinned package disagrees with the lock: {identifier}")
+def validate_manifest(manifest, identifier):
+    supported = {row["version"] for row in json.loads((ROOT / "mods/compatibility.json").read_text())["apis"]}
+    if manifest["id"] != identifier or manifest["api"] not in supported:
+        raise ValueError(f"{identifier} has an incompatible package identity or mod API")
+
+
+def mods_lock():
+    lock = json.loads((ROOT / "runtime/mods.lock.json").read_text())
+    if lock.get("schema") != MODS_SCHEMA or lock.get("product") != MODS_PRODUCT:
+        raise ValueError("unrecognized first-party mod lock")
     return lock

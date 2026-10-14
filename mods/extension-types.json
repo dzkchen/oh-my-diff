@@ -11,13 +11,13 @@
     {
       "path": "mods/first-party/omd_claude_cli",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation."
     },
     {
       "path": "mods/first-party/omd_inspector",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Replaces the live terminal inspector dialog and refresh actions while reading generic task, contract, ledger, and install identity state."
     },
     {
@@ -101,31 +101,31 @@
     {
       "path": "mods/first-party/omd_logo",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity."
     },
     {
       "path": "mods/first-party/omd_model_picker",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
     },
     {
       "path": "mods/first-party/omd_tool_lines",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns a render hook on the generic tool_call site that draws one line per agent tool call; the host keeps the native row, its expansion and copy; active by default in OMD+."
     },
     {
       "path": "mods/first-party/omd_plan_panel",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool."
     },
     {
       "path": "mods/first-party/omd_continue",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "A user-typed /continue command that submits a resume instruction with the host-recorded turn activity."
     },
     {
@@ -137,7 +137,7 @@
     {
       "path": "mods/first-party/omd_lsp_sync",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view."
     },
     {
@@ -179,7 +179,7 @@
     {
       "path": "mods/first-party/omd_advisor",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives."
     },
     {
@@ -485,55 +485,55 @@
     {
       "path": "mods/first-party/omd_plan_removal",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); enabled by default in OMD+."
     },
     {
       "path": "mods/first-party/omd_preview",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog, inline Mermaid drawings of assistant messages and draft image thumbnails above the composer; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_mods",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the /mods screen, its actions and the first-run card over public package controls and terminal sites; native code keeps trust, confirmation, package authority and /omd recovery; enabled by default in both profiles."
     },
     {
       "path": "mods/first-party/omd_update",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the update notice, the /update dialog, snooze and skip state and the update policy settings (checks, channel, cadence, pin, automatic updates); the installer reads those settings and does the network check and installation; active in OMD Core and OMD+."
     },
     {
       "path": "mods/first-party/omd_privacy",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns secret and PII detection, sensitive-path rules, reviewed exemptions and salted placeholders as a required model_send policy and approval middleware over the generic final-request stage; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_usage",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the on-demand language-server pane; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_frecency",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_profiles",
       "extension_type": "mod",
-      "role": "candidate",
+      "role": "bundled",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
     }
   ],
