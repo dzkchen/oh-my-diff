@@ -25,7 +25,7 @@ executed by this command. This is a filename inventory, not a check that a Rust
 module is enabled or an inline test executes; listing a file does not establish
 executed coverage.
 
-`mise run mods:check` checks mod declarations, example/first-party/optional
+`mise run mods:check` checks mod declarations, example, first-party and port
 TypeScript (including TSX), and bundled plugin TypeScript with `mods/tsconfig.json`.
 `mods/tsconfig.author.json` checks every public `mods/author/*.mjs` implementation
 with `checkJs`, Node types and declaration-linked JSDoc on the public client,
