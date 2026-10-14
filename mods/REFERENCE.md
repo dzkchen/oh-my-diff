@@ -1183,7 +1183,8 @@ no longer load. Each advertises a host feature a package can require.
 With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
 the recorded exclusions, live in `scripts/upstream_routes.json`;
-`mise run upstream:candidate` flags new upstream surfaces without a route.
+`python3 scripts/upstream_surfaces.py check /path/to/codex` flags upstream
+surfaces without a route.
 
 ### App-server bridge (`app_v1`)
 

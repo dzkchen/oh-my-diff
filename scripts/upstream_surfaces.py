@@ -371,7 +371,7 @@ def check(checkout, table):
         bucket["routed" if route else "excluded"] += 1
     for entry in unrouted:
         counts.setdefault(entry["kind"], {"surfaces": 0, "routed": 0, "excluded": 0})["surfaces"] += 1
-    removed = sorted(name for name in table["surfaces"] if name not in ids)
+    removed = sorted(name for name, entry in table["surfaces"].items() if name not in ids and not entry.get("omd"))
     return {
         "surfaces": len(surfaces),
         "by_kind": dict(sorted(counts.items())),
