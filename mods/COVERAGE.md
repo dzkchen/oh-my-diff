@@ -53,7 +53,7 @@ Frozen means held for the launch candidate; the API version remains experimental
 | capabilities:fs.read | frozen | `mods/examples/coordination/mod.json`; tool.workspace |
 | capabilities:fs.write | frozen | `mods/examples/snapshot_review/mod.json`; tool.workspace |
 | capabilities:history | frozen | `mods/examples/context_fold/mod.json`; context.history |
-| capabilities:history_persist | experimental | Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`. |
+| capabilities:history_persist | experimental | Experimental in 1.0.0;example consumer `mods/examples/history_redact`. |
 | capabilities:history_write | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
 | capabilities:http | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
 | capabilities:input | frozen | `mods/examples/frecency_rank/mod.json`; context.input |
@@ -73,7 +73,7 @@ Frozen means held for the launch candidate; the API version remains experimental
 | capabilities:request_policy | frozen | `mods/first-party/omd_privacy/mod.json`; kernel.final_request_policy |
 | capabilities:services | frozen | `mods/examples/service-consumer/mod.json`; kernel.inter_mod_services |
 | capabilities:sessions | frozen | `mods/examples/port_list/mod.json`; shared.session_index |
-| capabilities:sessions_tools | experimental | Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`. |
+| capabilities:sessions_tools | experimental | Experimental in 1.0.0;example consumer `mods/examples/tool_history`. |
 | capabilities:store | frozen | `mods/examples/approval_desk/mod.json`; context.store |
 | capabilities:terminal | frozen | `mods/examples/approval_desk/mod.json`; terminal.view |
 | capabilities:threads | frozen | `mods/examples/notification_bridge/mod.json`; coordination.app_bridge |
@@ -192,14 +192,14 @@ Frozen means held for the launch candidate; the API version remains experimental
 | intercepts:compaction | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
 | intercepts:component_change | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
 | intercepts:composer_edit | frozen | `mods/examples/paste_tidy/index.ts`; terminal.composer_drafts |
-| intercepts:composer_key | experimental | Wave 1 surface shipped experimental in 1.0.0. |
+| intercepts:composer_key | experimental | Experimental in 1.0.0. |
 | intercepts:config_list | frozen | `mods/examples/command_curator/index.ts`; terminal.commands_config |
 | intercepts:config_set | frozen | `mods/examples/command_curator/index.ts`; terminal.commands_config |
 | intercepts:elicitation | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
-| intercepts:history_persist | experimental | Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`. |
+| intercepts:history_persist | experimental | Experimental in 1.0.0;example consumer `mods/examples/history_redact`. |
 | intercepts:host_operation | frozen | `mods/examples/admission_guard/index.ts`; kernel.request_stream_middleware |
 | intercepts:input | frozen | `mods/examples/frecency_rank/index.ts`; context.input |
-| intercepts:mention | experimental | Wave 1 surface shipped experimental in 1.0.0. |
+| intercepts:mention | experimental | Experimental in 1.0.0. |
 | intercepts:model_request | frozen | `mods/examples/kernel/index.ts`; kernel.request_stream_middleware |
 | intercepts:model_send | frozen | `mods/first-party/omd_privacy/index.ts`; kernel.final_request_policy |
 | intercepts:peer_receive | experimental | No retained launch/example consumer with matched evidence; outside the launch-frozen subset. |
@@ -275,7 +275,7 @@ Frozen means held for the launch candidate; the API version remains experimental
 | operations:session.info | frozen | `mods/first-party/omd_usage/index.ts`; coordination.sdk_helpers |
 | operations:sessions.list | frozen | `mods/examples/scoped_data/index.ts`; shared.session_index |
 | operations:sessions.ports | frozen | `mods/examples/port_list/index.ts`; terminal.surface |
-| operations:sessions.read | experimental | Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`. |
+| operations:sessions.read | experimental | Experimental in 1.0.0;example consumer `mods/examples/tool_history`. |
 | operations:sessions.snapshot | frozen | `mods/examples/snapshot_review/index.ts`; shared.session_index |
 | operations:settings.write | frozen | `mods/first-party/omd_mods/index.ts`; coordination.packages |
 | operations:sidecars.invoke | frozen | `mods/examples/service_request/index.ts`; tool.sidecars |
@@ -582,42 +582,42 @@ deterministic and composable; the added control per decision is:
 
 ## Classic hook coverage
 
-Every classic hook name `api.hook` accepts, the native event or interceptor it maps to, the owner of that seam and the check exercising it. Later batches add their contracts here; the final coverage audit belongs to Batch 4el.
+Every classic hook name `api.hook` accepts, the native event or interceptor it maps to, the owner of that seam and the check exercising it.
 
 | Classic hook | Native event or interceptor | Owner | Check |
 | --- | --- | --- | --- |
-| `PreToolUse` | `tool` | 4ea tool continuation | `node:classic hooks map onto native events and interceptors with glob and negated matchers` |
+| `PreToolUse` | `tool` | tool continuation | `node:classic hooks map onto native events and interceptors with glob and negated matchers` |
 | `PostToolUse` | `tool_result` | lifecycle | `node:classic hooks map onto native events and interceptors with glob and negated matchers` |
 | `PostToolUseFailure` | `tool_result` | lifecycle | `node:classic hooks map onto native events and interceptors with glob and negated matchers` |
-| `PostToolBatch` | `tool_batch_end` | 4eh lifecycle_events_v1 | `patch:settled_batches_are_reported_and_failed_turns_may_continue` |
-| `PermissionRequest` | `approval` | 4ec approval middleware | `patch:approval_gates_tighten_before_automatic_review` |
-| `PermissionDenied` | `approval_result` | 4ec approval middleware | `patch:approval_gates_tighten_before_automatic_review` |
-| `UserPromptSubmit` | `input` | 4ea input interception | `rust:input_and_model_request_continuations_pass_downstream_results_or_deny` |
-| `UserPromptExpansion` | `prompt_expanded` | 4eh composer_v2 | `patch:edits_compare_revisions_and_keep_cursor_and_selection` |
+| `PostToolBatch` | `tool_batch_end` | lifecycle_events_v1 | `patch:settled_batches_are_reported_and_failed_turns_may_continue` |
+| `PermissionRequest` | `approval` | approval middleware | `patch:approval_gates_tighten_before_automatic_review` |
+| `PermissionDenied` | `approval_result` | approval middleware | `patch:approval_gates_tighten_before_automatic_review` |
+| `UserPromptSubmit` | `input` | input interception | `rust:input_and_model_request_continuations_pass_downstream_results_or_deny` |
+| `UserPromptExpansion` | `prompt_expanded` | composer_v2 | `patch:edits_compare_revisions_and_keep_cursor_and_selection` |
 | `SessionStart` | `session` | lifecycle middleware | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
 | `SessionEnd` | `session` | lifecycle middleware | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
 | `Setup` | `start` | lifecycle | `rust:command_descriptions_tool_labels_and_lifecycle_events_register` |
-| `Stop` | `turn_stop` | 4eg autonomous_turns_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `StopFailure` | `turn_stop` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `SubagentStart` | `agent` | 4eg agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
-| `SubagentStop` | `agent` | 4eg agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
-| `TaskCreated` | `agent` | 4eg agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
-| `TaskCompleted` | `agent` | 4eg agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `Stop` | `turn_stop` | autonomous_turns_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `StopFailure` | `turn_stop` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `SubagentStart` | `agent` | agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `SubagentStop` | `agent` | agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `TaskCreated` | `agent` | agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `TaskCompleted` | `agent` | agent_lifecycle_v1 | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
 | `TeammateIdle` | `idle` | lifecycle | `rust:command_descriptions_tool_labels_and_lifecycle_events_register` |
-| `PreCompact` | `compaction` | 4eh compaction_intercept_v1 | `patch:compaction_chains_answer_skip_replace_and_fail_closed` |
-| `PostCompact` | `compaction_end` | 4eh compaction_intercept_v1 | `patch:a_summary_answer_replaces_manual_compaction_without_a_provider_call` |
-| `PreModelSwitch` | `model_request` | 4ee model interception | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
-| `PostModelSwitch` | `thread_settings` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `CwdChanged` | `thread_settings` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `DirectoryAdded` | `thread_settings` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `ConfigChange` | `config_change` | 4ed command and config middleware | `rust:command_and_config_interceptors_compose_transform_and_keep_floors` |
-| `InstructionsLoaded` | `instructions_loaded` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `PreCompact` | `compaction` | compaction_intercept_v1 | `patch:compaction_chains_answer_skip_replace_and_fail_closed` |
+| `PostCompact` | `compaction_end` | compaction_intercept_v1 | `patch:a_summary_answer_replaces_manual_compaction_without_a_provider_call` |
+| `PreModelSwitch` | `model_request` | model interception | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `PostModelSwitch` | `thread_settings` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `CwdChanged` | `thread_settings` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `DirectoryAdded` | `thread_settings` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `ConfigChange` | `config_change` | command and config middleware | `rust:command_and_config_interceptors_compose_transform_and_keep_floors` |
+| `InstructionsLoaded` | `instructions_loaded` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
 | `FileChanged` | `workspace_change` | events_v1 watches | `rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions` |
-| `WorktreeCreate` | `worktree` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `WorktreeRemove` | `worktree` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `Elicitation` | `elicitation` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `ElicitationResult` | `elicitation_result` | 4eh lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
-| `MessageDisplay` | `model_response` | 4ee model interception | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
+| `WorktreeCreate` | `worktree` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `WorktreeRemove` | `worktree` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `Elicitation` | `elicitation` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `ElicitationResult` | `elicitation_result` | lifecycle_events_v1 | `patch:lifecycle_seams_report_batches_loads_failures_and_elicitations` |
+| `MessageDisplay` | `model_response` | model interception | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` |
 | `Notification` | `app_notification` | app_v1 | `patch:capability_context_and_unrouted_methods_are_enforced` |
 
 ## Not supported and not replaceable
@@ -645,7 +645,7 @@ frozen surface's evidence at the clean validated revision. See `integration/EVID
 | coordination.providers | `rust:lifecycle_route_registration_resumes_across_two_host_calls` |
 | coordination.ledger | `patch:observe_only_accounts_record_usage_without_admission` · `rust:concurrent_admissions_cannot_oversubscribe_the_shared_limit` |
 | kernel.request_stream_middleware | `rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only` · `rust:routing_and_prompt_wrappers_compose_on_one_model_request` · `patch:sections_name_every_classified_item_and_protect_policy` · `patch:ordinary_sections_rewrite_drop_reorder_and_insert_around_fixed_policy` · `patch:stream_results_keep_identity_and_validate_tool_arguments` · `patch:request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_tool_calls` · `patch:stream_control_stops_only_at_output_boundaries_and_carries_the_retry` · `patch:middleware_switches_only_configured_lead_routes_and_transforms_text` · `rust:host_operation_continuations_retry_and_answer_under_the_actual_caller` · `rust:input_and_model_request_continuations_pass_downstream_results_or_deny` |
-| kernel.final_request_policy | `patch:send_segments_cover_every_text_leaf_and_name_opaque_values` · `patch:send_opaque_lists_unscanned_media_before_capped_encrypted_content` · `patch:send_pages_pack_short_segments_and_split_long_ones_with_context` · `patch:send_results_keep_inner_edits_and_stay_inside_editable_text` · `patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed` · `patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies` · `patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it` |
+| kernel.final_request_policy | `patch:send_segments_cover_every_text_leaf_and_name_opaque_values` · `patch:send_opaque_lists_unscanned_media_before_capped_encrypted_content` · `patch:send_pages_pack_short_segments_and_split_long_ones_with_context` · `patch:send_results_keep_inner_edits_and_stay_inside_editable_text` · `patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed` · `patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies` · `patch:authority_grants_are_declared_scoped_expiring_and_revocable` · `patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it` |
 | kernel.inter_mod_services | `rust:typed_services_are_host_routed_versioned_and_generate_installed_types` · `rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently` · `node:typed middleware and services register without ambient authority` |
 | context.assembly | `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` |
 | context.input | `rust:input_and_model_request_continuations_pass_downstream_results_or_deny` · `node:lifecycle events and interceptors require their capabilities` · `patch:mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them` |

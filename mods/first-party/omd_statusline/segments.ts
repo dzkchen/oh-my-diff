@@ -50,8 +50,8 @@ export const EMPTY: Data = {
   git: null, github: { key: null, status: 'idle', at: null, next: 0, failures: 0, pr: null, ci: null, detail: null }, scripts: {}, tick: 0, beat: null, armed: null, viewport: null, mods: null, pending: null,
 };
 
-export const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '').slice(0, limit);
-const cells = (char: string) => /\p{M}|‍|️/u.test(char) ? 0
+export const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '').slice(0, limit);
+const cells = (char: string) => /\p{M}|\u200D|\uFE0F/u.test(char) ? 0
   : /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꥠ-꥿가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u.test(char) ? 2 : 1;
 const width = (text: string) => [...text].reduce((sum, char) => sum + cells(char), 0);
 const clip = (text: string, max: number) => {

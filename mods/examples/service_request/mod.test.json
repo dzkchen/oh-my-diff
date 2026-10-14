@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "sidecars.invoke": [
+      {
+        "result": {
+          "provider": "example_echo",
+          "program_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_hashes": {},
+          "result": {
+            "echo": "extension-owned request"
+          },
+          "untrusted": true
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "example_service_request",
+      "event": "tool",
+      "name": "probe",
+      "payload": {},
+      "expect": {
+        "ok": true,
+        "value": {
+          "provider": "example_echo",
+          "program_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_hashes": {},
+          "result": {
+            "echo": "extension-owned request"
+          },
+          "untrusted": true
+        }
+      }
+    }
+  ]
+}

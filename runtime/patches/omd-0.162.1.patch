@@ -101790,10 +101790,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..8fe7fb2b6
+index 000000000..d209fac27
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5966 @@
+@@ -0,0 +1,5971 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -102433,6 +102433,9 @@ index 000000000..8fe7fb2b6
 +    }
 +    if granted("middleware") {
 +        exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
++    }
++    if granted("request_policy") {
++        exposure.push("request_policy: every model request must pass this mod's final-request check; whenever the mod is not loaded, faults or fails to serve, OMD refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused.");
 +    }
 +    if granted("history_write") {
 +        exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
@@ -107707,8 +107710,10 @@ index 000000000..8fe7fb2b6
 +                    "policy": m.package.policy, "peer_access": m.package.peer_access,
 +                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
 +                    "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
-+                    "exposure": authority_exposure(&m.package.capabilities)});
++                    "exposure": authority_exposure(&m.selection.capabilities)});
 +                status }).collect::<Vec<_>>()});
++        status["request_policy_unavailable"] =
++            json!(self.send_policy().and_then(|policy| policy.unavailable));
 +        status["access"] = json!(self.access);
 +        status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
 +        status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
@@ -133783,10 +133788,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..4f058a481
+index 000000000..0918dbda5
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5958 @@
+@@ -0,0 +1,5974 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -138982,6 +138987,7 @@ index 000000000..4f058a481
 +        "fs.external",
 +        "mcp",
 +        "history_write",
++        "request_policy",
 +    ];
 +    let path = write(
 +        "delegate",
@@ -139023,17 +139029,32 @@ index 000000000..4f058a481
 +    assert!(grants.mcp_servers.contains_key("docs"));
 +    let status = runtime.status()["mods"][0]["authority"].clone();
 +    assert_eq!(status["current"], true);
-+    assert_eq!(status["exposure"].as_array().unwrap().len(), 7);
-+    assert!(
-+        status["exposure"]
-+            .as_array()
-+            .unwrap()
-+            .iter()
-+            .any(|text| text.as_str().unwrap().starts_with("middleware:"))
++    assert_eq!(status["exposure"].as_array().unwrap().len(), 8);
++    for name in ["middleware", "request_policy"] {
++        assert!(
++            status["exposure"]
++                .as_array()
++                .unwrap()
++                .iter()
++                .any(|text| text.as_str().unwrap().starts_with(&format!("{name}:")))
++        );
++        assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&name));
++    }
++    let policy = status["exposure"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .filter_map(Value::as_str)
++        .find(|text| text.starts_with("request_policy:"))
++        .unwrap();
++    assert!(policy.contains("refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused."), "{policy}");
++    assert_eq!(
++        runtime.status()["request_policy_unavailable"],
++        "delegate registers no required model_send interceptor"
 +    );
-+    assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&"middleware"));
 +    contended(|| store.revoke("delegate"));
 +    runtime.reload().unwrap();
++    assert_eq!(runtime.status()["request_policy_unavailable"], Value::Null);
 +    assert!(
 +        runtime.grants("delegate").is_none(),
 +        "a revoked mod is disabled"
@@ -147180,10 +147201,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..806125b60
+index 000000000..6fa492af2
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2137 @@
+@@ -0,0 +1,2148 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -147487,6 +147508,17 @@ index 000000000..806125b60
 +        "os" => "run listed programs unsandboxed with your account's full access",
 +        "approve" => "approve tool calls for you",
 +        "approve.override" => "approve commands your own rules forbid",
++        "http" => "send web requests to the sites it lists",
++        "fs.external" => "read and change the folders it lists outside this repository",
++        "mcp" => "connect to the MCP servers it lists",
++        "policy" => "refuse other mods or limit what they can do",
++        "peers" => "message other Codex sessions",
++        "autonomous" => "queue and stop turns on its own",
++        "history_write" => "rewrite this session's transcript",
++        "history_persist" => "see and replace saved history text",
++        "request_policy" => {
++            "check every model request, and block all of them whenever it is not working"
++        }
 +        other => other,
 +    }
 +}

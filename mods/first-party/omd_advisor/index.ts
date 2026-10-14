@@ -29,7 +29,7 @@ const SECRETS = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
 ];
-const safe = (value: string) => [...value.replace(/[\x00-\x1f\x7f‪-‮⁦-⁩]/g, ' ')].slice(0, 768).join('');
+const safe = (value: string) => [...value.replace(/[\x00-\x1f\x7f\u202A-\u202E\u2066-\u2069]/g, ' ')].slice(0, 768).join('');
 const utf8 = new TextEncoder();
 const bytes = (value: string) => utf8.encode(value).length;
 const shrink = (text: string) => { const characters = [...text]; return characters.slice(0, Math.floor(characters.length * 0.9)).join(''); };

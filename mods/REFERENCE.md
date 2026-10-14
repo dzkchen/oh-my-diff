@@ -2,9 +2,8 @@
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
 `0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.1`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
-historical and do not load in the current host; the later .9 reference sections
-remain only as migration evidence. A store also generates `active-host.d.ts` and
+[`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
+loads. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
 service contracts available to consumers. Once a session has listed its tools,
 the store also generates `tool-types.d.ts` for the tools the host actually has
@@ -44,7 +43,7 @@ runtime and uses that runtime's required-interceptor decision, including failure
 fallback. Required persistence failure withholds text; dropping persistence work
 cancels the callback.
 
-Safety change (2026-10-13): callback admission and completion validate current
+Callback admission and completion validate current
 source and authority. Cancellation, disablement, revocation, source replacement
 or a changed executing generation rejects completion before callback state or
 results are accepted. Effects already performed by a host call are not rolled
@@ -116,6 +115,7 @@ native work.
 | `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
+| `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
@@ -738,7 +738,9 @@ selection, failed activation, fault or failed reload. While a required
 pass the stage are refused (`request_policy_unsupported_transport`): realtime
 calls and their websockets, image generation, web search and memory
 summarization; Responses websockets are always off under OMD. Disable the mod
-in `/mods` or `/omd` to send again. Without `model_send` interceptors or
+in `/mods` or `/omd` to send again (only the administrator can disable a
+managed policy). Status `request_policy_unavailable` names the reason every
+request is being refused, or is `null`. Without `model_send` interceptors or
 declared policies the stage does not run and the body is untouched.
 
 Records keep digests, never segment text: chain traces hash each page's
@@ -1140,7 +1142,7 @@ snapshots scaled down to the raster's pixel size (a client's `cell_px`, else
 8×16) and at most 8 MiB, and cells-only clients receive half-blocks. Host paths and handles
 never reach external renderers.
 
-Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and
+Frames are paced at 16 ms while experimental. Use `frame_ms` and
 `retry_after_ms` instead of hardcoded timing. Encoded producers keep their
 stdin and stdout shapes.
 For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables
@@ -1185,9 +1187,8 @@ capabilities.
 
 ## Host primitives
 
-API `0.2.0-experimental.5` adds these generic primitives; earlier API versions
-no longer load. Each advertises a host feature a package can require.
-With no mod registered for a primitive the host allocates nothing for it and
+API `0.2.0-experimental.5` provides these generic primitives. Each advertises a
+host feature a package can require. With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
 the recorded exclusions, live in `scripts/upstream_routes.json`;
 `python3 scripts/upstream_surfaces.py check /path/to/codex` flags upstream

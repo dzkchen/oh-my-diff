@@ -1,6 +1,6 @@
 # omd_frecency
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod that
 ranks `@` file mentions by fuzzy match, per-project frecency and Git status. The agent's search tools are unchanged.
 
 **Matching.** Smart case: a query with an uppercase letter matches case
