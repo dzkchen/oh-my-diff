@@ -10,26 +10,28 @@ import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const surface = {
-  events: { workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', tool_output: 'outputs', turn_start: 'lifecycle', idle: 'lifecycle', stop: 'lifecycle' },
-  replacements: [], middleware: [], intercept: {}, state: 'store', contracts: 'contracts',
-};
 const base = {
-  source, surface, api: manifest.api, capabilities: manifest.capabilities, settings: {}, state: null,
+  source, api: manifest.api, capabilities: manifest.capabilities, settings: {}, state: null,
   filename: fileURLToPath(new URL('./index.ts', import.meta.url)),
   entrypoint: 'index.ts',
   assets: Object.fromEntries(manifest.assets.map(name => [name, { text: readFileSync(new URL(name, import.meta.url), 'utf8'), sha256: '0'.repeat(64) }])),
 };
 
-function run(extra) {
-  const result = runnerSync({ ...base, ...extra });
-  assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+function replay(host, extra) {
+  const output = callback({ ...base, hook_budget_ms: 500, ...extra }, host);
+  assert.equal(output.error, undefined, output.error);
+  return output;
 }
+
+const script = steps => call => {
+  const [operation, args, value] = steps.shift() ?? [];
+  assert.equal(call.operation, operation);
+  if (args) assert.deepEqual(call.arguments, args);
+  return value;
+};
 
 const observed = { key: 'lsp.observed_repository', scope: 'repository' };
 
-// The four tests below replay one host call per runner turn and assert the call sequence.
 test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
   const repository = '/tmp/project';
   const files = {
@@ -70,17 +72,8 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
       default: throw new Error(`unexpected operation ${call.operation}`);
     }
   };
-  const replay = (event, payload, state = null) => {
-    const receipts = [];
-    for (let index = 0; index < 24; index++) {
-      const output = run({ event, payload, state, receipts, hook_budget_ms: 500 });
-      assert.equal(output.error, undefined, output.error);
-      if (!output.host_call) return output;
-      receipts.push({ call: output.host_call, value: server(output.host_call) });
-    }
-    assert.fail('mod did not finish');
-  };
-  const write = replay('workspace_change', { repository, call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
+  const sync = (event, payload, state = null) => replay(server, { event, payload, state });
+  const write = sync('workspace_change', { repository, call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
   assert.equal(write.state.servers.python.status, 'synced');
   assert.equal(write.state.servers.python.documents['pkg/old.py'].version, 1);
   assert.equal(write.state.servers.python.diagnostics['pkg/old.py'].count, 1);
@@ -88,58 +81,48 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
     { textDocument: { uri: uri('pkg/__init__.py'), version: null }, edits: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 9 } }, newText: 'new' }] },
     { textDocument: { uri: uri('pkg/use.py'), version: null }, edits: [{ range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } }, newText: 'new' }] },
   ] };
-  const requested = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
+  const requested = sync('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
   assert.deepEqual(requested.value, { status: 'ready', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null, 'pkg/__init__.py': 'barrel-hash', 'pkg/use.py': 'alias-hash' }, writes: { 'pkg/__init__.py': 'from .new import value as alias\n', 'pkg/use.py': 'from pkg.new import value as local\n' } });
   rename.documentChanges[0].textDocument.version = 9;
-  const stale = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
+  const stale = sync('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
   assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
-  const idle = replay('idle', {}, requested.state);
+  const idle = sync('idle', {}, requested.state);
   assert.equal(idle.state.servers.python.running, true);
   assert.equal(running, true);
   idleMs = 16 * 60_000;
-  const expired = replay('idle', {}, requested.state);
+  const expired = sync('idle', {}, requested.state);
   assert.equal(expired.state.servers.python.status, 'idle');
   assert.equal(running, false);
 });
 
 test('LSP mod reports an absent server and leaves the write event recoverable', () => {
   const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const step = receipts => run({ event: 'workspace_change', payload, receipts });
-  const first = step();
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: observed });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = step(receipts);
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { ...observed, expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = step(receipts);
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = step(receipts);
-  assert.equal(published.host_call.operation, 'events.publish');
-  const absent = step([...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }]);
-  assert.equal(absent.error, undefined);
+  const steps = [
+    ['store.get', observed, null],
+    ['store.put', { ...observed, expected_revision: null, value: { repository: payload.repository } }, { revision: 1 }],
+    ['process.which', { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] }, { found: [] }],
+    ['events.publish', undefined, { delivered: 0, dropped: 0 }],
+  ];
+  const absent = replay(script(steps), { event: 'workspace_change', payload });
+  assert.equal(steps.length, 0);
   assert.equal(absent.state.servers.python.status, 'fallback');
   assert.equal(absent.state.servers.python.reason, 'python_server_absent');
-  const broken = JSON.parse(runnerSync({ source: 'export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', filename: 'fixture.ts', api: manifest.api, surface,
-    capabilities: ['fs.read'], state: null, settings: {}, event: 'workspace_change', payload }).stdout);
+  const broken = runnerSync({ source: 'export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', filename: 'fixture.ts', api: manifest.api,
+    capabilities: ['fs.read'], state: null, settings: {}, event: 'workspace_change', payload });
   assert.match(broken.error, /broken/);
 });
 
 test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
   const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
   const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const step = receipts => run({ event: 'workspace_change', payload, state, receipts });
-  const first = step();
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: observed });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = step(receipts);
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { ...observed, expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = step(receipts);
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = step(receipts);
-  const absent = step([...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }]);
+  const steps = [
+    ['store.get', observed, null],
+    ['store.put', { ...observed, expected_revision: null, value: { repository: payload.repository } }, { revision: 1 }],
+    ['process.which', { names: ['typescript-language-server', 'vtsls'] }, { found: [] }],
+    ['events.publish', undefined, { delivered: 0, dropped: 0 }],
+  ];
+  const absent = replay(script(steps), { event: 'workspace_change', payload, state });
+  assert.equal(steps.length, 0);
   assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
   assert.equal(absent.state.servers.python.server, 'pylsp');
   assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
@@ -180,15 +163,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
     throw new Error(`unexpected operation ${call.operation}`);
   };
   const payload = { repository, source: 'tool', call_id: 'mixed', status: 'observed', changes: Object.keys(files).map(path => ({ path, before: null, after: files[path].sha256 })) };
-  const receipts = [];
-  let result;
-  for (let index = 0; index < 32; index++) {
-    result = run({ event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
-    assert.equal(result.error, undefined, result.error);
-    if (!result.host_call) break;
-    receipts.push({ call: result.host_call, value: server(result.host_call) });
-  }
-  assert.equal(result.host_call, null, 'mixed adapter run did not finish');
+  const result = replay(server, { event: 'workspace_change', payload });
   assert.deepEqual(started.map(item => [item.session, item.name, item.arguments]), [
     ['typescript', 'typescript-language-server', ['--stdio']], ['rust', 'rust-analyzer', []], ['java', 'jdtls', ['--jvm-arg=-Duser.home={process.home}']],
   ]);
@@ -196,7 +171,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
   assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
   assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = run({ event: 'workspace_pre_rename', payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
+  const cross = runnerSync({ ...base, event: 'workspace_pre_rename', payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });
 
@@ -413,7 +388,7 @@ function createHost({ files = {}, server = null, repository = '/repo', binary = 
 }
 
 function drive(host, event, payload, state = null, name = null) {
-  const output = callback({ ...base, event, name, payload, state, hook_budget_ms: host.budget }, host.call, [], { capture: error => !error.crash });
+  const output = callback({ ...base, event, name, payload, state, hook_budget_ms: host.budget }, host.call);
   assert.equal(output.error, undefined, output.error);
   return output;
 }

@@ -1,29 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const surface = { events: { terminal: 'terminal', component_event: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
-const unexpected = call => { throw new Error(`unexpected host call ${call.operation}`); };
+const unexpected = call => assert.fail(`unexpected host call ${call.operation}`);
 
 function run(input, host = unexpected) {
-  const receipts = [];
-  for (;;) {
-    const request = { source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'packages', 'store', 'terminal'],
-      settings: {}, state: null, surface, hook_budget_ms: 2000, receipts, ...input };
-    const output = JSON.parse(runnerSync(request).stdout);
-    if (output.error) throw new Error(output.error);
-    if (!output.host_call) return { ...output, ui_state: JSON.parse(output.ui_state) };
-    try {
-      receipts.push({ call: output.host_call, value: host(output.host_call) });
-    } catch (error) {
-      if (host === unexpected) throw error;
-      receipts.push({ call: output.host_call, error: error.message });
-    }
-  }
+  const output = callback({ source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'packages', 'store', 'terminal'],
+    settings: {}, state: null, hook_budget_ms: 2000, ...input }, host);
+  if (output.error) throw new Error(output.error);
+  return { ...output, ui_state: JSON.parse(output.ui_state) };
 }
 
 const item = (id, extra = {}) => ({ id, kind: 'mod', version: '1.0.0', description: `${id} description`, scope: 'user', path: `/mods/${id}`, source: 'selection',

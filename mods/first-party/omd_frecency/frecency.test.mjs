@@ -5,10 +5,9 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: { turn_start: 'lifecycle', completion: 'composer' }, replacements: ['completion'], middleware: [], intercept: { input: 'input' }, state: 'store', contracts: 'contracts' };
 
 function run(event, payload, host, name = '', state = null) {
-  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, surface, hook_budget_ms: 2000 };
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, hook_budget_ms: 2000 };
   const receipts = [];
   const output = callback(request, host, receipts, { capture: error => error.host === true });
   if (output.error) throw new Error(output.error);

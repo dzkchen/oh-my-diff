@@ -6,10 +6,6 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const native = readFileSync(new URL('../../../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
-const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const intercepts = Object.fromEntries([...native.match(/pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
-const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: [], intercept: intercepts, state: 'store', contracts: 'contracts' };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const candidate = digest('candidate');
 const criterion = 'Preserve the current work';
@@ -24,24 +20,13 @@ function invoke(name, payload, host, extra = {}) {
     payload = { ...payload, operation_id: `operation-${++operations}`, expected_revision: store.get(key)?.value.revision ?? 0 };
   }
   const receipts = [];
-  for (let turn = 0; turn < 33; turn++) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: ['crypto'], state: null,
-      settings: { check: { program: 'check', argv: [] } }, surface, event: 'tool', name, payload, ...options };
-    const reply = callback(request, host, receipts);
-    assert.ok(receipts.length <= 32, 'native callback host-call limit');
-    if (reply.error) throw new Error(reply.error);
-    if (!reply.host_call) {
-      if (['refused', 'interrupted', 'partially_integrated'].includes(reply.value?.status) && typeof reply.value.reason === 'string' && !options.refusals) throw new Error(reply.value.reason);
-      return reply;
-    }
-    assert.ok(receipts.length < 32, 'native callback host-call limit');
-    try { receipts.push({ call: reply.host_call, value: host(reply.host_call) }); }
-    catch (error) {
-      if (error.crash) throw error;
-      receipts.push({ call: reply.host_call, error: error.message });
-    }
-  }
-  throw new Error('fixture_operation_limit');
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: ['crypto'], state: null,
+    settings: { check: { program: 'check', argv: [] } }, event: 'tool', name, payload, ...options };
+  const reply = callback(request, host, receipts);
+  assert.ok(receipts.length <= 32, 'native callback host-call limit');
+  if (reply.error) throw new Error(reply.error);
+  if (['refused', 'interrupted', 'partially_integrated'].includes(reply.value?.status) && typeof reply.value.reason === 'string' && !options.refusals) throw new Error(reply.value.reason);
+  return reply;
 }
 
 function fixture(overrides = {}, contract = 'reviewed_omd', findingLedger = {}) {

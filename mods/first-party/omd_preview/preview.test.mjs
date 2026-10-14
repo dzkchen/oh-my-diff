@@ -13,8 +13,6 @@ const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const read = name => readFileSync(new URL(name, mod), 'utf8');
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
-const surface = { events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', composer: 'composer', component_event: 'terminal' },
-  intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 let responses = ['Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))', 'Earlier answer'];
 let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
 
@@ -62,8 +60,8 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     assert.fail(`unexpected preview host operation: ${operation}`);
   };
   const request = { source: modSource, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
-    surface, hook_budget_ms: 10000, assets };
-  const output = callback(request, host, [], { capture: error => !(error instanceof assert.AssertionError) });
+    hook_budget_ms: 10000, assets };
+  const output = callback(request, host);
   if (output.error) throw new Error(output.error);
   return { value: output.value, state: output.state, calls, registrations: output.registrations };
 }

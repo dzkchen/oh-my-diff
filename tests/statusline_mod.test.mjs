@@ -5,18 +5,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runnerSync } from './mod_runner.mjs';
+import { callback, runnerSync } from './mod_runner.mjs';
 
 const dir = new URL('../mods/first-party/omd_statusline/', import.meta.url);
 const read = name => readFileSync(new URL(name, dir), 'utf8');
 const manifest = JSON.parse(read('mod.json'));
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
-const surface = {
-  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', idle: 'lifecycle', thread_settings: 'lifecycle', turn_end: 'lifecycle', tool_result: 'lifecycle',
-    compaction_end: 'lifecycle', model_response: 'model', agent: 'middleware', tool_call: 'middleware', app_notification: 'threads', component_event: 'terminal' },
-  intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts',
-};
 const NOW = 1_800_000_000_000;
 const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.com:dzkchen/oh-my-diff.git\n@@\n 3 files changed, 12 insertions(+), 4 deletions(-)\n@@\n'
   + ['# branch.oid 0123456789abcdef', '# branch.head feat/line', '# branch.ab +2 -1', '1 M. N... 100644 100644 100644 a b src/a.ts', '1 .M N... 100644 100644 100644 a b src/b.ts',
@@ -40,22 +35,19 @@ const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation === 'credentials.list') return [];
   if (['events.publish', 'events.schedule', 'events.cancel'].includes(operation)) return { delivered: 1, dropped: 0 };
   if (operation === 'settings.write') return { settings: args.values };
-  throw new Error(`unexpected host call ${operation}`);
+  assert.fail(`unexpected host call ${operation}`);
 };
 
-const run = (input, receipts) => JSON.parse(runnerSync({ source, filename: fileURLToPath(new URL('index.ts', dir)), entrypoint: 'index.ts', assets, api: manifest.api, surface,
-  capabilities: manifest.capabilities, settings: {}, state: null, virtual_time_ms: NOW, hook_budget_ms: 10_000, ...input, receipts }).stdout);
+const request = input => ({ source, filename: fileURLToPath(new URL('index.ts', dir)), entrypoint: 'index.ts', assets, api: manifest.api,
+  capabilities: manifest.capabilities, settings: {}, state: null, virtual_time_ms: NOW, hook_budget_ms: 10_000, ...input });
 function call(input, answer = host()) {
-  const receipts = [];
   const calls = [];
-  for (;;) {
-    const output = run(input, receipts);
-    assert.equal(output.error, undefined, output.error);
-    if (!output.host_call) return { ...output, calls, ui: output.ui_state === undefined ? null : JSON.parse(output.ui_state) };
-    calls.push(output.host_call);
-    const value = (() => { try { return answer(output.host_call); } catch (error) { return error; } })();
-    receipts.push(value instanceof Error ? { call: output.host_call, error: value.message } : { call: output.host_call, value });
-  }
+  const output = callback(request(input), operation => {
+    calls.push(operation);
+    return answer(operation);
+  });
+  assert.equal(output.error, undefined, output.error);
+  return { ...output, calls, ui: output.ui_state === undefined ? null : JSON.parse(output.ui_state) };
 }
 const feed = (state, events, answer) => events.reduce((current, [event, payload, extra = {}]) => call({ event, payload, state: current, ...extra }, answer).state, state);
 const response = (id, patch = {}) => ({
@@ -151,7 +143,7 @@ test('git results from another checkout are discarded and a non-repository hides
   assert.equal(raced.git.key, '/elsewhere');
   const timer = { event: 'timer', payload: { key: 'time:git' }, state };
   const recorded = call(timer).calls.map(item => ({ call: item, value: host()(item) }));
-  assert.match(run({ ...timer, state: moved }, recorded).error ?? '', /replay_diverged/, 'a state-conflict retry after a directory change reruns Git');
+  assert.match(runnerSync(request({ ...timer, state: moved, receipts: recorded })).error ?? '', /replay_diverged/, 'a state-conflict retry after a directory change reruns Git');
   assert.doesNotMatch(lines(view(state, {}, { ledger: { thread_id: 'lead', cwd: '/other', cost: null } }))[0], /feat\/line/);
   const outside = settled(host({ 'exec.run': () => ({ exit_code: 3, timed_out: false, stdout: '', stderr: 'fatal: not a git repository' }) }));
   assert.equal(outside.git.error, 'not a repository');

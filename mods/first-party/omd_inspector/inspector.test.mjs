@@ -6,22 +6,15 @@ import { runnerSync } from '../../../tests/mod_runner.mjs';
 const root = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', root), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', root), 'utf8'));
-const surface = { events: { terminal: 'terminal', component_event: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
-  intercept: { render: 'terminal' },
-  replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const run = (event, payload, state) => {
-  const result = JSON.parse(runnerSync({ source, filename: 'index.ts', api: manifest.api,
-    capabilities: manifest.capabilities, settings: {}, state, surface, hook_budget_ms: 2000,
-    receipts: [], event, payload }).stdout);
+  const result = runnerSync({ source, filename: 'index.ts', api: manifest.api,
+    capabilities: manifest.capabilities, settings: {}, state, hook_budget_ms: 2000, event, payload });
   assert.ifError(result.error);
   assert.ok(!result.host_call);
   return result;
 };
 const inspect = input => {
-  const result = runnerSync({ source, filename: 'index.ts', api: manifest.api, surface, settings: {}, state: null, event: 'inspect', capabilities: [], ...input });
-  assert.ifError(result.error);
-  const output = JSON.parse(result.stdout);
-  assert.equal(result.status, 0, `${result.stderr}\n${output.error ?? ''}`);
+  const output = runnerSync({ source, filename: 'index.ts', api: manifest.api, settings: {}, state: null, event: 'inspect', capabilities: [], ...input });
   assert.equal(output.error, undefined, output.error);
   return output;
 };
