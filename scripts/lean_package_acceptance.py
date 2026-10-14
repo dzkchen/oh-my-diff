@@ -8,14 +8,9 @@ import subprocess
 import tarfile
 import tempfile
 
-try:
-    from scripts import install_support as support
-    from scripts import lean_profiles
-    from scripts.lean_profile_acceptance import expected_defaults
-except ModuleNotFoundError:
-    import install_support as support
-    import lean_profiles
-    from lean_profile_acceptance import expected_defaults
+from scripts import install_support as support
+from scripts import lean_profiles
+from scripts.lean_profile_acceptance import expected_defaults
 
 
 ROOT = Path(__file__).resolve().parents[1]

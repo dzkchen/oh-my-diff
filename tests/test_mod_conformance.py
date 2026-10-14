@@ -45,7 +45,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             mod_conformance.COVERAGE.read_text(),
             mod_conformance.render(contract),
-            "mods/COVERAGE.md is stale; rerun scripts/mod_conformance.py --write",
+            "mods/COVERAGE.md is stale; rerun python3 -m scripts.mod_conformance --write",
         )
 
     def test_first_party_mods_use_only_the_published_api(self):

@@ -154,7 +154,7 @@ the recovery path if a mod fails.
    the window only with an advisory and mitigation. Stable API deprecation
    follows [the compatibility policy](../mods/COMPATIBILITY.md).
 
-Run `python3 scripts/extension_index.py` from the repository root before
+Run `python3 -m scripts.extension_index` from the repository root before
 submitting metadata. It checks every indexed source and evidence link, exact
 manifest identity/license/version, plugin components, release pins, and
 candidate/development separation.

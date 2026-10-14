@@ -20,6 +20,7 @@ def digest(path):
 
 
 def run(arguments, cwd=None, env=None, capture=True):
+    arguments = [str(item) for item in arguments]
     streams = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE} if capture else {}
     result = subprocess.run(arguments, cwd=cwd, env=env, text=True, **streams)
     if result.returncode:
@@ -153,6 +154,14 @@ def atomic_text(path, text, mode=0o644):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def check_or_write(path, text, write, stale):
+    if write:
+        atomic_text(path, text)
+        print(f"wrote {path.relative_to(ROOT)}")
+    elif not path.is_file() or path.read_text() != text:
+        raise SystemExit(stale)
 
 
 def preview_lock():

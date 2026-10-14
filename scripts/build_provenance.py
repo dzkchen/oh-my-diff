@@ -1,13 +1,9 @@
 import json
 import hashlib
 from pathlib import Path
-import subprocess
 import tomllib
 
-try:
-    from scripts import install_support as support
-except ModuleNotFoundError:
-    import install_support as support
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = "build-provenance.json"
@@ -55,7 +51,7 @@ def inputs(tree, arguments, environment):
     if any(argument.startswith("--target") for argument in arguments):
         raise ValueError("build provenance refuses target overrides")
     expected = identity()
-    git = lambda *args: subprocess.check_output(["git", *args], cwd=tree, text=True).strip()
+    git = lambda *args: support.output(["git", *args], cwd=tree)
     if git("rev-parse", "HEAD") != expected["upstream_commit"]:
         raise ValueError("build provenance requires the pinned checkout")
     manifest = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
@@ -70,8 +66,7 @@ def inputs(tree, arguments, environment):
             raise ValueError(f"build provenance source differs: {name}")
     if support.digest(tree / "codex-rs/Cargo.lock") != expected["cargo_lock_sha256"]:
         raise ValueError("build provenance dependency lock differs")
-    compiler = subprocess.check_output(["rustc", "-vV"],
-                                      cwd=tree / "codex-rs", env=environment, text=True).strip()
+    compiler = support.output(["rustc", "-vV"], cwd=tree / "codex-rs", env=environment)
     if f"release: {expected['rust_toolchain']}" not in compiler or f"host: {expected['target']}" not in compiler:
         raise ValueError("build provenance compiler or target differs")
     variables = {key: value for key, value in environment.items()

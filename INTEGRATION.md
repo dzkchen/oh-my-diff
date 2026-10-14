@@ -1,6 +1,6 @@
 # Integration coverage
 
-<!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->
+<!-- Generated from integration/matrix.json by python3 -m scripts.integration_matrix --write. -->
 
 Accumulated integration coverage for the rust-v0.162.1 pinned runtime as of
 2026-10-10. Each component names its owner, version, retained fixtures, limits,
@@ -244,8 +244,8 @@ Untested and not claimed:
 patch · `node:` `mods/runner.test.mjs` · `python:` `tests/` · `script:` a repository checker.
 
 ```sh
-python3 scripts/integration_matrix.py
-python3 scripts/mod_conformance.py
+python3 -m scripts.integration_matrix
+python3 -m scripts.mod_conformance
 python3 scripts/mod_compatibility.py
 python3 -m unittest discover -s tests
 OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd

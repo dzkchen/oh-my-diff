@@ -9,10 +9,7 @@ import tempfile
 import time
 import tomllib
 
-try:
-    from scripts import install_support as private
-except ModuleNotFoundError:
-    import install_support as private
+from scripts import install_support as private
 
 
 ROOT = Path(__file__).resolve().parents[1]

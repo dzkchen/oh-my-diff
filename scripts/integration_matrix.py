@@ -6,12 +6,8 @@ import re
 import sys
 from pathlib import Path
 
-try:
-    from scripts import lean_profiles, install_support, execution_evidence
-except ModuleNotFoundError:
-    import lean_profiles
-    import install_support
-    import execution_evidence
+from scripts import lean_profiles, install_support, execution_evidence
+from scripts.execution_evidence import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
@@ -76,25 +72,6 @@ def sources():
         "languages": servers,
         "hooks": re.findall(r"`([a-z_]+)`", re.search(r"and hooks for (.*?)\.\nA hook", coverage, re.S).group(1)),
     }
-
-
-def resolve(reference):
-    """Resolve source inventory only; this does not discover or execute a test."""
-    kind, _, name = reference.partition(":")
-    if kind == "rust":
-        path, _, function = name.partition("::")
-        source = ROOT / "runtime" / path
-        return source.exists() and re.search(rf"fn {re.escape(function)}\(", source.read_text()) is not None
-    if kind == "patch":
-        patch = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
-        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", patch.read_text(), re.M) is not None
-    if kind == "node":
-        return f"test('{name}'" in (ROOT / "mods/runner.test.mjs").read_text()
-    if kind == "python":
-        return any(f"def {name}(" in path.read_text() for path in (ROOT / "tests").glob("test_*.py"))
-    if kind == "script":
-        return (ROOT / name).exists()
-    return False
 
 
 def release_evidence(matrix):
@@ -309,7 +286,7 @@ def render(matrix):
     out = [
         "# Integration coverage",
         "",
-        "<!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->",
+        "<!-- Generated from integration/matrix.json by python3 -m scripts.integration_matrix --write. -->",
         "",
         f"Accumulated integration coverage for the {release['upstream_tag']} pinned runtime as of",
         f"{matrix['as_of']}. Each component names its owner, version, retained fixtures, limits,",
@@ -459,14 +436,8 @@ def main(argv=()):
         problems += execution_evidence.verify(release_evidence(matrix), args.executed_evidence)
     if problems:
         raise SystemExit("\n".join(problems))
-    rendered = render(matrix)
-    if args.write:
-        DOCUMENT.write_text(rendered)
-        print(f"wrote {DOCUMENT.relative_to(ROOT)}")
-    elif DOCUMENT.read_text() != rendered:
-        problems.append("INTEGRATION.md is stale; rerun scripts/integration_matrix.py --write")
-    if problems:
-        raise SystemExit("\n".join(problems))
+    install_support.check_or_write(DOCUMENT, render(matrix), args.write,
+                                   "INTEGRATION.md is stale; rerun python3 -m scripts.integration_matrix --write")
     print(
         f"integration matrix {matrix['as_of']}: {len(matrix['components'])} maintained components, "
         f"{len(matrix['combinations'])} inventoried combinations over {len(matrix['boundaries'])} shared "

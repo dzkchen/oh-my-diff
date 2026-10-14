@@ -144,7 +144,7 @@ From this repository:
 mise run mods:check
 mise run mods:test
 mise run mods:host-check   # needs an omd-mod built from the applied runtime patch on PATH or --omd-mod
-python3 scripts/mod_conformance.py
+python3 -m scripts.mod_conformance
 python3 scripts/check_native_ownership.py
 ```
 

@@ -7,10 +7,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-try:
-    from scripts.preview_lock import package_digest
-except ModuleNotFoundError:
-    from preview_lock import package_digest
+from scripts.preview_lock import package_digest
 
 
 ROOT = Path(__file__).resolve().parents[1]

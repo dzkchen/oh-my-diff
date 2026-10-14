@@ -3,10 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    from scripts import install_support as support
-except ModuleNotFoundError:
-    import install_support as support
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/plugin-v1.lock.json"
@@ -35,14 +32,8 @@ def build():
 
 
 def main():
-    text = json.dumps(build(), indent=2) + "\n"
-    if "--write" in sys.argv[1:]:
-        LOCK.write_text(text)
-        print(f"wrote {LOCK.relative_to(ROOT)}")
-    elif LOCK.read_text() != text:
-        raise SystemExit("bundled plugin lock is stale; rerun with --write after reviewing the sources")
-    else:
-        print("bundled plugin lock matches the pinned sources")
+    support.check_or_write(LOCK, json.dumps(build(), indent=2) + "\n", "--write" in sys.argv[1:],
+                           "bundled plugin lock is stale; rerun with --write after reviewing the sources")
 
 
 if __name__ == "__main__":

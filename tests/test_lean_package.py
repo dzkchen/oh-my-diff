@@ -41,7 +41,7 @@ class SourceBuildTests(unittest.TestCase):
             args = argparse.Namespace(payload=payload, upstream='/usr/bin/true', profile='platform', prefix='prefix',
                                       bin_dir='bin', store='store', node='node', attach_store=False)
             calls = []
-            with patch.object(lean_package, 'run', side_effect=lambda *arguments, **kwargs: calls.append(arguments)), \
+            with patch.object(lean_package.support, 'run', side_effect=lambda arguments, **kwargs: calls.append(arguments)), \
                     patch.object(lean_package.support, 'binary_identity', return_value={'path': '/usr/bin/true', 'version': 'fixture'}), \
                     patch.object(lean_package.support, 'compatible_upstream', return_value=True), \
                     patch.object(lean_package.tarfile, 'open', side_effect=AssertionError('extracted again')):
@@ -77,7 +77,7 @@ class SourceBuildTests(unittest.TestCase):
                 'compiler': f"release: {identity['rust_toolchain']}\nhost: {identity['target']}",
                 'environment': {}, 'cargo_configs': {}}}
 
-            def run(*arguments, **kwargs):
+            def run(arguments, **kwargs):
                 if arguments[0] != 'cargo':
                     return
                 binaries = [arguments[i + 1] for i, value in enumerate(arguments) if value == '--bin']
@@ -92,5 +92,5 @@ class SourceBuildTests(unittest.TestCase):
                 self.assertEqual(record['inputs'], inputs)
                 return {'sha256': 'fixture'}
 
-            with patch.object(lean_package, 'run', side_effect=run), patch.object(lean_package.release, 'sign'), patch.object(lean_package.release.build_provenance, 'inputs', return_value=inputs), patch.object(lean_package, 'archive_payload', side_effect=archive), patch.object(lean_package, 'install_archive'):
+            with patch.object(lean_package.support, 'run', side_effect=run), patch.object(lean_package.release, 'sign'), patch.object(lean_package.release.build_provenance, 'inputs', return_value=inputs), patch.object(lean_package, 'archive_payload', side_effect=archive), patch.object(lean_package, 'install_archive'):
                 lean_package.source_build(args)

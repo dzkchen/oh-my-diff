@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import fcntl
-import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -17,13 +16,11 @@ import tempfile
 from threading import Thread
 import time
 
+from scripts.install_support import digest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGO = "mods/first-party/omd_logo/index.ts"
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def variant(archive, version, work):
@@ -237,8 +234,7 @@ def run(archive, upstream, output, pty):
             checks.append("omd update rollback restores the previous version and its first-party sources; automatic updates skip it")
 
             if pty:
-                sys.path.insert(0, str(ROOT / "scripts"))
-                import pty_session
+                from scripts import pty_session
                 repo = base / "repo"
                 repo.mkdir()
                 pty_session.git(repo, "init", "-q")
