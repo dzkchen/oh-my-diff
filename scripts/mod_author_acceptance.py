@@ -9,7 +9,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EVIDENCE = Path(os.environ.get("OMD_AUTHOR_EVIDENCE", ROOT / ".docs/audits/evidence/mod-author-tooling-20260920"))
+EVIDENCE = Path(os.environ.get("OMD_AUTHOR_EVIDENCE", Path(tempfile.gettempdir()) / "omd-author-evidence"))
 
 
 def run(logs, name, args, cwd=ROOT, env=None):

@@ -2101,6 +2101,47 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
 }
 
 #[test]
+fn terminal_handlers_rerun_only_when_state_or_input_changes() {
+    let source = "export default api => { api.command('bump', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: String(Date.now())})); }";
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
+    let root = temp.path().canonicalize().unwrap();
+    let steady = package(
+        &root,
+        "steady",
+        "export default api => api.on('terminal', () => ({status: ['steady']}));",
+        &["terminal"],
+    );
+    trust(&store, &steady, &["terminal"]);
+    let mut runtime = host(&temp);
+    let title = |runtime: &mut ModHost, payload: Value| {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        runtime.terminal_view(payload, || true).view.title.unwrap()
+    };
+    let invocations = |runtime: &ModHost| {
+        runtime.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == "steady")
+            .unwrap()["telemetry"]["invocations"]
+            .clone()
+    };
+    let first = title(&mut runtime, json!({"event": "draw"}));
+    assert_eq!(title(&mut runtime, json!({"event": "draw"})), first);
+    let steady_runs = invocations(&runtime);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let ticked = title(&mut runtime, json!({"event": "draw"}));
+    assert_ne!(ticked, first);
+    assert_eq!(invocations(&runtime), steady_runs);
+    let input = title(&mut runtime, json!({"event": "resize"}));
+    assert_ne!(input, first);
+    runtime
+        .invoke("fixture", runtime.generation(), "command", "bump", Value::Null)
+        .unwrap();
+    assert_ne!(title(&mut runtime, json!({"event": "resize"})), input);
+}
+
+#[test]
 fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -2903,6 +2944,82 @@ fn an_incompatible_package_names_the_host_and_package_api_versions() {
     let error = ModStore::inspect_package(&path).unwrap_err().to_string();
     assert!(error.contains(MOD_API_VERSION), "{error}");
     assert!(error.contains("0.1.0-experimental.1"), "{error}");
+}
+
+#[test]
+fn codex_config_is_allowlisted_and_reported_for_active_mods() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let write = |directory: &str, extra: Value| {
+        let path = packaged(
+            &root,
+            directory,
+            directory,
+            "export default () => {}",
+            &[],
+            &[],
+        );
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        path
+    };
+    let feature = json!({"compatibility":{"required_features":["codex_config_v1"]}});
+    let planner = write(
+        "planner",
+        json!({"codex_config":{"tools.update_plan.enabled":true},"compatibility":feature["compatibility"]}),
+    );
+    trust(&store, &planner, &[]);
+    for (directory, extra) in [
+        (
+            "unlisted",
+            json!({"codex_config":{"model":true},"compatibility":feature["compatibility"]}),
+        ),
+        (
+            "disabled",
+            json!({"codex_config":{"tools.update_plan.enabled":false},"compatibility":feature["compatibility"]}),
+        ),
+        (
+            "undeclared",
+            json!({"codex_config":{"tools.update_plan.enabled":true}}),
+        ),
+    ] {
+        let error = ModStore::inspect_package(&write(directory, extra))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("invalid_codex_config"),
+            "{directory}: {error}"
+        );
+    }
+    let plain = write("plain", json!({}));
+    trust(&store, &plain, &[]);
+    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    let published = runtime.codex_config();
+    assert_eq!(
+        published.lock().unwrap().iter().collect::<Vec<_>>(),
+        ["tools.update_plan.enabled"]
+    );
+    let planner_status = runtime.status()["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "planner")
+        .unwrap()["authority"]["codex_config"]
+        .clone();
+    assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
+    store.enable(&planner, false).unwrap();
+    runtime.reload().unwrap();
+    assert!(published.lock().unwrap().is_empty());
 }
 
 fn error_of(runtime: &ModHost, id: &str) -> String {

@@ -6,21 +6,15 @@ import re
 import subprocess
 import tarfile
 
-try:
-    from scripts import install_support as support
-    from scripts import full_mods_lock, lean_profiles, build_provenance
-except ModuleNotFoundError:
-    import install_support as support
-    import full_mods_lock
-    import lean_profiles
-    import build_provenance
+from scripts import install_support as support
+from scripts import full_mods_lock, lean_profiles, build_provenance
+from scripts.build_provenance import BINARIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
 VERSION = "0.1.0-alpha.1"
 TARGET = "aarch64-apple-darwin"
-BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
 HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
 ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
 AUTHOR_ARCHIVE = "mod-api.tgz"
@@ -113,7 +107,7 @@ def build(artifact_dir, package_mode=False):
         raise ValueError("release binary does not match the active upstream pin")
     return {
         "schema": 1,
-        "product": "oh-my-diff-lean-package-candidate-v1",
+        "product": lean_profiles.PRODUCT,
         "version": VERSION,
         "upstream_tag": upstream["tag"],
         "upstream_commit": upstream["commit"],
@@ -126,11 +120,12 @@ def build(artifact_dir, package_mode=False):
         "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "build_provenance": provenance,
-        "platform_tools": ["omd", "omd-contract"],
+        "platform_tools": list(lean_profiles.HOST_TOOLS),
         "profiles": {
-            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods", "omd_update"], "first_party_default_active": ["omd_logo", "omd_mods", "omd_update"],
-                         "plugin_sources": []},
-            "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
+            "platform": {"label": lean_profiles.PROFILE_LABELS["platform"],
+                         "first_party_installed": list(lean_profiles.PLATFORM_PACKAGES),
+                         "first_party_default_active": list(lean_profiles.PLATFORM_PACKAGES), "plugin_sources": []},
+            "full": {"label": lean_profiles.PROFILE_LABELS["full"], "first_party_installed": sorted((*preview["packages"], *full["packages"])),
                      "first_party_default_active": sorted(lean_profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },
@@ -144,14 +139,8 @@ def main():
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--package-mode", action="store_true")
     args = parser.parse_args()
-    result = json.dumps(build(args.artifact_dir.resolve(), args.package_mode), indent=2, sort_keys=True) + "\n"
-    if args.write:
-        OUTPUT.write_text(result)
-        print(f"wrote {OUTPUT.relative_to(ROOT)}")
-    elif OUTPUT.read_text() != result:
-        raise SystemExit("lean release lock differs from exact artifacts and sources")
-    else:
-        print("lean release lock matches exact artifacts and sources")
+    support.check_or_write(OUTPUT, json.dumps(build(args.artifact_dir.resolve(), args.package_mode), indent=2, sort_keys=True) + "\n",
+                           args.write, "lean release lock differs from exact artifacts and sources")
 
 
 if __name__ == "__main__":

@@ -25,8 +25,7 @@ fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
-The historical `0.155.1` candidate and private build remain frozen. Verify the
-current host and SDK artifacts with
+Verify the host and SDK artifacts with
 `python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
 
 Release artifacts require `build-provenance.json`, written by the build workflow
@@ -85,16 +84,17 @@ with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
 `omd_inspector`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
-`omd_plan_removal`, `omd_statusline` and `omd_tool_lines`; Codex's
+`omd_plan_removal`, `omd_statusline`, `omd_tool_lines` and `omd_plan_panel`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
-the privacy policy and the usage HUD (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
-`omd_advisor`, `omd_preview`, `omd_frecency`, `omd_profiles`, `omd_privacy` and `omd_usage`) are installed but
+the privacy policy, the usage HUD and `/continue` (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,
+`omd_advisor`, `omd_preview`, `omd_frecency`, `omd_profiles`, `omd_privacy`, `omd_usage` and `omd_continue`) are installed but
 disabled. Advisor every-turn selection requires its own explicit host policy and allowance;
 installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
-re-enabled when they were on), and adds newly bundled first-party packages disabled. Each installation keeps a copy of
+re-enabled when they were on, also when an earlier attempt stopped between replacing and re-trusting), and adds
+newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
 `--previous PREFIX` carries the activation choice and route setups of the installation being replaced. Three plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
@@ -108,14 +108,7 @@ skills and mod components are source inventory, not enabled extensions.
 See [plugin setup](plugins/README.md) for each component's separate trust and
 activation steps. OMD Core can install the same packages explicitly.
 
-Packages outside this launch collection are not shipped. They remain in the
-annotated Git tag `pre-launch-collection`, except for later additions whose restore
-revision is recorded in the launch cut inventory, and return in post-launch waves. Wave 1 is `omd_source_knowledge`,
-`omd_mini`, `omd_plan_panel`, `omd_cursor`, `omd_programmable_context`, `omd_continue`
-and the `omd_profiles` account-switcher upgrade; wave 2 is the remaining deferred
-mods and plugins, `bridge/` and `browser/`.
-See the [launch cut inventory](INTEGRATION.md#launch-cut-inventory) for restoration
-requirements and dependency notes.
+Packages outside this launch collection are not shipped.
 
 Enable the installed synchronization mod explicitly with
 `/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,
@@ -169,10 +162,8 @@ shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 `OMD_CONTROLLED_MANIFEST` fails closed on the current host. Configure routes and grants in
 the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
 with `omd-contract`. Enabling the mod does not select a contract or grant a
-provider. The earlier bounded live native-workflow task and its `unverified` receipt are
-historical evidence, not qualification of this mod-owned workflow. Batch 2.55
-has local synthetic coverage; installed-profile and live-provider qualification
-remain separate gates.
+provider. The workflow has local synthetic coverage; installed-profile and
+live-provider qualification remain separate gates.
 
 The OMD+ profile includes inactive `omd_claude_cli` and `omd_profiles` route mods.
 `omd_claude_cli` uses the official Claude CLI's logged-in
@@ -220,10 +211,15 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain. `install.sh uninstall` also removes every older installation, failed
+The mod store and Codex state remain. Direct installation refuses a launcher directory that already holds any of
+`codex`, `omd`, `omd-contract`, `omd-mod`, `omd-package` or `omd-mod-author`, dangling links included. Removal
+journals itself once its checks pass, so an interrupted `omd-package uninstall` finishes when run again and keeps
+any launcher replaced in the meantime. `install.sh uninstall` also removes every older installation, failed
 attempts, staged updates and session markers; it refuses, leaving the current installation intact, when an older
-one cannot be removed. The stores under `ROOT/stores` stay, with the `ROOT/catalog` copies that `/mods` Browse
-installs of OMD's own mods run from.
+one cannot be removed. Once removal of the current installation has started, an interruption leaves the upstream
+commands restored and the next installer command finishes the uninstall. The stores under `ROOT/stores` stay, with
+the `ROOT/catalog` copies that `/mods` Browse installs of OMD's own mods run from, and the `ROOT/.install.lock`
+file that serializes installer commands.
 
 ## Install and manage mods
 
@@ -295,7 +291,7 @@ GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-r
 `lean_package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
 release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
 it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
-requirement. No release is published yet (Batch 5c), so checks report that none is available.
+requirement. Until a release is published, checks report that none is available.
 
 ```sh
 omd update                      # install the newest compatible release (or the pinned one)
@@ -374,13 +370,12 @@ uninstall. A failed first installation restores those commands and removes new
 launchers. Recovery restores commands if installation stopped before activation;
 after activation it completes the active installation's launchers.
 Rolling back restores the previous generation's binaries, launchers
-and first-party mod sources but keeps the rest of the mod store; Phase 11 makes no promise that an
-older generation reads newer store data.
+and first-party mod sources but keeps the rest of the mod store; an older
+generation is not guaranteed to read newer store data.
 If you explicitly added the
 staged plugin marketplace to Codex, remove its plugins and run
 `codex plugin marketplace remove oh-my-diff` before uninstall; the installer
-refuses to leave a marketplace pointing at a removed directory. Local candidate qualification
-and package limits are recorded in `.docs/ROADMAP.md`.
+refuses to leave a marketplace pointing at a removed directory.
 
 Both profiles include the generic `omd` extension-command dispatcher, the
 `omd-contract` selection tool and `omd-mod`, all on `PATH` next to `codex`.
@@ -392,5 +387,4 @@ store; only explicitly trusted and enabled command exports are available. For
 example, `omd COMMAND --repo /absolute/project` routes to the selected
 extension. No session-review or memory behavior is built into this binary.
 Package installation and activation remain separate. The current host exposes
-API `0.2.0-experimental.5`; API 0.1 packages are historical compatibility
-fixtures and do not qualify as current package candidates.
+API `0.2.0-experimental.5`; API 0.1 packages no longer load.

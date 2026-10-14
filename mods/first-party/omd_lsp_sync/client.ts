@@ -17,7 +17,7 @@ export function createClient(api: ModAPI) {
     spent += cost + size(result);
     return result;
   };
-  const stopServer = (s: State) => budget({ session: s.adapter }, a => api.host.tryCall('process.stop', a));
+  const stopServer = (s: State) => api.host.tryCall('process.stop', { session: s.adapter });
   const readFiles = (paths: string[]) => budget({ paths }, a => api.host.tryCall('workspace.read', a));
   let dirty = false;
   const save = (s: State) => {
@@ -71,7 +71,7 @@ export function createClient(api: ModAPI) {
         const start = object(object(item?.range ?? null)?.start ?? null);
         const text = string(item?.message ?? null);
         if ((item?.severity ?? 1) === 1) count++;
-        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${[...text.replace(/\s+/g, ' ')].slice(0, 200).join('')}`);
       }
       s.diagnostics[path] = { count, version, errors: [...errors] };
     }
@@ -101,7 +101,7 @@ export function createClient(api: ModAPI) {
       if (found) {
         const settled = settle(s, outgoing);
         if (!settled.ok) return settled;
-        return 'error' in found ? fail(`server_error:${JSON.stringify(found.error).slice(0, 160)}`) : ok(found.result ?? null);
+        return 'error' in found ? fail(`server_error:${[...JSON.stringify(found.error)].slice(0, 160).join('')}`) : ok(found.result ?? null);
       }
     }
     return fail('server_request_timeout');
@@ -213,14 +213,15 @@ export function createClient(api: ModAPI) {
       }
       if (!outbound.length) continue;
       const batch = exchange(s, outbound, 150);
-      const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
-      if (!settled.ok) {
+      if (!batch.ok && batch.error === 'callback_budget') {
         s.documents = priorDocuments;
         s.diagnostics = priorDiagnostics;
-        if (settled.error !== 'callback_budget') {
-          stopServer(s);
-          s.running = false;
-        }
+        return batch;
+      }
+      const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+      if (!settled.ok) {
+        stopServer(s);
+        s.running = false;
         return settled;
       }
       changed = true;

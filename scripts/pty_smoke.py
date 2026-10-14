@@ -6,8 +6,7 @@ from pathlib import Path
 import re
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pty_session import ROOT, Session, call, environment, fresh, git, provider  # noqa: E402
+from scripts.pty_session import ROOT, Session, call, environment, fresh, git, provider
 
 FIRST_PARTY = sorted(path for path in (ROOT / "mods/first-party").iterdir() if (path / "mod.json").is_file())
 

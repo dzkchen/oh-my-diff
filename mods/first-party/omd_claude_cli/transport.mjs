@@ -111,13 +111,16 @@ function overageWindow(headers) {
   return headers['anthropic-ratelimit-unified-representative-claim']?.startsWith('seven_day') ? '7d' : '5h';
 }
 
-// After a response reports extra usage, later requests stay stopped until the reported reset.
+// After a response reports extra usage, later requests stay stopped until the reported reset; without a usable reset they stay stopped until the provider restarts or extra_usage is enabled.
 export function stoppedForExtraUsage(headers, now = Date.now()) {
-  return usingOverage(headers) && resetAt(headers, overageWindow(headers)) > now;
+  if (!usingOverage(headers)) return false;
+  const reset = resetAt(headers, overageWindow(headers));
+  return reset === null || reset > now;
 }
 
 export function extraUsageStop(headers) {
-  return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, overageWindow(headers))}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
+  const until = resetAt(headers, overageWindow(headers)) ? 'that reset' : 'the provider restarts or extra_usage is on';
+  return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, overageWindow(headers))}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests until ${until}; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
 }
 
 export function upstreamFailure(status, headers, body, billing = 'subscription') {
@@ -360,19 +363,26 @@ export function cliArgs(entry, effort) {
 export async function runClaude(request, entry, claude, signal, onEvent, {
   upstream = 'https://api.anthropic.com', home = process.env.HOME, username = process.env.USER,
   translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true } = {}) {
-  if (signal.aborted) throw new Error('claude_request_cancelled');
+  const cancelled = () => { if (signal.aborted) throw new Error('claude_request_cancelled'); };
+  cancelled();
   translated ??= translateRequest(request, entry.slug);
-  const root = await mkdtemp('/private/tmp/omd-claude-');
   const relay = new Relay(upstream, onEvent, onHeaders, { billing, extraUsage, model: entry.slug });
+  let root;
   let child;
+  let fault;
   const cancel = () => { cancelChild(child); relay.abort(); };
   signal.addEventListener('abort', cancel, { once: true });
   try {
+    root = await mkdtemp('/private/tmp/omd-claude-');
+    cancelled();
     await relay.listen();
-    await writeFile(join(root, 'tools.json'), JSON.stringify(translated.manifest));
-    await writeFile(join(root, 'settings.json'), JSON.stringify({ env: {
-      CLAUDE_CODE_EXTRA_BODY: JSON.stringify(translated.extra) } }));
-    await writeFile(join(root, 'system.md'), translated.system);
+    cancelled();
+    await Promise.all([
+      writeFile(join(root, 'tools.json'), JSON.stringify(translated.manifest)),
+      writeFile(join(root, 'settings.json'), JSON.stringify({ env: {
+        CLAUDE_CODE_EXTRA_BODY: JSON.stringify(translated.extra) } })),
+      writeFile(join(root, 'system.md'), translated.system)]);
+    cancelled();
     const mcp = { mcpServers: { omd: { command: process.execPath,
       args: [file, 'inert', join(root, 'tools.json')] } } };
     const argv = [...cliArgs(entry, translated.effort), '--system-prompt-file', join(root, 'system.md'),
@@ -386,6 +396,8 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     delete env.OMD_READY_TOKEN;
     if (translated.extra.max_tokens) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(translated.extra.max_tokens);
     child = spawn(claude, argv, { cwd: root, env, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    child.on('error', error => { fault ??= error; });
+    child.stdin.on('error', () => {});
     const exited = new Promise(resolve => child.once('close', resolve));
     const next = eventQueue(child);
     for (const [index, source] of translated.frames.entries()) {
@@ -433,10 +445,12 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     const admission = { upstream_requests: relay.used, blocked_requests: relay.denied,
       request_id: relay.requestId };
     return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd, billing);
+  } catch (error) {
+    throw signal.aborted ? new Error('claude_request_cancelled') : fault ?? error;
   } finally {
     signal.removeEventListener('abort', cancel);
     cancel();
-    await rm(root, { recursive: true, force: true });
+    if (root) await rm(root, { recursive: true, force: true });
   }
 }
 

@@ -1,6 +1,6 @@
 # Extension types
 
-<!-- Generated from mods/extension-types.json by scripts/mod_extension_types.py --write. -->
+<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->
 
 Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.
 
@@ -24,6 +24,8 @@ contains only the packages labeled `bundled` below.
 | `omd_model_picker@0.3.0-preview.2` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
 | `omd_statusline@0.1.0-preview.1` | `mod` | `mods/first-party/omd_statusline` | Draws a configurable status line in the generic below- or above-composer site from public telemetry, exec and HTTP grants; it turns off the native status row through built-in controls only while active; active by default in OMD+. |
 | `omd_tool_lines@0.1.0-preview.1` | `mod` | `mods/first-party/omd_tool_lines` | Owns a render hook on the generic tool_call site that draws one line per agent tool call; the host keeps the native row, its expansion and copy; active by default in OMD+. |
+| `omd_plan_panel@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_panel` | Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool. |
+| `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | A user-typed /continue command that submits a resume instruction with the host-recorded turn activity. |
 | `omd_lsp_sync@0.5.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view. |
 | `omd_advisor@0.4.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives. |
 | `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); enabled by default in OMD+. |

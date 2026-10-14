@@ -1,6 +1,6 @@
 # Integration coverage
 
-<!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->
+<!-- Generated from integration/matrix.json by python3 -m scripts.integration_matrix --write. -->
 
 Accumulated integration coverage for the rust-v0.162.1 pinned runtime as of
 2026-10-10. Each component names its owner, version, retained fixtures, limits,
@@ -12,7 +12,7 @@ The matrix is checked against the
 shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language
 or evidence reference that disagrees with the runtime fails the check.
 
-**Qualification:** Development pin: the 0.162.1 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-01621-20261010.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.
+**Qualification:** Development pin: the 0.162.1 patch passes fresh replay, a second-apply no-op and scoped checks; the host serves API 0.2.0-experimental.5. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.
 
 Combinations below are representative, not exhaustive. Exercising every possible
 combination of mods, adapters and optional integrations is not promised; the untested
@@ -39,12 +39,13 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods, omd_update | omd_logo, omd_mods, omd_update | none |
-| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_frecency, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_statusline, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_removal, omd_statusline, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
+| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_continue, omd_frecency, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_statusline, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_statusline, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
 | `omd_advisor` | 0.4.0-preview.1 | `mods/first-party/omd_advisor` |
 | `omd_claude_cli` | 0.2.0-preview.3 | `mods/first-party/omd_claude_cli` |
+| `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
 | `omd_frecency` | 0.1.0-preview.2 | `mods/first-party/omd_frecency` |
 | `omd_inspector` | 0.2.0-preview.1 | `mods/first-party/omd_inspector` |
 | `omd_logo` | 0.2.0-preview.1 | `mods/first-party/omd_logo` |
@@ -52,6 +53,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_lsp_view` | 0.2.0-preview.1 | `mods/first-party/omd_lsp_view` |
 | `omd_model_picker` | 0.3.0-preview.2 | `mods/first-party/omd_model_picker` |
 | `omd_mods` | 0.1.0-preview.1 | `mods/first-party/omd_mods` |
+| `omd_plan_panel` | 0.1.0-preview.1 | `mods/first-party/omd_plan_panel` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
 | `omd_preview` | 0.2.0-preview.1 | `mods/first-party/omd_preview` |
 | `omd_privacy` | 0.1.0-preview.1 | `mods/first-party/omd_privacy` |
@@ -62,89 +64,40 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_usage` | 0.1.0-preview.1 | `mods/first-party/omd_usage` |
 | `omd_workflow` | 0.2.0-preview.2 | `mods/first-party/omd_workflow` |
 
-## Launch cut inventory
+## Launch collection
 
-Deferred packages are preserved at the `pre-launch-collection` tag unless a different revision is noted below;
-they are not shipped, selected or tested here. Restore a tagged path with `git checkout pre-launch-collection -- <path>`.
-Launch entries exist on disk; wave entries are deleted until their wave restores them.
-Restoring source also requires reintegrating and testing its dependencies and contracts; for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.
-Wave 1 also upgrades omd_profiles with an account switcher.
-The wave 2 `omd-mod-authoring` plugin arrived after `pre-launch-collection`; restore it with `git checkout cd7f92c467f61af03490f396b6614eaa6af073a6 -- plugins/optional/plugins/omd-mod-authoring`. The author CLI, testing SDK and typed host tools remain shipped.
-Deleted and not restored: `benchmarks/`.
-
-| Package | Kind | Launch | Wave 1 | Wave 2 | Path |
-| --- | --- | --- | --- | --- | --- |
-| `omd_logo` | mod | default-active (OMD Core + OMD+) | — | — | `mods/first-party/omd_logo` |
-| `omd_mods` | mod | default-active (OMD Core + OMD+) | — | — | `mods/first-party/omd_mods` |
-| `omd_update` | mod | default-active (OMD Core + OMD+) | — | — | `mods/first-party/omd_update` |
-| `omd_inspector` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_inspector` |
-| `omd_model_picker` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_model_picker` |
-| `omd_plan_removal` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_plan_removal` |
-| `omd_statusline` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_statusline` |
-| `omd_tool_lines` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_tool_lines` |
-| `omd_preview` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_preview` |
-| `omd_lsp_sync` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_lsp_sync` |
-| `omd_lsp_view` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_lsp_view` |
-| `omd_claude_cli` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_claude_cli` |
-| `omd_profiles` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_profiles` |
-| `omd_workflow` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_workflow` |
-| `omd_frecency` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_frecency` |
-| `omd_privacy` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_privacy` |
-| `omd_usage` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_usage` |
-| `omd_advisor` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_advisor` |
-| `omd-anchored-edit` | plugin | staged (OMD+) | — | — | `plugins/bundled/oh-my-diff/plugins/omd-anchored-edit` |
-| `omd-artifact-reading` | plugin | staged (OMD+) | — | — | `plugins/bundled/oh-my-diff/plugins/omd-artifact-reading` |
-| `omd-code-execution` | plugin | staged (OMD+) | — | — | `plugins/bundled/oh-my-diff/plugins/omd-code-execution` |
-| `omd_source_knowledge` | mod | — | restore | — | `mods/first-party/omd_source_knowledge` |
-| `omd_mini` | mod | — | restore | — | `mods/first-party/omd_mini` |
-| `omd_plan_panel` | mod | — | restore | — | `mods/first-party/omd_plan_panel` |
-| `omd_cursor` | mod | — | restore | — | `mods/first-party/omd_cursor` |
-| `omd_programmable_context` | mod | — | restore | — | `mods/first-party/omd_programmable_context` |
-| `omd_continue` | mod | — | restore | — | `mods/first-party/omd_continue` |
-| `omd_checks` | mod | — | — | restore | `mods/first-party/omd_checks` |
-| `omd_coordination` | mod | — | — | restore | `mods/first-party/omd_coordination` |
-| `omd_editor` | mod | — | — | restore | `mods/first-party/omd_editor` |
-| `omd_git` | mod | — | — | restore | `mods/first-party/omd_git` |
-| `omd_graph_navigator` | mod | — | — | restore | `mods/first-party/omd_graph_navigator` |
-| `omd_guideline_governance` | mod | — | — | restore | `mods/first-party/omd_guideline_governance` |
-| `omd_herdr` | mod | — | — | restore | `mods/first-party/omd_herdr` |
-| `omd_layout` | mod | — | — | restore | `mods/first-party/omd_layout` |
-| `omd_mcp` | mod | — | — | restore | `mods/first-party/omd_mcp` |
-| `omd_muse` | mod | — | — | restore | `mods/first-party/omd_muse` |
-| `omd_notes` | mod | — | — | restore | `mods/first-party/omd_notes` |
-| `omd_panes` | mod | — | — | restore | `mods/first-party/omd_panes` |
-| `omd_project_pi_prompts` | mod | — | — | restore | `mods/first-party/omd_project_pi_prompts` |
-| `omd_prompt_queue` | mod | — | — | restore | `mods/first-party/omd_prompt_queue` |
-| `omd_reactive_rules` | mod | — | — | restore | `mods/first-party/omd_reactive_rules` |
-| `omd_recovery` | mod | — | — | restore | `mods/first-party/omd_recovery` |
-| `omd_repository_analysis` | mod | — | — | restore | `mods/first-party/omd_repository_analysis` |
-| `omd_research` | mod | — | — | restore | `mods/first-party/omd_research` |
-| `omd_session_anchor` | mod | — | — | restore | `mods/first-party/omd_session_anchor` |
-| `omd_shared_checkout` | mod | — | — | restore | `mods/first-party/omd_shared_checkout` |
-| `omd_task_tools` | mod | — | — | restore | `mods/first-party/omd_task_tools` |
-| `omd_theme` | mod | — | — | restore | `mods/first-party/omd_theme` |
-| `omd_typed_tasks` | mod | — | — | restore | `mods/first-party/omd_typed_tasks` |
-| `omd_verification_gate` | mod | — | — | restore | `mods/first-party/omd_verification_gate` |
-| `omd_worktree` | mod | — | — | restore | `mods/first-party/omd_worktree` |
-| `omd_focus_flow` | mod | — | — | restore | `mods/optional/omd_focus_flow` |
-| `omd-application-bridges` | plugin | — | — | restore | `plugins/bundled/oh-my-diff/plugins/omd-application-bridges` |
-| `omd-guidance-hooks` | plugin | — | — | restore | `plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks` |
-| `omd-review-policy` | plugin | — | — | restore | `plugins/bundled/oh-my-diff/plugins/omd-review-policy` |
-| `omd-browser` | plugin | — | — | restore | `plugins/optional/plugins/omd-browser` |
-| `omd-curated-memory` | plugin | — | — | restore | `plugins/optional/plugins/omd-curated-memory` |
-| `omd-debugger` | plugin | — | — | restore | `plugins/optional/plugins/omd-debugger` |
-| `omd-procedures` | plugin | — | — | restore | `plugins/optional/plugins/omd-procedures` |
-| `omd-session-review` | plugin | — | — | restore | `plugins/optional/plugins/omd-session-review` |
-| `bridge` | tree | — | — | restore | `bridge` |
-| `browser` | tree | — | — | restore | `browser` |
-| `omd-mod-authoring` | plugin | — | — | restore | `plugins/optional/plugins/omd-mod-authoring` |
+| Package | Kind | Tier | Profiles | Path |
+| --- | --- | --- | --- | --- |
+| `omd_logo` | mod | default-active | OMD Core + OMD+ | `mods/first-party/omd_logo` |
+| `omd_mods` | mod | default-active | OMD Core + OMD+ | `mods/first-party/omd_mods` |
+| `omd_update` | mod | default-active | OMD Core + OMD+ | `mods/first-party/omd_update` |
+| `omd_inspector` | mod | default-active | OMD+ | `mods/first-party/omd_inspector` |
+| `omd_model_picker` | mod | default-active | OMD+ | `mods/first-party/omd_model_picker` |
+| `omd_plan_removal` | mod | default-active | OMD+ | `mods/first-party/omd_plan_removal` |
+| `omd_plan_panel` | mod | default-active | OMD+ | `mods/first-party/omd_plan_panel` |
+| `omd_statusline` | mod | default-active | OMD+ | `mods/first-party/omd_statusline` |
+| `omd_continue` | mod | opt-in | OMD+ | `mods/first-party/omd_continue` |
+| `omd_tool_lines` | mod | default-active | OMD+ | `mods/first-party/omd_tool_lines` |
+| `omd_preview` | mod | opt-in | OMD+ | `mods/first-party/omd_preview` |
+| `omd_lsp_sync` | mod | opt-in | OMD+ | `mods/first-party/omd_lsp_sync` |
+| `omd_lsp_view` | mod | opt-in | OMD+ | `mods/first-party/omd_lsp_view` |
+| `omd_claude_cli` | mod | opt-in | OMD+ | `mods/first-party/omd_claude_cli` |
+| `omd_profiles` | mod | opt-in | OMD+ | `mods/first-party/omd_profiles` |
+| `omd_workflow` | mod | opt-in | OMD+ | `mods/first-party/omd_workflow` |
+| `omd_frecency` | mod | opt-in | OMD+ | `mods/first-party/omd_frecency` |
+| `omd_privacy` | mod | opt-in | OMD+ | `mods/first-party/omd_privacy` |
+| `omd_usage` | mod | opt-in | OMD+ | `mods/first-party/omd_usage` |
+| `omd_advisor` | mod | opt-in | OMD+ | `mods/first-party/omd_advisor` |
+| `omd-anchored-edit` | plugin | staged | OMD+ | `plugins/bundled/oh-my-diff/plugins/omd-anchored-edit` |
+| `omd-artifact-reading` | plugin | staged | OMD+ | `plugins/bundled/oh-my-diff/plugins/omd-artifact-reading` |
+| `omd-code-execution` | plugin | staged | OMD+ | `plugins/bundled/oh-my-diff/plugins/omd-code-execution` |
 
 ## Host and public API
 
 | Component | Owner | Version | Status | Fixtures | Limitations | Removal or migration |
 | --- | --- | --- | --- | --- | --- | --- |
-| **OMD host runtime** | OMD runtime (runtime/omd, runtime/native) | 0.1.0 on Codex 0.162.1 — features: turn_abort_v1, terminal_selection_v1, terminal_copy_v1, environment_overrides_v1, timers_16ms_v1, author_diagnostics_v1, author_offline_runner_v1, author_tooling_v1, installed_contract_types_v1, package_manager_v1, service_contracts_v1, service_dispatch_v1, integration_receipts_v1, tool_result_fingerprints_v1, source_use_v1, state_migration_v1, terminal_components_v1, terminal_identity_v1, terminal_render_sites_v1, terminal_welcome_v1, terminal_rich_line_v1, terminal_box_model_v1, transactional_reload_v1, task_tool_exposure_v1, virtual_reads_v1, scoped_data_v1, plugin_dispatch_v1, turn_evidence_v1, service_requests_v1, exec_v1, exec_output_artifacts_v1, guarded_exec_v1, package_text_assets_v1, package_imports_v1, workspace_access_v1, workspace_fs_v1, workspace_snapshots_v1, workspace_fingerprint_v1, snapshot_exec_v1, agent_parent_history_v1, agent_failures_v1, task_resume_v1, contract_scoped_restrictions_v1, store_v1, routes_v1, model_turn_interception_v1, final_request_policy_v1, continuation_middleware_v1, builtins_v1, contracts_v2, framed_process_v1, process_streams_v1, process_raster_v1, raster_pixels_v1, kernels_v1, terminal_lists_v1, adapters_v1, app_v1, approval_v1, unrestricted_process_v1, delegated_approval_v1, tool_batch_v1, tool_continuation_v2, events_v1, store_thread_v1, state_scopes_v1, turn_activity_v1, binary_evidence_v1, package_controls_v1, terminal_surface_v1, credentials_v1, completion_v1, tool_feedback_v1, terminal_media_v1, terminal_surface_paint_v1, terminal_backdrop_transform_v1, terminal_image_sample_v1, terminal_import_lifetime_v1, secrets_v1, terminal_prompt_v1, model_complete_v2, sdk_helpers_v1, history_v1, history_rewrite_v1, terminal_pty_v1, dynamic_tools_v1, timers_v1, terminal_input_v1, terminal_style_v1, completion_arguments_v1, terminal_editor_v1, pty_programs_v1, route_reload_v1, terminal_tabs_v1, terminal_inline_sites_v1, render_hooks_v1, component_modules_v1, ui_composition_v1, ui_controls_v1, reactive_state_v1, session_ports_v1, structured_access_v1, command_config_middleware_v1, admission_api_policy_v1, agent_lifecycle_v1, peer_sessions_v1, autonomous_turns_v1, provider_billing_v1, compaction_intercept_v1, composer_v2, lifecycle_events_v1, user_submissions_v1, terminal_raster_v1, svg_assets_v1, history_persist_v1, model_cache_v1, composer_key_v1, completion_tokens_v1, mention_read_v1 — schemas: package 1, state_storage 1, installed_contract_types 1 | supported | `rust:omd/tests/mods.rs::host_versions_and_storage_schemas_are_reported_independently` · `rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries` · `script:scripts/mod_compatibility.py` | Pinned Apple Silicon development host. The host is feature-agnostic and features are TypeScript mods; evidence is local and offline, and release qualification remains open. | Select or reinstall the retained upstream executable; `OMD_MODE=upstream_direct` disables OMD task behaviour inside the custom binary. |
-| **Public TypeScript mod API** | OMD mod host (runtime/omd/src/mods.rs) | 0.2.0-experimental.5 — supported versions: 0.2.0-experimental.5 — terminal operations: terminal.notify, terminal.show_thread, terminal.import_file, terminal.image_sample, composer.read, composer.write, composer.suggest, builtins.invoke, terminal.open, terminal.prompt, terminal.pane, terminal.panes, terminal.notice, terminal.selection, terminal.copy, terminal.blit, terminal.pty — sites: sidebar, header, above_composer, below_composer, dialog, welcome | supported | `script:scripts/mod_conformance.py` · `rust:omd/tests/mods.rs::exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `node:typed module context callback` | API 0.2 is experimental. API 0.1 admission and SDK declarations are retired in this development host; historical compatibility fixtures do not establish current support. | Breaking stable changes need an API major with one stable OMD release of deprecation notice; each row has a finite support window in mods/COMPATIBILITY.md. |
+| **OMD host runtime** | OMD runtime (runtime/omd, runtime/native) | 0.1.0 on Codex 0.162.1 — features: turn_abort_v1, terminal_selection_v1, terminal_copy_v1, environment_overrides_v1, timers_16ms_v1, author_diagnostics_v1, author_offline_runner_v1, author_tooling_v1, installed_contract_types_v1, package_manager_v1, service_contracts_v1, service_dispatch_v1, integration_receipts_v1, tool_result_fingerprints_v1, source_use_v1, state_migration_v1, terminal_components_v1, terminal_identity_v1, terminal_render_sites_v1, terminal_welcome_v1, terminal_rich_line_v1, terminal_box_model_v1, transactional_reload_v1, task_tool_exposure_v1, virtual_reads_v1, scoped_data_v1, plugin_dispatch_v1, turn_evidence_v1, service_requests_v1, exec_v1, exec_output_artifacts_v1, guarded_exec_v1, package_text_assets_v1, package_imports_v1, workspace_access_v1, workspace_fs_v1, workspace_snapshots_v1, workspace_fingerprint_v1, snapshot_exec_v1, agent_parent_history_v1, agent_failures_v1, task_resume_v1, contract_scoped_restrictions_v1, store_v1, routes_v1, model_turn_interception_v1, final_request_policy_v1, continuation_middleware_v1, builtins_v1, contracts_v2, framed_process_v1, process_streams_v1, process_raster_v1, raster_pixels_v1, kernels_v1, terminal_lists_v1, adapters_v1, app_v1, approval_v1, unrestricted_process_v1, delegated_approval_v1, tool_batch_v1, tool_continuation_v2, events_v1, store_thread_v1, state_scopes_v1, turn_activity_v1, binary_evidence_v1, package_controls_v1, terminal_surface_v1, credentials_v1, completion_v1, tool_feedback_v1, terminal_media_v1, terminal_surface_paint_v1, codex_config_v1, terminal_image_sample_v1, terminal_import_lifetime_v1, secrets_v1, terminal_prompt_v1, model_complete_v2, sdk_helpers_v1, history_v1, history_rewrite_v1, terminal_pty_v1, dynamic_tools_v1, timers_v1, terminal_input_v1, terminal_style_v1, completion_arguments_v1, terminal_editor_v1, pty_programs_v1, route_reload_v1, terminal_tabs_v1, terminal_inline_sites_v1, render_hooks_v1, component_modules_v1, ui_composition_v1, ui_controls_v1, reactive_state_v1, session_ports_v1, structured_access_v1, command_config_middleware_v1, admission_api_policy_v1, agent_lifecycle_v1, peer_sessions_v1, autonomous_turns_v1, provider_billing_v1, compaction_intercept_v1, composer_v2, lifecycle_events_v1, user_submissions_v1, terminal_raster_v1, svg_assets_v1, history_persist_v1, model_cache_v1, composer_key_v1, completion_tokens_v1, mention_read_v1 — schemas: package 1, state_storage 1, installed_contract_types 1 | supported | `rust:omd/tests/mods.rs::host_versions_and_storage_schemas_are_reported_independently` · `rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries` · `script:scripts/mod_compatibility.py` | Pinned Apple Silicon development host. The host is feature-agnostic and features are TypeScript mods; evidence is local and offline, and release qualification remains open. | Select or reinstall the retained upstream executable; `OMD_MODE=upstream_direct` disables OMD task behaviour inside the custom binary. |
+| **Public TypeScript mod API** | OMD mod host (runtime/omd/src/mods.rs) | 0.2.0-experimental.5 — supported versions: 0.2.0-experimental.5 — terminal operations: terminal.notify, terminal.show_thread, terminal.import_file, terminal.image_sample, composer.read, composer.write, composer.suggest, builtins.invoke, terminal.open, terminal.prompt, terminal.pane, terminal.panes, terminal.notice, terminal.selection, terminal.copy, terminal.blit, terminal.pty — sites: sidebar, header, above_composer, below_composer, dialog, welcome | supported | `script:scripts/mod_conformance.py` · `rust:omd/tests/mods.rs::exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `node:typed module context callback` | API 0.2 is experimental. API 0.1 admission and SDK declarations are retired; API 0.1 packages no longer load. | Breaking stable changes need an API major with one stable OMD release of deprecation notice; each row has a finite support window in mods/COMPATIBILITY.md. |
 | **Mod package install, update and rollback** | OMD package manager (runtime/omd/src/mods/package_manager.rs) | package schema 1 | supported | `rust:omd/tests/packages.rs::local_updates_preview_preserve_edits_settings_and_rollback` · `rust:omd/tests/packages.rs::stale_plans_and_interrupted_transactions_preserve_the_previous_lock` · `rust:omd/tests/packages.rs::repository_revision_is_immutable_and_cached_for_offline_reuse` | Local folders, Git repositories (a branch or tag locks to its commit), curated-index releases and npm packages from public or npmrc-configured private registries (sha512-verified, no runtime dependencies, npm install scripts never run). Installing never enables a mod, and granted permissions still run with that authority. | `omd-mod` disable, uninstall, revoke and package-quarantine work without any control mod; disable and uninstall restore the previous lock and preserve edited sources and explicit settings, and quarantine blocks the installed version while keeping its data. |
 | **Administrator policy and managed deployment** | OMD mod host (runtime/omd/src/mods/policy.rs, package_manager.rs) | policy schema 1 | supported | `rust:omd/tests/managed.rs::managed_tiers_wrap_user_mods_and_required_guards_cannot_be_skipped` · `rust:omd/tests/managed.rs::administrator_controls_override_user_and_project_selections_with_provenance` · `rust:omd/tests/managed.rs::tampered_policy_fails_closed_and_stale_or_revoked_managed_content_never_loads` · `rust:omd/tests/managed.rs::managed_collections_deploy_per_user_through_mirrors_offline_and_roll_back_cleanly` · `rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation` · `rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions` | Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service. | An administrator clears or rolls back the policy (`omd-mod policy clear\|rollback`, `omd-package policy remove\|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running. |
 
@@ -235,7 +188,7 @@ Untested and not claimed:
 - **Independently authored mods combined with the first-party bundle** — no independent-author trial has run; the human author trial is now W1c, so no third-party composition is claimed.
 - **Upgrading from an earlier published OMD release** — no earlier public OMD mod release exists; only synthetic host, API and state transitions are covered.
 - **Any combination on Linux or Intel macOS** — only aarch64-apple-darwin on the pinned toolchain is verified; other platforms remain evaluation scope.
-- **The Kiro gateway connector beside the mod set** — not implemented; it remains a separate Phase 10 checkbox with its own acceptance.
+- **The Kiro gateway connector beside the mod set** — not implemented.
 - **Every possible combination of mods, plugins and optional integrations** — the space is combinatorially unbounded; this matrix maintains representative combinations and names what is not covered instead.
 
 ## Reproducing the evidence
@@ -244,8 +197,8 @@ Untested and not claimed:
 patch · `node:` `mods/runner.test.mjs` · `python:` `tests/` · `script:` a repository checker.
 
 ```sh
-python3 scripts/integration_matrix.py
-python3 scripts/mod_conformance.py
+python3 -m scripts.integration_matrix
+python3 -m scripts.mod_conformance
 python3 scripts/mod_compatibility.py
 python3 -m unittest discover -s tests
 OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd

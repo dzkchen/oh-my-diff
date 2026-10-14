@@ -8,6 +8,8 @@ const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const RADIUS = 16;
 const MAX_BYTES = 96_000;
 const MAX_OUTPUT = 60_000;
+const RECEIPT_BUDGET = 131_072 - 2_048;
+const FALLBACK = 'use the ordinary patch tool';
 const OPS = ['replace', 'delete', 'insert_before', 'insert_after', 'append', 'prepend'];
 
 // FNV-1a over line number and content, as in pi-hashline-edit: identical lines still get distinct anchors.
@@ -113,6 +115,18 @@ function apply(text: string, rows: Row[], spans: Span[]): { text: string; diff: 
   return { text: result, diff };
 }
 
+function bytes(value: Json): number {
+  const text = JSON.stringify(value);
+  let total = text.length;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0x80) total += code < 0x800 || (code >= 0xd800 && code <= 0xdfff) ? 1 : 2;
+  }
+  return total;
+}
+
+const receipt = (operation: string, args: Json, value: Json) => bytes({ call: { operation, arguments: args }, value }) + 1;
+
 function bounded(lines: string[], note: (shown: number) => string): string {
   let size = 0;
   const shown = lines.findIndex(line => (size += line.length + 1) > MAX_OUTPUT);
@@ -130,8 +144,13 @@ export default function activate(api: ModAPI) {
     const stat = api.host.tryCall('workspace.stat', { paths });
     if (!stat.ok) return stat;
     const total = paths.reduce((sum, name) => sum + (stat.value.files[name]?.size ?? 0), 0);
-    if (total > MAX_BYTES) throw new Error(`files_too_large: ${total} bytes exceeds ${MAX_BYTES}; use the ordinary patch tool`);
-    return api.host.tryCall('workspace.read', { paths });
+    if (total > MAX_BYTES) throw new Error(`files_too_large: ${total} bytes exceeds ${MAX_BYTES}; ${FALLBACK}`);
+    const read = api.host.tryCall('workspace.read', { paths });
+    if (!read.ok) {
+      if (read.error.startsWith('host_result_limit')) throw new Error(`files_too_large: the JSON-encoded contents exceed one callback's ${RECEIPT_BUDGET}-byte budget; ${FALLBACK}`);
+      return read;
+    }
+    return { ...read, spent: receipt('workspace.stat', { paths }, stat.value) + receipt('workspace.read', { paths }, read.value) };
   };
 
   api.tool({ name: 'read', description: 'Read files as LINE#HASH|content lines. Cite these anchors in the edit tool.', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 }, offset: { type: 'integer', minimum: 1 }, limit: { type: 'integer', minimum: 1, maximum: 2000 } }, required: ['paths'], additionalProperties: false } }, value => guard(() => {
@@ -220,6 +239,8 @@ export default function activate(api: ModAPI) {
       }
     }
     if (failures.length) return { status: 'rejected', writes_attempted: false, failures };
+    const needed = current.spent + receipt('workspace.transaction', { expected, writes }, { files: expected, backup: null });
+    if (needed > RECEIPT_BUDGET) return { status: 'rejected', writes_attempted: false, reason: `edit_too_large: reading and rewriting these files needs ${needed} of one callback's ${RECEIPT_BUDGET} JSON bytes; ${FALLBACK}` };
     const result = api.host.tryCall('workspace.transaction', { expected, writes });
     if (!result.ok) return { status: 'transaction_failed', reason: result.error, review: 'Inspect current files before any retry: rollback can conflict with another writer.' };
     return { status: 'applied', diff: bounded(diff, () => '… diff truncated; read the files for further anchors') };

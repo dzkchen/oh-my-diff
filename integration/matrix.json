@@ -94,7 +94,7 @@
         "tool_feedback_v1",
         "terminal_media_v1",
         "terminal_surface_paint_v1",
-        "terminal_backdrop_transform_v1",
+        "codex_config_v1",
         "terminal_image_sample_v1",
         "terminal_import_lifetime_v1",
         "secrets_v1",
@@ -168,7 +168,7 @@
         "rust:omd/tests/mods.rs::exclusive_decisions_require_a_replacement_registration_while_observers_compose",
         "node:typed module context callback"
       ],
-      "limitations": "API 0.2 is experimental. API 0.1 admission and SDK declarations are retired in this development host; historical compatibility fixtures do not establish current support.",
+      "limitations": "API 0.2 is experimental. API 0.1 admission and SDK declarations are retired; API 0.1 packages no longer load.",
       "removal": "Breaking stable changes need an API major with one stable OMD release of deprecation notice; each row has a finite support window in mods/COMPATIBILITY.md.",
       "sites": [
         "sidebar",
@@ -859,7 +859,7 @@
     {
       "id": "kiro_connector",
       "combination": "The Kiro gateway connector beside the mod set",
-      "reason": "not implemented; it remains a separate Phase 10 checkbox with its own acceptance."
+      "reason": "not implemented."
     },
     {
       "id": "exhaustive_combinations",
@@ -868,14 +868,14 @@
     }
   ],
   "commands": [
-    "python3 scripts/integration_matrix.py",
-    "python3 scripts/mod_conformance.py",
+    "python3 -m scripts.integration_matrix",
+    "python3 -m scripts.mod_conformance",
     "python3 scripts/mod_compatibility.py",
     "python3 -m unittest discover -s tests",
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
   ],
-  "qualification": "Development pin: the 0.162.1 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-01621-20261010.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
+  "qualification": "Development pin: the 0.162.1 patch passes fresh replay, a second-apply no-op and scoped checks; the host serves API 0.2.0-experimental.5. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
   "profiles": {
     "platform": {
       "label": "OMD Core",
@@ -896,6 +896,7 @@
       "first_party_installed": [
         "omd_advisor",
         "omd_claude_cli",
+        "omd_continue",
         "omd_frecency",
         "omd_inspector",
         "omd_logo",
@@ -903,6 +904,7 @@
         "omd_lsp_view",
         "omd_model_picker",
         "omd_mods",
+        "omd_plan_panel",
         "omd_plan_removal",
         "omd_preview",
         "omd_privacy",
@@ -918,6 +920,7 @@
         "omd_logo",
         "omd_model_picker",
         "omd_mods",
+        "omd_plan_panel",
         "omd_plan_removal",
         "omd_statusline",
         "omd_tool_lines",
@@ -938,6 +941,10 @@
     "omd_claude_cli": {
       "version": "0.2.0-preview.3",
       "source": "mods/first-party/omd_claude_cli"
+    },
+    "omd_continue": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_continue"
     },
     "omd_frecency": {
       "version": "0.1.0-preview.2",
@@ -966,6 +973,10 @@
     "omd_mods": {
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_mods"
+    },
+    "omd_plan_panel": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_plan_panel"
     },
     "omd_plan_removal": {
       "version": "0.1.0-preview.1",
@@ -1004,489 +1015,216 @@
       "source": "mods/first-party/omd_workflow"
     }
   },
-  "launch_cut": {
-    "tag": "pre-launch-collection",
-    "restore": "git checkout pre-launch-collection -- <path>",
-    "not_restored": [
-      "benchmarks"
-    ],
-    "notes": [
-      "Restoring source also requires reintegrating and testing its dependencies and contracts; for example, `omd_verification_gate` requires its contract to be admitted by `omd_workflow` again.",
-      "Wave 1 also upgrades omd_profiles with an account switcher.",
-      "The wave 2 `omd-mod-authoring` plugin arrived after `pre-launch-collection`; restore it with `git checkout cd7f92c467f61af03490f396b6614eaa6af073a6 -- plugins/optional/plugins/omd-mod-authoring`. The author CLI, testing SDK and typed host tools remain shipped."
-    ],
-    "entries": [
-      {
-        "id": "omd_logo",
-        "kind": "mod",
-        "path": "mods/first-party/omd_logo",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "platform",
-          "full"
-        ]
-      },
-      {
-        "id": "omd_mods",
-        "kind": "mod",
-        "path": "mods/first-party/omd_mods",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "platform",
-          "full"
-        ]
-      },
-      {
-        "id": "omd_update",
-        "kind": "mod",
-        "path": "mods/first-party/omd_update",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "platform",
-          "full"
-        ]
-      },
-      {
-        "id": "omd_inspector",
-        "kind": "mod",
-        "path": "mods/first-party/omd_inspector",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_model_picker",
-        "kind": "mod",
-        "path": "mods/first-party/omd_model_picker",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_plan_removal",
-        "kind": "mod",
-        "path": "mods/first-party/omd_plan_removal",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_statusline",
-        "kind": "mod",
-        "path": "mods/first-party/omd_statusline",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_tool_lines",
-        "kind": "mod",
-        "path": "mods/first-party/omd_tool_lines",
-        "disposition": "launch",
-        "tier": "default-active",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_preview",
-        "kind": "mod",
-        "path": "mods/first-party/omd_preview",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_lsp_sync",
-        "kind": "mod",
-        "path": "mods/first-party/omd_lsp_sync",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_lsp_view",
-        "kind": "mod",
-        "path": "mods/first-party/omd_lsp_view",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_claude_cli",
-        "kind": "mod",
-        "path": "mods/first-party/omd_claude_cli",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_profiles",
-        "kind": "mod",
-        "path": "mods/first-party/omd_profiles",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_workflow",
-        "kind": "mod",
-        "path": "mods/first-party/omd_workflow",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_frecency",
-        "kind": "mod",
-        "path": "mods/first-party/omd_frecency",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_privacy",
-        "kind": "mod",
-        "path": "mods/first-party/omd_privacy",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_usage",
-        "kind": "mod",
-        "path": "mods/first-party/omd_usage",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_advisor",
-        "kind": "mod",
-        "path": "mods/first-party/omd_advisor",
-        "disposition": "launch",
-        "tier": "opt-in",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd-anchored-edit",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-anchored-edit",
-        "disposition": "launch",
-        "tier": "staged",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd-artifact-reading",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
-        "disposition": "launch",
-        "tier": "staged",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd-code-execution",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
-        "disposition": "launch",
-        "tier": "staged",
-        "profiles": [
-          "full"
-        ]
-      },
-      {
-        "id": "omd_source_knowledge",
-        "kind": "mod",
-        "path": "mods/first-party/omd_source_knowledge",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_mini",
-        "kind": "mod",
-        "path": "mods/first-party/omd_mini",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_plan_panel",
-        "kind": "mod",
-        "path": "mods/first-party/omd_plan_panel",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_cursor",
-        "kind": "mod",
-        "path": "mods/first-party/omd_cursor",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_programmable_context",
-        "kind": "mod",
-        "path": "mods/first-party/omd_programmable_context",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_continue",
-        "kind": "mod",
-        "path": "mods/first-party/omd_continue",
-        "disposition": "wave_1"
-      },
-      {
-        "id": "omd_checks",
-        "kind": "mod",
-        "path": "mods/first-party/omd_checks",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_coordination",
-        "kind": "mod",
-        "path": "mods/first-party/omd_coordination",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_editor",
-        "kind": "mod",
-        "path": "mods/first-party/omd_editor",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_git",
-        "kind": "mod",
-        "path": "mods/first-party/omd_git",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_graph_navigator",
-        "kind": "mod",
-        "path": "mods/first-party/omd_graph_navigator",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_guideline_governance",
-        "kind": "mod",
-        "path": "mods/first-party/omd_guideline_governance",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_herdr",
-        "kind": "mod",
-        "path": "mods/first-party/omd_herdr",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_layout",
-        "kind": "mod",
-        "path": "mods/first-party/omd_layout",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_mcp",
-        "kind": "mod",
-        "path": "mods/first-party/omd_mcp",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_muse",
-        "kind": "mod",
-        "path": "mods/first-party/omd_muse",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_notes",
-        "kind": "mod",
-        "path": "mods/first-party/omd_notes",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_panes",
-        "kind": "mod",
-        "path": "mods/first-party/omd_panes",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_project_pi_prompts",
-        "kind": "mod",
-        "path": "mods/first-party/omd_project_pi_prompts",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_prompt_queue",
-        "kind": "mod",
-        "path": "mods/first-party/omd_prompt_queue",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_reactive_rules",
-        "kind": "mod",
-        "path": "mods/first-party/omd_reactive_rules",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_recovery",
-        "kind": "mod",
-        "path": "mods/first-party/omd_recovery",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_repository_analysis",
-        "kind": "mod",
-        "path": "mods/first-party/omd_repository_analysis",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_research",
-        "kind": "mod",
-        "path": "mods/first-party/omd_research",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_session_anchor",
-        "kind": "mod",
-        "path": "mods/first-party/omd_session_anchor",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_shared_checkout",
-        "kind": "mod",
-        "path": "mods/first-party/omd_shared_checkout",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_task_tools",
-        "kind": "mod",
-        "path": "mods/first-party/omd_task_tools",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_theme",
-        "kind": "mod",
-        "path": "mods/first-party/omd_theme",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_typed_tasks",
-        "kind": "mod",
-        "path": "mods/first-party/omd_typed_tasks",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_verification_gate",
-        "kind": "mod",
-        "path": "mods/first-party/omd_verification_gate",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_worktree",
-        "kind": "mod",
-        "path": "mods/first-party/omd_worktree",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd_focus_flow",
-        "kind": "mod",
-        "path": "mods/optional/omd_focus_flow",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-application-bridges",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-application-bridges",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-guidance-hooks",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-review-policy",
-        "kind": "plugin",
-        "path": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-browser",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-browser",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-curated-memory",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-curated-memory",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-debugger",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-debugger",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-procedures",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-procedures",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-session-review",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-session-review",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "bridge",
-        "kind": "tree",
-        "path": "bridge",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "browser",
-        "kind": "tree",
-        "path": "browser",
-        "disposition": "wave_2"
-      },
-      {
-        "id": "omd-mod-authoring",
-        "kind": "plugin",
-        "path": "plugins/optional/plugins/omd-mod-authoring",
-        "disposition": "wave_2"
-      }
-    ]
-  }
+  "launch": [
+    {
+      "id": "omd_logo",
+      "kind": "mod",
+      "path": "mods/first-party/omd_logo",
+      "tier": "default-active",
+      "profiles": [
+        "platform",
+        "full"
+      ]
+    },
+    {
+      "id": "omd_mods",
+      "kind": "mod",
+      "path": "mods/first-party/omd_mods",
+      "tier": "default-active",
+      "profiles": [
+        "platform",
+        "full"
+      ]
+    },
+    {
+      "id": "omd_update",
+      "kind": "mod",
+      "path": "mods/first-party/omd_update",
+      "tier": "default-active",
+      "profiles": [
+        "platform",
+        "full"
+      ]
+    },
+    {
+      "id": "omd_inspector",
+      "kind": "mod",
+      "path": "mods/first-party/omd_inspector",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_model_picker",
+      "kind": "mod",
+      "path": "mods/first-party/omd_model_picker",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_plan_removal",
+      "kind": "mod",
+      "path": "mods/first-party/omd_plan_removal",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_plan_panel",
+      "kind": "mod",
+      "path": "mods/first-party/omd_plan_panel",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_statusline",
+      "kind": "mod",
+      "path": "mods/first-party/omd_statusline",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_continue",
+      "kind": "mod",
+      "path": "mods/first-party/omd_continue",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_tool_lines",
+      "kind": "mod",
+      "path": "mods/first-party/omd_tool_lines",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_preview",
+      "kind": "mod",
+      "path": "mods/first-party/omd_preview",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_lsp_sync",
+      "kind": "mod",
+      "path": "mods/first-party/omd_lsp_sync",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_lsp_view",
+      "kind": "mod",
+      "path": "mods/first-party/omd_lsp_view",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_claude_cli",
+      "kind": "mod",
+      "path": "mods/first-party/omd_claude_cli",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_profiles",
+      "kind": "mod",
+      "path": "mods/first-party/omd_profiles",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_workflow",
+      "kind": "mod",
+      "path": "mods/first-party/omd_workflow",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_frecency",
+      "kind": "mod",
+      "path": "mods/first-party/omd_frecency",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_privacy",
+      "kind": "mod",
+      "path": "mods/first-party/omd_privacy",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_usage",
+      "kind": "mod",
+      "path": "mods/first-party/omd_usage",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_advisor",
+      "kind": "mod",
+      "path": "mods/first-party/omd_advisor",
+      "tier": "opt-in",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd-anchored-edit",
+      "kind": "plugin",
+      "path": "plugins/bundled/oh-my-diff/plugins/omd-anchored-edit",
+      "tier": "staged",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd-artifact-reading",
+      "kind": "plugin",
+      "path": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
+      "tier": "staged",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd-code-execution",
+      "kind": "plugin",
+      "path": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
+      "tier": "staged",
+      "profiles": [
+        "full"
+      ]
+    }
+  ]
 }

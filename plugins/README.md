@@ -10,8 +10,7 @@ release sources, then regenerate the plugin lock. Unlisted scratch files,
 dependencies and build outputs do not enter the package. Declared files must
 exist and cannot be symlinks.
 
-Plugins outside this launch collection are not shipped; see the
-[restore and wave note](../LEAN_PROFILES.md).
+Plugins outside this launch collection are not shipped.
 
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its
@@ -59,7 +58,7 @@ stages this plugin's source; it does not bundle Python or Bun.
 Activate experimental code mode explicitly with
 `codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex
 config. Configure Python and Bun in `features.code_mode.kernels` with the
-installed driver paths and exact SHA-256 hashes shown in the
+path and SHA-256 of each installed driver, as shown in the
 [code-execution skill](bundled/oh-my-diff/plugins/omd-code-execution/skills/omd-code-execution/SKILL.md),
 and install the interpreters separately.
 Each worker keeps one bound loopback port and receives a fresh cell token. Its `tool`

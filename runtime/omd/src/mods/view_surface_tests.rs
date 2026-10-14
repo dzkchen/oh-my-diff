@@ -136,26 +136,6 @@ fn layouts_need_one_transcript_and_composer_below_it() {
 }
 
 #[test]
-fn backdrops_bound_text_dim_and_position() {
-    assert!(view(json!({"backdrop": {"ascii": {"text": "~ ~", "dim": 0.4}}})).is_ok());
-    let reference = json!({"reference": "r", "sha256": "0".repeat(64)});
-    assert!(
-        view(
-            json!({"backdrop": {"image": {"resource": reference, "position": "fill"},
-        "fallback": {"ascii": {"text": "#"}}}})
-        )
-        .is_ok()
-    );
-    for backdrop in [
-        json!({"ascii": {"text": ""}}),
-        json!({"ascii": {"text": "x", "dim": 2.0}}),
-        json!({"image": {"resource": reference, "position": "stretch"}}),
-    ] {
-        assert!(view(json!({"backdrop": backdrop})).is_err(), "{backdrop}");
-    }
-}
-
-#[test]
 fn documents_and_diffs_validate_and_named_sites_are_allowed() {
     let document = json!({"type": "document", "id": "doc", "label": "Doc",
         "lines": [[{"text": "one"}], [{"text": "two"}]], "anchors": ["a.rs:1", "a.rs:2"],
@@ -179,7 +159,7 @@ fn documents_and_diffs_validate_and_named_sites_are_allowed() {
 }
 
 #[test]
-fn patches_claim_layout_and_backdrop_once() {
+fn patches_claim_layout_once() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
     let layout = json!({"layout": {"content": "transcript"}});
@@ -220,15 +200,15 @@ fn text_components_take_the_shared_text_bound() {
 }
 
 #[test]
-fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
+fn appearance_styles_are_bounded_and_merge_by_surface() {
     assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
-    assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
+    assert!(
+        view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}}}))
+            .is_ok()
+    );
     for value in [
         json!({"surface_styles":{"transcript":{"top":0}}}),
         json!({"surface_styles":{"composer":{"opacity":1.01}}}),
-        json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
-        json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
-        json!({"backdrop":{"ascii":{"text":"x","tint":"red"}}}),
     ] {
         assert!(view(value.clone()).is_err(), "{value}");
     }
@@ -236,7 +216,7 @@ fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() 
     let mut claims = BTreeMap::new();
     for patch in [
         json!({"surface_styles":{"composer":{"top":"#123456"}}}),
-        json!({"surface_styles":{"backdrop":{"top":"#abcdef"}}}),
+        json!({"surface_styles":{"approval":{"top":"#abcdef"}}}),
         json!({"surface_styles":{"composer":{"top":"#654321"}}}),
     ] {
         ModViewPatch::parse(patch)

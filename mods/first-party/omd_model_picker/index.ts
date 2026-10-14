@@ -8,7 +8,7 @@ export default function activate(api: ModAPI) {
     if (channel === 'omd_profiles/routes') api.state.set(data);
   });
   const clean = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
-  const brand = typeof api.settings.brand === 'string' ? clean(api.settings.brand).slice(0, 24) : 'oh my diff';
+  const brand = typeof api.settings.brand === 'string' ? [...clean(api.settings.brand)].slice(0, 24).join('') : 'oh my diff';
   const shorten = (value: string, limit: number) => {
     const text = Array.from(clean(value));
     const size = (chars: string[]) => chars.reduce((sum, char) => {

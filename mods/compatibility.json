@@ -87,7 +87,7 @@
       "tool_feedback_v1",
       "terminal_media_v1",
       "terminal_surface_paint_v1",
-      "terminal_backdrop_transform_v1",
+      "codex_config_v1",
       "terminal_image_sample_v1",
       "terminal_import_lifetime_v1",
       "secrets_v1",

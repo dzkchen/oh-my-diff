@@ -31,9 +31,6 @@ pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
-pub use view::ModAsciiBackdrop;
-pub use view::ModBackdrop;
-pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
@@ -46,13 +43,13 @@ pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
-pub use view::ModImageBackdrop;
 pub use view::ModKeyAction;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
 pub use view::ModLayoutTabs;
 pub use view::ModListRow;
+pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -377,7 +374,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_feedback_v1",
     "terminal_media_v1",
     "terminal_surface_paint_v1",
-    "terminal_backdrop_transform_v1",
+    "codex_config_v1",
     "terminal_image_sample_v1",
     "terminal_import_lifetime_v1",
     "secrets_v1",
@@ -1313,7 +1310,12 @@ pub struct ModPackage {
     pub hook_budget_ms: u64,
     #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
     pub subscriptions: ModSubscriptions,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codex_config: BTreeMap<String, Value>,
 }
+
+pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1656,6 +1658,20 @@ impl ModPackage {
             text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
         }) {
             return Err(failure("invalid_description: 1-160 printable characters"));
+        }
+        if !self.codex_config.is_empty()
+            && (!self
+                .compatibility
+                .required_features
+                .iter()
+                .any(|feature| feature == "codex_config_v1")
+                || self.codex_config.iter().any(|(key, value)| {
+                    !CODEX_CONFIG_KEYS.contains(&key.as_str()) || *value != Value::Bool(true)
+                }))
+        {
+            return Err(failure(
+                "invalid_codex_config: keys from the host allowlist set to true, with codex_config_v1 required",
+            ));
         }
         if let Some(adapter) = self.adapter.as_deref()
             && (adapter == self.id
@@ -2442,6 +2458,8 @@ struct Reply {
     ui_read: bool,
     #[serde(default)]
     ui_written: bool,
+    #[serde(default)]
+    clock_read: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2664,7 +2682,8 @@ pub struct ModHost {
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
-    renders: BTreeMap<String, (String, Value, Instant)>,
+    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    clock_reads: BTreeSet<String>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -2672,6 +2691,7 @@ pub struct ModHost {
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    codex_config: Arc<Mutex<BTreeSet<String>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
@@ -3147,6 +3167,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            clock_reads: BTreeSet::new(),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -3154,6 +3175,7 @@ impl ModHost {
             brokered: None,
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
+            codex_config: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
@@ -3656,6 +3678,11 @@ impl ModHost {
         self.environment.clone()
     }
 
+    /// Codex config keys the active packages turn on, readable while another caller holds the runtime.
+    pub fn codex_config(&self) -> Arc<Mutex<BTreeSet<String>>> {
+        self.codex_config.clone()
+    }
+
     fn retain_environment(&self) {
         self.environment.retain(
             &self
@@ -3694,6 +3721,12 @@ impl ModHost {
             .collect();
         if let Ok(mut published) = self.intercepted_surfaces.lock() {
             *published = intercepted;
+        }
+        if let Ok(mut published) = self.codex_config.lock() {
+            *published = self
+                .active()
+                .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
+                .collect();
         }
     }
 
@@ -4744,7 +4777,11 @@ impl ModHost {
             let stamp = Self::terminal_stamp(
                 loaded,
                 &reply.state,
-                ui.as_ref().map(|state| state.revision),
+                loaded
+                    .ui
+                    .as_ref()
+                    .map(|(scope, _)| scope.as_str())
+                    .zip(ui.as_ref().map(|state| &state.value)),
             );
             if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
                 current.command_view = Some(AcceptedCommandView {
@@ -4752,6 +4789,13 @@ impl ModHost {
                     stamp,
                     parsed: parsed_command,
                 });
+            }
+        }
+        if event == "terminal" {
+            if reply.clock_read {
+                self.clock_reads.insert(loaded.package.id.clone());
+            } else {
+                self.clock_reads.remove(&loaded.package.id);
             }
         }
         Ok((reply.value, reply.state))
@@ -5101,14 +5145,14 @@ impl ModHost {
         )
     }
 
-    fn terminal_stamp(loaded: &Loaded, state: &Value, revision: Option<u64>) -> String {
+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
         digest(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
                 state,
-                loaded.ui.as_ref().map(|(scope, _)| scope),
-                revision
+                ui.map(|(scope, _)| scope),
+                ui.map(|(_, value)| value)
             ])
             .to_string()
             .as_bytes(),
@@ -5117,23 +5161,25 @@ impl ModHost {
 
     fn terminal_state_key(&self, id: &str, thread: Option<&str>) -> Option<String> {
         let loaded = self.loaded.get(id)?;
-        if loaded
-            .ui
-            .as_ref()
-            .is_none_or(|(scope, _)| scope != &self.ui_key(loaded, thread))
-        {
-            return None;
-        }
+        let scope = self.ui_key(loaded, thread);
+        let ui = match &loaded.ui {
+            Some((current, state)) if current == &scope => Some(state.clone()),
+            _ => UI_STATES
+                .lock()
+                .ok()?
+                .get(&scope)
+                .and_then(std::sync::Weak::upgrade),
+        };
+        let ui = match ui {
+            Some(state) => state.lock().ok()?.value.clone(),
+            None => Value::Null,
+        };
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let state = self
             .store
             .scoped_state(&location, loaded.package.state_version)
             .ok()?;
-        let revision = match &loaded.ui {
-            Some((_, state)) => Some(state.lock().ok()?.revision),
-            None => None,
-        };
-        Some(Self::terminal_stamp(loaded, &state, revision))
+        Some(Self::terminal_stamp(loaded, &state, Some((&scope, &ui))))
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -5146,10 +5192,10 @@ impl ModHost {
                 let key = self
                     .terminal_state_key(&id, thread.as_deref())
                     .map(|stamp| format!("{stamp}:{payload_hash}"));
-                // Renders may read the clock, so a cached one lives for a second.
-                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
+                // A handler that read the clock is rerun once its result is a second old.
+                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                     && key == cached
-                    && at.elapsed() < Duration::from_secs(1)
+                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
                 {
                     return (id, Ok(value.clone()));
                 }
@@ -5163,8 +5209,8 @@ impl ModHost {
                 );
                 match (&result, key) {
                     (Ok(value), Some(key)) => {
-                        self.renders
-                            .insert(id.clone(), (key, value.clone(), Instant::now()));
+                        let clock = self.clock_reads.contains(&id).then(Instant::now);
+                        self.renders.insert(id.clone(), (key, value.clone(), clock));
                     }
                     _ => {
                         self.renders.remove(&id);
@@ -5217,10 +5263,11 @@ impl ModHost {
             Some((id, parsed))
         };
         self.renders.remove(id);
+        // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
             let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
             self.renders
-                .insert(id.to_owned(), (key, patch, Instant::now()));
+                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
         let results = self
             .active()
@@ -5863,7 +5910,7 @@ impl ModHost {
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,
-                    "autonomy": m.package.autonomy, "withheld": m.withheld,
+                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
                     "exposure": authority_exposure(&m.package.capabilities)});
                 status }).collect::<Vec<_>>()});

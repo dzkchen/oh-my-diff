@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -11,17 +10,11 @@ import tempfile
 import tomllib
 from threading import Thread
 
-try:
-    from scripts.lean_profile_acceptance import expected_defaults, isolated_environment
-except ModuleNotFoundError:
-    from lean_profile_acceptance import expected_defaults, isolated_environment
+from scripts.install_support import digest
+from scripts.lean_profile_acceptance import expected_defaults, isolated_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def run(archive, upstream, output):

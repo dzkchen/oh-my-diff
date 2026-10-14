@@ -4,6 +4,7 @@ import re
 import sys
 from pathlib import Path
 
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
@@ -100,7 +101,7 @@ def render(registry):
     out = [
         "# Extension types",
         "",
-        "<!-- Generated from mods/extension-types.json by scripts/mod_extension_types.py --write. -->",
+        "<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->",
         "",
         registry["rule"],
         "",
@@ -144,14 +145,10 @@ def render(registry):
 def main():
     registry = json.loads(REGISTRY.read_text())
     problems = check(registry)
-    rendered = render(registry)
-    if "--write" in sys.argv[1:]:
-        DOCUMENT.write_text(rendered)
-        print(f"wrote {DOCUMENT.relative_to(ROOT)}")
-    elif not DOCUMENT.is_file() or DOCUMENT.read_text() != rendered:
-        problems.append("mods/EXTENSION_TYPES.md is stale; rerun scripts/mod_extension_types.py --write")
     if problems:
         raise SystemExit("\n".join(problems))
+    support.check_or_write(DOCUMENT, render(registry), "--write" in sys.argv[1:],
+                           "mods/EXTENSION_TYPES.md is stale; rerun python3 -m scripts.mod_extension_types --write")
     print(f"extension types: {len(registry['packages'])} packages and {len(registry['synthetic_fixtures'])} synthetic fixtures")
 
 

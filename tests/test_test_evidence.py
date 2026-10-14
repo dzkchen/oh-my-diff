@@ -20,6 +20,19 @@ class EvidenceTests(unittest.TestCase):
                   "regression": [{"evidence": ["python:test_required"]}]}
         self.assertEqual(integration_matrix.release_evidence(matrix), {"node:required", "python:test_required"})
 
+    def test_references_resolve_only_to_repository_sources_that_define_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            (root / "tests").mkdir(parents=True)
+            (root / "tests/fixture.mjs").write_text("test('required', () => {});\n")
+            (root / "tests/fixture.json").write_text("test('required', () => {});\n")
+            (Path(directory) / "outside.mjs").write_text("test('required', () => {});\n")
+            self.assertEqual(list(test_evidence.source_files(root, "node:tests/fixture.mjs:required")), [root / "tests/fixture.mjs"])
+            for reference in ("node:tests/fixture.mjs:missing", "node:tests/fixture.json:required",
+                              "node:../outside.mjs:required", "script:../outside.mjs"):
+                with self.subTest(reference=reference):
+                    self.assertEqual(test_evidence.source_files(root, reference), {})
+
     def test_skipped_failed_missing_and_mismatched_tests_cannot_verify_evidence(self):
         binding = {"python:test_required": ["suite", "test_required"]}
         for content in ('<skipped/>', '<failure/>', '<error/>'):

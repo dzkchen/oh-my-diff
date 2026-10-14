@@ -214,6 +214,8 @@ fn selection_status_explains_precedence_and_changed_source() {
         "shadowed_by_project_scope"
     );
     assert_eq!(status["selections"][1]["effective"], true);
+    let listed = codex_omd::package_controls::list(&store, None).unwrap();
+    assert!(listed["packages"].as_array().unwrap().iter().all(|item| item["failed"].is_null()));
     std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);

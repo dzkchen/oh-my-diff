@@ -17,7 +17,9 @@ client; enable both.
 Lines and columns are 1-based. Slash commands cannot call framed processes or
 services, so `/lsp` shows "Asking the language server…", publishes the request
 on `omd_lsp_view/request`, and the mod's own channel callback calls
-`omd.lsp`'s `query` method and republishes the view. Results open in a popup;
+`omd.lsp`'s `query` method and republishes the view. Each request carries a
+number the view is waiting for; a request still queued after `/lsp close`,
+Back or a newer request is dropped without querying the server. Results open in a popup;
 Pin (`/lsp pane`) moves them to a Code intelligence card above the prompt.
 Its controls remain clickable and keyboard-focusable; focused controls scroll
 into view when the available height is limited. Enter on a location

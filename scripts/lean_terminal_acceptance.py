@@ -17,12 +17,8 @@ import tempfile
 import termios
 import time
 
-try:
-    from scripts import install_support as support
-    from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
-except ModuleNotFoundError:
-    import install_support as support
-    from lean_profile_acceptance import isolated_environment, expected_defaults
+from scripts import install_support as support
+from scripts.lean_profile_acceptance import isolated_environment, expected_defaults
 
 
 ROOT = Path(__file__).resolve().parents[1]
