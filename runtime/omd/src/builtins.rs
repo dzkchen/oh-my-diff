@@ -15,7 +15,16 @@ pub const PROTECTED_COMMANDS: &[&str] = &[
     "logout",
 ];
 pub const PROTECTED_MODES: &[&str] = &["default"];
-pub const BUILTINS_SNAPSHOT: &str = "builtins.json";
+pub const SURFACES: &[&str] = &["status_line"];
+
+/// The store file holding the built-in controls of the sessions in one repository.
+pub fn builtins_snapshot(repository: &Path) -> String {
+    let repository = repository
+        .canonicalize()
+        .unwrap_or_else(|_| repository.to_path_buf());
+    let digest = crate::broker::sha256(repository.to_string_lossy().as_bytes());
+    format!("builtins-{}.json", &digest[..16])
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -28,7 +37,7 @@ pub struct HiddenCommands {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct DisabledModes {
+pub struct Disabled {
     #[serde(default)]
     pub disable: Vec<String>,
 }
@@ -39,7 +48,9 @@ pub struct BuiltinControls {
     #[serde(default)]
     pub commands: HiddenCommands,
     #[serde(default)]
-    pub modes: DisabledModes,
+    pub modes: Disabled,
+    #[serde(default)]
+    pub surfaces: Disabled,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, Option<String>>,
 }
@@ -50,6 +61,8 @@ pub struct BuiltinSnapshot {
     pub schema: u32,
     pub hidden_commands: BTreeMap<String, Vec<String>>,
     pub disabled_modes: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub disabled_surfaces: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub replaced_commands: BTreeMap<String, (String, String)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -114,6 +127,12 @@ impl BuiltinControls {
                 .disable
                 .iter()
                 .any(|mode| !name(mode) || PROTECTED_MODES.contains(&mode.as_str()))
+            || !unique(&controls.surfaces.disable)
+            || controls
+                .surfaces
+                .disable
+                .iter()
+                .any(|surface| !SURFACES.contains(&surface.as_str()))
         {
             return Err("invalid_builtins".into());
         }
@@ -139,6 +158,13 @@ impl BuiltinSnapshot {
                 snapshot
                     .disabled_modes
                     .entry(mode.clone())
+                    .or_default()
+                    .push(owner.clone());
+            }
+            for surface in &controls.surfaces.disable {
+                snapshot
+                    .disabled_surfaces
+                    .entry(surface.clone())
                     .or_default()
                     .push(owner.clone());
             }
@@ -182,8 +208,8 @@ impl BuiltinSnapshot {
             .flatten()
     }
 
-    pub fn read(directory: &Path) -> Self {
-        let path = directory.join(BUILTINS_SNAPSHOT);
+    pub fn read(directory: &Path, repository: &Path) -> Self {
+        let path = directory.join(builtins_snapshot(repository));
         std::fs::symlink_metadata(&path)
             .ok()
             .filter(|metadata| metadata.is_file() && metadata.len() <= 65_536)
@@ -199,6 +225,10 @@ impl BuiltinSnapshot {
 
     pub fn mode_disabled(&self, mode: &str) -> bool {
         !PROTECTED_MODES.contains(&mode) && self.disabled_modes.contains_key(mode)
+    }
+
+    pub fn surface_disabled(&self, surface: &str) -> bool {
+        self.disabled_surfaces.contains_key(surface)
     }
 }
 

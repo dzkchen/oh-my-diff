@@ -24,7 +24,7 @@ PRODUCT = "oh-my-diff-install-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_panel",
-                  "omd_plan_removal", "omd_tool_lines", "omd_update")
+                  "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted((*base_lock.PACKAGES, *mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")

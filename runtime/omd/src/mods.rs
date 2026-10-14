@@ -2697,6 +2697,13 @@ pub struct ModHost {
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
     project: Option<PathBuf>,
+    pool: u64,
+}
+
+impl Drop for ModHost {
+    fn drop(&mut self) {
+        process::size_reused_pool(self.pool, None);
+    }
 }
 
 enum Access<'a> {
@@ -3174,6 +3181,10 @@ impl ModHost {
             managed: None,
             unserved: Vec::new(),
             project: None,
+            pool: {
+                static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -3402,7 +3413,6 @@ impl ModHost {
             let keep = selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
-                    && m.sha256 == loaded.selection.sha256
                     && m.scope == loaded.selection.scope
                     && loaded
                         .package
@@ -3683,6 +3693,15 @@ impl ModHost {
     }
 
     fn publish_surfaces(&self) {
+        process::size_reused_pool(
+            self.pool,
+            Some(
+                self.loaded
+                    .keys()
+                    .filter(|id| self.registered(id, "terminal"))
+                    .count(),
+            ),
+        );
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -3708,11 +3727,6 @@ impl ModHost {
                 .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
                 .collect();
         }
-        process::reserve_reused(
-            self.active()
-                .filter(|(_, loaded)| loaded.registrations.events.iter().any(|e| e == "terminal"))
-                .count(),
-        );
     }
 
     /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
@@ -5115,11 +5129,15 @@ impl ModHost {
     }
 
     fn ui_key(&self, loaded: &Loaded, thread: Option<&str>) -> String {
+        let mut selection = json!(loaded.selection);
+        if let Some(selection) = selection.as_object_mut() {
+            selection.remove("settings");
+        }
         format!(
             "{}:{}",
             self.store.root.display(),
             digest(
-                json!([self.project, thread, loaded.selection, loaded.adapter])
+                json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
             )

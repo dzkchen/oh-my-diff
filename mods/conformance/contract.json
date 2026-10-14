@@ -303,6 +303,7 @@
     "view_fields:title": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"title: 'My workspace'"},"decision":"terminal.view"},
     "view_fields:welcome": {"status":"frozen","consumer":{"path":"mods/first-party/omd_logo/index.ts","snippet":"welcome:"},"decision":"terminal.view"},
     "view_sites:above_composer": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"above_composer:"},"decision":"terminal.view"},
+    "view_sites:below_composer": {"status":"experimental","reason":"Added for the status line in this release; ships experimental and freezes after a release with its first-party consumer."},
     "view_sites:dialog": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"dialog:"},"decision":"terminal.view"},
     "view_sites:header": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "view_sites:owner/name": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"'layout_explorer/diff': { mode: 'replace'"},"decision":"terminal.surface"},

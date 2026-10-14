@@ -76,12 +76,12 @@ test('preview harness rejects unhandled host operations', () => {
 
 test('preview dismisses its popup on owned Escape or startup with thumbnails off', () => {
   const state = { inline: { title: 'Preview', kind: 'markdown', text: 'Content' }, revision: 1, images: [] };
-  const escaped = invoke(tmpdir(), state, 'component_event', { component: 'omd_preview_close', events: [{ key: 'Esc' }] }, undefined, { thumbnails: false });
+  const escaped = invoke(tmpdir(), state, 'component_event', { component: 'omd_preview_dialog', kind: 'close', origin: 'user' }, undefined, { thumbnails: false });
   assert.equal(escaped.state.inline, null);
   assert.equal(invoke(tmpdir(), escaped.state, 'terminal', { event: 'idle' }, undefined, { thumbnails: false }).value, null);
   assert.equal(invoke(tmpdir(), state, 'terminal', { event: 'startup' }, undefined, { thumbnails: false }).state.inline, null);
   assert.ok(invoke(tmpdir(), state, 'terminal', null, undefined, { thumbnails: false }).value.sites.dialog);
-  assert.deepEqual(invoke(tmpdir(), state, 'component_event', { component: 'other_dialog', events: [{ key: 'Esc' }] }, undefined, { thumbnails: false }).state.inline, state.inline);
+  assert.deepEqual(invoke(tmpdir(), state, 'component_event', { component: 'other_dialog', kind: 'close', origin: 'user' }, undefined, { thumbnails: false }).state.inline, state.inline);
 });
 
 test('preview renders sanitized HTML for responses and files, keeps watched files fresh and shows inline dialogs', () => {

@@ -418,11 +418,13 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     .unwrap();
     trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
-    assert_eq!(
+    assert_eq!(runtime.generation(), generation);
+    assert!(
         runtime
             .invoke("fixture", generation, "command", "count", Value::Null)
-            .unwrap(),
-        json!(1)
+            .unwrap_err()
+            .to_string()
+            .contains("callback_authority_changed")
     );
     store.enable(&path, false).unwrap();
     runtime.reload().unwrap();
@@ -752,15 +754,20 @@ fn mod_duplicate_id_cannot_replace_an_active_package() {
             .to_string()
             .contains("mod_conflict")
     );
+    let generation = runtime.generation();
+    assert!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("mod_conflict")
+    );
+    store.enable(&other, false).unwrap();
+    runtime.reload().unwrap();
+    let generation = runtime.generation();
     assert_eq!(
         runtime
-            .invoke(
-                "fixture",
-                runtime.generation(),
-                "command",
-                "count",
-                Value::Null
-            )
+            .invoke("fixture", generation, "command", "count", Value::Null)
             .unwrap(),
         json!(1)
     );
@@ -1804,7 +1811,7 @@ fn command_outcomes_are_validated() {
 
 #[test]
 fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
-    let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
+    let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('lone', where => { const lone = String.fromCharCode(0xd800); api.uiState.set(where === 'key' ? {[lone]: 1} : ['ok', lone]); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
     let (temp, store, path) = fixture(source, &["commands", "terminal", "fs.read"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
@@ -1867,6 +1874,15 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
         )
         .unwrap_err();
     assert!(error.to_string().contains("ui_state_limit"));
+    let escaped = json!(["\\ud800", "\\\\ud800", "😀"]);
+    invoke(&mut first, "write", escaped.clone());
+    assert_eq!(invoke(&mut second, "read", Value::Null), escaped);
+    for place in ["key", "value"] {
+        let error = first
+            .invoke("fixture", first.generation(), "command", "lone", json!(place))
+            .unwrap_err();
+        assert!(error.to_string().contains("ui_state_invalid_json"), "{error}");
+    }
 }
 
 #[test]
@@ -1905,6 +1921,12 @@ fn ui_state_write_survives_a_reload_during_its_command() {
     assert_eq!(read(), json!({"open": true, "before": null}));
     assert_eq!(during("keep", &reload).unwrap(), "kept");
     assert_eq!(read(), json!({"open": true, "before": null}));
+    let settings = || {
+        codex_omd::write_settings(&store, "fixture", &json!({"placement": "above"})).unwrap();
+        reload();
+    };
+    assert_eq!(during("apply", &settings).unwrap(), "applied");
+    assert_eq!(read(), json!({"open": true, "before": {"open": true, "before": null}}));
     let error = during("apply", &|| {
         runtime.lock().unwrap().set_checkout(temp.path());
     })

@@ -671,11 +671,20 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
             "host_caller_source_changed"
         );
     }
-    let value = call(
-        &source,
-        "environment.read",
-        json!({"names": ["FIXTURE_VALUE"]}),
-    )
+    let value = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn_scoped(scope, || {
+                call(
+                    &source,
+                    "environment.read",
+                    json!({"names": ["FIXTURE_VALUE"]}),
+                )
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
     .unwrap();
     assert_eq!(value["values"]["FIXTURE_VALUE"]["value"], "scoped");
     let write = json!({"program": "sh", "argv": ["-c", "printf forbidden > scoped-policy-proof"], "write": true});

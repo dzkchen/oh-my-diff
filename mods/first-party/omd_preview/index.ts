@@ -233,7 +233,7 @@ export default function activate(api: ModAPI) {
     api.on('composer', event => { if (event.kind === 'change' && event.attachments_revision !== load().attachments) refresh(event.attachments_revision); });
   }
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_preview_') && event.events?.some(input => 'key' in input && input.key === 'Esc')) {
+    if (event.component.startsWith('omd_preview_') && event.kind === 'close') {
       save({ inline: null });
       return;
     }

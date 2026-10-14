@@ -111,6 +111,12 @@
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
     },
     {
+      "path": "mods/first-party/omd_statusline",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Draws a configurable status line in the generic below- or above-composer site from public telemetry, exec and HTTP grants; it turns off the native status row through built-in controls only while active; active by default in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_tool_lines",
       "extension_type": "mod",
       "role": "candidate",

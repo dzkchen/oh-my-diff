@@ -120,9 +120,9 @@ For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
 installer (`INSTALL.md` in the repository) stages first-party packages
-inactive except eight default packages (`omd_inspector`, `omd_logo`,
+inactive except nine default packages (`omd_inspector`, `omd_logo`,
 `omd_model_picker`, `omd_mods`, `omd_plan_panel`, `omd_plan_removal`,
-`omd_tool_lines` and `omd_update`). Its `omd_workflow` package
+`omd_statusline`, `omd_tool_lines` and `omd_update`). Its `omd_workflow` package
 implements task controls through mod-owned schema-2 contracts selected
 separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract select ID@VERSION`.
 
