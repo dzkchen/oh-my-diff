@@ -58,7 +58,7 @@ stages this plugin's source; it does not bundle Python or Bun.
 Activate experimental code mode explicitly with
 `codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex
 config. Configure Python and Bun in `features.code_mode.kernels` with the
-installed driver paths and exact SHA-256 hashes shown in the
+path and SHA-256 of each installed driver, as shown in the
 [code-execution skill](bundled/oh-my-diff/plugins/omd-code-execution/skills/omd-code-execution/SKILL.md),
 and install the interpreters separately.
 Each worker keeps one bound loopback port and receives a fresh cell token. Its `tool`

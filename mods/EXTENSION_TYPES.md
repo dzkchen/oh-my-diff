@@ -1,6 +1,6 @@
 # Extension types
 
-<!-- Generated from mods/extension-types.json by scripts/mod_extension_types.py --write. -->
+<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->
 
 Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.
 

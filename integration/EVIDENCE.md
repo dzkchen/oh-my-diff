@@ -21,10 +21,10 @@ evidence IDs to exact JUnit `[classname, name]` pairs, for example:
 Run the actual test runner through the recorder:
 
 ```sh
-python3 scripts/execution_evidence.py --bindings /path/to/bindings.json \
+python3 -m scripts.execution_evidence --bindings /path/to/bindings.json \
   --output /path/outside/checkout/execution.json -- /path/to/junit-test-command
-python3 scripts/mod_conformance.py --release --executed-evidence /path/outside/checkout/execution.json
-python3 scripts/integration_matrix.py --release --executed-evidence /path/outside/checkout/execution.json
+python3 -m scripts.mod_conformance --release --executed-evidence /path/outside/checkout/execution.json
+python3 -m scripts.integration_matrix --release --executed-evidence /path/outside/checkout/execution.json
 mise run release:evidence /path/outside/checkout/execution.json
 ```
 
@@ -41,16 +41,16 @@ Python's standard unittest runner is supported directly, including skipped tests
 expected failures, and failing subtests:
 
 ```sh
-python3 scripts/execution_evidence.py --bindings /path/to/python-bindings.json \
+python3 -m scripts.execution_evidence --bindings /path/to/python-bindings.json \
   --output /path/to/python-receipt.json -- \
-  python3 scripts/execution_evidence.py --unittest tests.test_mod_conformance
+  python3 -m scripts.execution_evidence --unittest tests.test_mod_conformance
 ```
 
 Node's built-in JUnit reporter includes the source file metadata required by the
 validator. Run it through a shell to expand the recorder's fresh report path:
 
 ```sh
-python3 scripts/execution_evidence.py --bindings /path/to/node-bindings.json \
+python3 -m scripts.execution_evidence --bindings /path/to/node-bindings.json \
   --output /path/to/node-receipt.json -- sh -c \
   'node --test --test-reporter=junit --test-reporter-destination="$OMD_TEST_EVIDENCE_JUNIT" mods/runner.test.mjs'
 ```
@@ -63,9 +63,9 @@ that binary's tests, then executes each selected name with `--exact`; absent or
 ignored tests cannot produce passing evidence. Its classname is the source path:
 
 ```sh
-python3 scripts/execution_evidence.py --bindings /path/to/rust-bindings.json \
+python3 -m scripts.execution_evidence --bindings /path/to/rust-bindings.json \
   --output /path/to/rust-receipt.json -- \
-  python3 scripts/execution_evidence.py --libtest /path/to/built-test-binary \
+  python3 -m scripts.execution_evidence --libtest /path/to/built-test-binary \
   runtime/omd/tests/examples.rs host_feature_examples_load_and_register_together
 ```
 
@@ -79,9 +79,9 @@ For `script:` evidence, use the checker adapter. Bind the reference to
 `["script", "scripts/mod_compatibility.py"]`, for example:
 
 ```sh
-python3 scripts/execution_evidence.py --bindings /path/to/script-bindings.json \
+python3 -m scripts.execution_evidence --bindings /path/to/script-bindings.json \
   --output /path/to/script-receipt.json -- \
-  python3 scripts/execution_evidence.py --script scripts/mod_compatibility.py
+  python3 -m scripts.execution_evidence --script scripts/mod_compatibility.py
 ```
 
 This records the actual checker process exit status. Node `.mjs` script suites run

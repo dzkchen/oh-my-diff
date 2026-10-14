@@ -867,8 +867,8 @@
     }
   ],
   "commands": [
-    "python3 scripts/integration_matrix.py",
-    "python3 scripts/mod_conformance.py",
+    "python3 -m scripts.integration_matrix",
+    "python3 -m scripts.mod_conformance",
     "python3 scripts/mod_compatibility.py",
     "python3 -m unittest discover -s tests",
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",

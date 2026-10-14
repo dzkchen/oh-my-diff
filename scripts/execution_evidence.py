@@ -2,6 +2,7 @@
 """Record fresh JUnit execution reports and verify release evidence at a clean revision."""
 import argparse
 import ast
+from functools import cache
 import hashlib
 import json
 import os
@@ -56,28 +57,41 @@ def source_files(root, reference):
                                                          and child.name == name for child in node.body):
                     found.setdefault(path, set()).add(f"tests.{path.stem}.{node.name}")
         return found
-    if kind == "node":
-        path = name.split(":", 1)[0] if ":" in name else "mods/runner.test.mjs"
-        return {root / path: None}
-    if kind == "script":
-        return {root / name: None}
-    if kind == "rust":
-        if "::" in name:
-            return {root / "runtime" / name.split("::", 1)[0]: None}
-        return {path: None for path in (root / "runtime/omd/tests").glob("*.rs")
-                if f"fn {name}(" in path.read_text()}
     if kind == "patch":
-        lock = json.loads((root / "upstream.lock.json").read_text())
-        source = root / lock["runtime_patches"][0]["path"]
-        paths = {}
-        current = None
-        for line in source.read_text().splitlines():
-            if line.startswith("+++ b/"):
-                current = line[6:]
-            elif current and line.startswith("+") and f"fn {name}(" in line:
-                paths[root / current] = None
-        return paths
-    return {}
+        return dict.fromkeys(patch_functions(root).get(name, ()))
+    if kind == "script":
+        paths, marker = [root / name], ""
+    elif kind == "node":
+        file, test = name.split(":", 1) if ":" in name else ("mods/runner.test.mjs", name)
+        paths, marker = [root / file] if file.endswith(".mjs") else [], f"test('{test}'"
+    elif kind == "rust":
+        file, _, function = name.rpartition("::")
+        paths = [root / "runtime" / file] if file else (root / "runtime/omd/tests").glob("*.rs")
+        marker = f"fn {function}("
+    else:
+        return {}
+    return {path: None for path in paths
+            if path.resolve().is_relative_to(root.resolve()) and path.is_file() and marker in path.read_text()}
+
+
+@cache
+def patch_functions(root):
+    lock = json.loads((root / "upstream.lock.json").read_text())
+    functions = {}
+    current = None
+    for line in (root / lock["runtime_patches"][0]["path"]).read_text().splitlines():
+        if line.startswith("+++ b/"):
+            current = root / line[6:]
+        elif current and line.startswith("+"):
+            for name in re.findall(r"\bfn (\w+)\(", line):
+                functions.setdefault(name, []).append(current)
+    return functions
+
+
+@cache
+def resolve(reference):
+    """Resolve a source inventory reference, without claiming collection or execution."""
+    return bool(source_files(ROOT, reference))
 
 
 def validate_bindings(bindings, collected, root=ROOT):
@@ -171,11 +185,7 @@ def main():
     if sys.argv[1:2] == ["--unittest"]:
         raise SystemExit(unittest_report(sys.argv[2:]))
     if sys.argv[1:2] == ["--release"]:
-        try:
-            from scripts import integration_matrix, mod_conformance
-        except ModuleNotFoundError:
-            import integration_matrix
-            import mod_conformance
+        from scripts import integration_matrix, mod_conformance
         parser = argparse.ArgumentParser(description="Verify all release-critical execution evidence")
         parser.add_argument("receipts", nargs="+", type=Path)
         args = parser.parse_args(sys.argv[2:])
@@ -300,7 +310,8 @@ def script_report(argv):
             except (ValueError, OSError, ET.ParseError) as error:
                 failure = str(error)
     else:
-        result = subprocess.run([sys.executable, str(path), *args.args], cwd=root)
+        module = ".".join(path.relative_to(root).with_suffix("").parts)
+        result = subprocess.run([sys.executable, "-m", module, *args.args], cwd=root)
     source = str(path.relative_to(root))
     case = ET.SubElement(tree, "testcase", classname="script", name=source, file=source)
     if result.returncode or failure:

@@ -13,16 +13,10 @@ import tarfile
 import tomllib
 from datetime import datetime, timezone
 
-try:
-    from scripts import install_support as support
-    from scripts import authority_broker
-    from scripts import full_mods_lock
-    from scripts import preview_lock
-except ModuleNotFoundError:
-    import install_support as support
-    import authority_broker
-    import full_mods_lock
-    import preview_lock
+from scripts import install_support as support
+from scripts import authority_broker
+from scripts import full_mods_lock
+from scripts import preview_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,10 +38,7 @@ MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "s
 
 
 def invoke(*arguments):
-    result = subprocess.run([str(item) for item in arguments], capture_output=True, text=True)
-    if result.returncode:
-        raise ValueError((result.stderr or result.stdout or "command failed").strip())
-    return json.loads(result.stdout)
+    return json.loads(support.output(arguments))
 
 
 def package_sources(preview):

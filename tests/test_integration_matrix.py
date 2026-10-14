@@ -28,7 +28,7 @@ class IntegrationMatrixTests(unittest.TestCase):
         self.assertEqual(
             integration_matrix.DOCUMENT.read_text(),
             integration_matrix.render(self.matrix),
-            "INTEGRATION.md is stale; rerun scripts/integration_matrix.py --write",
+            "INTEGRATION.md is stale; rerun python3 -m scripts.integration_matrix --write",
         )
 
     def test_missing_launch_reports_validation_before_rendering(self):

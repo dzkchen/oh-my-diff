@@ -4,18 +4,14 @@ import json
 from pathlib import Path
 import sys
 
+from scripts import install_support as support
+
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/preview-v1.lock.json"
-SCHEMA = 1
-PRODUCT = "oh-my-diff-private-preview-v1"
 NODE = "24.18.0"
 FILES = ("mod.json", "index.ts")
 PACKAGES = ("omd_workflow",)
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def package_digest(base):
@@ -49,30 +45,24 @@ def build():
             "extension_type": "mod",
             "capabilities": manifest["capabilities"],
             "source": str(base.relative_to(ROOT)),
-            "files": {name: digest(base / name) for name in FILES},
+            "files": {name: support.digest(base / name) for name in FILES},
             "package_sha256": package_digest(base),
         }
     if not packages:
         raise ValueError("no first-party preview packages found")
     return {
-        "schema": SCHEMA,
-        "product": PRODUCT,
+        "schema": support.PREVIEW_SCHEMA,
+        "product": support.PREVIEW_PRODUCT,
         "mod_api": api,
         "node": NODE,
-        "types": {"path": "mods/api.d.ts", "sha256": digest(ROOT / "mods/api.d.ts")},
+        "types": {"path": "mods/api.d.ts", "sha256": support.digest(ROOT / "mods/api.d.ts")},
         "packages": packages,
     }
 
 
 def main():
-    text = json.dumps(build(), indent=2, sort_keys=True) + "\n"
-    if "--write" in sys.argv[1:]:
-        LOCK.write_text(text)
-        print(f"wrote {LOCK.relative_to(ROOT)}")
-        return
-    if LOCK.read_text() != text:
-        raise SystemExit("preview lock is stale; rerun with --write after reviewing the sources")
-    print("preview lock matches the pinned sources")
+    support.check_or_write(LOCK, json.dumps(build(), indent=2, sort_keys=True) + "\n", "--write" in sys.argv[1:],
+                           "preview lock is stale; rerun with --write after reviewing the sources")
 
 
 if __name__ == "__main__":

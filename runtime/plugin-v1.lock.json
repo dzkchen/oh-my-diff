@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "f8ac3b08106db5614386a633cd4e561f5f1e85fc1952c33ac462b7fd37bae7a8"
+    "sha256": "a7f5fece7c4c6992ac24c8c364c5d3549a102e24071a33db6659ad51cd5d89ec"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -37,21 +37,18 @@
     ".agents/plugins/marketplace.json": "04b95b0e31386e9e08964a840210aced7a9b3191d56f3e1262944d6dd08a9d03",
     "plugins/omd-anchored-edit/.codex-plugin/omd.json": "a5b5f9841af014460a839d658314951a73fef8b1c0e2c6d0e8b9b6c5a6fa2bad",
     "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
-    "plugins/omd-anchored-edit/README.md": "db8897b33a88dc7dbb6eb43fd0c88890978f9bf856da04c2b3bc94b3ffb74954",
+    "plugins/omd-anchored-edit/README.md": "5154b525e758773964fa90304e9527af32d22b9a01252decd65f68b7820fc98a",
     "plugins/omd-anchored-edit/mod/index.ts": "4f0b93356e8ad5fc043d7ba7d74d8e18619e4ec1c0fc2a542a9708e9aa98fd98",
     "plugins/omd-anchored-edit/mod/mod.json": "62069d26106713ee9d765453a550241016f0e14b86295c256f2bfa36dcaffa46",
     "plugins/omd-anchored-edit/skills/omd-anchored-edit/SKILL.md": "9a1fcb82de5db7bc9179e4b7383150c160f3757f3031cfa3d9d115cf7ffc9ae6",
-    "plugins/omd-anchored-edit/tsconfig.json": "d406c45044e0ac875e6fe9ed6c8c7c70fdfac49bbe5e386fbd51c9e5bc38ebcf",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "71ca7ba932d75ca645714ae1a2a7bd5ab69f54a68471c87d78d1bf0cfd620554",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "e4859e9126b144cfc79ba0f8e828939e7f3479a3f78ee76a300f9c9b62f166fe",
-    "plugins/omd-artifact-reading/README.md": "b8cd094cc8039aa3686e559f68b53bb4ee6252d8b53b641eb482762fb3948ffd",
-    "plugins/omd-artifact-reading/mod.test.mjs": "e35222011f16fc00b6dbc633a0032dfbe5aff3538956642ec10072dd24f34a99",
+    "plugins/omd-artifact-reading/README.md": "26cb7e01d969231f075f2366ef36b647f246669cee854a01dffcfcf956fe0207",
     "plugins/omd-artifact-reading/mod/index.ts": "2764548cdde0f6a8d2c8961bb53e22ee18a86fa21f7adf0c7edc97cf24db436d",
     "plugins/omd-artifact-reading/mod/mod.json": "587e2b7c489f1006c9a08577367bdab74637d56276e7f8561eb992960fe645fd",
-    "plugins/omd-artifact-reading/scripts/github_read.py": "1a730b4c48d81b7a0e6feb4962c69b6b9f454c76db887a61984c28b5b8cdc709",
+    "plugins/omd-artifact-reading/scripts/github_read.py": "a1b4afff9bc5f5db66280af6e93ac83b41e9518223ab0afd049b9146b9a21ad1",
     "plugins/omd-artifact-reading/scripts/read_artifact.py": "fd037db4ff91779538c2fb42979a8f08ba59d454ea42cb3b81868897f72f7eb3",
     "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",
-    "plugins/omd-artifact-reading/tsconfig.json": "6bcf4da7be953f3d578863baeab06aefde1fbbbed2d1991fcde567d679637037",
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "f22c589d2750663096d75be96c63c666c4303542258eb0d79b8b5f6adce924e0",
     "plugins/omd-code-execution/kernels/bun.mjs": "0e983d0c42e282e1145d7a421fdf8e331e9bb5ce21f6c153c839954520be5071",
     "plugins/omd-code-execution/kernels/python.py": "38d7563a12663419d880f22973e7141663131630c0e2c3c02cfaae550fe2068b",

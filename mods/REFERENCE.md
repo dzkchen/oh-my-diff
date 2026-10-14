@@ -2161,7 +2161,7 @@ and token to its webview, which loads the SDK as ESM and connects over
 `snapshot.view.sites` by component type, calls `unsupported()` for the rest,
 reads images with `omd/resource/read`, sends `omd/action` and `omd/client/event`,
 answers approval server requests through `onServerRequest`, and re-renders
-from the full snapshot after `onReconnect`. `scripts/client_acceptance.py
+from the full snapshot after `onReconnect`. `python3 -m scripts.client_acceptance
 --binaries DIR` drives both example adapters against headless and co-attached
 hosts with a scripted local provider and is the conformance check for a new
 client.

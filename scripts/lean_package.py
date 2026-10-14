@@ -4,27 +4,18 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
 
-try:
-    from scripts import lean_release_lock as release
-    from scripts import install_support as support
-except ModuleNotFoundError:
-    import lean_release_lock as release
-    import install_support as support
+from scripts import lean_release_lock as release
+from scripts import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
 RELEASE_MANIFEST = "omd-release.json"
-
-
-def run(*arguments, cwd=None, env=None):
-    subprocess.run([str(item) for item in arguments], cwd=cwd, env=env, check=True)
 
 
 def copy_sources(destination):
@@ -132,9 +123,8 @@ def install_payload(payload, args):
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if not support.compatible_upstream(upstream["version"], expected_version):
         raise ValueError("upstream fallback does not match the package's Codex minor version")
-    run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
-        "--package-mode",
-        cwd=payload)
+    support.run([sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
+                 "--package-mode"], cwd=payload, capture=False)
     command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
                "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
                "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
@@ -146,7 +136,7 @@ def install_payload(payload, args):
         command += ["--previous", args.previous]
     environment = os.environ.copy()
     environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
-    run(*command, cwd=payload, env=environment)
+    support.run(command, cwd=payload, env=environment, capture=False)
 
 
 def source_build(args):
@@ -155,10 +145,10 @@ def source_build(args):
         raise ValueError("source package archive already exists")
     with tempfile.TemporaryDirectory(prefix="omd-package-source-", dir="/private/tmp") as temporary:
         checkout = Path(temporary) / "upstream"
-        run("git", "clone", "--no-checkout", args.repository, checkout)
-        run("git", "checkout", upstream["commit"], cwd=checkout)
-        run(sys.executable, ROOT / "scripts/normalize_upstream_lock.py", checkout)
-        run(sys.executable, ROOT / "scripts/apply_runtime_patch.py", checkout)
+        support.run(["git", "clone", "--no-checkout", args.repository, checkout], capture=False)
+        support.run(["git", "checkout", upstream["commit"]], cwd=checkout, capture=False)
+        support.run([sys.executable, ROOT / "scripts/normalize_upstream_lock.py", checkout], capture=False)
+        support.run([sys.executable, ROOT / "scripts/apply_runtime_patch.py", checkout], capture=False)
         target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
@@ -167,7 +157,8 @@ def source_build(args):
             "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
         before = release.build_provenance.inputs(checkout, arguments, environment)
         (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
-        run("cargo", f"+{upstream['rust_toolchain']}", *arguments, cwd=checkout / "codex-rs", env=environment)
+        support.run(["cargo", f"+{upstream['rust_toolchain']}", *arguments], cwd=checkout / "codex-rs", env=environment,
+                    capture=False)
         release.build_provenance.record_build(target / "release", before,
             release.build_provenance.inputs(checkout, arguments, environment))
         unsigned = release.build_provenance.verify(target / "release", signed=False, expected_inputs=before)
@@ -231,5 +222,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    except (OSError, RuntimeError, ValueError, tarfile.TarError) as error:
         raise SystemExit(str(error)) from error

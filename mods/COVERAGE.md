@@ -1,6 +1,6 @@
 # Public API coverage and composition contract
 
-<!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
+<!-- Generated from conformance/contract.json by python3 -m scripts.mod_conformance --write. -->
 
 Mod API `0.2.0-experimental.5`. Every decision a mod can reach through the published
 API is listed below with the support it has, when it takes effect, who owns the
