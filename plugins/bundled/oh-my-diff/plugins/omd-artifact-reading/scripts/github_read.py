@@ -52,7 +52,6 @@ class Client:
     def __init__(self):
         self.deadline = time.monotonic() + 18
         self.count = 0
-        self.rate = {}
         token = os.environ.get("OMD_GITHUB_TOKEN", "")
         if token and (len(token) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in token)):
             raise Unavailable("github_credential_invalid")
@@ -70,7 +69,6 @@ class Client:
             with self.opener.open(request, timeout=max(0.1, self.deadline - time.monotonic())) as response:
                 if response.status != 200 or response.headers.get_content_type() != "application/json":
                     raise Unavailable("github_response_invalid")
-                self.rate = {key: response.headers.get(key) for key in ("X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After")}
                 body = response.read(MAX_RESPONSE + 1)
                 if len(body) > MAX_RESPONSE:
                     raise Unavailable("github_response_too_large_narrow_resource")
