@@ -660,17 +660,17 @@ const api = Object.freeze({
     set(value) {
       requireCapability('terminal');
       if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
-      const encoded = JSON.stringify(value, (key, item) => {
-        if (!key.isWellFormed() || (typeof item === 'string' && !item.isWellFormed())) throw new Error('ui_state_invalid_json');
-        return item;
-      });
+      const encoded = JSON.stringify(value);
       if (typeof encoded !== 'string') throw new Error('ui_state_limit');
-      let bytes = 0;
-      for (const character of encoded) {
+      // JSON.stringify writes a lone surrogate, in a key or a value, as a \\udXXX escape.
+      if (/(?<!\\\\)(?:\\\\\\\\)*\\\\ud[89a-f]/i.test(encoded)) throw new Error('ui_state_invalid_json');
+      let bytes = /[^\\x00-\\x7f]/.test(encoded) ? 0 : encoded.length;
+      if (!bytes) for (const character of encoded) {
         const code = character.codePointAt(0);
         bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
-        if (bytes > 65536) throw new Error('ui_state_limit');
+        if (bytes > 65536) break;
       }
+      if (bytes > 65536) throw new Error('ui_state_limit');
       uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
     },
   }),

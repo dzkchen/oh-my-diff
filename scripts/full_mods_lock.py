@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/full-mods.lock.json"
 PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_continue", "omd_frecency", "omd_inspector", "omd_logo", "omd_lsp_sync",
             "omd_lsp_view", "omd_model_picker", "omd_mods", "omd_plan_panel", "omd_plan_removal", "omd_preview",
-            "omd_privacy", "omd_profiles", "omd_tool_lines", "omd_update", "omd_usage")
+            "omd_privacy", "omd_profiles", "omd_statusline", "omd_tool_lines", "omd_update", "omd_usage")
 
 
 def source_files(identifier):

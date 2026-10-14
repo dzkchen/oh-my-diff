@@ -132,7 +132,7 @@ export default function activate(api: ModAPI) {
     return { display: next.review ? `${reviewText(next.review)}\nRun /mods apply or /mods cancel` : next.notice ?? 'No change' };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
   api.on('component_event', event => {
-    if (!event.component.startsWith('omd_mods_') || !event.events?.some(input => 'key' in input && input.key === 'Esc')) return;
+    if (!event.component.startsWith('omd_mods_') || event.kind !== 'close') return;
     api.uiState.set({ ...saved(), ...CLOSED });
   });
 

@@ -174,6 +174,7 @@
         "sidebar",
         "header",
         "above_composer",
+        "below_composer",
         "dialog",
         "welcome"
       ],
@@ -908,6 +909,7 @@
         "omd_preview",
         "omd_privacy",
         "omd_profiles",
+        "omd_statusline",
         "omd_tool_lines",
         "omd_update",
         "omd_usage",
@@ -920,6 +922,7 @@
         "omd_mods",
         "omd_plan_panel",
         "omd_plan_removal",
+        "omd_statusline",
         "omd_tool_lines",
         "omd_update"
       ],
@@ -990,6 +993,10 @@
     "omd_profiles": {
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_profiles"
+    },
+    "omd_statusline": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_statusline"
     },
     "omd_tool_lines": {
       "version": "0.1.0-preview.1",
@@ -1070,6 +1077,15 @@
       "id": "omd_plan_panel",
       "kind": "mod",
       "path": "mods/first-party/omd_plan_panel",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_statusline",
+      "kind": "mod",
+      "path": "mods/first-party/omd_statusline",
       "tier": "default-active",
       "profiles": [
         "full"

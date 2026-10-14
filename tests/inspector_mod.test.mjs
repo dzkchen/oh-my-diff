@@ -23,8 +23,8 @@ test('inspector stays closed after startup or its owned Escape without claiming 
   assert.equal(startup.state.open, false);
   assert.equal(startup.state.limits, 'kept');
   assert.equal(startup.value, null);
-  const escaped = run('component_event', { component: 'omd_inspector_close', events: [{ key: 'Esc' }] }, open);
+  const escaped = run('component_event', { component: 'omd_inspector_dialog', kind: 'close', origin: 'user' }, open);
   assert.equal(escaped.state.open, false);
   assert.equal(run('terminal', { event: 'idle' }, escaped.state).value, null);
-  assert.equal(run('component_event', { component: 'another_dialog', events: [{ key: 'Esc' }] }, open).state.open, true);
+  assert.equal(run('component_event', { component: 'another_dialog', kind: 'close', origin: 'user' }, open).state.open, true);
 });

@@ -84,7 +84,7 @@ with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
 `--profile full` installs the first-party launch collection. A fresh OMD+ store enables
 `omd_inspector`, `omd_logo`, `omd_mods`, `omd_update`, `omd_model_picker`,
-`omd_plan_removal`, `omd_tool_lines` and `omd_plan_panel`; Codex's
+`omd_plan_removal`, `omd_statusline`, `omd_tool_lines` and `omd_plan_panel`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. The Claude route, LSP synchronization and code
 intelligence, workflow, advisor review, `/preview`, frecency file ranking, account and provider profiles,
 the privacy policy, the usage HUD and `/continue` (`omd_claude_cli`, `omd_lsp_sync`, `omd_lsp_view`, `omd_workflow`,

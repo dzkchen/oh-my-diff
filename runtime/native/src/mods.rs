@@ -572,8 +572,8 @@ fn publish(
     views.base(host, terminal, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
-    if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
-        let _ = host.persist_json(codex_omd::BUILTINS_SNAPSHOT, &builtins);
+    if codex_omd::BuiltinSnapshot::read(&host.root, &host.repository) != builtins {
+        let _ = host.persist_json(&codex_omd::builtins_snapshot(&host.repository), &builtins);
     }
 }
 
@@ -1428,7 +1428,7 @@ impl TurnLifecycleContributor for Mods {
                 .into_iter()
                 .flat_map(|(_, controls)| controls.modes.disable)
                 .collect(),
-            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root)
+            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root, &self.host.repository)
                 .disabled_modes
                 .into_values()
                 .flatten()

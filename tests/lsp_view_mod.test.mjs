@@ -45,7 +45,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.deepEqual(view[1], { type: 'slot' });
     assert.deepEqual(view[0].children[1].rows, [{ value: 'box.py:2', label: 'box.py:2:7', spans: [{ text: 'box.py:2:7' }] }]);
     assert.deepEqual(view[0].children[1].action, { command: 'omd_lsp_view:lsp', args: 'open' });
-    assert.equal(invoke(state, 'component_event', { component: view[0].children[1].id, events: [{ key: 'Esc' }] }).state.view, null);
+    assert.equal(invoke(state, 'component_event', { component: view[0].id, kind: 'close', origin: 'user' }).state.view, null);
     assert.equal(invoke(state, 'terminal', { event: 'startup' }).state.view, null);
     state = invoke(state, 'command', 'open box.py:2', 'lsp').state;
     assert.deepEqual(state.view.excerpt, { path: 'box.py', line: 2, start: 1, lines: ['value = 1', 'class Box:', '    size = 2'], errors: [] });
