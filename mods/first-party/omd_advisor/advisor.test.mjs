@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { callback } from './mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const root = new URL('../mods/first-party/omd_advisor/', import.meta.url);
+const root = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', root), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', root), 'utf8'));
 
@@ -115,7 +115,7 @@ function invoke(payload, host, extra = {}) {
   return reply;
 }
 
-const nativeEvents = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
+const nativeEvents = readFileSync(new URL('../../../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
 const advisorOptions = { surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true } };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };

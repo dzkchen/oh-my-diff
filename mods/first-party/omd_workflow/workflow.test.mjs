@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { callback } from './mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const source = readFileSync(new URL('../mods/first-party/omd_workflow/index.ts', import.meta.url), 'utf8');
-const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_workflow/mod.json', import.meta.url), 'utf8'));
-const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const native = readFileSync(new URL('../../../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
 const intercepts = Object.fromEntries([...native.match(/pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
 const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: [], intercept: intercepts, state: 'store', contracts: 'contracts' };

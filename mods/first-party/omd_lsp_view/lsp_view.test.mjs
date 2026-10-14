@@ -4,10 +4,10 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runnerSync } from './mod_runner.mjs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const mod = new URL('../mods/first-party/omd_lsp_view/', import.meta.url);
+const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
+const mod = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const surface = { events: { terminal: 'terminal', component_event: 'terminal', channel: 'events' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };

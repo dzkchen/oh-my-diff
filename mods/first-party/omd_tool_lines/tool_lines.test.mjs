@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from './mod_runner.mjs';
+import { runnerSync } from '../../../tests/mod_runner.mjs';
 
-const mod = new URL('../mods/first-party/omd_tool_lines/', import.meta.url);
+const mod = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const surface = { events: {}, replacements: [], middleware: [], state: 'store', contracts: 'contracts', intercept: { render: 'terminal' } };
