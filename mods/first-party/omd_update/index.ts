@@ -85,7 +85,7 @@ export default function activate(api: ModAPI) {
     return null;
   }, { description: 'See whether a newer Oh My Diff is out and change update checks and automatic updates' });
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_update_') && event.events?.some(input => 'key' in input && input.key === 'Esc')) save({ open: false, notice: null });
+    if (event.component.startsWith('omd_update_') && event.kind === 'close') save({ open: false, notice: null });
   });
 
   // Dialog height counts text lines, so long text is wrapped here instead of by the renderer.

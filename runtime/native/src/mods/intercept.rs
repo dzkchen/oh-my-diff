@@ -181,35 +181,64 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
             let policy: Option<codex_protocol::models::PermissionProfile> =
                 policy.cloned().map(serde_json::from_value).transpose()?;
             let _cancellation = Cancellation(cancelled.clone());
-            let future = async {
-                tokio::select! {
-                    value = operations::dispatch_with_policy(
-                        &core,
-                        &lead,
-                        Caller {
-                            id: caller,
-                            source: &source,
-                            grants,
-                            generation,
-                            origin: Origin::Event,
-                            record_changes: true,
-                        },
-                        None,
-                        request,
-                        &cancelled,
-                        policy.as_ref(),
-                    ) => value.map_err(std::io::Error::other),
-                    () = async {
-                        while active() {
-                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let stopped = AtomicBool::new(false);
+            let operation = || {
+                handle.block_on(async {
+                    tokio::select! {
+                        value = operations::dispatch_with_policy(
+                            &core,
+                            &lead,
+                            Caller {
+                                id: caller,
+                                source: &source,
+                                grants,
+                                generation,
+                                origin: Origin::Event,
+                                record_changes: true,
+                            },
+                            None,
+                            request,
+                            &cancelled,
+                            policy.as_ref(),
+                        ) => value.map_err(std::io::Error::other),
+                        () = async {
+                            while !stopped.load(Ordering::Acquire) {
+                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                            }
+                        } => Err(std::io::Error::other("callback_cancelled")),
+                    }
+                })
+            };
+            // Callers include small-stack callback threads; the operation's future is built and
+            // polled on a thread with a Tokio worker's stack.
+            let wait = || {
+                std::thread::scope(|scope| {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::Builder::new()
+                        .name("omd-host-call".into())
+                        .stack_size(codex_async_utils::THREAD_STACK_SIZE_BYTES)
+                        .spawn_scoped(scope, move || {
+                            let _ = tx.send(operation());
+                        })?;
+                    loop {
+                        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                            Ok(result) => return result,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                if !active() {
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                return Err(unavailable("host operation thread failed"));
+                            }
                         }
-                    } => Err(std::io::Error::other("callback_cancelled")),
-                }
+                    }
+                })
             };
             if worker {
-                tokio::task::block_in_place(|| handle.block_on(future))
+                tokio::task::block_in_place(wait)
             } else {
-                handle.block_on(future)
+                wait()
             }
         },
     );
