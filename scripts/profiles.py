@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from scripts import install_support as support
 from scripts import authority_broker
 from scripts import mods_lock
-from scripts import base_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +24,7 @@ SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_panel",
                   "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
-PACKAGES = tuple(sorted((*base_lock.PACKAGES, *mods_lock.PACKAGES)))
+PACKAGES = mods_lock.PACKAGES
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
@@ -33,19 +32,11 @@ UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/mods_lock.py", "runtime/mods.lock.json",
-                    "scripts/base_lock.py",
-                    "runtime/base.lock.json", "upstream.lock.json", "INSTALL.md", "install.sh")
+                    "upstream.lock.json", "INSTALL.md", "install.sh")
 
 
 def invoke(*arguments):
     return json.loads(support.output(arguments))
-
-
-def package_sources(base):
-    full = mods_lock.load()
-    if full["mod_api"] != base["mod_api"]:
-        raise ValueError("OMD+ mod API disagrees with the base lock")
-    return {**base["packages"], **full["packages"]}
 
 
 def profile_packages(profile):
@@ -113,13 +104,13 @@ def identity(binary):
     return result
 
 
-def release_lock(upstream, patch, base):
+def release_lock(upstream, patch, mods):
     record = json.loads((ROOT / "runtime/release.lock.json").read_text())
     if (record.get("schema") != SCHEMA or record.get("product") != PRODUCT
             or record.get("upstream_commit") != upstream["commit"]
             or record.get("runtime_patch_sha256") != patch["patch"]["sha256"]
-            or record.get("mod_api") != base["mod_api"]
-            or record.get("node") != base["node"]):
+            or record.get("mod_api") != mods["mod_api"]
+            or record.get("node") != mods["node"]):
         raise ValueError("release lock disagrees with pinned runtime sources")
     for name, expected in record["source_sha256"].items():
         if support.digest(ROOT / name) != expected:
@@ -260,7 +251,7 @@ def status(prefix, bin_dir):
         raise ValueError("mod store API no longer matches the installation")
     selection = invoke(manager, "selection-status", store)
     active = {item["id"]: item for item in host["mods"]}
-    locked = package_sources(support.base_lock())
+    locked = support.mods_lock()["packages"]
     packages = []
     for identifier in profile_packages(record["profile"]):
         source = store / "sources" / identifier
@@ -419,13 +410,11 @@ def install(args):
     patch_lock = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch_lock["patch"]["path"]) != patch_lock["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
-    locked = support.base_sources(support.base_lock())
-    if mods_lock.load() != mods_lock.build():
-        raise ValueError("OMD+ mod lock differs from pinned sources")
-    packages = package_sources(locked)
+    locked = support.mods_lock()
+    if locked != mods_lock.build():
+        raise ValueError("first-party mod lock differs from pinned sources")
+    packages = locked["packages"]
     release = release_lock(upstream_lock, patch_lock, locked)
-    if tuple(sorted(packages)) != PACKAGES:
-        raise ValueError("first-party package inventory changed")
     binary = identity(args.binary)
     if binary["sha256"] != release["artifacts"]["codex"]["sha256"]:
         raise ValueError("Codex binary differs from the release lock")

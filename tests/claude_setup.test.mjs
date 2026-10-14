@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 test('Claude setup adds its provider grant to the OMD+ store without disturbing other host settings',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 120000 }, async () => {
+  { timeout: 120000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'omd-claude-setup-')));
     const prefix = join(root, 'prefix');
     const store = join(root, 'store');

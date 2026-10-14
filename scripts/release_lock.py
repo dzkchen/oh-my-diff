@@ -23,9 +23,8 @@ SOURCES = (
     "plugins/release-files.json",
     "scripts/profiles.py", "scripts/release_lock.py",
     "scripts/package.py", "scripts/install_support.py",
-    "scripts/base_lock.py", "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
-    "upstream.lock.json", "runtime/patches/manifest.json",
-    "runtime/base.lock.json", "runtime/plugins.lock.json",
+    "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
+    "upstream.lock.json", "runtime/patches/manifest.json", "runtime/plugins.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "INSTALL.md", "install.sh",
@@ -66,15 +65,14 @@ def build(artifact_dir, package_mode=False):
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
-    base = support.base_sources(support.base_lock())
-    full = mods_lock.load()
-    if not package_mode and full != mods_lock.build():
-        raise ValueError("OMD+ mod lock differs from pinned sources")
+    mods = support.mods_lock()
+    if not package_mode and mods != mods_lock.build():
+        raise ValueError("first-party mod lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
     version = upstream["tag"].removeprefix("rust-v")
     if (index["release_pin"]["codex"] != version
-            or index["release_pin"]["mod_api"] != base["mod_api"]
-            or index["release_pin"]["node"] != base["node"]):
+            or index["release_pin"]["mod_api"] != mods["mod_api"]
+            or index["release_pin"]["node"] != mods["node"]):
         raise ValueError("curated catalog does not match the active release pin")
     plugins = sorted(support.plugin_sources()["plugins"])
     artifacts = {}
@@ -115,8 +113,8 @@ def build(artifact_dir, package_mode=False):
         "rust_toolchain": upstream["rust_toolchain"],
         "normalized_cargo_lock_sha256": upstream["normalized_cargo_lock_sha256"],
         "runtime_patch_sha256": patch["patch"]["sha256"],
-        "mod_api": base["mod_api"],
-        "node": base["node"],
+        "mod_api": mods["mod_api"],
+        "node": mods["node"],
         "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "build_provenance": provenance,
@@ -125,7 +123,7 @@ def build(artifact_dir, package_mode=False):
             "platform": {"label": profiles.PROFILE_LABELS["platform"],
                          "first_party_installed": list(profiles.PLATFORM_PACKAGES),
                          "first_party_default_active": list(profiles.PLATFORM_PACKAGES), "plugin_sources": []},
-            "full": {"label": profiles.PROFILE_LABELS["full"], "first_party_installed": sorted((*base["packages"], *full["packages"])),
+            "full": {"label": profiles.PROFILE_LABELS["full"], "first_party_installed": sorted(mods["packages"]),
                      "first_party_default_active": sorted(profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },

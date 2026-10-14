@@ -35,16 +35,16 @@ def sources():
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
-    base = json.loads((ROOT / "runtime/base.lock.json").read_text())
-    packages = {**base["packages"], **json.loads((ROOT / "runtime/mods.lock.json").read_text())["packages"]}
     plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
+    mods = install_support.mods_lock()
+    packages = mods["packages"]
     view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
     site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
-        "base": base,
+        "mods": mods,
         "plugin": plugin,
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
@@ -93,7 +93,7 @@ def check(matrix):
         "upstream_tag": source["upstream"]["tag"],
         "upstream_commit": source["upstream"]["commit"],
         "target": source["upstream"]["verified_target"],
-        "node": source["base"]["node"],
+        "node": source["mods"]["node"],
     }
     for key, value in expected.items():
         if release.get(key) != value:
@@ -138,10 +138,11 @@ def check(matrix):
         component = plugin_id.replace("-", "_")
         claim(component, "version", plugin["version"])
         claim(component, "extension_type", plugin["extension_types"])
-    for name, package in source["base"]["packages"].items():
-        claim(name, "version", package["version"])
-        claim(name, "extension_type", package["extension_type"])
-        claim(name, "capabilities", sorted(package["capabilities"]))
+    for name, package in source["mods"]["packages"].items():
+        if name in components:
+            claim(name, "version", package["version"])
+            claim(name, "extension_type", package["extension_type"])
+            claim(name, "capabilities", sorted(package["capabilities"]))
         if not set(package["capabilities"]) <= source["capabilities"]:
             problems.append(f"{name}: capabilities outside the published API")
     for language, servers in source["languages"].items():
@@ -185,7 +186,7 @@ def check(matrix):
         if not entry.get("retained_for") or not entry.get("evidence"):
             problems.append(f"regression case {entry['id']}: missing retained versions or evidence")
         for version in entry.get("retained_for", []):
-            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["base"]["node"]]
+            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["mods"]["node"]]
             if version not in known:
                 problems.append(f"regression case {entry['id']}: {version} is not a supported version row")
 

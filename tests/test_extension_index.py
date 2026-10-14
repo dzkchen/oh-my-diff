@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from scripts import extension_index
-from scripts.base_lock import package_digest
+from scripts.install_support import package_digest
 
 
 class PublishedSourceTests(unittest.TestCase):

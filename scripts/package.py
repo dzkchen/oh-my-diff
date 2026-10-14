@@ -20,13 +20,10 @@ RELEASE_MANIFEST = "omd-release.json"
 
 def copy_sources(destination):
     plugin = support.plugin_sources()
-    base = support.base_sources(support.base_lock())
     listed = set(release.SOURCES)
     listed.update(("runtime/release.lock.json", plugin["guide"]["path"],
                    json.loads((ROOT / "runtime/patches/manifest.json").read_text())["patch"]["path"]))
     listed.update(f"{plugin['source']}/{name}" for name in plugin["files"])
-    for package in base["packages"].values():
-        listed.update(f"{package['source']}/{name}" for name in package["files"])
     for name in sorted(listed):
         source = ROOT / name
         target = destination / name

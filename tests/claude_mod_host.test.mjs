@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { translateRequest, responseEvents } from '../mods/first-party/omd_claude_cli/index.ts';
 
 test('pinned Codex executes a mod-mapped host tool and returns its result',
-  { skip: !process.env.OMD_TEST_CODEX, timeout: 30000 }, async () => {
+  { timeout: 30000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'omd-claude-host-'));
     await mkdir(join(root, 'codex-home'));
     const catalog = resolve('mods/first-party/omd_claude_cli/models.json');
