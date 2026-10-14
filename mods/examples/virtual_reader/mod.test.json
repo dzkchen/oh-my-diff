@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "example_virtual_reader",
+      "event": "virtual_read",
+      "name": "fixture",
+      "payload": {
+        "uri": "fixture://manual/intro"
+      },
+      "expect": {
+        "canonical_uri": "fixture://manual/intro",
+        "canonical_url": "https://example.invalid/manual/intro",
+        "identity": "manual/intro",
+        "revision": "manual-v1",
+        "text": "A resource supplied by an independent extension.",
+        "anchors": [
+          "intro:1"
+        ],
+        "cursor": null,
+        "truncated": false
+      }
+    }
+  ]
+}

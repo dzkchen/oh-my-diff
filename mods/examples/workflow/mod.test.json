@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "contract.status": [
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "schema": 2,
+            "id": "paired_review",
+            "version": 1,
+            "description": "Paired review",
+            "assurance": "independent-review-candidate",
+            "gates": {
+              "complete": []
+            }
+          },
+          "provenance": null,
+          "receipts": [],
+          "finding_ledger": {},
+          "restrictions": [],
+          "scoped_restrictions": []
+        }
+      }
+    ],
+    "contract.restrict": [
+      {
+        "result": {
+          "restrictions": [
+            "agents.spawn"
+          ],
+          "scoped_restrictions": []
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "workflow",
+      "event": "tool",
+      "name": "workflow",
+      "payload": {},
+      "expect": {
+        "status": "active",
+        "active": {
+          "schema": 2,
+          "id": "paired_review",
+          "version": 1,
+          "description": "Paired review",
+          "assurance": "independent-review-candidate",
+          "gates": {
+            "complete": []
+          }
+        },
+        "provenance": null,
+        "receipts": [],
+        "finding_ledger": {},
+        "restrictions": [],
+        "scoped_restrictions": []
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "workflow",
+      "event": "tool",
+      "name": "no_delegation",
+      "payload": {},
+      "expect": {
+        "restrictions": [
+          "agents.spawn"
+        ],
+        "scoped_restrictions": []
+      }
+    }
+  ]
+}

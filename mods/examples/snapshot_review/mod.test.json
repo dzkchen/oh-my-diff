@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "task.status": [
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "author-preview",
+            "cwd": "/repo",
+            "cost": null
+          },
+          "limits": {},
+          "worker_limits": {}
+        }
+      }
+    ],
+    "store.get": [
+      {
+        "result": null
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "snapshot_review",
+      "event": "tool",
+      "name": "start",
+      "payload": {},
+      "expect_error": "capture_first"
+    }
+  ]
+}

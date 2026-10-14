@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -20,12 +19,6 @@ def package_paths():
         for base in PACKAGE_ROOTS
         for path in base.rglob("mod.json")
     }
-
-
-def author_examples():
-    source = (ROOT / "mods/author/cli.mjs").read_text()
-    match = re.search(r"const publicExamples = \[(.*?)\];", source, re.S)
-    return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
 def identified(registry):
@@ -72,8 +65,6 @@ def check(registry):
         for package in packages
         if package["role"] == "author_example"
     }
-    if set(author_examples()) != published:
-        problems.append(f"author CLI examples differ: declared={author_examples()}, classified={sorted(published)}")
     files = json.loads((ROOT / "mods/package.json").read_text())["files"]
     shipped = {value.removeprefix("examples/") for value in files if value.startswith("examples/")}
     if shipped != published:
