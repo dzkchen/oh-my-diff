@@ -587,6 +587,7 @@
         "patch:send_results_keep_inner_edits_and_stay_inside_editable_text",
         "patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed",
         "patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies",
+        "patch:authority_grants_are_declared_scoped_expiring_and_revocable",
         "patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it"
       ]
     },

@@ -638,6 +638,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("middleware") {
         exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
     }
+    if granted("request_policy") {
+        exposure.push("request_policy: every model request must pass this mod's final-request check; whenever the mod is not loaded, faults or fails to serve, OMD refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused.");
+    }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
@@ -5911,8 +5914,10 @@ impl ModHost {
                     "policy": m.package.policy, "peer_access": m.package.peer_access,
                     "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
-                    "exposure": authority_exposure(&m.package.capabilities)});
+                    "exposure": authority_exposure(&m.selection.capabilities)});
                 status }).collect::<Vec<_>>()});
+        status["request_policy_unavailable"] =
+            json!(self.send_policy().and_then(|policy| policy.unavailable));
         status["access"] = json!(self.access);
         status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
         status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
