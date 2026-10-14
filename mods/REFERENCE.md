@@ -1142,7 +1142,7 @@ snapshots scaled down to the raster's pixel size (a client's `cell_px`, else
 8×16) and at most 8 MiB, and cells-only clients receive half-blocks. Host paths and handles
 never reach external renderers.
 
-Experimental pacing changed from 33 to 16 ms in Batch 4gh. Use `frame_ms` and
+Frames are paced at 16 ms while experimental. Use `frame_ms` and
 `retry_after_ms` instead of hardcoded timing. Encoded producers keep their
 stdin and stdout shapes.
 For local profiling, `OMD_FRAME_TRACE=/absolute/new/file.jsonl` enables

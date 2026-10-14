@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "reactive_dashboard",
+      "event": "command",
+      "name": "search",
+      "payload": " logs ",
+      "expect": null
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "draw",
+        "ledger": null
+      },
+      "expect": [
+        {
+          "mod": "reactive_dashboard",
+          "value": {
+            "sidebar_width": 32,
+            "sites": {
+              "sidebar": {
+                "components": [
+                  {
+                    "type": "input",
+                    "id": "dashboard_query",
+                    "label": "Filter",
+                    "value": "logs",
+                    "placeholder": "type to filter",
+                    "action": {
+                      "command": "reactive_dashboard:search"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "id": "dashboard_summary",
+                    "label": "Summary",
+                    "text": "logs · 1 searches · 0 ticks",
+                    "tone": "muted"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
