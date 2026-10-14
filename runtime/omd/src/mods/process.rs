@@ -281,7 +281,7 @@ static MOUNTED: Mutex<BTreeSet<(String, String)>> = Mutex::new(BTreeSet::new());
 static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new()), Condvar::new());
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
-const REUSED_RUNNERS: usize = 2;
+static REUSED_RUNNERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
 struct Stepping(Option<String>);
@@ -473,6 +473,12 @@ where
     Ok(value)
 }
 
+/// Keeps a reused runner for each package whose `terminal` handler runs on every view, so one view
+/// never evicts another package's runner.
+pub(super) fn reserve_reused(packages: usize) {
+    REUSED_RUNNERS.fetch_max(packages, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
     WARM.lock()
         .map(|mut runners| runners.extract_if(.., retire).collect())
@@ -487,7 +493,7 @@ fn pool(mut runner: Warm) {
     let size = match kind {
         (_, Some(_)) => usize::MAX,
         (true, None) => WARM_RUNNERS,
-        (false, None) => REUSED_RUNNERS,
+        (false, None) => REUSED_RUNNERS.load(std::sync::atomic::Ordering::Relaxed),
     };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {

@@ -1238,11 +1238,11 @@ pub const IMAGE_PIXELS: u32 = 4096;
 pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let _stage = crate::frame_metrics::stage("decode");
     if bytes.len() > 8 * 1024 * 1024 {
-        return Err("backdrop_image_too_large".into());
+        return Err("image_too_large".into());
     }
-    let format = image::guess_format(bytes).map_err(|_| "backdrop_format_unsupported")?;
+    let format = image::guess_format(bytes).map_err(|_| "image_format_unsupported")?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err("backdrop_format_unsupported".into());
+        return Err("image_format_unsupported".into());
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
@@ -1252,7 +1252,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     reader.limits(limits);
     reader
         .decode()
-        .map_err(|_| "backdrop_image_invalid_or_too_large".into())
+        .map_err(|_| "image_invalid_or_too_large".into())
 }
 
 /// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.

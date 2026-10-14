@@ -100,6 +100,42 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_plan_panel",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Pins Codex's update_plan steps above the composer",
+      "source": "mods/first-party/omd_plan_panel",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_continue",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "/continue resumes an interrupted turn from recorded activity",
+      "source": "mods/first-party/omd_continue",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_tool_lines",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

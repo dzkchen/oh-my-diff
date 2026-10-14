@@ -1,5 +1,4 @@
 use super::*;
-use codex_omd::ModBackdrop;
 use codex_omd::ModCommand;
 use codex_omd::ModComponent;
 use codex_omd::ModComponentAction;
@@ -876,12 +875,6 @@ fn view_resource(
                 source: Some(source),
                 ..
             } if source.reference == reference => Some((source.clone(), owned(id))),
-            _ => None,
-        })
-        .or_else(|| match &snapshot.view.backdrop {
-            Some(ModBackdrop::Image { image, .. }) if image.resource.reference == reference => {
-                Some((image.resource.clone(), snapshot.contributors.clone()))
-            }
             _ => None,
         })
 }

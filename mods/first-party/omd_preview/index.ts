@@ -155,7 +155,7 @@ export default function activate(api: ModAPI) {
       return null;
     }
     if (target === 'list') {
-      const lines = responses(10).map((text, index) => `${index + 1}. ${text.replace(/\s+/g, ' ').slice(0, 90)}`);
+      const lines = responses(10).map((text, index) => `${index + 1}. ${[...text.replace(/\s+/g, ' ')].slice(0, 90).join('')}`);
       return { display: lines.join('\n') || 'No responses in this session yet' };
     }
     if (!target || /^\d+$/.test(target)) {

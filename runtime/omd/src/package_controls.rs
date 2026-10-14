@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackageControl {
@@ -94,14 +95,95 @@ fn source_kind(source: &ModPackageSource) -> &'static str {
     }
 }
 
-/// Lists every store selection; `runtime` is the serving session's mod status.
-pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
+struct Selections {
+    lock: crate::ModPackageLock,
+    configuration: crate::ModConfiguration,
+    status: Value,
+    manifests: Vec<Value>,
+}
+
+type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
+
+static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
+
+/// The store side of a listing, reused while the store files and every package file are unchanged.
+fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
+    let key = store.listing_stamp();
+    let listed = LISTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let (Some(key), Some((cached, stamps, selections))) = (&key, listed)
+        && key == &cached
+        && ModStore::stamps_unchanged(&stamps)
+    {
+        return Ok(selections);
+    }
     let lock = store.package_lock()?;
     let configuration = store.configuration()?;
-    let generation = configuration.revision;
+    let stamps = key.as_ref().and_then(|_| {
+        ModStore::package_stamps(
+            configuration
+                .mods
+                .iter()
+                .map(|selection| selection.path.as_path()),
+        )
+    });
     let mut manifests = Vec::new();
     let status =
         store.selection_status_inspected_in(None, &configuration, &lock, Some(&mut manifests))?;
+    let selections = Arc::new(Selections {
+        lock,
+        configuration,
+        status,
+        manifests,
+    });
+    if let (Some(key), Some(stamps)) = (key, stamps) {
+        *LISTED.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((key, stamps, selections.clone()));
+    }
+    Ok(selections)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListArguments {
+    fields: Vec<String>,
+}
+
+/// `packages.list`: [`list`], keeping only the requested `fields` of each package.
+pub fn list_fields(
+    store: &ModStore,
+    runtime: Option<&Value>,
+    arguments: Value,
+) -> io::Result<Value> {
+    let fields = match arguments {
+        Value::Null => None,
+        arguments => Some(
+            serde_json::from_value::<ListArguments>(arguments)
+                .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?
+                .fields,
+        ),
+    };
+    let mut listed = list(store, runtime)?;
+    if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
+        for package in packages.iter_mut().filter_map(Value::as_object_mut) {
+            package.retain(|key, _| fields.iter().any(|field| field == key));
+        }
+    }
+    Ok(listed)
+}
+
+/// Lists every store selection; `runtime` is the serving session's mod status.
+pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
+    let selections = selections(store)?;
+    let Selections {
+        lock,
+        configuration,
+        status,
+        manifests,
+    } = &*selections;
+    let generation = configuration.revision;
     let selections = status["selections"]
         .as_array()
         .map(Vec::as_slice)
@@ -237,6 +319,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             .cloned()
             .ok_or_else(|| failure(format!("package_not_installed: {id}")))
     };
+    let mut codex_config = Value::Null;
     let (id, request, plan, selection, added) = match arguments.action.as_str() {
         "install" => {
             let index = arguments.index.clone().or_else(|| store.package_index());
@@ -327,6 +410,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 .filter(|capability| !current.capabilities.contains(capability))
                 .cloned()
                 .collect();
+            codex_config = inspected["manifest"]["codex_config"].clone();
             let trusted = Selection {
                 sha256,
                 capabilities,
@@ -345,7 +429,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         (None, Some(selection)) if arguments.action == "trust" => {
             json!({"sha256": selection.sha256, "enabled": selection.enabled,
                 "exec_environment": selection.exec_environment,
-                "secret_environment": selection.secret_environment})
+                "secret_environment": selection.secret_environment, "codex_config": codex_config})
         }
         _ => json!({"enabled": arguments.action == "enable"}),
     };

@@ -71,7 +71,7 @@ export function createClient(api: ModAPI) {
         const start = object(object(item?.range ?? null)?.start ?? null);
         const text = string(item?.message ?? null);
         if ((item?.severity ?? 1) === 1) count++;
-        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${[...text.replace(/\s+/g, ' ')].slice(0, 200).join('')}`);
       }
       s.diagnostics[path] = { count, version, errors: [...errors] };
     }
@@ -101,7 +101,7 @@ export function createClient(api: ModAPI) {
       if (found) {
         const settled = settle(s, outgoing);
         if (!settled.ok) return settled;
-        return 'error' in found ? fail(`server_error:${JSON.stringify(found.error).slice(0, 160)}`) : ok(found.result ?? null);
+        return 'error' in found ? fail(`server_error:${[...JSON.stringify(found.error)].slice(0, 160).join('')}`) : ok(found.result ?? null);
       }
     }
     return fail('server_request_timeout');

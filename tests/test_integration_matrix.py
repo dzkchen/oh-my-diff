@@ -84,7 +84,7 @@ class IntegrationMatrixTests(unittest.TestCase):
             lambda matrix: matrix["launch_cut"]["entries"][0].__setitem__("disposition", "wave_1"),
             lambda matrix: matrix["launch_cut"]["entries"][0].__setitem__("path", "mods/first-party/omd_absent"),
             lambda matrix: matrix["launch_cut"]["entries"].append(
-                {"id": "omd_theme", "kind": "mod", "path": "mods/first-party/omd_logo", "disposition": "wave_2"}
+                {"id": "omd_mini", "kind": "mod", "path": "mods/first-party/omd_logo", "disposition": "wave_2"}
             ),
         ):
             drifted = copy.deepcopy(self.matrix)

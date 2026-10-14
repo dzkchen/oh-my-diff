@@ -229,6 +229,7 @@ class LeanProfileModeTests(unittest.TestCase):
         self.assertIn("-c features.daemon_auto_start=false", text)
         self.assertIn("OMD_CLAUDE_LOCAL_TOKEN=\"$(cat '/opt/omd/claude/local token' 2>/dev/null)\"", text)
         self.assertIn("-c 'model_providers.omd_claude_cli.base_url=\"http://127.0.0.1:5/v1\"'", text)
+        self.assertNotIn("update_plan", text)
         record["activation"]["selection"] = "direct"
         self.assertNotIn("omd_claude_cli", lean_profiles.selected_text(record))
 

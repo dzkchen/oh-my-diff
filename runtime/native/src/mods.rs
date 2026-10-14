@@ -164,6 +164,7 @@ pub(super) struct Core {
     persist_runtime: Arc<Mutex<ModHost>>,
     persist_required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
+    codex_config: Arc<Mutex<std::collections::BTreeSet<String>>>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -437,6 +438,7 @@ fn initialize(
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
     let environment = runtime.environment();
+    let codex_config = runtime.codex_config();
     let runtime = Arc::new(Mutex::new(runtime));
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
@@ -452,6 +454,7 @@ fn initialize(
             persist_runtime,
             persist_required,
             environment,
+            codex_config,
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
@@ -1041,6 +1044,13 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             ));
         }
         config.model_provider.supports_websockets = false;
+        if self
+            .codex_config
+            .lock()
+            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
+        {
+            config.update_plan_enabled = true;
+        }
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem
             .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));

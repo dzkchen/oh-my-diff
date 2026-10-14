@@ -115,6 +115,7 @@ fn fixture_with_registry(
             persist_runtime,
             persist_required,
             environment,
+            codex_config: Default::default(),
             services: services::Services::default(),
             views,
             expansion: State::default(),

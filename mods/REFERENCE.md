@@ -1664,27 +1664,20 @@ typing a slash command clears the transcript selection before its callback.
 Require `terminal_selection_v1` and `terminal_copy_v1` for these operations.
 
 The appearance additions (`terminal_surface_paint_v1`,
-`terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,
-`terminal_import_lifetime_v1`) remain generic presentation primitives:
+`terminal_image_sample_v1`, `terminal_import_lifetime_v1`) remain generic
+presentation primitives:
 
-- `surface_styles.composer`, `.backdrop` and `.approval` accept a `TerminalSurfacePaint`
+- `surface_styles.composer` and `.approval` accept a `TerminalSurfacePaint`
   with `top`, `bottom`, `foreground`, `border` RGB/indexed colors and
   `opacity` from 0 to 1. Background colors interpolate vertically and blend
   with existing colors. The foreground is independent of background opacity;
   reset foregrounds get a readable color against the surviving background.
   Explicit native foregrounds and special backgrounds remain. Borders use
   blank edge cells and disappear at zero opacity. `NO_COLOR` omits styling.
-  Solid backdrop colors remain in narrow terminals. Inline rendering uses
-  the current bounded viewport; it does not repaint earlier terminal scrollback.
+  Inline rendering uses the current bounded viewport; it does not repaint
+  earlier terminal scrollback.
   `approval` frames native approval prompts and mod confirmations; their
   text, options, default selection, focus and grants stay host-owned.
-- Image and ASCII backdrops accept `position: center|fit|fill|tile`,
-  `scale: 0.1..4`, signed `offset: {x,y}` in -4096..4096 cells,
-  `dim`, `opacity` from 0 to 1 and optional `tint`. Image dimming blends
-  toward the tint, or black if absent; ASCII tint colors decorative glyphs.
-  Images may add an independent `overlay: TerminalSurfacePaint` for pixel
-  gradients. Placement assumes an 8×16 pixel cell and caps its working canvas
-  at 2048×2048. The host does not choose a gloss or background policy.
 - `terminal.image_sample {resource, columns, rows}` returns
   `{width,height,rgba}` (row-major RGBA bytes) for a caller-owned PNG/JPEG.
   Columns are integers 1..120 and rows 1..60; sources are at most 8 MiB and
@@ -1697,27 +1690,23 @@ The appearance additions (`terminal_surface_paint_v1`,
   resource quotas apply; removing the mod store removes retained assets.
 
 Surface paints compose by surface name with the later contributor replacing
-that surface's paint. Backdrops retain one owner. Keeping settings, selected
-assets, image-to-ASCII conversion, greetings and glass composition in a mod
-lets outside authors use the same APIs for document viewers, image previews,
-warnings, watermarks and dashboards.
+that surface's paint. Keeping settings, selected assets and image-to-ASCII
+conversion in a mod lets outside authors use the same APIs for document
+viewers, image previews, warnings, watermarks and dashboards.
 
 Views may declare a `layout` tree of splits and tabs with transcript, composer
-and mod-named sites (`mod/site`), plus an ASCII or image `backdrop`. Local
-detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
-reduced motion, other protocols and inline viewports use ASCII fallback.
-Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
-Components add `document` (up to 100,000 lines with anchors, selection and
-find), `diff`, `image`, `raster` and `terminal` (a PTY session). Updating only a
-document's anchors updates activation targets without resetting its cursor,
-selection or scroll, including when source-backed text is unchanged. An `image`
+and mod-named sites (`mod/site`). Components add `document` (up to 100,000
+lines with anchors, selection and find), `diff`, `image`, `raster` and
+`terminal` (a PTY session). Updating only a document's anchors updates
+activation targets without resetting its cursor, selection or scroll,
+including when source-backed text is unchanged. An `image`
 places a Kitty graphics image in its cells, aspect-fit to the measured cell
 size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
 and hides under dialogs and overlays like text); elsewhere it draws truecolor
 half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Local
 Orca, iTerm2 and WezTerm draw it as an iTerm2 inline image (`iip`). Each
 image component has its own image id; replacing or removing the component
-deletes it, and exit and suspend delete every image and the backdrop.
+deletes it, and exit and suspend delete every image.
 Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
 (`terminal_raster_v1`). An SVG `image` (`svg_assets_v1`) draws
 `[image unavailable: alt]` in the terminal, which has no SVG rasterizer;
@@ -2238,6 +2227,21 @@ Interceptors of these surfaces skip their own mod's calls like every other
 surface, which bounds recursion through `commands.invoke` and
 `settings.write`.
 
+### Codex configuration (`codex_config_v1`)
+
+A manifest's `codex_config` turns on Codex features the package depends on, for
+every lead thread the session starts, resumes or forks while the package is
+active: `{"codex_config": {"tools.update_plan.enabled": true}}`. Keys come from a
+closed host allowlist (`tools.update_plan.enabled`) and must be `true`, and the
+package must list `codex_config_v1` in `required_features`; anything else fails
+inspection with `invalid_codex_config`. The host recomputes the keys whenever it
+reloads the active packages (at the next turn boundary after a change), so a
+package enabled mid-session applies to lead threads started after that reload;
+threads that already exist keep their configuration. It overrides an explicit
+`false` in the user's config for those threads and writes nothing to
+`config.toml`. Install, update and trust previews and `omd-mod status` list a
+package's `codex_config` with its other authority.
+
 ### Composer completion (`completion_v1`)
 
 `replace('completion')` receives each `@` mention query with up to 200
@@ -2618,7 +2622,7 @@ failing with `evidence_record_invalid:
 svg_<reason>`. `terminal.import_file` labels SVG text `image/svg+xml`, so it
 passes the same check. External renderers draw SVG natively; the terminal
 shows an `image` component's alt text, refuses SVG in `terminal.image_sample`
-and backdrops, and never attaches it to the composer. `packages.list`, `packages.index`, `packages.preview`,
+and never attaches it to the composer. `packages.list`, `packages.index`, `packages.preview`,
 `packages.apply` and `packages.reload` (`package_controls_v1`) install, update,
 remove, roll back, enable and disable packages from local directories, Git
 repositories, curated index releases and npm packages (sources and references
@@ -2628,7 +2632,9 @@ names its package with `source` or with a `reference` string and an optional
 every store selection: managed packages and trusted `omd-mod` selections
 (`source: 'selection'`, which enable, disable and `trust` but do not update);
 `source` is also `npm` for npm packages, and `blocked` is the quarantine reason
-or `null`. `packages.index {index?, query?}` is read-only and returns `{index,
+or `null`. `packages.list {fields}` keeps only the named keys of each
+package, so a listing view can skip schemas, settings and grants it does not
+show. `packages.index {index?, query?}` is read-only and returns `{index,
 packages: [{id, latest, description, support, versions: [{version, blocked}],
 installed}]}` from the named index (the store's `package-index.json` by
 default), filtered by `query`; it fails with `package_index_unavailable` when no
@@ -3406,14 +3412,19 @@ Observers compose in that order; interceptors follow the continuation order abov
 (`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
 replacement whichever composes first; a site's `overlay` is not claimed, so
 the last patch that sets one wins, even a wrap over another mod's), presentation fields merge, and
-exclusive fields (layout, backdrop, panels, header, footer, placeholder,
-replaced sites, keys, glyphs and the status budget) go to the first claimant;
+exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant;
 each later claim is reported in `omd-mod status` under `terminal.conflicts` as
 `{field, owner, rejected, origin}`, and a patch that breaks the composed view's
 limits is dropped whole. Exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
+The host reuses a mod's last `terminal` patch without a callback while its
+settings, durable state, UI state and the `terminal` event input are unchanged.
+A patch from a callback that read the clock (`Date.now()` or `new Date()`) is
+reused for at most one second, so elapsed times and countdowns stay current on
+the next redraw. A command's `{terminal}` result likewise stands for at most
+one second; after that the next view update runs the `terminal` handler.
 
 ### Protected authority (macOS)
 
