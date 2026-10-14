@@ -76,8 +76,9 @@ const settled = (answer = host()) => {
 const started = () => settled();
 
 test('registers the native status-row removal and the /statusline route', () => {
-  const { registrations } = call({ event: 'terminal', payload: { event: 'idle', ledger: null } });
+  const { registrations, state } = call({ event: 'terminal', payload: { event: 'startup', ledger: null, client: { kind: 'terminal', columns: 120, rows: 40 } } });
   assert.deepEqual(registrations.builtins, [{ surfaces: { disable: ['status_line'] }, commands: { replace: { statusline: 'edit' } } }]);
+  assert.equal(state, null, 'the threadless startup view writes no thread-scoped state');
   assert.deepEqual(registrations.commands.map(command => command.name), ['edit']);
 });
 
@@ -106,15 +107,15 @@ test('session telemetry is request-idempotent, separates workers from the lead c
   const compacted = feed(state, [['compaction_end', { turn_id: 't', trigger: 'auto', outcome: 'compacted', by: null, provider_call: true }, { virtual_time_ms: NOW + 1000 }]]);
   assert.match(lines(view(compacted))[0], /~38% 170k left ⟳1/);
   assert.deepEqual(lines(view(null)), []);
-  const health = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 160, rows: 40 },
+  const health = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 160, rows: 40 },
     identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state });
   assert.match(lines(health.value)[0], / · 7 mods on 1 failed · \/omd$/);
   assert.deepEqual(health.state.mods, { installed: 21, enabled: 8, active: 7, failed: 1 });
-  const again = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 160, rows: 40 },
+  const again = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 160, rows: 40 },
     identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state: health.state });
   assert.deepEqual(again.state, health.state, 'an unchanged draw writes no state');
   assert.deepEqual(health.state.viewport, { columns: 160, rows: 40 });
-  const narrow = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 50, rows: 20 } }, state: health.state }).state;
+  const narrow = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 50, rows: 20 } }, state: health.state }).state;
   const command = call({ event: 'command', name: 'edit', payload: '', state: narrow });
   assert.ok(lines(command.value.terminal).every(text => [...text].length <= 46), 'a command view fits the real width');
 });
@@ -219,7 +220,7 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
   };
   const hostile = '\x1b[31mrain\x1b[0m \x1b]8;;https://example.com/w\x07forecast\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07bad\x1b]8;;\x07\x1b[2J\x1b]0;title\x07‮evil\n2nd line';
   const state = feed(started(), [['model_response', response('r1')]]);
-  const viewed = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 90, rows: 30 } }, state, settings }).state;
+  const viewed = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 90, rows: 30 } }, state, settings }).state;
   const done = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(hostile) })).state;
   const stdin = JSON.parse(runs[0].stdin);
   assert.deepEqual([runs[0].timeout_ms, stdin.schema, stdin.viewport, stdin.model.served, stdin.context.used, stdin.git.branch], [800, 1, { columns: 90, rows: 30 }, 'gpt-6.1-sol', 102_000, 'feat/line']);

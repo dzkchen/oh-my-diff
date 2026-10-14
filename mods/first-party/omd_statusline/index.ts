@@ -17,15 +17,8 @@ export default function activate(api: ModAPI) {
 
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
-  // Thread-scoped state is unavailable until the session has a thread (the startup terminal event).
-  const threadless = () => {
-    try { api.state.get(); return false; } catch (error) {
-      if (error instanceof Error && error.message.includes('state_thread_unavailable')) return true;
-      throw error;
-    }
-  };
   const saved = (): Data => {
-    const stored = threadless() ? {} : object(api.state.get());
+    const stored = object(api.state.get());
     const data = { ...EMPTY, ...stored } as Record<string, any>;
     for (const [key, fallback] of Object.entries(EMPTY)) if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) data[key] = { ...fallback, ...object(stored[key]) };
     return data as Data;
@@ -34,7 +27,6 @@ export default function activate(api: ModAPI) {
   // while this host still runs with settings that apply superseded.
   const effective = (data: Data): Settings => data.pending?.from.includes(JSON.stringify(config)) ? data.pending.to : config;
   const update = (change: (data: Data) => void) => {
-    if (threadless()) return;
     const data = saved();
     const before = JSON.stringify(data);
     change(data);
@@ -43,9 +35,8 @@ export default function activate(api: ModAPI) {
 
   const refreshGit = () => {
     const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', GIT_SCRIPT], timeout_ms: 3000, max_output_bytes: 65_536 });
-    const key = saved().cwd ?? '';
     update(data => {
-      if ((data.cwd ?? '') !== key) return;
+      const key = data.cwd ?? '';
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
         : parseGit(key, run.value.stdout);
@@ -237,7 +228,8 @@ export default function activate(api: ModAPI) {
     if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; });
     if (method === 'account/rateLimits/updated') return update(data => limits(data, update_));
     const thread = thread_id ?? update_.threadId ?? null;
-    if (saved().thread !== null && thread !== null && thread !== saved().thread) return;
+    const current = saved().thread;
+    if (current !== null && thread !== null && thread !== current) return;
     if (method === 'thread/settings/updated') {
       const next = object(update_.threadSettings);
       let moved = false;
@@ -410,12 +402,12 @@ export default function activate(api: ModAPI) {
     const columns = number(input.client?.columns) ?? 120;
     const rows = number(input.client?.rows);
     // Drawing writes durable state only when something it caches changed: mod counts or the viewport.
+    // Thread-scoped state can't be written before the session has a thread (the startup event has no ledger).
     const viewport = rows !== null ? { columns, rows } : data.viewport;
     const mods = input.identity?.mods ?? data.mods;
-    if (JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]) && !threadless()) {
-      Object.assign(data, { viewport, mods });
-      api.state.set(data as unknown as Json);
-    }
+    const changed = JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]);
+    Object.assign(data, { viewport, mods });
+    if (changed && input.ledger?.thread_id) api.state.set(data as unknown as Json);
     const settled = number(object(input.ledger?.cost).settled_task_charge_microusd);
     return contribution(data, editor(), columns, input.ledger?.cwd ?? data.cwd, settled === null ? null : settled / 1e6);
   });

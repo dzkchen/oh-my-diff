@@ -302,13 +302,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "7c505f0638600171b45480464b1c19f47e15eff7d369243974f0b7736cafd6e6",
+        "index.ts": "41031471e795c369241fa4e3870efbc6f74cbcf3ecc0f87f66a2cfa82a859aa4",
         "mod.json": "e5a79280d59ae47b25c3fad63c131493c6c07bdb87b944c73f5e35fb77b1dac2",
         "segments.ts": "f636735a03ec4a637d4ce3a06a344577fea21acaec650dbe89cc259e17a1d09c",
         "sources.ts": "bcab442b301711c65caea4b5e6b65216c869a689d93b0903a3870df8be0aae38"
       },
       "id": "omd_statusline",
-      "package_sha256": "3d3d507d95b51025671b54aeb4da70f4c87e8e4121a5ff947438e2bce62f4a24",
+      "package_sha256": "8d9b2d078668ae7ddc729ed31530c906d90ef98e76a4529a180df4ff55d72fd5",
       "source": "mods/first-party/omd_statusline",
       "version": "0.1.0-preview.1"
     },
