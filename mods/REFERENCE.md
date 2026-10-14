@@ -2,9 +2,8 @@
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
 `0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.1`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
-historical and do not load in the current host; the later .9 reference sections
-remain only as migration evidence. A store also generates `active-host.d.ts` and
+[`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
+loads. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
 service contracts available to consumers. Once a session has listed its tools,
 the store also generates `tool-types.d.ts` for the tools the host actually has
@@ -44,7 +43,7 @@ runtime and uses that runtime's required-interceptor decision, including failure
 fallback. Required persistence failure withholds text; dropping persistence work
 cancels the callback.
 
-Safety change (2026-10-13): callback admission and completion validate current
+Callback admission and completion validate current
 source and authority. Cancellation, disablement, revocation, source replacement
 or a changed executing generation rejects completion before callback state or
 results are accepted. Effects already performed by a host call are not rolled
@@ -1188,9 +1187,8 @@ capabilities.
 
 ## Host primitives
 
-API `0.2.0-experimental.5` adds these generic primitives; earlier API versions
-no longer load. Each advertises a host feature a package can require.
-With no mod registered for a primitive the host allocates nothing for it and
+API `0.2.0-experimental.5` provides these generic primitives. Each advertises a
+host feature a package can require. With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
 the recorded exclusions, live in `scripts/upstream_routes.json`;
 `python3 scripts/upstream_surfaces.py check /path/to/codex` flags upstream

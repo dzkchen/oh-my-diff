@@ -39,7 +39,7 @@ to users. The author SDK packs only author examples. The first-party mod lock
 | --- | --- | --- | --- |
 | `coordination@2.0.0` | `mod` | `mods/examples/coordination` | Drives live native agent spawning, waiting, result consumption, and lifecycle state inside the active task. |
 | `kernel@2.0.0` | `mod` | `mods/examples/kernel` | Alters admitted model requests and the live response stream, which hooks and plugins cannot replace. |
-| `recovery@2.0.0` | `mod` | `mods/examples/recovery` | Replaces live compaction and context recovery policy while reading host-owned checkpoint state. |
+| `recovery@2.0.0` | `mod` | `mods/examples/recovery` | Replaces live compaction and context recovery policy. |
 | `routing@2.0.0` | `mod` | `mods/examples/routing` | Replaces the model, provider, and reasoning preset selected at the live request boundary. |
 | `terminal@2.0.0` | `mod` | `mods/examples/terminal` | Replaces live terminal layout, theme, render templates, and key handling. |
 | `workflow@2.0.0` | `mod` | `mods/examples/workflow` | Registers and restricts a host-enforced workflow contract during a live task without owning native guarantees. |

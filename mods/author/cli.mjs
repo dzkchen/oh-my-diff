@@ -119,7 +119,6 @@ function scenarioFor(name, example = 'minimal') {
       steps: [
         { type: 'event', event: 'compaction', payload: { token_limit: 32000, context_window: 64000 } },
         { type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u' } },
-        { type: 'invoke', mod: 'recovery', event: 'tool', name: 'checkpoint', payload: {}, expect_error: 'unsupported_operation: checkpoint.read' },
       ],
     },
     kernel: {

@@ -42,7 +42,7 @@
       "path": "mods/examples/recovery",
       "extension_type": "mod",
       "role": "author_example",
-      "why_mod": "Replaces live compaction and context recovery policy while reading host-owned checkpoint state."
+      "why_mod": "Replaces live compaction and context recovery policy."
     },
     {
       "path": "mods/examples/routing",

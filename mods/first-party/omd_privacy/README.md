@@ -1,6 +1,6 @@
 # Privacy
 
-`omd_privacy` (`0.1.0-preview.1`) is installed inactive in OMD+ and can be installed explicitly in OMD Core. `omd-package mod enable omd_privacy` turns it on. It replaces secrets, and PII rules you select, in every provider-bound request with stable opaque placeholders such as `[REDACTED:github_token:q7xk2m9fhd4w]`. It also asks before a shell command reads a sensitive path.
+`omd_privacy` is installed inactive in OMD+ and can be installed explicitly in OMD Core. `omd-package mod enable omd_privacy` turns it on. It replaces secrets, and PII rules you select, in every provider-bound request with stable opaque placeholders such as `[REDACTED:github_token:q7xk2m9fhd4w]`. It also asks before a shell command reads a sensitive path.
 
 ## What it covers
 
