@@ -126,9 +126,7 @@ inactive except eight default packages (`omd_inspector`, `omd_logo`,
 implements task controls through mod-owned schema-2 contracts selected
 separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract select ID@VERSION`.
 
-Packages deferred from the launch collection are not in this tree. They can be
-restored from the `pre-launch-collection` Git tag and return in post-launch waves
-(`LEAN_PROFILES.md` in the repository).
+Packages outside the launch collection are not in this tree.
 
 ## Validation
 
