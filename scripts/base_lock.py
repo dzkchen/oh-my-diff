@@ -8,7 +8,7 @@ from scripts import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = ROOT / "runtime/preview-v1.lock.json"
+LOCK = ROOT / "runtime/base.lock.json"
 NODE = "24.18.0"
 FILES = ("mod.json", "index.ts")
 PACKAGES = ("omd_workflow",)
@@ -49,10 +49,10 @@ def build():
             "package_sha256": package_digest(base),
         }
     if not packages:
-        raise ValueError("no first-party preview packages found")
+        raise ValueError("no first-party base packages found")
     return {
-        "schema": support.PREVIEW_SCHEMA,
-        "product": support.PREVIEW_PRODUCT,
+        "schema": support.BASE_SCHEMA,
+        "product": support.BASE_PRODUCT,
         "mod_api": api,
         "node": NODE,
         "types": {"path": "mods/api.d.ts", "sha256": support.digest(ROOT / "mods/api.d.ts")},
@@ -62,7 +62,7 @@ def build():
 
 def main():
     support.check_or_write(LOCK, json.dumps(build(), indent=2, sort_keys=True) + "\n", "--write" in sys.argv[1:],
-                           "preview lock is stale; rerun with --write after reviewing the sources")
+                           "base lock is stale; rerun with --write after reviewing the sources")
 
 
 if __name__ == "__main__":

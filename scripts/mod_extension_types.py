@@ -60,13 +60,13 @@ def check(registry):
             problems.append(f"{label}: missing mod rationale")
 
     bundled = {package["path"]: package for package in packages if package["role"] == "bundled"}
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    locked = {package["source"]: package for package in preview["packages"].values()}
+    base = json.loads((ROOT / "runtime/base.lock.json").read_text())
+    locked = {package["source"]: package for package in base["packages"].values()}
     if set(bundled) != set(locked):
-        problems.append("bundled classifications differ from runtime/preview-v1.lock.json")
+        problems.append("bundled classifications differ from runtime/base.lock.json")
     for path, package in bundled.items():
         if locked.get(path, {}).get("extension_type") != package["extension_type"]:
-            problems.append(f"{path}: preview lock extension type differs")
+            problems.append(f"{path}: base lock extension type differs")
 
     published = {
         Path(package["path"]).name
@@ -106,8 +106,8 @@ def render(registry):
         registry["rule"],
         "",
         "A conformance fixture is retained source and executable coverage, not a package offered",
-        "to users. The author SDK packs only author examples. The current private-preview bundle",
-        "contains only the packages labeled `bundled` below.",
+        "to users. The author SDK packs only author examples. The base lock",
+        "(`runtime/base.lock.json`) pins only the packages labeled `bundled` below.",
         "",
     ]
     sections = (
@@ -136,7 +136,7 @@ def render(registry):
         "",
         "The small context, counter, guard, interception, service, reader, and tool cases remain",
         "available to repository conformance checks. They are not copied by `omd-mod-author examples`,",
-        "not packed as SDK examples, and not part of the private-preview bundle.",
+        "not packed as SDK examples, and not part of the base lock.",
         "",
     ])
     return "\n".join(out)

@@ -4,11 +4,11 @@ from pathlib import Path
 import sys
 
 from scripts import install_support as support
-from scripts import preview_lock
+from scripts import base_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = ROOT / "runtime/full-mods.lock.json"
+LOCK = ROOT / "runtime/mods.lock.json"
 PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_continue", "omd_frecency", "omd_inspector", "omd_logo", "omd_lsp_sync",
             "omd_lsp_view", "omd_model_picker", "omd_mods", "omd_plan_panel", "omd_plan_removal", "omd_preview",
             "omd_privacy", "omd_profiles", "omd_tool_lines", "omd_update", "omd_usage")
@@ -28,13 +28,13 @@ def build():
     for identifier in PACKAGES:
         base = ROOT / "mods/first-party" / identifier
         manifest = json.loads((base / "mod.json").read_text())
-        preview_lock.validate_manifest(manifest, identifier)
+        base_lock.validate_manifest(manifest, identifier)
         packages[identifier] = {
             "id": identifier, "version": manifest["version"], "api": manifest["api"],
             "extension_type": "mod", "capabilities": manifest["capabilities"],
             "source": base.relative_to(ROOT).as_posix(),
             "files": {name: support.digest(base / name) for name in source_files(identifier)},
-            "package_sha256": preview_lock.package_digest(base),
+            "package_sha256": base_lock.package_digest(base),
         }
     return {"schema": 1, "mod_api": json.loads((ROOT / "mods/package.json").read_text())["version"], "packages": packages}
 

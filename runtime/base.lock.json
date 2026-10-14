@@ -30,7 +30,7 @@
       "version": "0.2.0-preview.2"
     }
   },
-  "product": "oh-my-diff-private-preview-v1",
+  "product": "oh-my-diff-base-v1",
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
