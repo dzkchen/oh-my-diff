@@ -29,7 +29,7 @@ const SECRETS = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
 ];
-const safe = (value: string) => [...value.replace(/[\x00-\x1f\x7f‪-‮⁦-⁩]/g, ' ')].slice(0, 768).join('');
+const safe = (value: string) => [...value.replace(/[\x00-\x1f\x7f\u202A-\u202E\u2066-\u2069]/g, ' ')].slice(0, 768).join('');
 const bytes = (value: string) => { let total = 0; for (const character of value) { const code = character.codePointAt(0)!; total += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4; } return total; };
 const shrink = (text: string) => { const characters = [...text]; return characters.slice(0, Math.floor(characters.length * 0.9)).join(''); };
 const clip = (value: string, max: number) => { let text = value; while (bytes(text) > max) text = shrink(text); return text; };
