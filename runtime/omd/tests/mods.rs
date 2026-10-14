@@ -418,11 +418,13 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     .unwrap();
     trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
-    assert_eq!(
+    assert_eq!(runtime.generation(), generation);
+    assert!(
         runtime
             .invoke("fixture", generation, "command", "count", Value::Null)
-            .unwrap(),
-        json!(1)
+            .unwrap_err()
+            .to_string()
+            .contains("callback_authority_changed")
     );
     store.enable(&path, false).unwrap();
     runtime.reload().unwrap();
@@ -752,15 +754,20 @@ fn mod_duplicate_id_cannot_replace_an_active_package() {
             .to_string()
             .contains("mod_conflict")
     );
+    let generation = runtime.generation();
+    assert!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("mod_conflict")
+    );
+    store.enable(&other, false).unwrap();
+    runtime.reload().unwrap();
+    let generation = runtime.generation();
     assert_eq!(
         runtime
-            .invoke(
-                "fixture",
-                runtime.generation(),
-                "command",
-                "count",
-                Value::Null
-            )
+            .invoke("fixture", generation, "command", "count", Value::Null)
             .unwrap(),
         json!(1)
     );

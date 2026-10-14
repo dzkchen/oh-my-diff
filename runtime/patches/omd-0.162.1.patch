@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index b30500b71..fdd9712a6 100644
+index b30500b71..38b324a41 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2121,6 +2121,8 @@ dependencies = [
@@ -43,7 +43,7 @@ index b30500b71..fdd9712a6 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4209,6 +4215,67 @@ dependencies = [
+@@ -4209,6 +4215,68 @@ dependencies = [
   "wiremock",
  ]
 
@@ -75,6 +75,7 @@ index b30500b71..fdd9712a6 100644
 + "bytes",
 + "chrono",
 + "codex-api",
++ "codex-async-utils",
 + "codex-client",
 + "codex-config",
 + "codex-core",
@@ -111,7 +112,7 @@ index b30500b71..fdd9712a6 100644
  [[package]]
  name = "codex-otel"
  version = "0.162.1"
-@@ -4316,7 +4383,7 @@ dependencies = [
+@@ -4316,7 +4384,7 @@ dependencies = [
   "codex-utils-string",
   "derive_more 2.1.1",
   "encoding_rs",
@@ -120,7 +121,7 @@ index b30500b71..fdd9712a6 100644
   "globset",
   "http 1.4.0",
   "icu_decimal",
-@@ -4763,6 +4830,7 @@ dependencies = [
+@@ -4763,6 +4831,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -128,7 +129,7 @@ index b30500b71..fdd9712a6 100644
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4838,6 +4906,8 @@ dependencies = [
+@@ -4838,6 +4907,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -137,7 +138,7 @@ index b30500b71..fdd9712a6 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4859,6 +4929,7 @@ dependencies = [
+@@ -4859,6 +4930,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -145,7 +146,7 @@ index b30500b71..fdd9712a6 100644
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -6262,6 +6333,37 @@ version = "0.1.10"
+@@ -6262,6 +6334,37 @@ version = "0.1.10"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "26bf8fc351c5ed29b5c2f0cbbac1b209b74f60ecd62e675a998df72c49af5204"
 
@@ -183,7 +184,7 @@ index b30500b71..fdd9712a6 100644
  [[package]]
  name = "deltae"
  version = "0.3.2"
-@@ -7512,9 +7614,9 @@ dependencies = [
+@@ -7512,9 +7615,9 @@ dependencies = [
 
  [[package]]
  name = "gix"
@@ -195,7 +196,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-actor",
   "gix-archive",
-@@ -7539,7 +7641,7 @@ dependencies = [
+@@ -7539,7 +7642,7 @@ dependencies = [
   "gix-object",
   "gix-odb",
   "gix-pack",
@@ -204,7 +205,7 @@ index b30500b71..fdd9712a6 100644
   "gix-protocol",
   "gix-ref",
   "gix-refspec",
-@@ -7552,7 +7654,7 @@ dependencies = [
+@@ -7552,7 +7655,7 @@ dependencies = [
   "gix-tempfile",
   "gix-trace",
   "gix-traverse",
@@ -213,7 +214,7 @@ index b30500b71..fdd9712a6 100644
   "gix-utils",
   "gix-validate",
   "gix-worktree",
-@@ -7565,21 +7667,20 @@ dependencies = [
+@@ -7565,21 +7668,20 @@ dependencies = [
 
  [[package]]
  name = "gix-actor"
@@ -239,7 +240,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-date",
-@@ -7590,13 +7691,13 @@ dependencies = [
+@@ -7590,13 +7692,13 @@ dependencies = [
 
  [[package]]
  name = "gix-attributes"
@@ -256,7 +257,7 @@ index b30500b71..fdd9712a6 100644
   "gix-quote",
   "gix-trace",
   "kstring",
-@@ -7607,18 +7708,18 @@ dependencies = [
+@@ -7607,18 +7709,18 @@ dependencies = [
 
  [[package]]
  name = "gix-bitmap"
@@ -279,7 +280,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-commitgraph",
   "gix-date",
-@@ -7636,21 +7737,21 @@ dependencies = [
+@@ -7636,21 +7738,21 @@ dependencies = [
 
  [[package]]
  name = "gix-chunk"
@@ -306,7 +307,7 @@ index b30500b71..fdd9712a6 100644
   "gix-quote",
   "gix-trace",
   "shell-words",
-@@ -7658,9 +7759,9 @@ dependencies = [
+@@ -7658,9 +7760,9 @@ dependencies = [
 
  [[package]]
  name = "gix-commitgraph"
@@ -318,7 +319,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-chunk",
-@@ -7672,77 +7773,73 @@ dependencies = [
+@@ -7672,77 +7774,73 @@ dependencies = [
 
  [[package]]
  name = "gix-config"
@@ -410,7 +411,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-discover",
-@@ -7750,7 +7847,7 @@ dependencies = [
+@@ -7750,7 +7848,7 @@ dependencies = [
   "gix-ignore",
   "gix-index",
   "gix-object",
@@ -419,7 +420,7 @@ index b30500b71..fdd9712a6 100644
   "gix-pathspec",
   "gix-trace",
   "gix-utils",
-@@ -7760,14 +7857,14 @@ dependencies = [
+@@ -7760,14 +7858,14 @@ dependencies = [
 
  [[package]]
  name = "gix-discover"
@@ -437,7 +438,7 @@ index b30500b71..fdd9712a6 100644
   "gix-ref",
   "gix-sec",
   "thiserror 2.0.18",
-@@ -7775,22 +7872,22 @@ dependencies = [
+@@ -7775,22 +7873,22 @@ dependencies = [
 
  [[package]]
  name = "gix-error"
@@ -465,7 +466,7 @@ index b30500b71..fdd9712a6 100644
   "gix-trace",
   "gix-utils",
   "libc",
-@@ -7803,9 +7900,9 @@ dependencies = [
+@@ -7803,9 +7901,9 @@ dependencies = [
 
  [[package]]
  name = "gix-filter"
@@ -477,7 +478,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "encoding_rs",
-@@ -7814,7 +7911,7 @@ dependencies = [
+@@ -7814,7 +7912,7 @@ dependencies = [
   "gix-hash",
   "gix-object",
   "gix-packetline",
@@ -486,7 +487,7 @@ index b30500b71..fdd9712a6 100644
   "gix-quote",
   "gix-trace",
   "gix-utils",
-@@ -7824,35 +7921,35 @@ dependencies = [
+@@ -7824,35 +7922,35 @@ dependencies = [
 
  [[package]]
  name = "gix-fs"
@@ -530,7 +531,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "faster-hex",
   "gix-features",
-@@ -7862,33 +7959,43 @@ dependencies = [
+@@ -7862,33 +7960,43 @@ dependencies = [
 
  [[package]]
  name = "gix-hashtable"
@@ -582,7 +583,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bitflags 2.13.1",
   "bstr",
-@@ -7914,9 +8021,9 @@ dependencies = [
+@@ -7914,9 +8022,9 @@ dependencies = [
 
  [[package]]
  name = "gix-lock"
@@ -594,7 +595,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-tempfile",
   "gix-utils",
-@@ -7925,9 +8032,9 @@ dependencies = [
+@@ -7925,9 +8033,9 @@ dependencies = [
 
  [[package]]
  name = "gix-merge"
@@ -606,7 +607,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-command",
-@@ -7935,25 +8042,25 @@ dependencies = [
+@@ -7935,25 +8043,25 @@ dependencies = [
   "gix-filter",
   "gix-fs",
   "gix-hash",
@@ -636,7 +637,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bitflags 2.13.1",
   "gix-commitgraph",
-@@ -7965,9 +8072,9 @@ dependencies = [
+@@ -7965,9 +8073,9 @@ dependencies = [
 
  [[package]]
  name = "gix-object"
@@ -648,7 +649,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-actor",
-@@ -7975,20 +8082,18 @@ dependencies = [
+@@ -7975,20 +8083,18 @@ dependencies = [
   "gix-features",
   "gix-hash",
   "gix-hashtable",
@@ -671,7 +672,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "arc-swap",
   "gix-features",
-@@ -7997,8 +8102,9 @@ dependencies = [
+@@ -7997,8 +8103,9 @@ dependencies = [
   "gix-hashtable",
   "gix-object",
   "gix-pack",
@@ -682,7 +683,7 @@ index b30500b71..fdd9712a6 100644
   "parking_lot",
   "tempfile",
   "thiserror 2.0.18",
-@@ -8006,9 +8112,9 @@ dependencies = [
+@@ -8006,9 +8113,9 @@ dependencies = [
 
  [[package]]
  name = "gix-pack"
@@ -694,7 +695,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "clru",
   "gix-chunk",
-@@ -8017,7 +8123,7 @@ dependencies = [
+@@ -8017,7 +8124,7 @@ dependencies = [
   "gix-hash",
   "gix-hashtable",
   "gix-object",
@@ -703,7 +704,7 @@ index b30500b71..fdd9712a6 100644
   "memmap2",
   "smallvec",
   "thiserror 2.0.18",
-@@ -8025,9 +8131,9 @@ dependencies = [
+@@ -8025,9 +8132,9 @@ dependencies = [
 
  [[package]]
  name = "gix-packetline"
@@ -715,7 +716,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "faster-hex",
-@@ -8047,26 +8153,38 @@ dependencies = [
+@@ -8047,26 +8154,38 @@ dependencies = [
   "thiserror 2.0.18",
  ]
 
@@ -759,7 +760,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-date",
-@@ -8079,14 +8197,13 @@ dependencies = [
+@@ -8079,14 +8198,13 @@ dependencies = [
   "maybe-async",
   "nonempty",
   "thiserror 2.0.18",
@@ -776,7 +777,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-error",
-@@ -8095,9 +8212,9 @@ dependencies = [
+@@ -8095,9 +8213,9 @@ dependencies = [
 
  [[package]]
  name = "gix-ref"
@@ -788,7 +789,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-actor",
   "gix-features",
-@@ -8105,20 +8222,19 @@ dependencies = [
+@@ -8105,20 +8223,19 @@ dependencies = [
   "gix-hash",
   "gix-lock",
   "gix-object",
@@ -812,7 +813,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-error",
-@@ -8132,9 +8248,9 @@ dependencies = [
+@@ -8132,9 +8249,9 @@ dependencies = [
 
  [[package]]
  name = "gix-revision"
@@ -824,7 +825,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bitflags 2.13.1",
   "bstr",
-@@ -8150,9 +8266,9 @@ dependencies = [
+@@ -8150,9 +8267,9 @@ dependencies = [
 
  [[package]]
  name = "gix-revwalk"
@@ -836,7 +837,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-commitgraph",
   "gix-date",
-@@ -8166,21 +8282,21 @@ dependencies = [
+@@ -8166,21 +8283,21 @@ dependencies = [
 
  [[package]]
  name = "gix-sec"
@@ -863,7 +864,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-hash",
-@@ -8191,9 +8307,9 @@ dependencies = [
+@@ -8191,9 +8308,9 @@ dependencies = [
 
  [[package]]
  name = "gix-status"
@@ -875,7 +876,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "filetime",
-@@ -8205,7 +8321,7 @@ dependencies = [
+@@ -8205,7 +8322,7 @@ dependencies = [
   "gix-hash",
   "gix-index",
   "gix-object",
@@ -884,7 +885,7 @@ index b30500b71..fdd9712a6 100644
   "gix-pathspec",
   "gix-worktree",
   "portable-atomic",
-@@ -8214,24 +8330,24 @@ dependencies = [
+@@ -8214,24 +8331,24 @@ dependencies = [
 
  [[package]]
  name = "gix-submodule"
@@ -915,7 +916,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "dashmap",
   "gix-fs",
-@@ -8242,15 +8358,15 @@ dependencies = [
+@@ -8242,15 +8359,15 @@ dependencies = [
 
  [[package]]
  name = "gix-trace"
@@ -935,7 +936,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-command",
-@@ -8258,15 +8374,15 @@ dependencies = [
+@@ -8258,15 +8375,15 @@ dependencies = [
   "gix-packetline",
   "gix-quote",
   "gix-sec",
@@ -954,7 +955,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bitflags 2.13.1",
   "gix-commitgraph",
-@@ -8286,16 +8402,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -8286,16 +8403,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "d28e8af3d42581190da884f013caf254d2fd4d6ab102408f08d21bfa11de6c8d"
  dependencies = [
   "bstr",
@@ -986,7 +987,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "fastrand",
-@@ -8304,18 +8432,18 @@ dependencies = [
+@@ -8304,18 +8433,18 @@ dependencies = [
 
  [[package]]
  name = "gix-validate"
@@ -1009,7 +1010,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-attributes",
-@@ -8325,15 +8453,15 @@ dependencies = [
+@@ -8325,15 +8454,15 @@ dependencies = [
   "gix-ignore",
   "gix-index",
   "gix-object",
@@ -1028,7 +1029,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "bstr",
   "gix-features",
-@@ -8341,7 +8469,7 @@ dependencies = [
+@@ -8341,7 +8470,7 @@ dependencies = [
   "gix-fs",
   "gix-index",
   "gix-object",
@@ -1037,7 +1038,7 @@ index b30500b71..fdd9712a6 100644
   "gix-worktree",
   "io-close",
   "thiserror 2.0.18",
-@@ -8349,9 +8477,9 @@ dependencies = [
+@@ -8349,9 +8478,9 @@ dependencies = [
 
  [[package]]
  name = "gix-worktree-stream"
@@ -1049,7 +1050,7 @@ index b30500b71..fdd9712a6 100644
  dependencies = [
   "gix-attributes",
   "gix-error",
-@@ -8360,7 +8488,7 @@ dependencies = [
+@@ -8360,7 +8489,7 @@ dependencies = [
   "gix-fs",
   "gix-hash",
   "gix-object",
@@ -1058,7 +1059,7 @@ index b30500b71..fdd9712a6 100644
   "gix-traverse",
   "parking_lot",
  ]
-@@ -9409,25 +9537,6 @@ dependencies = [
+@@ -9409,25 +9538,6 @@ dependencies = [
   "quick-error",
  ]
 
@@ -1084,7 +1085,7 @@ index b30500b71..fdd9712a6 100644
  [[package]]
  name = "include_dir"
  version = "0.7.4"
-@@ -9676,25 +9785,38 @@ checksum = "84de9d95a6d2547d9b77ee3f25fa0ee32e3c3a6484d47a55adebc0439c077992"
+@@ -9676,25 +9786,38 @@ checksum = "84de9d95a6d2547d9b77ee3f25fa0ee32e3c3a6484d47a55adebc0439c077992"
 
  [[package]]
  name = "jiff"
@@ -1128,7 +1129,7 @@ index b30500b71..fdd9712a6 100644
   "proc-macro2",
   "quote",
   "syn 2.0.117",
-@@ -15237,9 +15359,9 @@ checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
+@@ -15237,9 +15360,9 @@ checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
  [[package]]
  name = "tar"
@@ -33320,7 +33321,7 @@ index f0b809ce5..6ca31803f 100644
      let key_hints = props.key_hints;
      // Passive footer context can come from the configurable status line, the
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view.rs b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-index 64f660f8a..fd6037eb4 100644
+index 64f660f8a..e52b25205 100644
 --- a/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 @@ -38,6 +38,9 @@ use super::CancellationEvent;
@@ -33358,7 +33359,21 @@ index 64f660f8a..fd6037eb4 100644
  }
 
  const SELECTION_TOGGLE_ON_PREFIX: &str = "[*] ";
-@@ -477,6 +484,7 @@ impl ListSelectionView {
+@@ -413,7 +420,12 @@ impl ListSelectionView {
+         let mut header = params.header;
+         if params.title.is_some() || params.subtitle.is_some() {
+             let title = params.title.map(|title| Line::from(title.bold()));
+-            let subtitle = params.subtitle.map(|subtitle| Line::from(subtitle.dim()));
++            let subtitle = params.subtitle.iter().flat_map(|subtitle| {
++                subtitle
++                    .lines()
++                    .map(|line| Line::from(line.to_owned().dim()))
++                    .collect::<Vec<_>>()
++            });
+             header = Box::new(ColumnRenderable::with([
+                 header,
+                 Box::new(
+@@ -477,6 +489,7 @@ impl ListSelectionView {
              allow_cancel: params.allow_cancel,
              on_cancel: params.on_cancel,
              keymap,
@@ -33366,7 +33381,7 @@ index 64f660f8a..fd6037eb4 100644
          };
          s.apply_filter();
          if s.tabs_enabled() && !has_initial_selected_idx && s.state.selected_idx.is_none() {
-@@ -1269,6 +1277,35 @@ impl BottomPaneView for ListSelectionView {
+@@ -1269,6 +1282,35 @@ impl BottomPaneView for ListSelectionView {
 
  impl Renderable for ListSelectionView {
      fn desired_height(&self, width: u16) -> u16 {
@@ -33402,7 +33417,7 @@ index 64f660f8a..fd6037eb4 100644
          // Inner content width after menu surface horizontal insets (2 per side).
          let inner_width = popup_content_width(width);
 
-@@ -1336,12 +1373,7 @@ impl Renderable for ListSelectionView {
+@@ -1336,12 +1378,7 @@ impl Renderable for ListSelectionView {
          height
      }
 
@@ -33416,7 +33431,7 @@ index 64f660f8a..fd6037eb4 100644
          let note_width = area.width.saturating_sub(2);
          let note_lines = self
              .footer_note
-@@ -1616,6 +1648,14 @@ impl Renderable for ListSelectionView {
+@@ -1616,6 +1653,14 @@ impl Renderable for ListSelectionView {
                  Paragraph::new(hint_lines).dim().render(hint_area, buf);
              }
          }
@@ -35073,6 +35088,60 @@ index 2387eade6..a09aa7a08 100644
 
  --- plugin authentication ---
    Plugins
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
+index e0809c168..0b7b3f050 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
+@@ -7,11 +7,11 @@ Bundled catalog:
+
+ › /ultrafast
+
+-  GPT-6-Astra default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
+
+ Custom catalog:
+ › /express  My custom Bedrock tier.
+
+ › /express
+
+-  GPT-6-Astra default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
+index 0a2120ba8..e8abd66b1 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
+@@ -7,11 +7,11 @@ Bundled catalog:
+
+ › /ultrafast
+
+-  GPT-6-Astra (Global) default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra (Global) default · /tmp/project
+
+ Custom catalog:
+ › /express  My custom Bedrock tier.
+
+ › /express
+
+-  GPT-6-Astra default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
+index f08ee8330..5a366e302 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
+@@ -7,11 +7,11 @@ Bundled catalog:
+
+ › /ultrafast
+
+-  GPT-6-Astra (US cross-region) default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra (US cross-region) default · /tmp/pro…
+
+ Custom catalog:
+ › /express  My custom Bedrock tier.
+
+ › /express
+
+-  GPT-6-Astra default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
 index 915041d85..20a3eb5a4 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
@@ -35972,6 +36041,64 @@ index dfa6b7a09..8c8626ff3 100644
 
 -  gpt-5 default · /tmp/project
 +  Oh My Diff · upstream-style direct · …
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
+index b5281c321..96d50cee2 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
+@@ -5,7 +5,7 @@ expression: popup
+       Archive this session?
+ › As  Are you sure? This will archive the current session
+
+-  GP
++  Oh                                                                        p/p…
+     › 1. No, don't archive  Return to the current session
+       2. Yes, archive       Archive this session now
+
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
+index 064231754..817a8c722 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
+@@ -1,6 +1,5 @@
+ ---
+ source: tui/src/chatwidget/tests/slash_commands.rs
+-assertion_line: 2937
+ expression: popup
+ ---
+ • Wo  Archive this session?
+@@ -8,6 +7,6 @@ expression: popup
+
+ › As
+     › 1. No, don't archive  Return to the current session
+-  GP  2. Yes, archive       Archive this session now
++  Oh  2. Yes, archive       Archive this session now                        p/p…
+
+       enter select · esc back
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
+index cd9e610ef..06eefb213 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
+@@ -5,7 +5,7 @@ expression: popup
+       Delete this session?
+ › As  Cannot be undone. Subagent threads will also be deleted.
+
+-  GP
++  Oh                                                                        p/p…
+     › 1. No, keep this session                     Return to the current
+                                                    session
+       2. Yes, delete and return to command center  Permanently delete this
+diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
+index 85506a0ab..caff1bad3 100644
+--- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
++++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
+@@ -5,7 +5,7 @@ expression: popup
+       Delete this session?
+ › As  Cannot be undone. Subagent threads will also be deleted.
+
+-  GP
++  Oh                                                                        p/p…
+     › 1. No, keep this session  Return to the current session
+       2. Yes, delete and exit   Permanently delete this session now
+
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap
 index 558a9e05b..f2da3b143 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap
@@ -36700,6 +36827,36 @@ index 77b7fbd67..b3eb00f1e 100644
 
 -  test-model-a default · /tmp/project
 +  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
+diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
+index 6505ef3a2..d03fac0e4 100644
+--- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
++++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
+@@ -1,9 +1,9 @@
+ ---
+ source: tui/src/chatwidget/tests/slash_commands.rs
+-expression: "render_bottom_popup(&chat, 80)"
++expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
+ ---
+ › /ultrafast  ultrafast processing
+
+ › /ultra
+
+-  GPT-5.5 default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 default · /tmp/proje…
+diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
+index 25210e0ac..903c6306a 100644
+--- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
++++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
+@@ -1,7 +1,7 @@
+ ---
+ source: tui/src/chatwidget/tests/slash_commands.rs
+-expression: "render_bottom_popup(&chat, 80)"
++expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
+ ---
+ › /ultra
+
+-  GPT-5.5 default · /tmp/project
++  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 default · /tmp/proje…
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 index 307e1f512..012bb93a5 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
@@ -41962,7 +42119,7 @@ index 92b3eb1ca..ee34d4606 100644
          },
      );
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 9f49da4ad..5e4242b1d 100644
+index 9f49da4ad..c04cf2946 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -122,6 +122,7 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused:
@@ -41989,19 +42146,7 @@ index 9f49da4ad..5e4242b1d 100644
      #[cfg(unix)]
      crate::terminal_palette::set_default_colors_from_startup_probe(startup_probe.default_colors);
 
-@@ -653,6 +658,11 @@ impl OverlayInput {
-     }
- }
-
-+#[cfg(test)]
-+pub(crate) fn alternate_screen_active() -> bool {
-+    alternate_screen::ALTERNATE_SCREEN.is_active()
-+}
-+
- pub struct Tui {
-     pub(crate) link_hover: link_pointer::LinkHover,
-     frame_requester: FrameRequester,
-@@ -765,6 +775,7 @@ impl Tui {
+@@ -765,6 +770,7 @@ impl Tui {
              let _ = self.set_owned_screen(/*owned*/ false);
          }
          self.alt_screen_enabled = enabled;
@@ -42009,7 +42154,7 @@ index 9f49da4ad..5e4242b1d 100644
      }
 
      /// Defer a fresh fullscreen launch until its first synchronized frame is ready.
-@@ -1003,6 +1014,22 @@ impl Tui {
+@@ -1003,6 +1009,22 @@ impl Tui {
 
      /// Emit a desktop notification now if the terminal is unfocused.
      /// Returns true if a notification was posted.
@@ -50572,10 +50717,10 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..71f55c55f
+index 000000000..b8ca7705d
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,45 @@
 +[package]
 +name = "codex-omd-extension"
 +version = "0.162.1"
@@ -50592,6 +50737,7 @@ index 000000000..71f55c55f
 +hyper-util = { version = "=0.1.20", features = ["tokio"] }
 +chrono = { workspace = true }
 +codex-api = { workspace = true }
++codex-async-utils = { workspace = true }
 +codex-client = { workspace = true }
 +codex-config = { workspace = true }
 +codex-core = { workspace = true }
@@ -71474,10 +71620,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..df997103f
+index 000000000..b6ed5e740
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5605 @@
+@@ -0,0 +1,5614 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -72151,11 +72297,20 @@ index 000000000..df997103f
 +            "host_caller_source_changed"
 +        );
 +    }
-+    let value = call(
-+        &source,
-+        "environment.read",
-+        json!({"names": ["FIXTURE_VALUE"]}),
-+    )
++    let value = std::thread::scope(|scope| {
++        std::thread::Builder::new()
++            .stack_size(256 * 1024)
++            .spawn_scoped(scope, || {
++                call(
++                    &source,
++                    "environment.read",
++                    json!({"names": ["FIXTURE_VALUE"]}),
++                )
++            })
++            .unwrap()
++            .join()
++            .unwrap()
++    })
 +    .unwrap();
 +    assert_eq!(value["values"]["FIXTURE_VALUE"]["value"], "scoped");
 +    let write = json!({"program": "sh", "argv": ["-c", "printf forbidden > scoped-policy-proof"], "write": true});
@@ -77085,10 +77240,10 @@ index 000000000..df997103f
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 000000000..5e9538260
+index 000000000..1520e9885
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,246 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -77272,35 +77427,64 @@ index 000000000..5e9538260
 +            let policy: Option<codex_protocol::models::PermissionProfile> =
 +                policy.cloned().map(serde_json::from_value).transpose()?;
 +            let _cancellation = Cancellation(cancelled.clone());
-+            let future = async {
-+                tokio::select! {
-+                    value = operations::dispatch_with_policy(
-+                        &core,
-+                        &lead,
-+                        Caller {
-+                            id: caller,
-+                            source: &source,
-+                            grants,
-+                            generation,
-+                            origin: Origin::Event,
-+                            record_changes: true,
-+                        },
-+                        None,
-+                        request,
-+                        &cancelled,
-+                        policy.as_ref(),
-+                    ) => value.map_err(std::io::Error::other),
-+                    () = async {
-+                        while active() {
-+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++            let stopped = AtomicBool::new(false);
++            let operation = || {
++                handle.block_on(async {
++                    tokio::select! {
++                        value = operations::dispatch_with_policy(
++                            &core,
++                            &lead,
++                            Caller {
++                                id: caller,
++                                source: &source,
++                                grants,
++                                generation,
++                                origin: Origin::Event,
++                                record_changes: true,
++                            },
++                            None,
++                            request,
++                            &cancelled,
++                            policy.as_ref(),
++                        ) => value.map_err(std::io::Error::other),
++                        () = async {
++                            while !stopped.load(Ordering::Acquire) {
++                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++                            }
++                        } => Err(std::io::Error::other("callback_cancelled")),
++                    }
++                })
++            };
++            // Callers include small-stack callback threads; the operation's future is built and
++            // polled on a thread with a Tokio worker's stack.
++            let wait = || {
++                std::thread::scope(|scope| {
++                    let (tx, rx) = std::sync::mpsc::channel();
++                    std::thread::Builder::new()
++                        .name("omd-host-call".into())
++                        .stack_size(codex_async_utils::THREAD_STACK_SIZE_BYTES)
++                        .spawn_scoped(scope, move || {
++                            let _ = tx.send(operation());
++                        })?;
++                    loop {
++                        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
++                            Ok(result) => return result,
++                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
++                                if !active() {
++                                    stopped.store(true, Ordering::Release);
++                                }
++                            }
++                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
++                                return Err(unavailable("host operation thread failed"));
++                            }
 +                        }
-+                    } => Err(std::io::Error::other("callback_cancelled")),
-+                }
++                    }
++                })
 +            };
 +            if worker {
-+                tokio::task::block_in_place(|| handle.block_on(future))
++                tokio::task::block_in_place(wait)
 +            } else {
-+                handle.block_on(future)
++                wait()
 +            }
 +        },
 +    );
@@ -101606,10 +101790,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..d87fd4922
+index 000000000..8fe7fb2b6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5967 @@
+@@ -0,0 +1,5966 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -105025,7 +105209,6 @@ index 000000000..d87fd4922
 +            let keep = selections.iter().enumerate().any(|(index, m)| {
 +                m.enabled
 +                    && m.path == loaded.selection.path
-+                    && m.sha256 == loaded.selection.sha256
 +                    && m.scope == loaded.selection.scope
 +                    && loaded
 +                        .package
@@ -133586,10 +133769,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..f699638e2
+index 000000000..4f058a481
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5951 @@
+@@ -0,0 +1,5958 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -134010,11 +134193,13 @@ index 000000000..f699638e2
 +    .unwrap();
 +    trust(&store, &path, &["commands", "store"]);
 +    assert!(runtime.reload().is_err());
-+    assert_eq!(
++    assert_eq!(runtime.generation(), generation);
++    assert!(
 +        runtime
 +            .invoke("fixture", generation, "command", "count", Value::Null)
-+            .unwrap(),
-+        json!(1)
++            .unwrap_err()
++            .to_string()
++            .contains("callback_authority_changed")
 +    );
 +    store.enable(&path, false).unwrap();
 +    runtime.reload().unwrap();
@@ -134344,15 +134529,20 @@ index 000000000..f699638e2
 +            .to_string()
 +            .contains("mod_conflict")
 +    );
++    let generation = runtime.generation();
++    assert!(
++        runtime
++            .invoke("fixture", generation, "command", "count", Value::Null)
++            .unwrap_err()
++            .to_string()
++            .contains("mod_conflict")
++    );
++    store.enable(&other, false).unwrap();
++    runtime.reload().unwrap();
++    let generation = runtime.generation();
 +    assert_eq!(
 +        runtime
-+            .invoke(
-+                "fixture",
-+                runtime.generation(),
-+                "command",
-+                "count",
-+                Value::Null
-+            )
++            .invoke("fixture", generation, "command", "count", Value::Null)
 +            .unwrap(),
 +        json!(1)
 +    );
@@ -167950,10 +168140,10 @@ index 000000000..b127214e8
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..04d0726d3
+index 000000000..e67c630b8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2412 @@
+@@ -0,0 +1,2416 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -168190,7 +168380,7 @@ index 000000000..04d0726d3
 +        let view = crate::bottom_pane::ListSelectionView::new(
 +            SelectionViewParams {
 +                title: Some("Confirm request from mod m".into()),
-+                subtitle: Some("Mod m wants to start /bin/sh with workspace writes.".into()),
++                subtitle: Some("Mod m wants to start a process.\nCommand: /bin/sh".into()),
 +                items: ["Allow once", "Decline"]
 +                    .map(|name| SelectionItem {
 +                        name: name.into(),
@@ -168210,6 +168400,11 @@ index 000000000..04d0726d3
 +            buffer
 +        };
 +        let native = draw();
++        assert!(
++            rows(&native, area)
++                .lines()
++                .any(|row| row.trim_start().starts_with("Command: /bin/sh"))
++        );
 +        preview(snapshot(serde_json::json!({"surface_styles":{"approval":{
 +            "top":"#202030","bottom":"#101018","foreground":"#000000","border":"#888888"}}})));
 +        let painted = draw();
@@ -168753,7 +168948,6 @@ index 000000000..04d0726d3
 +#[test]
 +#[serial_test::serial]
 +fn inline_snapshot_keeps_ascii_palette_composer_dialog_and_workspace_bounded() {
-+    assert!(!crate::tui::alternate_screen_active());
 +    let colors = crate::terminal_probe::DefaultColors {
 +        fg: (240, 240, 240),
 +        bg: (0, 0, 0),
