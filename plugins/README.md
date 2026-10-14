@@ -10,8 +10,7 @@ release sources, then regenerate the plugin lock. Unlisted scratch files,
 dependencies and build outputs do not enter the package. Declared files must
 exist and cannot be symlinks.
 
-Plugins outside this launch collection are not shipped; see the
-[restore and wave note](../LEAN_PROFILES.md).
+Plugins outside this launch collection are not shipped.
 
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its

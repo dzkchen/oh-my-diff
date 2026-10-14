@@ -255,7 +255,8 @@
    "route": "app.notification"
   },
   "app_notification:thread/rewritten": {
-   "route": "app.notification"
+   "route": "app.notification",
+   "omd": true
   },
   "app_notification:thread/settings/updated": {
    "route": "app.notification"
@@ -1712,6 +1713,7 @@
   },
   "app_request:thread/rewrite": {
    "route": "app.request",
+   "omd": true,
    "class": "history_write",
    "contexts": [
     "user",

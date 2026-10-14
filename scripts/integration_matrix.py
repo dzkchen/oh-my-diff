@@ -194,7 +194,7 @@ def check(matrix):
             if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
 
-    problems += launch_problems(matrix.get("launch_cut"), source)
+    problems += launch_problems(matrix.get("launch"), source)
 
     untested = set()
     for entry in matrix["untested"]:
@@ -209,49 +209,37 @@ def check(matrix):
 
 
 LAUNCH_TIERS = ("default-active", "opt-in", "staged")
-DISPOSITIONS = ("launch", "wave_1", "wave_2")
 
 
-def launch_problems(cut, source):
-    if not cut:
-        return ["launch_cut is missing"]
+def launch_problems(entries, source):
+    if not entries:
+        return ["launch is missing"]
     problems = []
     seen = set()
     launched = {"mod": set(), "plugin": set()}
     active = set()
-    for entry in cut.get("entries", []):
+    for entry in entries:
         name = entry.get("id")
         if not entry.get("path"):
-            problems.append(f"launch_cut {name}: missing path")
+            problems.append(f"launch {name}: missing path")
             continue
         if name in seen:
-            problems.append(f"launch_cut: duplicate entry {name}")
+            problems.append(f"launch: duplicate entry {name}")
         seen.add(name)
-        disposition = entry.get("disposition")
-        if disposition not in DISPOSITIONS:
-            problems.append(f"launch_cut {name}: unknown disposition {disposition!r}")
-        elif disposition == "launch":
-            if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
-                problems.append(f"launch_cut {name}: needs a launch tier and profiles")
-            if not (ROOT / entry["path"]).exists():
-                problems.append(f"launch_cut {name}: launch path {entry['path']} is missing")
-            if entry.get("kind") in launched:
-                launched[entry["kind"]].add(name)
-            if entry.get("tier") == "default-active":
-                active.add(name)
-        elif (ROOT / entry["path"]).exists():
-            problems.append(f"launch_cut {name}: deferred path {entry['path']} still exists")
-    for path in cut.get("not_restored", []):
-        if (ROOT / path).exists():
-            problems.append(f"launch_cut: {path} should stay deleted")
-    if not cut.get("tag") or "<path>" not in cut.get("restore", ""):
-        problems.append("launch_cut: needs the restore tag and a restore command")
+        if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
+            problems.append(f"launch {name}: needs a launch tier and profiles")
+        if not (ROOT / entry["path"]).exists():
+            problems.append(f"launch {name}: path {entry['path']} is missing")
+        if entry.get("kind") in launched:
+            launched[entry["kind"]].add(name)
+        if entry.get("tier") == "default-active":
+            active.add(name)
     if launched["mod"] != set(lean_profiles.PACKAGES):
-        problems.append("launch_cut mods differ from the selected package source inventory")
+        problems.append("launch mods differ from the selected package source inventory")
     if active != set(lean_profiles.DEFAULT_ACTIVE):
-        problems.append("launch_cut default-active mods differ from the fresh-install default selection")
+        problems.append("launch default-active mods differ from the fresh-install default selection")
     if launched["plugin"] != set(source["plugin"]["plugins"]):
-        problems.append("launch_cut plugins differ from the plugin lock")
+        problems.append("launch plugins differ from the plugin lock")
     return problems
 
 
@@ -323,25 +311,11 @@ def render(matrix):
         table([(f"`{name}`", package["version"], f"`{package['source']}`")
                for name, package in matrix["first_party_packages"].items()], ["Selected mod", "Version", "Source"]), "",
     ]
-    cut = matrix["launch_cut"]
-    stage = {"launch": 2, "wave_1": 3, "wave_2": 4}
-    rows = []
-    for entry in cut["entries"]:
-        row = [f"`{entry['id']}`", entry["kind"], "—", "—", "—", f"`{entry['path']}`"]
-        if entry["disposition"] == "launch":
-            where = " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"])
-            row[2] = f"{entry['tier']} ({where})"
-        else:
-            row[stage[entry["disposition"]]] = "restore"
-        rows.append(tuple(row))
     out += [
-        "## Launch cut inventory", "",
-        f"Deferred packages are preserved at the `{cut['tag']}` tag unless a different revision is noted below;",
-        f"they are not shipped, selected or tested here. Restore a tagged path with `{cut['restore']}`.",
-        "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
-        *[f"{note}" for note in cut["notes"]],
-        f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",
-        table(rows, ["Package", "Kind", "Launch", "Wave 1", "Wave 2", "Path"]), "",
+        "## Launch collection", "",
+        table([(f"`{entry['id']}`", entry["kind"], entry["tier"],
+                " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"]), f"`{entry['path']}`")
+               for entry in matrix["launch"]], ["Package", "Kind", "Tier", "Profiles", "Path"]), "",
     ]
     for area, title in AREAS.items():
         rows = [
