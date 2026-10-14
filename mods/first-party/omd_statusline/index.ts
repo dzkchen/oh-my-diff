@@ -41,19 +41,17 @@ export default function activate(api: ModAPI) {
     if (JSON.stringify(data) !== before) api.state.set(data as unknown as Json);
   };
 
-  const refreshGit = (force = false) => {
-    const now = Date.now();
-    const current = saved();
-    if (!force && current.git && now - current.git.at < 2000) return;
+  const refreshGit = () => {
     const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', GIT_SCRIPT], timeout_ms: 3000, max_output_bytes: 65_536 });
-    const key = current.cwd ?? '';
+    const key = saved().cwd ?? '';
     update(data => {
       if ((data.cwd ?? '') !== key) return;
-      data.git = !run.ok ? { ...parseGit(key, now, ''), error: visible(run.error, 80) }
-        : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, now, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
-        : parseGit(key, now, run.value.stdout);
+      data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
+        : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
+        : parseGit(key, run.value.stdout);
     });
   };
+  const gitSoon = api.time.after('git_soon', 1000, refreshGit);
 
   const pollGithub = (force = false) => {
     const now = Date.now();
@@ -64,12 +62,12 @@ export default function activate(api: ModAPI) {
       return;
     }
     const github = data.github.key === key ? data.github : { ...EMPTY.github, key, status: 'loading' as const };
-    if (!force && github.key === data.github.key && now < github.next) return;
+    if ((!force || github.status === 'rate_limited') && github.key === data.github.key && now < github.next) return;
     const profiles = api.host.tryCall('credentials.list', null);
     const profile = profiles.ok ? profiles.value.find(item => item.kind === 'secret' && item.origin === GITHUB_ORIGIN && item.status === 'ready') : undefined;
     const backoff = (failures: number) => now + Math.min(900_000, 60_000 * 2 ** failures);
     let result = github;
-    if (!profile) result = { ...github, status: 'auth', next: now + 60_000, detail: profiles.ok ? null : visible(profiles.error, 80) };
+    if (!profile) result = { ...github, status: 'auth', next: github.status === 'auth' ? github.next : now + 60_000, detail: profiles.ok ? null : visible(profiles.error, 80) };
     else {
       const { owner, repo } = data.git.remote;
       const branch = data.git.branch;
@@ -114,9 +112,14 @@ export default function activate(api: ModAPI) {
   };
 
   const timers = [
-    api.time.every('git', config.refresh_s * 1000, () => { refreshGit(); pollGithub(); }),
+    api.time.every('git', config.refresh_s * 1000, refreshGit),
     api.time.every('github', 30_000, () => pollGithub()),
-    api.time.every('tick', 60_000, () => update(data => { data.tick += 1; data.beat = Date.now(); })),
+    api.time.every('tick', 60_000, () => {
+      const data = saved();
+      const now = Date.now();
+      const drawn = (at: number) => JSON.stringify(render(data, effective(data), { now: at, columns: 1000, cwd: data.cwd, settled: null }));
+      if (drawn(now) !== drawn(now - 60_000)) update(next => { next.tick += 1; next.beat = now; });
+    }),
     ...configured.scripts.map(script => api.time.every(`script_${script.id}`, script.interval_s * 1000, () => runScript(script.id))),
   ];
   const armedFor = JSON.stringify(config);
@@ -127,12 +130,16 @@ export default function activate(api: ModAPI) {
     update(data => { data.beat = Date.now(); data.armed = armedFor; });
   };
   const refreshAll = () => {
-    refreshGit(true);
+    refreshGit();
     pollGithub(true);
     for (const script of configured.scripts) runScript(script.id, true);
   };
   // Subprocess and network refreshes wait until startup has settled so they never compete with the first commands.
-  const settle = api.time.after('settle', 2000, refreshAll);
+  const settle = api.time.after('settle', 2000, () => {
+    const rates = api.usage.rateLimits();
+    if (rates.available) update(data => limits(data, rates.value));
+    refreshAll();
+  });
 
   const limits = (data: Data, value: unknown) => {
     const snapshot = object(object(value).rateLimits);
@@ -152,7 +159,6 @@ export default function activate(api: ModAPI) {
     const session = api.host.tryCall('session.info', null);
     const read = api.host.tryCall('app.request', { method: 'config/read', params: {} });
     const values = object(read.ok ? object(read.value).config : null);
-    const rates = api.usage.rateLimits();
     update(data => {
       if (session.ok) {
         if (data.thread !== session.value.thread_id) data.started = Date.now();
@@ -163,7 +169,6 @@ export default function activate(api: ModAPI) {
       if (data.started === null) data.started = Date.now();
       if (typeof values.model_reasoning_effort === 'string') data.model.effort = values.model_reasoning_effort;
       data.context.window = number(values.model_context_window) ?? data.context.window;
-      if (rates.available) limits(data, rates.value);
     });
     arm(true);
     settle.start();
@@ -225,7 +230,7 @@ export default function activate(api: ModAPI) {
   }));
   api.on('tool_result', ({ call_id, tool }) => {
     update(data => { delete data.tools[call_id]; });
-    if (/patch|edit|write|exec|shell/.test(tool)) refreshGit();
+    if (/patch|edit|write|exec|shell/.test(tool)) gitSoon.start();
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
@@ -256,9 +261,10 @@ export default function activate(api: ModAPI) {
   });
   api.on('channel', ({ channel, data, publisher }) => {
     if (channel !== 'omd_statusline/refresh') return;
-    const pending = object(object(data).pending);
-    if (publisher === 'omd_statusline' && Array.isArray(pending.from)) {
-      update(next => { next.pending = { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)) }; });
+    const sent = object(data);
+    if (publisher === 'omd_statusline' && 'pending' in sent) {
+      const pending = object(sent.pending);
+      update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)) } : null; });
     }
     arm(true);
     refreshAll();
@@ -312,11 +318,10 @@ export default function activate(api: ModAPI) {
     });
     const problem = configured.error ?? state.notice;
     return { type: 'dialog', id: 'omd_statusline_dialog', label: 'Status line', title: 'Status line', children: [
-      { type: 'text', id: 'omd_statusline_preview_label', label: 'Preview', text: `Preview (${state.draft.placement} the composer)`, tone: 'muted' },
+      { type: 'text', id: 'omd_statusline_preview_label', label: 'Preview', text: `${problem ? `${visible(problem, 200)} · ` : ''}Preview (${state.draft.placement} the composer)`, tone: problem ? 'attention' : 'muted' },
       // One document keeps the dialog's component ids, and so its keyboard focus, stable as the line count changes.
       { type: 'document', id: 'omd_statusline_preview', label: 'Preview', height: Math.max(1, preview.length),
         lines: preview.length ? preview.map(spans => spans.map(({ link: _link, ...span }) => span)) : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' }]] },
-      ...problem ? [{ type: 'text' as const, id: 'omd_statusline_notice', label: 'Notice', text: visible(problem, 200), tone: 'attention' as const }] : [],
       select('placement', 'Placement', state.draft.placement, ['below', 'above']),
       select('preset', 'Preset', state.draft.preset, ['compact', 'detailed', 'custom']),
       { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'pick' } },
@@ -333,7 +338,9 @@ export default function activate(api: ModAPI) {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
     const state = editor();
     if (verb === 'github') {
-      const asked = api.host.tryCall('credentials.request', { action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: GITHUB_ORIGIN });
+      const listed = api.host.tryCall('credentials.list', null);
+      const owned = listed.ok ? listed.value.find(item => item.kind === 'secret' && item.origin === GITHUB_ORIGIN) : undefined;
+      const asked = api.host.tryCall('credentials.request', owned ? { action: 'refresh', profile: owned.id } : { action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: GITHUB_ORIGIN });
       api.host.tryCall('events.publish', { channel: 'refresh', data: null });
       return { display: !asked.ok ? `GitHub token not saved: ${asked.error}` : asked.value.status === 'completed' ? 'GitHub token saved; pull request and CI status refresh now' : 'GitHub token not saved' };
     }
@@ -359,7 +366,10 @@ export default function activate(api: ModAPI) {
       // so no host call, durable state or command view may follow a successful write.
       api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
       const written = api.host.tryCall('settings.write', { values });
-      if (!written.ok) return show({ ...state, notice: `Not saved: ${written.error}` });
+      if (!written.ok) {
+        api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: data.pending } as unknown as Json });
+        return show({ ...state, notice: `Not saved: ${written.error}` });
+      }
       api.uiState.set(closed as unknown as Json);
       return { display: 'Status line saved' };
     }
@@ -377,7 +387,7 @@ export default function activate(api: ModAPI) {
     if (!event.component.startsWith('omd_statusline_')) return;
     const state = editor();
     if (!state.open) return;
-    if (event.events?.some(input => 'key' in input && input.key === 'Esc')) return api.uiState.set({ open: false });
+    if (event.kind === 'close') return api.uiState.set({ open: false });
     if (event.kind !== 'change' || typeof event.value !== 'string') return;
     const key = event.component.slice('omd_statusline_'.length);
     if (['placement', 'preset', 'glyphs', 'bars', 'thresholds'].includes(key)) api.uiState.set(edit(state, 'set', [key, event.value]) as unknown as Json);
@@ -399,8 +409,8 @@ export default function activate(api: ModAPI) {
     const data = saved();
     const columns = number(input.client?.columns) ?? 120;
     const rows = number(input.client?.rows);
-    // Drawing writes durable state only when something it caches changed: mod counts, or the viewport when scripts read it.
-    const viewport = configured.scripts.length && rows !== null ? { columns, rows } : data.viewport;
+    // Drawing writes durable state only when something it caches changed: mod counts or the viewport.
+    const viewport = rows !== null ? { columns, rows } : data.viewport;
     const mods = input.identity?.mods ?? data.mods;
     if (JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]) && !threadless()) {
       Object.assign(data, { viewport, mods });

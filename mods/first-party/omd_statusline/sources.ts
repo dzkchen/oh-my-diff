@@ -4,10 +4,10 @@ import type { Checks, Data, Git, Pull, Settings } from './segments.ts';
 
 export const GIT_SCRIPT = [
   'export LC_ALL=C GIT_OPTIONAL_LOCKS=0',
-  'git status --porcelain=v2 --branch -z || exit 3',
-  'printf "\\n@@\\n"; git diff --shortstat HEAD 2>/dev/null',
-  'printf "@@\\n"; git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel',
-  'printf "@@\\n"; git remote get-url origin 2>/dev/null; true',
+  'git rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel || exit 3',
+  'printf "@@\\n"; git remote get-url origin 2>/dev/null',
+  'printf "@@\\n"; git diff --shortstat HEAD 2>/dev/null',
+  'printf "@@\\n"; git status --porcelain=v2 --branch -z || exit 3',
 ].join('\n');
 
 export function remote(url: string): Git['remote'] {
@@ -15,9 +15,10 @@ export function remote(url: string): Git['remote'] {
   return match ? { owner: match[1], repo: match[2] } : null;
 }
 
-export function parseGit(key: string, at: number, stdout: string): Git {
-  const [status = '', shortstat = '', paths = '', origin = ''] = stdout.split(/\n?@@\n/);
-  const git: Git = { key, at, branch: null, oid: null, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicts: 0, added: 0, removed: 0, worktree: null, remote: remote(origin), error: null };
+export function parseGit(key: string, stdout: string): Git {
+  const [paths = '', origin = '', shortstat = '', ...rest] = stdout.split(/\n?@@\n/);
+  const status = rest.join('\n@@\n');
+  const git: Git = { key, branch: null, oid: null, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicts: 0, added: 0, removed: 0, worktree: null, remote: remote(origin), error: null };
   const records = status.split('\0');
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];
@@ -43,7 +44,7 @@ export function parseGit(key: string, at: number, stdout: string): Git {
 export const GITHUB_ORIGIN = 'https://api.github.com';
 const ROLLUP = 'statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{status conclusion} ... on StatusContext{state}}}}';
 export const GITHUB_QUERY = `query($owner:String!,$name:String!,$branch:String!,$ref:String!){repository(owner:$owner,name:$name){`
-  + `pullRequests(headRefName:$branch,first:1,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number title url state isDraft reviewDecision mergeStateStatus commits(last:1){nodes{commit{${ROLLUP}}}}}}`
+  + `pullRequests(headRefName:$branch,first:10,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number title url state isDraft isCrossRepository reviewDecision mergeStateStatus commits(last:1){nodes{commit{${ROLLUP}}}}}}`
   + `ref(qualifiedName:$ref){target{... on Commit{${ROLLUP}}}}}}`;
 
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
@@ -69,7 +70,8 @@ export function parseGithub(body: string, owner: string, repo: string, branch: s
   const errors = Array.isArray(parsed.errors) ? parsed.errors.map(record) : [];
   if (errors.length) return { error: visible(String(errors[0].message ?? errors[0].type ?? 'query failed'), 80), rate_limited: errors.some(error => error.type === 'RATE_LIMITED') };
   const repository = record(record(parsed.data).repository);
-  const node = record(record(repository.pullRequests).nodes?.[0]);
+  const nodes = record(repository.pullRequests).nodes;
+  const node = record(Array.isArray(nodes) ? nodes.find(item => record(item).isCrossRepository === false) : null);
   const safe = (url: unknown) => typeof url === 'string' && /^https:\/\/github\.com\//.test(url) && url.length <= 2048 ? url : null;
   const pr: Pull | null = typeof node.number === 'number' ? {
     number: node.number, title: visible(String(node.title ?? ''), 120), url: safe(node.url) ?? `https://github.com/${owner}/${repo}/pull/${node.number}`,

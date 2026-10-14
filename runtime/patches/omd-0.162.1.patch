@@ -61777,7 +61777,7 @@ index 000000000..310f9cf88
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..b98295a4a
+index 000000000..c1392c73a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2438 @@
@@ -62352,8 +62352,8 @@ index 000000000..b98295a4a
 +    views.base(host, terminal, input, rendered_ms);
 +    let _ = host.persist_json("mod-status.json", &status);
 +    let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
-+    if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
-+        let _ = host.persist_json(codex_omd::BUILTINS_SNAPSHOT, &builtins);
++    if codex_omd::BuiltinSnapshot::read(&host.root, &host.repository) != builtins {
++        let _ = host.persist_json(&codex_omd::builtins_snapshot(&host.repository), &builtins);
 +    }
 +}
 +
@@ -63201,7 +63201,7 @@ index 000000000..b98295a4a
 +                .into_iter()
 +                .flat_map(|(_, controls)| controls.modes.disable)
 +                .collect(),
-+            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root)
++            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root, &self.host.repository)
 +                .disabled_modes
 +                .into_values()
 +                .flatten()
@@ -91720,10 +91720,10 @@ index 000000000..7d7b7d901
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
-index 000000000..9c0ad7c2a
+index 000000000..644ba9d74
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins.rs
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,237 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -91742,7 +91742,15 @@ index 000000000..9c0ad7c2a
 +];
 +pub const PROTECTED_MODES: &[&str] = &["default"];
 +pub const SURFACES: &[&str] = &["status_line"];
-+pub const BUILTINS_SNAPSHOT: &str = "builtins.json";
++
++/// The store file holding the built-in controls of the sessions in one repository.
++pub fn builtins_snapshot(repository: &Path) -> String {
++    let repository = repository
++        .canonicalize()
++        .unwrap_or_else(|_| repository.to_path_buf());
++    let digest = crate::broker::sha256(repository.to_string_lossy().as_bytes());
++    format!("builtins-{}.json", &digest[..16])
++}
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -91926,8 +91934,8 @@ index 000000000..9c0ad7c2a
 +            .flatten()
 +    }
 +
-+    pub fn read(directory: &Path) -> Self {
-+        let path = directory.join(BUILTINS_SNAPSHOT);
++    pub fn read(directory: &Path, repository: &Path) -> Self {
++        let path = directory.join(builtins_snapshot(repository));
 +        std::fs::symlink_metadata(&path)
 +            .ok()
 +            .filter(|metadata| metadata.is_file() && metadata.len() <= 65_536)
@@ -99526,7 +99534,7 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..c22013d56
+index 000000000..f71c7913e
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,252 @@
@@ -99571,7 +99579,7 @@ index 000000000..c22013d56
 +pub use admission::VersionMarker;
 +pub use admission::WorkerLimits;
 +pub use admission::WorkerStatus;
-+pub use builtins::BUILTINS_SNAPSHOT;
++pub use builtins::builtins_snapshot;
 +pub use builtins::BuiltinControls;
 +pub use builtins::BuiltinSnapshot;
 +pub use builtins::PROTECTED_COMMANDS;
@@ -101673,10 +101681,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..9c99d3484
+index 000000000..90145be86
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5906 @@
+@@ -0,0 +1,5920 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -104356,6 +104364,13 @@ index 000000000..9c99d3484
 +    managed: Option<Managed>,
 +    unserved: Vec<(String, Vec<String>, String)>,
 +    project: Option<PathBuf>,
++    pool: u64,
++}
++
++impl Drop for ModHost {
++    fn drop(&mut self) {
++        process::size_reused_pool(self.pool, None);
++    }
 +}
 +
 +enum Access<'a> {
@@ -104831,6 +104846,10 @@ index 000000000..9c99d3484
 +            managed: None,
 +            unserved: Vec::new(),
 +            project: None,
++            pool: {
++                static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++                HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
++            },
 +        };
 +        if let Some(repository) = repository {
 +            host.set_checkout(repository);
@@ -105336,10 +105355,13 @@ index 000000000..9c99d3484
 +
 +    fn publish_surfaces(&self) {
 +        process::size_reused_pool(
-+            self.loaded
-+                .keys()
-+                .filter(|id| self.registered(id, "terminal"))
-+                .count(),
++            self.pool,
++            Some(
++                self.loaded
++                    .keys()
++                    .filter(|id| self.registered(id, "terminal"))
++                    .count(),
++            ),
 +        );
 +        let surfaces = MOD_INTERCEPT_SURFACES
 +            .iter()
@@ -115322,13 +115344,14 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..ae046f293
+index 000000000..7fb0d8d5a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,616 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
++use std::collections::BTreeMap;
 +use std::collections::BTreeSet;
 +use std::io::BufRead;
 +use std::io::BufReader;
@@ -115344,8 +115367,6 @@ index 000000000..ae046f293
 +use std::sync::Condvar;
 +use std::sync::Mutex;
 +use std::sync::PoisonError;
-+use std::sync::atomic::AtomicUsize;
-+use std::sync::atomic::Ordering;
 +use std::sync::mpsc;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -115613,7 +115634,7 @@ index 000000000..ae046f293
 +const PINNED_RUNNERS: usize = 4;
 +const REUSED_RUNNERS: usize = 2;
 +const MAX_REUSED_RUNNERS: usize = 8;
-+static REUSED_POOL: AtomicUsize = AtomicUsize::new(REUSED_RUNNERS);
++static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 +const WARM_IDLE: Duration = Duration::from_secs(60);
 +
 +struct Stepping(Option<String>);
@@ -115806,12 +115827,25 @@ index 000000000..ae046f293
 +}
 +
 +/// Keeps one warm callback runner per active package with a `terminal` handler, so view refreshes
-+/// don't evict each other's runners and a command finds its package's runner warm.
-+pub(super) fn size_reused_pool(terminal_handlers: usize) {
-+    REUSED_POOL.store(
-+        terminal_handlers.clamp(REUSED_RUNNERS, MAX_REUSED_RUNNERS),
-+        Ordering::Relaxed,
-+    );
++/// don't evict each other's runners and a command finds its package's runner warm. Every host in
++/// the process shares the pool, so it fits the host with the most handlers; `None` forgets a host.
++pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
++    let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
++    match terminal_handlers {
++        Some(count) => sizes.insert(host, count),
++        None => sizes.remove(&host),
++    };
++}
++
++fn reused_pool() -> usize {
++    REUSED_POOL
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .values()
++        .max()
++        .copied()
++        .unwrap_or_default()
++        .clamp(REUSED_RUNNERS, MAX_REUSED_RUNNERS)
 +}
 +
 +fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
@@ -115828,7 +115862,7 @@ index 000000000..ae046f293
 +    let size = match kind {
 +        (_, Some(_)) => usize::MAX,
 +        (true, None) => WARM_RUNNERS,
-+        (false, None) => REUSED_POOL.load(Ordering::Relaxed),
++        (false, None) => reused_pool(),
 +    };
 +    let evicted = match WARM.lock() {
 +        Ok(mut runners) => {
@@ -115932,10 +115966,10 @@ index 000000000..ae046f293
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..1fc4e43b8
+index 000000000..243f09290
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,497 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -115943,6 +115977,15 @@ index 000000000..1fc4e43b8
 +use std::path::PathBuf;
 +use std::process::Stdio;
 +use std::time::Duration;
++
++#[test]
++fn reused_pool_fits_the_host_with_the_most_terminal_handlers() {
++    super::size_reused_pool(u64::MAX - 1, Some(5));
++    super::size_reused_pool(u64::MAX, Some(0));
++    assert!(super::reused_pool() >= 5);
++    super::size_reused_pool(u64::MAX - 1, None);
++    super::size_reused_pool(u64::MAX, None);
++}
 +
 +#[test]
 +fn reused_process_resets_callback_globals_and_reloads_source() {
@@ -117070,7 +117113,7 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..91e09e8a3
+index 000000000..22c04282e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,948 @@
@@ -117734,17 +117777,17 @@ index 000000000..91e09e8a3
 +    set(value) {
 +      requireCapability('terminal');
 +      if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
-+      const encoded = JSON.stringify(value, (key, item) => {
-+        if (!key.isWellFormed() || (typeof item === 'string' && !item.isWellFormed())) throw new Error('ui_state_invalid_json');
-+        return item;
-+      });
++      const encoded = JSON.stringify(value);
 +      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
-+      let bytes = 0;
-+      for (const character of encoded) {
++      // JSON.stringify writes a lone surrogate, in a key or a value, as a \\udXXX escape.
++      if (/(?<!\\\\)(?:\\\\\\\\)*\\\\ud[89a-f]/i.test(encoded)) throw new Error('ui_state_invalid_json');
++      let bytes = /[^\\x00-\\x7f]/.test(encoded) ? 0 : encoded.length;
++      if (!bytes) for (const character of encoded) {
 +        const code = character.codePointAt(0);
 +        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
-+        if (bytes > 65536) throw new Error('ui_state_limit');
++        if (bytes > 65536) break;
 +      }
++      if (bytes > 65536) throw new Error('ui_state_limit');
 +      uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
 +    },
 +  }),
@@ -133552,10 +133595,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..2f5661536
+index 000000000..6e2fd73f2
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5825 @@
+@@ -0,0 +1,5834 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -135362,7 +135405,7 @@ index 000000000..2f5661536
 +
 +#[test]
 +fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
-+    let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
++    let source = "export default api => { api.command('write', value => { api.uiState.set(value); return null; }); api.command('lone', where => { const lone = String.fromCharCode(0xd800); api.uiState.set(where === 'key' ? {[lone]: 1} : ['ok', lone]); return null; }); api.command('read', () => api.uiState.get()); api.command('race', () => { const before = api.uiState.get() ?? 0; api.host.call('workspace.read', {path:'file'}); api.uiState.set(before + 1); return before + 1; }); api.on('terminal', () => ({title:String(api.uiState.get() ?? 'empty')})); };";
 +    let (temp, store, path) = fixture(source, &["commands", "terminal", "fs.read"]);
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
@@ -135425,6 +135468,15 @@ index 000000000..2f5661536
 +        )
 +        .unwrap_err();
 +    assert!(error.to_string().contains("ui_state_limit"));
++    let escaped = json!(["\\ud800", "\\\\ud800", "😀"]);
++    invoke(&mut first, "write", escaped.clone());
++    assert_eq!(invoke(&mut second, "read", Value::Null), escaped);
++    for place in ["key", "value"] {
++        let error = first
++            .invoke("fixture", first.generation(), "command", "lone", json!(place))
++            .unwrap_err();
++        assert!(error.to_string().contains("ui_state_invalid_json"), "{error}");
++    }
 +}
 +
 +#[test]
@@ -163374,10 +163426,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..bbd8c9187
+index 000000000..01e72e591
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4689 @@
+@@ -0,0 +1,4690 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -166371,6 +166423,7 @@ index 000000000..bbd8c9187
 +    let Some(dialog) =
 +        site(&snapshot.view, "dialog").filter(|dialog| !dialog.components.is_empty())
 +    else {
++        interaction.dialog = None;
 +        interaction.dialog_area = None;
 +        return;
 +    };
@@ -168382,10 +168435,10 @@ index 000000000..7f139af2f
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..43f9449b1
+index 000000000..88aabc62f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2555 @@
+@@ -0,0 +1,2567 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -169359,6 +169412,18 @@ index 000000000..43f9449b1
 +        );
 +        reopen_dialogs();
 +        assert!(dialog_visible(&current), "a mod command reopens a dismissed dialog");
++        render_inline(area, chat, &mut buffer, &current);
++        assert!(focus("theme_close"));
++        let mut closed = current.clone();
++        closed.view.sites.remove("dialog");
++        render_inline(area, chat, &mut buffer, &closed);
++        reopen_dialogs();
++        render_inline(area, chat, &mut buffer, &current);
++        assert_eq!(
++            INTERACTION.lock().unwrap().focused.as_deref(),
++            Some("theme_apply"),
++            "a dialog the mod closed and shows again starts at its first control"
++        );
 +
 +        preview(ModViewSnapshot::default());
 +        let mut native = Buffer::empty(area);
@@ -171094,10 +171159,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..78e49f60c
+index 000000000..fcdcc7872
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,772 @@
+@@ -0,0 +1,777 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -171306,12 +171371,12 @@ index 000000000..78e49f60c
 +
 +pub(crate) fn builtins() -> codex_omd::BuiltinSnapshot {
 +    type Cached = (
-+        Option<PathBuf>,
++        Option<(PathBuf, PathBuf)>,
 +        std::time::Instant,
 +        codex_omd::BuiltinSnapshot,
 +    );
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
-+    let root = mod_paths().and_then(|paths| paths.store);
++    let root = mod_paths().and_then(|paths| Some((paths.store?, paths.repository)));
 +    let mut cache = CACHE
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -171322,8 +171387,8 @@ index 000000000..78e49f60c
 +        return snapshot.clone();
 +    }
 +    let snapshot = root
-+        .as_deref()
-+        .map(codex_omd::BuiltinSnapshot::read)
++        .as_ref()
++        .map(|(store, repository)| codex_omd::BuiltinSnapshot::read(store, repository))
 +        .unwrap_or_default();
 +    *cache = Some((root, std::time::Instant::now(), snapshot.clone()));
 +    snapshot
@@ -171798,7 +171863,7 @@ index 000000000..78e49f60c
 +        let root = TempDir::new().unwrap();
 +        let store = store_fixture(&root);
 +        std::fs::write(
-+            store.join(codex_omd::BUILTINS_SNAPSHOT),
++            store.join(codex_omd::builtins_snapshot(&store)),
 +            serde_json::json!({"schema":1,"hidden_commands":{"plan":["fixture"]},
 +                "disabled_modes":{"plan":["fixture"]},
 +                "disabled_surfaces":{"status_line":["fixture"]},
@@ -171825,6 +171890,11 @@ index 000000000..78e49f60c
 +                ))
 +        );
 +        assert!(status_line_disabled());
++        assert_eq!(
++            codex_omd::BuiltinSnapshot::read(&store, &store.join("sessions")),
++            codex_omd::BuiltinSnapshot::default(),
++            "sessions in another repository keep their built-ins"
++        );
 +        {
 +            let _home = EnvGuard::set("HOME", store.to_str());
 +            assert!(!status_line_disabled());

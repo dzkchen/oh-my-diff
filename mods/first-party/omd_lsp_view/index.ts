@@ -95,7 +95,7 @@ export default function activate(api: ModAPI) {
     }
   });
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_lsp_view_') && event.events?.some(input => 'key' in input && input.key === 'Esc') && !view()?.pane) show(null);
+    if (event.component.startsWith('omd_lsp_view_') && event.kind === 'close' && !view()?.pane) show(null);
   });
   api.on('terminal', input => {
     if (input.event === 'startup' && view() && !view()?.pane) show(null);

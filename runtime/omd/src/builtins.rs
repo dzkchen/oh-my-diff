@@ -16,7 +16,15 @@ pub const PROTECTED_COMMANDS: &[&str] = &[
 ];
 pub const PROTECTED_MODES: &[&str] = &["default"];
 pub const SURFACES: &[&str] = &["status_line"];
-pub const BUILTINS_SNAPSHOT: &str = "builtins.json";
+
+/// The store file holding the built-in controls of the sessions in one repository.
+pub fn builtins_snapshot(repository: &Path) -> String {
+    let repository = repository
+        .canonicalize()
+        .unwrap_or_else(|_| repository.to_path_buf());
+    let digest = crate::broker::sha256(repository.to_string_lossy().as_bytes());
+    format!("builtins-{}.json", &digest[..16])
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -200,8 +208,8 @@ impl BuiltinSnapshot {
             .flatten()
     }
 
-    pub fn read(directory: &Path) -> Self {
-        let path = directory.join(BUILTINS_SNAPSHOT);
+    pub fn read(directory: &Path, repository: &Path) -> Self {
+        let path = directory.join(builtins_snapshot(repository));
         std::fs::symlink_metadata(&path)
             .ok()
             .filter(|metadata| metadata.is_file() && metadata.len() <= 65_536)

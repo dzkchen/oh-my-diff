@@ -11,7 +11,7 @@ native row and the built-in `/statusline` return unchanged; your
 `/statusline` opens a dialog with a live preview of the draft: placement,
 preset, the segment list (Show/hide, Earlier, Later, Next line for multiline
 layouts), glyphs, progress bars and thresholds. Apply saves the changed
-settings, Cancel or Esc discards the draft, Reset loads the defaults into the
+settings, Cancel, Esc or dismissing the dialog discards the draft, Reset loads the defaults into the
 preview. The same settings are editable in `/mods` and from a shell with
 `omd-mod settings STORE omd_statusline '{"preset": "detailed"}'`.
 
@@ -43,7 +43,7 @@ terminal drops trailing segments; colors follow the theme and `NO_COLOR`.
 | `provider` | `model_response` provider and cost basis | `unpriced` or `unsettled` when the host reports no price |
 | `context` | `usage.summarize` context (or the last lead request's input plus output) and the window from `config/read` or `thread/tokenUsage/updated` | `~` and muted after a compaction, rewind or model switch until the next response; compactions as `⟳N` |
 | `tokens`, `cache` | `usage.summarize` per request, idempotent by request and attempt; cache TTL from `omd_cache_ttl_seconds` | Hidden before the first measured request |
-| `cost` | Cost basis per request: provider-billed or provider-reported is billed, settled configured rates are an estimate (`~`, `est.`), subscription requests are `included`; the turn ledger's settled charge when the host supplies one | `+?` while requests are unsettled or unpriced; never an invoice |
+| `cost` | Cost basis per request: provider-billed or provider-reported is billed, settled configured rates are an estimate (`~`, `est.`), subscription requests are `included`; the session ledger's settled charge replaces that sum when it is larger | `+?` while requests are unsettled or unpriced; never an invoice |
 | `limits` | `account/rateLimits/read` and `account/rateLimits/updated` windows with reset countdowns | Hidden without account limits; `compact` shows the tightest window |
 | `git`, `changes` | `git status --porcelain=v2`, `git diff --shortstat HEAD` and `git rev-parse` through `exec.run` on a timer and after edits | Hidden outside a repository and while a result belongs to another checkout |
 | `pr`, `ci` | GitHub GraphQL through `http.request` to `api.github.com` with your enrolled token | `PR: /statusline github` without a token, `PR …` while loading, `rate-limited`, `offline` or `error` with backoff |
@@ -59,13 +59,15 @@ callbacks, and the line draws their cached results.
 
 Run `/statusline github` once and paste a GitHub token with read access to the
 repository (a fine-grained token with Pull requests and Commit statuses read is
-enough). The host stores it, attaches it only to `https://api.github.com` and
+enough); run it again to replace the token. The host stores it, attaches it only to `https://api.github.com` and
 never shows it to the mod. Without a token the mod makes no network request.
 The repository is the `origin` remote on github.com and the pull request is
-the newest one whose head is the current branch.
+the newest one whose head is the current branch of that repository (pull
+requests from forks with the same branch name are ignored).
 It polls once a minute while checks are pending and every three minutes
 otherwise, backs off to 15 minutes after failures, honours `retry-after` and
-the rate-limit reset, and discards results for a branch you have left.
+the rate-limit reset (also for `/statusline refresh`), and discards results for
+a branch you have left.
 
 ## Scripts
 

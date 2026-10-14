@@ -21,7 +21,7 @@ export type Script = { id: string; command: string[]; interval_s: number; timeou
 
 export type Charge = 'billed' | 'estimate' | 'included' | 'pending' | 'unknown' | 'none';
 export type Git = {
-  key: string; at: number; branch: string | null; oid: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number;
+  key: string; branch: string | null; oid: string | null; ahead: number; behind: number; staged: number; unstaged: number; untracked: number; conflicts: number;
   added: number; removed: number; worktree: string | null; remote: { owner: string; repo: string } | null; error: string | null;
 };
 export type GithubStatus = 'idle' | 'loading' | 'ok' | 'auth' | 'offline' | 'rate_limited' | 'error';
@@ -162,11 +162,10 @@ const parts: Record<string, (env: Env) => Part> = {
     ...data.cache.expires !== null && data.cache.expires > now ? [{ text: ` ${span(data.cache.expires - now)}`, tone: 'muted' as const }] : []],
   cost: env => {
     const { billed, estimate, included, pending, unknown } = env.data.cost;
-    const settled = env.settled !== null && env.settled > billed ? env.settled : billed;
-    const total = settled + estimate;
+    const total = Math.max(env.settled ?? 0, billed + estimate);
     if (!total && !included && !pending && !unknown) return null;
     if (!total) return [{ text: included ? 'included' : pending ? 'cost pending' : 'cost unknown', tone: 'muted' }];
-    return [{ text: `${estimate ? '~' : ''}${usd(total)}`, tone: level(env, 'cost', total) }, ...estimate && !settled ? [{ text: ' est.', tone: 'muted' as const }] : [],
+    return [{ text: `${estimate ? '~' : ''}${usd(total)}`, tone: level(env, 'cost', total) }, ...estimate && !billed ? [{ text: ' est.', tone: 'muted' as const }] : [],
       ...pending || unknown ? [{ text: ' +?', tone: 'muted' as const }] : []];
   },
   limits: env => {

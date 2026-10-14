@@ -81,7 +81,7 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   assert.deepEqual(state.review.grants, ['exec']);
   state = command('apply', state);
   assert.deepEqual(calls.filter(call => call.operation === 'packages.apply').at(-1).arguments, { action: 'update', id: 'omd_lsp_sync', scope: 'user', expected_generation: 7 });
-  const escaped = run({ event: 'component_event', ui_state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
+  const escaped = run({ event: 'component_event', ui_state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_dialog', kind: 'close', origin: 'user' } });
   assert.deepEqual([escaped.ui_state.open, escaped.ui_state.directory, escaped.ui_state.query], [false, false, ''], 'closing forgets the directory search');
   assert.ok(view({ ...state, review: { request: { action: 'install' }, label: 'Install Git', changes: {}, grants: Array(12).fill('fs.write') } }).children
     .find(child => child.id === 'omd_mods_review').text.split('\n').every(text => text.length <= 52), 'review text wraps for narrow terminals');

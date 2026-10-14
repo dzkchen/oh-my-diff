@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runnerSync } from './mod_runner.mjs';
 
@@ -15,11 +18,12 @@ const surface = {
   intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts',
 };
 const NOW = 1_800_000_000_000;
-const GIT = ['# branch.oid 0123456789abcdef', '# branch.head feat/line', '# branch.ab +2 -1', '1 M. N... 100644 100644 100644 a b src/a.ts', '1 .M N... 100644 100644 100644 a b src/b.ts',
-  '2 R. N... 100644 100644 100644 a b R100 new.ts', 'old.ts', '? scratch.txt', ''].join('\0')
-  + '\n@@\n 3 files changed, 12 insertions(+), 4 deletions(-)\n@@\n/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.com:dzkchen/oh-my-diff.git\n';
+const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.com:dzkchen/oh-my-diff.git\n@@\n 3 files changed, 12 insertions(+), 4 deletions(-)\n@@\n'
+  + ['# branch.oid 0123456789abcdef', '# branch.head feat/line', '# branch.ab +2 -1', '1 M. N... 100644 100644 100644 a b src/a.ts', '1 .M N... 100644 100644 100644 a b src/b.ts',
+    '2 R. N... 100644 100644 100644 a b R100 new.ts', 'old.ts', '? scratch.txt', ''].join('\0');
 const GRAPHQL = JSON.stringify({ data: { repository: {
-  pullRequests: { nodes: [{ number: 44, title: 'Status line', url: 'https://github.com/dzkchen/oh-my-diff/pull/44', state: 'OPEN', isDraft: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN',
+  pullRequests: { nodes: [{ number: 51, title: 'Fork branch of the same name', url: 'https://github.com/dzkchen/oh-my-diff/pull/51', state: 'OPEN', isDraft: false, isCrossRepository: true },
+    { number: 44, title: 'Status line', url: 'https://github.com/dzkchen/oh-my-diff/pull/44', state: 'OPEN', isDraft: false, isCrossRepository: false, reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN',
     commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE', contexts: { nodes: [
       { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }, { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'FAILURE' },
       { __typename: 'StatusContext', state: 'PENDING' }] } } } }] } }] },
@@ -66,7 +70,7 @@ const rows = patch => Object.values(patch.sites).flatMap(site => site.components
 const lines = patch => rows(patch).map(item => item.spans.map(span => span.text).join(''));
 const settled = (answer = host()) => {
   const start = call({ event: 'start', payload: {} }, answer);
-  assert.ok(!start.calls.some(item => item.operation === 'exec.run' || item.operation === 'http.request'), 'start runs no subprocess or network work');
+  assert.ok(!start.calls.some(item => item.operation === 'exec.run' || item.operation === 'http.request' || item.arguments?.method === 'account/rateLimits/read'), 'start runs no subprocess or network work');
   return call({ event: 'timer', payload: { key: 'time:settle' }, state: start.state }, answer).state;
 };
 const started = () => settled();
@@ -94,6 +98,9 @@ test('session telemetry is request-idempotent, separates workers from the lead c
   const detailed = lines(view(state, { preset: 'detailed' }));
   assert.match(detailed[0], /high · openai API est\. · .*↑109k ↓2\.0k r500 c80k · cache 80% · ~\$2\.50 est\. · 5h 42% ↻2h00m 7d 93% ↻24h00m/);
   assert.equal(detailed[1], '⎇ feat/line* ↑2↓1 wt:line · +12 -4 4f · PR: /statusline github · lead 0m');
+  const ledger = cost => lines(view(state, {}, { ledger: { thread_id: 'lead', cwd: '/repo', cost } }))[0];
+  assert.match(ledger({ settled_task_charge_microusd: 2_500_000 }), / ~\$2\.50 est\. /, 'the session ledger covers the same settled requests');
+  assert.match(ledger({ settled_task_charge_microusd: 4_000_000 }), / ~\$4\.00 est\. /, 'settled charges this mod did not see still count');
   const switched = feed(state, [['app_notification', { method: 'thread/settings/updated', params: { threadId: 'lead', threadSettings: { model: 'gpt-6.2', modelProvider: 'openai' } }, thread_id: 'lead', coalesced: 0, dropped: 0 }]]);
   assert.match(lines(view(switched))[0], /^gpt-6\.2 · .*~38%/);
   const compacted = feed(state, [['compaction_end', { turn_id: 't', trigger: 'auto', outcome: 'compacted', by: null, provider_call: true }, { virtual_time_ms: NOW + 1000 }]]);
@@ -103,9 +110,13 @@ test('session telemetry is request-idempotent, separates workers from the lead c
     identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state });
   assert.match(lines(health.value)[0], / · 7 mods on 1 failed · \/omd$/);
   assert.deepEqual(health.state.mods, { installed: 21, enabled: 8, active: 7, failed: 1 });
-  const again = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 100, rows: 30 },
+  const again = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 160, rows: 40 },
     identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state: health.state });
-  assert.deepEqual(again.state, health.state, 'an unchanged draw writes no state, and the viewport is kept only for scripts');
+  assert.deepEqual(again.state, health.state, 'an unchanged draw writes no state');
+  assert.deepEqual(health.state.viewport, { columns: 160, rows: 40 });
+  const narrow = call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 50, rows: 20 } }, state: health.state }).state;
+  const command = call({ event: 'command', name: 'edit', payload: '', state: narrow });
+  assert.ok(lines(command.value.terminal).every(text => [...text].length <= 46), 'a command view fits the real width');
 });
 
 test('narrow terminals drop trailing segments, ASCII glyphs replace symbols and lines stay within the span limit', () => {
@@ -126,7 +137,11 @@ test('git results from another checkout are discarded and a non-repository hides
   const state = started();
   assert.equal(state.git.branch, 'feat/line');
   assert.deepEqual(state.git.remote, { owner: 'dzkchen', repo: 'oh-my-diff' });
-  const moved = { ...state, cwd: '/elsewhere', git: { ...state.git, at: 0 } };
+  assert.deepEqual(call({ event: 'timer', payload: { key: 'time:git' }, state, virtual_time_ms: NOW + 60_000 }).state, state, 'an unchanged checkout writes no state');
+  const quiet = { ...state, limits: [] };
+  assert.deepEqual(call({ event: 'timer', payload: { key: 'time:tick' }, state: quiet, virtual_time_ms: NOW + 60_000 }).state, quiet, 'a minute passing writes nothing when no shown text depends on it');
+  assert.notDeepEqual(call({ event: 'timer', payload: { key: 'time:tick' }, state, virtual_time_ms: NOW + 60_000 }).state, state, 'a reset countdown redraws');
+  const moved = { ...state, cwd: '/elsewhere' };
   const raced = call({ event: 'timer', payload: { key: 'time:git' }, state: moved }, host({ 'exec.run': () => ({ exit_code: 0, timed_out: false, stdout: GIT, stderr: '' }) })).state;
   assert.equal(raced.git.key, '/elsewhere');
   assert.doesNotMatch(lines(view(state, {}, { ledger: { thread_id: 'lead', cwd: '/other', cost: null } }))[0], /feat\/line/);
@@ -135,11 +150,32 @@ test('git results from another checkout are discarded and a non-repository hides
   assert.doesNotMatch(lines(view(outside))[0], /⎇/);
 });
 
+test('a status listing over the output cap keeps the branch, remote and diff summary', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'omd-statusline-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+  git('init', '-q', '-b', 'feat/big');
+  git('remote', 'add', 'origin', 'https://github.com/dzkchen/oh-my-diff.git');
+  for (let index = 0; index < 1600; index += 1) writeFileSync(join(repo, `untracked-file-with-a-long-name-${String(index).padStart(5, '0')}.txt`), '');
+  const exec = args => {
+    const run = spawnSync(args.program, args.argv, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+    assert.ok(run.stdout.length > args.max_output_bytes);
+    return { exit_code: run.status, timed_out: false, stdout: run.stdout.slice(0, args.max_output_bytes), stderr: '', stdout_truncated: true };
+  };
+  try {
+    const state = settled(host({ 'exec.run': exec }));
+    assert.deepEqual([state.git.error, state.git.branch, state.git.remote, state.git.worktree], [null, 'feat/big', { owner: 'dzkchen', repo: 'oh-my-diff' }, null]);
+    assert.ok(state.git.untracked > 1000);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('pull request and CI status cover auth, success, rate limits, offline backoff and checkout races', () => {
   const state = started();
   const auth = call({ event: 'timer', payload: { key: 'time:github' }, state }).state;
   assert.equal(auth.github.status, 'auth');
   assert.match(lines(view(auth, { preset: 'detailed' }))[1], /PR: \/statusline github/);
+  assert.deepEqual(call({ event: 'timer', payload: { key: 'time:github' }, state: auth, virtual_time_ms: NOW + 120_000 }).state, auth, 'a missing token is rechecked without rewriting state');
   const profile = { 'credentials.list': () => [{ id: 's1', label: 'GitHub', kind: 'secret', provider: null, origin: 'https://api.github.com', status: 'ready', default: false }] };
   const requests = [];
   const ok = call({ event: 'timer', payload: { key: 'time:github' }, state: { ...auth, github: { ...auth.github, next: 0 } } }, host({ ...profile,
@@ -158,6 +194,8 @@ test('pull request and CI status cover auth, success, rate limits, offline backo
   const limited = call({ event: 'timer', payload: { key: 'time:github' }, state: due }, host({ ...profile,
     'http.request': args => ({ status: 403, url: args.url, headers: { 'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': String((NOW + 600_000) / 1000) }, redirects: [], body: '{}', truncated: false, bytes: 2 }) })).state;
   assert.deepEqual([limited.github.status, limited.github.next, limited.github.pr.number], ['rate_limited', NOW + 600_000, 44]);
+  const refresh = { event: 'channel', payload: { publisher: 'omd_statusline', channel: 'omd_statusline/refresh', data: null, correlation: null, sequence: 1, dropped: 0 }, state: limited };
+  assert.equal(call(refresh, host({ ...profile, 'http.request': () => assert.fail('a forced refresh ignored the rate-limit reset') })).state.github.status, 'rate_limited');
   const offline = call({ event: 'timer', payload: { key: 'time:github' }, state: due }, host({ ...profile, 'http.request': () => { throw new Error('http_timeout'); } })).state;
   assert.deepEqual([offline.github.status, offline.github.next, offline.github.failures], ['offline', NOW + 60_000, 1]);
   const again = call({ event: 'timer', payload: { key: 'time:github' }, state: { ...offline, github: { ...offline.github, next: 0 } } }, host({ ...profile, 'http.request': () => { throw new Error('http_timeout'); } })).state;
@@ -244,14 +282,31 @@ test('the editor previews drafts live, applies only changes and cancels without 
   const cancelled = command('cancel', split);
   assert.equal(cancelled.calls.length, 0);
   assert.equal(cancelled.ui.open, false);
-  const escaped = call({ event: 'component_event', payload: { component: 'omd_statusline_segments', kind: 'input', events: [{ key: 'Esc', text: null }] }, state, ui_state: split }).ui;
-  assert.equal(escaped.open, false);
+  const escaped = call({ event: 'component_event', payload: { component: 'omd_statusline_dialog', kind: 'close', origin: 'user' }, state, ui_state: split }).ui;
+  assert.equal(escaped.open, false, 'any user dismissal closes the editor');
   assert.equal(command('reset', split).ui.draft.preset, 'compact');
   assert.equal(command('apply', opened.ui).calls.some(item => item.operation === 'settings.write'), false);
   const stale = command('apply', escaped);
   assert.equal(stale.calls.length, 0);
   assert.match(stale.value.display, /not open/);
-  const refused = call({ event: 'command', name: 'edit', payload: 'apply', state, ui_state: split }, host({ 'settings.write': () => { throw new Error('mod_not_enabled: omd_statusline'); } })).ui;
+  const refusal = call({ event: 'command', name: 'edit', payload: 'apply', state, ui_state: split }, host({ 'settings.write': () => { throw new Error('mod_not_enabled: omd_statusline'); } }));
+  const refused = refusal.ui;
   assert.match(refused.notice, /Not saved/);
   assert.equal(refused.open, true);
+  const [announce, withdraw] = refusal.calls.filter(item => item.operation === 'events.publish').map(item => item.arguments.data);
+  const channel = (data, current) => call({ event: 'channel', payload: { publisher: 'omd_statusline', channel: 'omd_statusline/refresh', data, correlation: null, sequence: 1, dropped: 0 }, state: current }).state;
+  assert.deepEqual(Object.keys(view(channel(withdraw ?? {}, channel(announce, state)), {}).sites), ['below_composer'], 'a refused apply withdraws its announcement');
+  const dialogIds = ui => {
+    const ids = nodes => nodes.flatMap(node => [node.id, ...ids(node.children ?? [])]).filter(Boolean);
+    return ids(call({ event: 'terminal', payload: { event: 'idle', ledger: null, client: { kind: 'terminal', columns: 120, rows: 30 } }, state, ui_state: ui }).value.sites.dialog.components);
+  };
+  assert.deepEqual(dialogIds(refused), dialogIds(split), 'a notice keeps the dialog identity and so its focus');
+});
+
+test('/statusline github rotates the existing token instead of enrolling a duplicate', () => {
+  const requests = [];
+  const answer = owned => host({ 'credentials.list': () => owned, 'credentials.request': args => { requests.push(args); return { status: 'completed', profile: null }; } });
+  call({ event: 'command', name: 'edit', payload: 'github' }, answer([]));
+  call({ event: 'command', name: 'edit', payload: 'github' }, answer([{ id: 'p7', label: 'GitHub (status line)', kind: 'secret', provider: null, origin: 'https://api.github.com', status: 'ready', default: false }]));
+  assert.deepEqual(requests, [{ action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: 'https://api.github.com' }, { action: 'refresh', profile: 'p7' }]);
 });

@@ -7,6 +7,15 @@ use std::process::Stdio;
 use std::time::Duration;
 
 #[test]
+fn reused_pool_fits_the_host_with_the_most_terminal_handlers() {
+    super::size_reused_pool(u64::MAX - 1, Some(5));
+    super::size_reused_pool(u64::MAX, Some(0));
+    assert!(super::reused_pool() >= 5);
+    super::size_reused_pool(u64::MAX - 1, None);
+    super::size_reused_pool(u64::MAX, None);
+}
+
+#[test]
 fn reused_process_resets_callback_globals_and_reloads_source() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",

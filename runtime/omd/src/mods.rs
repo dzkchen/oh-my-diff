@@ -2677,6 +2677,13 @@ pub struct ModHost {
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
     project: Option<PathBuf>,
+    pool: u64,
+}
+
+impl Drop for ModHost {
+    fn drop(&mut self) {
+        process::size_reused_pool(self.pool, None);
+    }
 }
 
 enum Access<'a> {
@@ -3152,6 +3159,10 @@ impl ModHost {
             managed: None,
             unserved: Vec::new(),
             project: None,
+            pool: {
+                static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -3657,10 +3668,13 @@ impl ModHost {
 
     fn publish_surfaces(&self) {
         process::size_reused_pool(
-            self.loaded
-                .keys()
-                .filter(|id| self.registered(id, "terminal"))
-                .count(),
+            self.pool,
+            Some(
+                self.loaded
+                    .keys()
+                    .filter(|id| self.registered(id, "terminal"))
+                    .count(),
+            ),
         );
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()

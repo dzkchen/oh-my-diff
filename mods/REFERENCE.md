@@ -1460,8 +1460,10 @@ turn by itself; only `turns.queue` under an `autonomous` grant can.
 `ready` once enrolled; secrets are listed only to the mod that owns them.
 `credentials.request` opens native flows from user contexts: ChatGPT sign-in,
 masked API-key entry, refresh and removal, and `{kind: 'secret', label,
-origin}` for an origin-bound secret owned by the calling mod. A mod can remove
-only its own secrets, and the confirmation names the profile's kind and label. Route entries
+origin}` for an origin-bound secret owned by the calling mod. Labels are unique in
+the store, so enrolling an existing label fails with `credential_profile_label_exists`;
+`{action: 'refresh', profile}` on the mod's own secret asks for a new value and replaces it.
+A mod can remove only its own secrets, and the confirmation names the profile's kind and label. Route entries
 may name a `credential`; its token replaces the request's authorization after
 upstream auth, and a missing or expired credential blocks the request.
 `routes.select {route, scope}` applies a configured route at the next request
