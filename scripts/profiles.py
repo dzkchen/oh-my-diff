@@ -15,37 +15,37 @@ from datetime import datetime, timezone
 
 from scripts import install_support as support
 from scripts import authority_broker
-from scripts import full_mods_lock
-from scripts import preview_lock
+from scripts import mods_lock
+from scripts import base_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT = "oh-my-diff-lean-package-candidate-v1"
+PRODUCT = "oh-my-diff-install-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_panel",
                   "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
-PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
+PACKAGES = tuple(sorted((*base_lock.PACKAGES, *mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
-MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
-                    "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
-                    "scripts/preview_lock.py",
-                    "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md", "install.sh")
+MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
+                    "scripts/mods_lock.py", "runtime/mods.lock.json",
+                    "scripts/base_lock.py",
+                    "runtime/base.lock.json", "upstream.lock.json", "INSTALL.md", "install.sh")
 
 
 def invoke(*arguments):
     return json.loads(support.output(arguments))
 
 
-def package_sources(preview):
-    full = full_mods_lock.load()
-    if full["mod_api"] != preview["mod_api"]:
-        raise ValueError("OMD+ mod API disagrees with pinned preview")
-    return {**preview["packages"], **full["packages"]}
+def package_sources(base):
+    full = mods_lock.load()
+    if full["mod_api"] != base["mod_api"]:
+        raise ValueError("OMD+ mod API disagrees with the base lock")
+    return {**base["packages"], **full["packages"]}
 
 
 def profile_packages(profile):
@@ -109,21 +109,21 @@ def identity(binary):
     result = support.binary_identity(binary)
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if not support.compatible_upstream(result["version"], version):
-        raise ValueError(f"candidate requires a Codex {version.rsplit('.', 1)[0]}.x host")
+        raise ValueError(f"this release requires a Codex {version.rsplit('.', 1)[0]}.x host")
     return result
 
 
-def candidate_lock(upstream, patch, preview):
-    record = json.loads((ROOT / "runtime/lean-release.lock.json").read_text())
+def release_lock(upstream, patch, base):
+    record = json.loads((ROOT / "runtime/release.lock.json").read_text())
     if (record.get("schema") != SCHEMA or record.get("product") != PRODUCT
             or record.get("upstream_commit") != upstream["commit"]
             or record.get("runtime_patch_sha256") != patch["patch"]["sha256"]
-            or record.get("mod_api") != preview["mod_api"]
-            or record.get("node") != preview["node"]):
-        raise ValueError("lean release lock disagrees with pinned runtime sources")
+            or record.get("mod_api") != base["mod_api"]
+            or record.get("node") != base["node"]):
+        raise ValueError("release lock disagrees with pinned runtime sources")
     for name, expected in record["source_sha256"].items():
         if support.digest(ROOT / name) != expected:
-            raise ValueError(f"lean candidate source changed: {name}")
+            raise ValueError(f"release source changed: {name}")
     return record
 
 
@@ -136,14 +136,14 @@ def copy_plugins(destination):
         shutil.copy2(source / name, target)
     return {"marketplace": str(destination), "plugins": sorted(lock["plugins"]), "files": lock["files"],
             "marketplace_sha256": lock["files"][".agents/plugins/marketplace.json"],
-            "installed_by_candidate": [],
+            "installed_by_omd": [],
             "note": "available for explicit installation; no plugin is configured by this installer"}
 
 
 def load(prefix):
     record = json.loads((prefix / "install.json").read_text())
     if record.get("schema") != SCHEMA or record.get("product") != PRODUCT:
-        raise ValueError("unrecognized candidate installation")
+        raise ValueError("unrecognized OMD installation")
     if support.resolved(record["prefix"]) != prefix:
         raise ValueError("installation prefix changed")
     return record
@@ -257,10 +257,10 @@ def status(prefix, bin_dir):
     store = Path(record["store"])
     host = invoke(manager, "status", store)
     if host["api"] != record["mod_api"]:
-        raise ValueError("mod store API no longer matches candidate")
+        raise ValueError("mod store API no longer matches the installation")
     selection = invoke(manager, "selection-status", store)
     active = {item["id"]: item for item in host["mods"]}
-    locked = package_sources(support.preview_lock())
+    locked = package_sources(support.base_lock())
     packages = []
     for identifier in profile_packages(record["profile"]):
         source = store / "sources" / identifier
@@ -316,7 +316,7 @@ def activate(prefix, bin_dir, selection):
 def select_mod(prefix, bin_dir, identifier, enabled):
     record = load(prefix)
     if identifier not in record["packages"]:
-        raise ValueError("only installed first-party candidate mods can be selected here")
+        raise ValueError("only installed first-party mods can be selected here")
     _, manager = check(record, bin_dir)
     source = Path(record["store"]) / "sources" / identifier
     def selection():
@@ -410,7 +410,7 @@ def shelve(source, destination):
 def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise ValueError("this candidate installer supports Apple Silicon macOS")
+        raise ValueError("this installer supports Apple Silicon macOS")
     if prefix.exists() or any((bin_dir / name).exists() or (bin_dir / name).is_symlink() for name in LAUNCHERS):
         raise ValueError("managed prefix or launcher already exists")
     if store.exists() != args.attach_store:
@@ -419,34 +419,34 @@ def install(args):
     patch_lock = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
     if support.digest(ROOT / patch_lock["patch"]["path"]) != patch_lock["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
-    locked = support.preview_sources(support.preview_lock())
-    if full_mods_lock.load() != full_mods_lock.build():
+    locked = support.base_sources(support.base_lock())
+    if mods_lock.load() != mods_lock.build():
         raise ValueError("OMD+ mod lock differs from pinned sources")
     packages = package_sources(locked)
-    candidate = candidate_lock(upstream_lock, patch_lock, locked)
+    release = release_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:
-        raise ValueError("first-party candidate inventory changed")
+        raise ValueError("first-party package inventory changed")
     binary = identity(args.binary)
-    if binary["sha256"] != candidate["artifacts"]["codex"]["sha256"]:
-        raise ValueError("Codex binary differs from frozen lean candidate")
+    if binary["sha256"] != release["artifacts"]["codex"]["sha256"]:
+        raise ValueError("Codex binary differs from the release lock")
     code_mode_host = Path(binary["path"]).parent / "codex-code-mode-host"
     if (not code_mode_host.is_file()
-            or support.digest(code_mode_host) != candidate["artifacts"]["codex-code-mode-host"]["sha256"]):
-        raise ValueError("code-mode host beside the Codex binary differs from frozen lean candidate")
+            or support.digest(code_mode_host) != release["artifacts"]["codex-code-mode-host"]["sha256"]):
+        raise ValueError("code-mode host beside the Codex binary differs from the release lock")
     broker_helper = Path(binary["path"]).parent / "omd-broker"
     if (not broker_helper.is_file()
-            or support.digest(broker_helper) != candidate["artifacts"]["omd-broker"]["sha256"]):
-        raise ValueError("authority broker beside the Codex binary differs from frozen lean candidate")
+            or support.digest(broker_helper) != release["artifacts"]["omd-broker"]["sha256"]):
+        raise ValueError("authority broker beside the Codex binary differs from the release lock")
     manager = support.resolved(args.manager)
     node = support.resolved(args.node)
     if not manager.is_file() or not os.access(manager, os.X_OK):
         raise ValueError("mod manager executable is unavailable")
-    if support.digest(manager) != candidate["artifacts"]["omd-mod"]["sha256"]:
-        raise ValueError("mod manager differs from frozen lean candidate")
+    if support.digest(manager) != release["artifacts"]["omd-mod"]["sha256"]:
+        raise ValueError("mod manager differs from the release lock")
     author_archive = support.resolved(args.author_archive)
     if (not author_archive.is_file()
-            or support.digest(author_archive) != candidate["artifacts"]["mod-api.tgz"]["sha256"]):
-        raise ValueError("mod author archive differs from pinned lean package")
+            or support.digest(author_archive) != release["artifacts"]["mod-api.tgz"]["sha256"]):
+        raise ValueError("mod author archive differs from the release lock")
     if not support.compatible_node(support.output([str(node), "--version"]), locked["node"]):
         raise ValueError(f"Node {locked['node']} or a later {locked['node'].split('.')[0]}.x is required")
     fallback = shutil.which("codex", path=support.path_without(bin_dir))
@@ -492,7 +492,7 @@ def install(args):
             made_store = True
         host = invoke(installed_manager, "status", store)
         if host["api"] != locked["mod_api"]:
-            raise ValueError("candidate mod API does not match the source lock")
+            raise ValueError("mod store API does not match the source lock")
         installed = {}
         plugin_bundle = None
         tools = {}
@@ -500,8 +500,8 @@ def install(args):
             source = support.resolved(getattr(args, name.replace("-", "_")))
             if not source.is_file() or not os.access(source, os.X_OK):
                 raise ValueError(f"host tool binary is unavailable: {name}")
-            if support.digest(source) != candidate["artifacts"][name]["sha256"]:
-                raise ValueError(f"host tool differs from frozen lean candidate: {name}")
+            if support.digest(source) != release["artifacts"][name]["sha256"]:
+                raise ValueError(f"host tool differs from the release lock: {name}")
             target = artifacts / name
             shutil.copy2(source, target)
             tools[name] = {"installed_path": str(target), "sha256": support.digest(target)}
@@ -556,7 +556,7 @@ def install(args):
                   "installed_at": datetime.now(timezone.utc).isoformat(),
                   "prefix": str(prefix), "bin_dir": str(bin_dir), "store": str(store),
                   "profile": args.profile, "profile_label": PROFILE_LABELS[args.profile],
-                  "version": candidate["version"], "mod_api": host["api"], "packages": installed,
+                  "version": release["version"], "mod_api": host["api"], "packages": installed,
                   "sources": {identifier: packages[identifier]["files"] for identifier in PACKAGES},
                   "plugin_bundle": plugin_bundle,
                   "binary": {**binary, "installed_path": str(artifacts / "codex"),
@@ -601,7 +601,7 @@ def install(args):
                             f"for python in {shlex.quote(sys.executable)} python3.14 python3.13 python3.12 python3; do\n"
                             "  command -v \"$python\" >/dev/null 2>&1 && \"$python\" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null && break\n"
                             "done\n"
-                            f"exec \"$python\" -m scripts.lean_profiles "
+                            f"exec \"$python\" -m scripts.profiles "
                             f"--prefix {shlex.quote(str(prefix))} --bin-dir {shlex.quote(str(bin_dir))} \"$@\"\n",
                             0o755)
         made_launchers.append(control_launcher)
@@ -621,7 +621,7 @@ def install(args):
         result = status(prefix, bin_dir)
         failed = [(package["id"], package["error"]) for package in result["packages"] if package["error"]]
         if failed:
-            raise ValueError(f"candidate mod failed to load during installation: {failed}")
+            raise ValueError(f"first-party mod failed to load during installation: {failed}")
         return result
     except BaseException:
         for launcher in made_launchers:

@@ -9,7 +9,7 @@ import tempfile
 import time
 import tomllib
 
-from scripts import install_support as private
+from scripts import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +91,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         raise ValueError("evidence output already exists")
     started = time.monotonic()
     node = Path(call(["mise", "which", "node"], os.environ.copy(), False)).resolve()
-    with tempfile.TemporaryDirectory(prefix="omd-lean-acceptance-", dir="/private/tmp") as temporary:
+    with tempfile.TemporaryDirectory(prefix="omd-profile-acceptance-", dir="/private/tmp") as temporary:
         base = Path(temporary)
         home = base / "codex-home"
         home.mkdir()
@@ -102,7 +102,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         session = home / "sessions/2026/09/23/package-smoke.jsonl"
         session.parent.mkdir(parents=True)
         session.write_text('{"type":"preserve-session"}\n')
-        shared_hashes = {str(path.relative_to(home)): private.digest(path)
+        shared_hashes = {str(path.relative_to(home)): support.digest(path)
                          for path in (sentinel, auth, session)}
         env = isolated_environment(base, home, upstream)
         observations = {}
@@ -110,7 +110,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         def command(profile, *args):
             prefix = base / f"{profile}-prefix"
             bin_dir = base / f"{profile}-bin"
-            return call(["python3", "-m", "scripts.lean_profiles", "--prefix", prefix,
+            return call(["python3", "-m", "scripts.profiles", "--prefix", prefix,
                          "--bin-dir", bin_dir, *args], env)
 
         platform_store = base / "platform-store"
@@ -193,7 +193,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution"]
         assert not (base / "full-prefix/browser").exists()
         host = base / "full-prefix/artifacts/codex-code-mode-host"
-        assert host.is_file() and private.digest(host) == private.digest(artifact_dir / "codex-code-mode-host")
+        assert host.is_file() and support.digest(host) == support.digest(artifact_dir / "codex-code-mode-host")
         staged_skills = {}
         inert_hooks = []
         for identifier in full["plugin_bundle"]["plugins"]:
@@ -279,10 +279,10 @@ def run(artifact_dir, upstream, output, managed_policy=False):
                                 "attach_preserved_disable": True,
                                 "side_by_side_attach_preserved_disable": True,
                                 "state_preserved": True}
-        assert {str(path.relative_to(home)): private.digest(path)
+        assert {str(path.relative_to(home)): support.digest(path)
                 for path in (sentinel, auth, session)} == shared_hashes
-    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in (
+    result = {"status": "pass", "release_lock_sha256": support.digest(ROOT / "runtime/release.lock.json"),
+              "artifact_sha256": {name: support.digest(artifact_dir / name) for name in (
                   "codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}

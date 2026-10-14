@@ -5,8 +5,8 @@
 Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.
 
 A conformance fixture is retained source and executable coverage, not a package offered
-to users. The author SDK packs only author examples. The current private-preview bundle
-contains only the packages labeled `bundled` below.
+to users. The author SDK packs only author examples. The base lock
+(`runtime/base.lock.json`) pins only the packages labeled `bundled` below.
 
 ## Bundled packages
 
@@ -127,4 +127,4 @@ contains only the packages labeled `bundled` below.
 
 The small context, counter, guard, interception, service, reader, and tool cases remain
 available to repository conformance checks. They are not copied by `omd-mod-author examples`,
-not packed as SDK examples, and not part of the private-preview bundle.
+not packed as SDK examples, and not part of the base lock.

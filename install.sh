@@ -75,7 +75,7 @@ def broker_deployed():
 
 
 def package(generation, upstream, bin_dir, *arguments):
-    return run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", generation / "prefix",
+    return run([sys.executable, "-m", "scripts.profiles", "--prefix", generation / "prefix",
                 "--bin-dir", generation / "bin", *arguments],
                cwd=generation / "prefix/management", env=environment(upstream, bin_dir))
 
@@ -354,7 +354,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
         generation.mkdir(parents=True)
-        command = [sys.executable, "-m", "scripts.lean_package", "install",
+        command = [sys.executable, "-m", "scripts.package", "install",
                    "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
                    "--bin-dir", generation / "bin", "--store", store, "--node", node]

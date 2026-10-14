@@ -34,7 +34,7 @@ complete module or transitive dependency analysis.
 only an explicitly selected schema-2 contract, route grants, permissions and
 receipts. `omd-contract` selects a contract; enabling the package alone selects
 none and authorizes no provider. Installation is described in
-[`LEAN_PROFILES.md`](../LEAN_PROFILES.md).
+[`INSTALL.md`](../INSTALL.md).
 
 Apply the patch to an exact pinned checkout after lock normalization:
 

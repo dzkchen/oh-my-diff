@@ -9,8 +9,8 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PREVIEW_SCHEMA = 1
-PREVIEW_PRODUCT = "oh-my-diff-private-preview-v1"
+BASE_SCHEMA = 1
+BASE_PRODUCT = "oh-my-diff-base-v1"
 PLUGIN_SCHEMA = 1
 PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 
@@ -72,7 +72,7 @@ def validate_locations(prefix, bin_dir):
 
 
 def plugin_lock():
-    lock = json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text())
+    lock = json.loads((ROOT / "runtime/plugins.lock.json").read_text())
     if lock.get("schema") != PLUGIN_SCHEMA or lock.get("product") != PLUGIN_PRODUCT:
         raise ValueError("unrecognized bundled plugin lock")
     return lock
@@ -164,27 +164,27 @@ def check_or_write(path, text, write, stale):
         raise SystemExit(stale)
 
 
-def preview_lock():
-    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    if lock.get("schema") != PREVIEW_SCHEMA or lock.get("product") != PREVIEW_PRODUCT:
-        raise ValueError("unrecognized preview lock")
+def base_lock():
+    lock = json.loads((ROOT / "runtime/base.lock.json").read_text())
+    if lock.get("schema") != BASE_SCHEMA or lock.get("product") != BASE_PRODUCT:
+        raise ValueError("unrecognized base lock")
     return lock
 
 
-def preview_sources(lock):
+def base_sources(lock):
     if digest(ROOT / lock["types"]["path"]) != lock["types"]["sha256"]:
-        raise ValueError(f"pinned preview types changed: {lock['types']['path']}")
+        raise ValueError(f"pinned mod API types changed: {lock['types']['path']}")
     for identifier, package in lock["packages"].items():
         if package.get("extension_type") != "mod":
-            raise ValueError(f"pinned preview package {identifier} must be labeled as a mod")
+            raise ValueError(f"pinned package {identifier} must be labeled as a mod")
         base = ROOT / package["source"]
         for name, expected in package["files"].items():
             if digest(base / name) != expected:
-                raise ValueError(f"pinned preview source changed: {package['source']}/{name}")
+                raise ValueError(f"pinned package source changed: {package['source']}/{name}")
         declared = json.loads((base / "mod.json").read_text())
         if declared["api"] != package.get("api", lock["mod_api"]):
             raise ValueError(f"package {identifier} declares mod API {declared['api']}; "
-                             f"this preview is pinned to {lock['mod_api']}")
+                             f"this release is pinned to {lock['mod_api']}")
         if declared["id"] != identifier:
-            raise ValueError(f"pinned preview package disagrees with the lock: {identifier}")
+            raise ValueError(f"pinned package disagrees with the lock: {identifier}")
     return lock

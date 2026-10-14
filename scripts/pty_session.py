@@ -16,7 +16,7 @@ import termios
 import threading
 import time
 
-from scripts.lean_profile_acceptance import PROVIDER_ENV_PREFIXES
+from scripts.profile_acceptance import PROVIDER_ENV_PREFIXES
 
 ROOT = Path(__file__).resolve().parents[1]
 CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")

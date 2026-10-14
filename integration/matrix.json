@@ -228,7 +228,7 @@
         "rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation",
         "rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions"
       ],
-      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/lean_profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
+      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
       "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
     },
     {
@@ -288,7 +288,7 @@
         "python:test_pinned_bundle_matches_plugin_sources",
         "node:hashline edits apply atomically across files with byte fidelity and fresh anchors",
         "node:denied, oversized, missing, generated and malformed edits never write",
-        "script:scripts/lean_profile_acceptance.py"
+        "script:scripts/profile_acceptance.py"
       ],
       "limitations": "Staged in OMD+ as inert plugin files and guidance. The TypeScript component (tools, fs.read, fs.write, exec) stays disabled until the user trusts and enables it; the ordinary patch tool is unaffected. Offline runner tests cover anchored reads, edits, search and refusals; live-session parity and edit quality remain unqualified.",
       "removal": "Remove omd-anchored-edit from Codex and disable its trusted component separately; plugin removal alone does not disable the component."
