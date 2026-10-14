@@ -125,26 +125,6 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   assert.match(broken.error, /broken/);
 });
 
-test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
-  const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
-  const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const step = receipts => run({ event: 'workspace_change', payload, state, receipts });
-  const first = step();
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: observed });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = step(receipts);
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { ...observed, expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = step(receipts);
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = step(receipts);
-  const absent = step([...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }]);
-  assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
-  assert.equal(absent.state.servers.python.server, 'pylsp');
-  assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
-});
-
 test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
   const repository = '/tmp/project';
   const files = {

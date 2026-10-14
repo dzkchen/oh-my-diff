@@ -12,14 +12,7 @@ const BUDGET = 122_880;
 const STORED = 32_000;
 const STATUS_BYTES = 16_000;
 
-function serializedBytes(value: unknown): number {
-  let bytes = 0;
-  for (const character of JSON.stringify(value)) {
-    const code = character.codePointAt(0)!;
-    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return bytes;
-}
+const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 function common(query: string, path: string): number {
   let row = new Array<number>(path.length + 1).fill(0);
@@ -76,7 +69,7 @@ export default function activate(api: ModAPI) {
     return [boosts, spent];
   };
 
-  const rank = (query: string, upstream: string[], limit: number) => {
+  const rank = (query: string, upstream: string[]) => {
     const { files, revision } = load();
     const [boosts, status] = git();
     let room = BUDGET - 2 * serializedBytes(files) - status;
@@ -91,8 +84,8 @@ export default function activate(api: ModAPI) {
     const ranked: string[] = [];
     const missing: string[] = [];
     let checks = 0;
-    for (let at = 0; ranked.length < limit && at < scored.length;) {
-      const page = scored.slice(at, at + Math.min(STAT_BATCH, limit - ranked.length));
+    for (let at = 0; ranked.length < LIMIT && at < scored.length;) {
+      const page = scored.slice(at, at + Math.min(STAT_BATCH, LIMIT - ranked.length));
       at += page.length;
       const unknown = page.filter(path => !known.has(path));
       const cost = 2 * serializedBytes(unknown) + 64 * unknown.length;
@@ -109,16 +102,8 @@ export default function activate(api: ModAPI) {
   };
 
   api.replace('completion', event => event.kind === 'mention'
-    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path), LIMIT).map(path => ({ path })) }
+    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path)).map(path => ({ path })) }
     : null);
-
-  api.provide({ name: 'omd.frecency', version: '1.0.0', methods: { rank: { input: 'object', output: 'object' } } }, {
-    rank: input => {
-      const request = input as { query?: unknown; paths?: unknown };
-      const paths = Array.isArray(request.paths) ? request.paths.filter((path): path is string => typeof path === 'string').slice(0, 1000) : [];
-      return { paths: rank(String(request.query ?? ''), paths, Math.max(paths.length, LIMIT)) };
-    },
-  });
 
   api.intercept('input', (event, next) => {
     const tokens = mentioned(event.text);

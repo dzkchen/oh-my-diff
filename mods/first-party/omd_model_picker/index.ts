@@ -9,16 +9,12 @@ export default function activate(api: ModAPI) {
   });
   const clean = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
   const brand = typeof api.settings.brand === 'string' ? [...clean(api.settings.brand)].slice(0, 24).join('') : 'oh my diff';
+  const utf8 = new TextEncoder();
   const shorten = (value: string, limit: number) => {
     const text = Array.from(clean(value));
-    const size = (chars: string[]) => chars.reduce((sum, char) => {
-      const code = char.codePointAt(0) ?? 0;
-      return sum + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
-    }, 0);
-    if (text.length <= limit && size(text) <= 256) return text.join('');
-    const kept = text.slice(0, Math.max(1, limit - 1));
-    while (size(kept) > 253) kept.pop();
-    return `${kept.join('')}…`;
+    if (text.length <= limit && utf8.encode(text.join('')).length <= 256) return text.join('');
+    const kept = text.slice(0, Math.max(1, limit - 1)).join('');
+    return `${kept.slice(0, utf8.encodeInto(kept, new Uint8Array(253)).read)}…`;
   };
   api.intercept('render', { match: { component: 'list' } }, (input, next) => {
     const { props: event, viewport } = input as RenderEvent<'list'>;
