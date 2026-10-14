@@ -1,3 +1,7 @@
 {
-  "optional": {}
+  "optional": {
+    "tests/claude_mod_cli.test.mjs": "Needs the Claude CLI: OMD_TEST_CLAUDE=/path/to/claude node --test tests/claude_mod_cli.test.mjs",
+    "tests/claude_mod_host.test.mjs": "Needs a Codex built from the pinned patch: OMD_TEST_CODEX=/path/to/codex node --test tests/claude_mod_host.test.mjs",
+    "tests/claude_setup.test.mjs": "Needs a logged-in Claude CLI: OMD_TEST_CLAUDE=/path/to/claude node --test tests/claude_setup.test.mjs"
+  }
 }

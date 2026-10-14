@@ -30,7 +30,7 @@ function stream(response, blocks, stopReason = 'end_turn') {
 }
 
 test('official CLI request passes through the mod relay once without account traffic',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 30000 }, async () => {
+  { timeout: 30000 }, async () => {
     const captured = [];
     const server = createServer(async (incoming, response) => {
       let body = '';
@@ -62,7 +62,7 @@ test('official CLI request passes through the mod relay once without account tra
   });
 
 test('official CLI replays a Codex tool result into one new upstream request',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 30000 }, async () => {
+  { timeout: 30000 }, async () => {
     const captured = [];
     const server = createServer(async (incoming, response) => {
       let body = '';
@@ -101,7 +101,7 @@ test('official CLI replays a Codex tool result into one new upstream request',
   });
 
 test('cancellation stops the owned CLI request and the next request starts cleanly',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 30000 }, async () => {
+  { timeout: 30000 }, async () => {
     let admitted;
     const firstAdmitted = new Promise(resolve => { admitted = resolve; });
     let count = 0;
@@ -131,7 +131,7 @@ test('cancellation stops the owned CLI request and the next request starts clean
   });
 
 test('upstream rate limit fails without another admitted request',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 30000 }, async () => {
+  { timeout: 30000 }, async () => {
     let count = 0;
     const server = createServer(async (incoming, response) => {
       for await (const _ of incoming) {}
@@ -153,7 +153,7 @@ test('upstream rate limit fails without another admitted request',
   });
 
 test('setup reads the model catalog and served context windows from the installed CLI without account traffic',
-  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 120000 }, async () => {
+  { timeout: 120000 }, async () => {
     const models = await discover(process.env.OMD_TEST_CLAUDE);
     const byFamily = Object.fromEntries(models.map(item => [item.family, item]));
     assert.deepEqual(Object.keys(byFamily).sort(), ['fable', 'haiku', 'opus', 'sonnet']);

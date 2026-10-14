@@ -9,7 +9,8 @@ Tracked files deleted from the working tree leave the inventory immediately.
 Test files using other extensions or locations fail discovery. A genuinely
 optional or manual test must have its exact path and a nonempty reason
 in `tests/suites.json` under `optional`. Such tests are reported as not executed;
-stale entries fail discovery. There are currently no exceptions.
+stale entries fail discovery. The live Claude CLI and pinned-Codex checks are the
+current exceptions; each entry's reason names the variable and command that run it.
 
 The inventory also assigns direct `tests/test_*.py` files to Python unittest,
 `runtime/{omd,native}/src/**/*_tests.rs` or `tests.rs` and direct integration tests under
