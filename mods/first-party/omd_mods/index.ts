@@ -2,7 +2,9 @@ import type { Json, ModAPI, PackageCatalogEntry, PackageRequest, PackageState, T
 
 type Review = { request: PackageRequest; label: string; changes: Json; grants: string[] };
 type Scope = 'user' | 'project';
-type Saved = { open: boolean; generation: number; packages: PackageState[]; reloadError: string | null; details: string | null; filter: string; review: Review | null; notice: string | null; onboarded: boolean;
+const FIELDS = ['id', 'scope', 'description', 'installed', 'enabled', 'effective', 'pending', 'failed', 'blocked', 'settings_schema'] as const;
+type Listed = Pick<PackageState, Exclude<typeof FIELDS[number], 'settings_schema'>>;
+type Saved = { open: boolean; generation: number; packages: (Listed & { configurable: boolean })[]; reloadError: string | null; details: PackageState | null; filter: string; review: Review | null; notice: string | null; onboarded: boolean;
   directory: boolean; catalog: PackageCatalogEntry[]; catalogError: string | null; query: string; picked: string | null; pickedVersion: string; scope: Scope };
 type Property = { type?: string; enum?: Json[] };
 const EMPTY: Saved = { open: false, generation: 0, packages: [], reloadError: null, details: null, filter: '', review: null, notice: null, onboarded: false,
@@ -15,14 +17,19 @@ export default function activate(api: ModAPI) {
   const compare = new Intl.Collator().compare;
   const saved = (): Saved => ({ ...EMPTY, ...(api.uiState.get() as Partial<Saved> | null ?? {}), onboarded: (api.state.get() as { onboarded?: boolean } | null)?.onboarded ?? false });
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
-  const key = (item: PackageState) => `${item.scope}:${item.id}`;
+  const key = (item: Listed) => `${item.scope}:${item.id}`;
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ') || id;
-  const properties = (item: PackageState) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
-  const refresh = (state: Saved, notice: string | null): Saved => {
+  const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
+  const describe = (argument: string): PackageState | null => {
     const listed = api.host.tryCall('packages.list', null);
-    if (!listed.ok) return { ...state, packages: [], notice: `The mod list is unavailable (${listed.error})` };
-    const packages = [...listed.value.packages].sort((a, b) => compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
-    return { ...state, packages, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
+    return listed.ok ? listed.value.packages.find(item => item.installed && (key(item) === argument || item.id === argument)) ?? null : null;
+  };
+  const refresh = (state: Saved, notice: string | null): Saved => {
+    const listed = api.host.tryCall('packages.list', { fields: [...FIELDS] });
+    if (!listed.ok) return { ...state, packages: [], details: null, notice: `The mod list is unavailable (${listed.error})` };
+    const packages = listed.value.packages.map(({ settings_schema, ...item }) => ({ ...item, configurable: properties({ settings_schema }).length > 0 }))
+      .sort((a, b) => compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
+    return { ...state, packages, details: state.details && describe(key(state.details)), generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
   const apply = (state: Saved, request: PackageRequest, label: string): Saved => {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: state.generation });
@@ -49,7 +56,7 @@ export default function activate(api: ModAPI) {
   const find = (state: Saved, argument: string) => state.packages.find(item => item.installed && (key(item) === argument || item.id === argument));
   const write = (state: Saved, argument: string): Saved => {
     const [target = '', name = '', ...rest] = argument.split(' ');
-    const item = find(state, target);
+    const item = describe(target);
     const property = item && properties(item).find(([entry]) => entry === name)?.[1];
     if (!item || !property) return { ...state, notice: 'That setting is unavailable' };
     const text = rest.join(' ');
@@ -59,7 +66,7 @@ export default function activate(api: ModAPI) {
     return refresh(state, written.ok ? `${friendly(item.id)}: ${name.replace(/_/g, ' ')} saved` : `${name} was not saved (${written.error})`);
   };
   const act = (state: Saved, verb: string, argument: string): Saved => {
-    if (verb === 'details') return { ...state, details: find(state, argument) ? argument : null, notice: null };
+    if (verb === 'details') return { ...state, details: describe(argument), notice: null };
     if (verb === 'back') return { ...state, details: null, notice: null };
     if (verb === 'filter') return { ...state, filter: visible(argument, 64).trim(), details: null };
     if (verb === 'cancel') return { ...state, review: null, notice: null };
@@ -126,7 +133,7 @@ export default function activate(api: ModAPI) {
   }, []).slice(0, lines).join('\n');
   const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal', lines = 6, width = 52): TerminalComponent => ({ type: 'text', id: `omd_mods_${id}`, label, text: wrap(text, lines, width), tone });
   const button = (verb: string, text: string, value = ''): TerminalComponent => ({ type: 'button', id: `omd_mods_${verb}`, label: text, text, action: { command: 'omd_mods:mods', args: `${verb} ${value}`.trim() } });
-  const status = (item: PackageState): [string, string, TerminalTone] =>
+  const status = (item: Listed): [string, string, TerminalTone] =>
     !item.installed ? ['◇', 'removed', 'attention']
       : item.blocked ? ['✕', 'quarantined', 'failure']
       : item.failed ? ['✕', 'failed', 'failure']
@@ -134,13 +141,13 @@ export default function activate(api: ModAPI) {
       : item.effective ? ['◆', 'on', 'success']
       : item.enabled ? ['○', 'shadowed', 'muted']
       : ['○', 'off', 'muted'];
-  const row = (item: PackageState): TerminalListRow => {
+  const row = (item: Listed): TerminalListRow => {
     const [mark, word, tone] = status(item);
     const name = friendly(item.id);
     return { value: key(item), label: visible(`${name}, ${word}`, 128), spans: [{ text: `${mark} `, tone }, { text: visible(name, 40), bold: true },
       { text: ` ${word}`, tone: 'muted' }, ...(item.description ? [{ text: `  ${visible(item.description, 60)}`, tone: 'muted' as const }] : [])] };
   };
-  const section = (title: string, items: PackageState[]): TerminalListRow[] => items.length
+  const section = (title: string, items: Listed[]): TerminalListRow[] => items.length
     ? [{ value: `group:${title}`, label: title, spans: [{ text: `${title} ${items.length}`, tone: 'accent', bold: true }] }, ...items.map(row)] : [];
   const listing = (state: Saved): TerminalComponent[] => {
     const needle = state.filter.toLowerCase();
@@ -148,7 +155,7 @@ export default function activate(api: ModAPI) {
     const failed = shown.filter(item => item.failed);
     const on = shown.filter(item => !item.failed && item.enabled);
     const off = shown.filter(item => !item.failed && !item.enabled);
-    const configurable = state.packages.filter(item => item.installed && properties(item).length);
+    const configurable = state.packages.filter(item => item.installed && item.configurable);
     const rows = [...section('Failed', failed), ...section('On', on), ...section('Off', off)];
     return [
       rows.length ? { type: 'list', id: 'omd_mods_list', label: 'Mods', height: 12, rows, action: { command: 'omd_mods:mods', args: 'toggle' } }
@@ -222,7 +229,7 @@ export default function activate(api: ModAPI) {
   const dialog = (state: Saved): TerminalComponent => {
     const on = state.packages.filter(item => item.effective).length;
     const installed = state.packages.filter(item => item.installed).length;
-    const current = state.details ? state.packages.find(item => key(item) === state.details) : undefined;
+    const current = state.details;
     const children: TerminalComponent[] = [
       { type: 'line', id: 'omd_mods_header', label: 'Mods', spans: [{ text: 'Mods', bold: true, tone: 'accent' }, { text: `  ${on} of ${installed} on`, tone: 'muted' }] },
       ...(state.reloadError ? [line('reload_error', 'Rejected change', `The last change was rejected; your mods keep running as before. ${brief(state.reloadError)}`, 'failure', 3)] : []),

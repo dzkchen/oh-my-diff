@@ -1624,34 +1624,20 @@ typing a slash command clears the transcript selection before its callback.
 Require `terminal_selection_v1` and `terminal_copy_v1` for these operations.
 
 The appearance additions (`terminal_surface_paint_v1`,
-`terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,
-`terminal_import_lifetime_v1`) remain generic presentation primitives:
+`terminal_image_sample_v1`, `terminal_import_lifetime_v1`) remain generic
+presentation primitives:
 
-- `surface_styles.composer`, `.backdrop` and `.approval` accept a `TerminalSurfacePaint`
+- `surface_styles.composer` and `.approval` accept a `TerminalSurfacePaint`
   with `top`, `bottom`, `foreground`, `border` RGB/indexed colors and
   `opacity` from 0 to 1. Background colors interpolate vertically and blend
   with existing colors. The foreground is independent of background opacity;
   reset foregrounds get a readable color against the surviving background.
   Explicit native foregrounds and special backgrounds remain. Borders use
   blank edge cells and disappear at zero opacity. `NO_COLOR` omits styling.
-  Solid backdrop colors remain in narrow terminals. Inline rendering uses
-  the current bounded viewport; it does not repaint earlier terminal scrollback.
+  Inline rendering uses the current bounded viewport; it does not repaint
+  earlier terminal scrollback.
   `approval` frames native approval prompts and mod confirmations; their
   text, options, default selection, focus and grants stay host-owned.
-- `surface_styles.composer.glass {blur, tint, opacity}` (`terminal_surface_glass_v1`)
-  extends a placed image backdrop under the composer: the host blurs that part
-  of the transformed image (`blur` 0..16, default 6, in quarter cells) and
-  mixes `tint` over it at `opacity` (0..1, default 0.35). Rows between the
-  transcript and the composer stay clear. Where the image backdrop is not
-  placed (other terminals, narrow, `NO_COLOR`, reduced motion, inline), the
-  surface's gradient is the fallback. Other surfaces refuse `glass`.
-- Image and ASCII backdrops accept `position: center|fit|fill|tile`,
-  `scale: 0.1..4`, signed `offset: {x,y}` in -4096..4096 cells,
-  `dim`, `opacity` from 0 to 1 and optional `tint`. Image dimming blends
-  toward the tint, or black if absent; ASCII tint colors decorative glyphs.
-  Images may add an independent `overlay: TerminalSurfacePaint` for pixel
-  gradients. Placement assumes an 8×16 pixel cell and caps its working canvas
-  at 2048×2048. The host does not choose a gloss or background policy.
 - `terminal.image_sample {resource, columns, rows}` returns
   `{width,height,rgba}` (row-major RGBA bytes) for a caller-owned PNG/JPEG.
   Columns are integers 1..120 and rows 1..60; sources are at most 8 MiB and
@@ -1664,17 +1650,12 @@ The appearance additions (`terminal_surface_paint_v1`,
   resource quotas apply; removing the mod store removes retained assets.
 
 Surface paints compose by surface name with the later contributor replacing
-that surface's paint. Backdrops retain one owner. Keeping settings, selected
-assets, image-to-ASCII conversion, greetings and glass composition in a mod
-lets outside authors use the same APIs for document viewers, image previews,
-warnings, watermarks and dashboards.
+that surface's paint. Keeping settings, selected assets and image-to-ASCII
+conversion in a mod lets outside authors use the same APIs for document
+viewers, image previews, warnings, watermarks and dashboards.
 
 Views may declare a `layout` tree of splits and tabs with transcript, composer
-and mod-named sites (`mod/site`), plus an ASCII or image `backdrop`. Local
-detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
-reduced motion, other protocols and inline viewports use ASCII fallback.
-Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
-Components add `document` (up to 100,000 lines with anchors, selection and
+and mod-named sites (`mod/site`). Components add `document` (up to 100,000 lines with anchors, selection and
 find), `diff`, `image`, `raster` and `terminal` (a PTY session). An `image`
 places a Kitty graphics image in its cells, aspect-fit to the measured cell
 size, on local Kitty and Ghostty (Unicode placeholders, so it scrolls, clips
@@ -1682,7 +1663,7 @@ and hides under dialogs and overlays like text); elsewhere it draws truecolor
 half-block cells, and under `NO_COLOR` or below 4 columns its alt text. Local
 Orca, iTerm2 and WezTerm draw it as an iTerm2 inline image (`iip`). Each
 image component has its own image id; replacing or removing the component
-deletes it, and exit and suspend delete every image and the backdrop.
+deletes it, and exit and suspend delete every image.
 Images decode at most 8 MiB, PNG or JPEG, 4,096 pixels a side
 (`terminal_raster_v1`). An SVG `image` (`svg_assets_v1`) draws
 `[image unavailable: alt]` in the terminal, which has no SVG rasterizer;
@@ -2582,7 +2563,7 @@ failing with `evidence_record_invalid:
 svg_<reason>`. `terminal.import_file` labels SVG text `image/svg+xml`, so it
 passes the same check. External renderers draw SVG natively; the terminal
 shows an `image` component's alt text, refuses SVG in `terminal.image_sample`
-and backdrops, and never attaches it to the composer. `packages.list`, `packages.index`, `packages.preview`,
+and never attaches it to the composer. `packages.list`, `packages.index`, `packages.preview`,
 `packages.apply` and `packages.reload` (`package_controls_v1`) install, update,
 remove, roll back, enable and disable packages from local directories, Git
 repositories, curated index releases and npm packages (sources and references
@@ -2592,7 +2573,9 @@ names its package with `source` or with a `reference` string and an optional
 every store selection: managed packages and trusted `omd-mod` selections
 (`source: 'selection'`, which enable, disable and `trust` but do not update);
 `source` is also `npm` for npm packages, and `blocked` is the quarantine reason
-or `null`. `packages.index {index?, query?}` is read-only and returns `{index,
+or `null`. `packages.list {fields}` keeps only the named keys of each
+package, so a listing view can skip schemas, settings and grants it does not
+show. `packages.index {index?, query?}` is read-only and returns `{index,
 packages: [{id, latest, description, support, versions: [{version, blocked}],
 installed}]}` from the named index (the store's `package-index.json` by
 default), filtered by `query`; it fails with `package_index_unavailable` when no
@@ -3340,8 +3323,7 @@ Observers compose in that order; interceptors follow the continuation order abov
 (`ui_composition_v1`): sites wrap or replace (a wrap encloses the site's
 replacement whichever composes first; a site's `overlay` is not claimed, so
 the last patch that sets one wins, even a wrap over another mod's), presentation fields merge, and
-exclusive fields (layout, backdrop, panels, header, footer, placeholder,
-replaced sites, keys, glyphs and the status budget) go to the first claimant;
+exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant;
 each later claim is reported in `omd-mod status` under `terminal.conflicts` as
 `{field, owner, rejected, origin}`, and a patch that breaks the composed view's
 limits is dropped whole. Exclusive replacements, contract IDs, service

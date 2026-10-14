@@ -29311,7 +29311,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 3fcd0cd23..3edd70453 100644
+index 3fcd0cd23..a820b1f96 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -63,8 +63,9 @@ impl App {
@@ -29523,7 +29523,7 @@ index 3fcd0cd23..3edd70453 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -270,16 +274,32 @@ impl App {
+@@ -270,16 +274,25 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
@@ -29531,14 +29531,7 @@ index 3fcd0cd23..3edd70453 100644
 +            chat_widget.note_rendered_width(area.width);
 +            crate::mod_runtime::startup_profile("frame_owned_widgets", widgets_started);
 +            let mods_started = std::time::Instant::now();
-+            crate::mod_ui::render_owned(
-+                screen,
-+                area,
-+                Rect::new(area.x, area.y, transcript_width, available),
-+                view.remaining_area(),
-+                frame.buffer,
-+                &mod_snapshot,
-+            );
++            crate::mod_ui::render_owned(screen, area, frame.buffer, &mod_snapshot);
 +            if mod_welcome {
 +                crate::mod_ui::render_welcome(
 +                    Rect {
@@ -29563,7 +29556,7 @@ index 3fcd0cd23..3edd70453 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -290,12 +310,21 @@ impl App {
+@@ -290,12 +303,15 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
@@ -29575,12 +29568,6 @@ index 3fcd0cd23..3edd70453 100644
          {
              self.turn_tips.acknowledge(*surface);
          }
-+        crate::mod_backdrop_sync::sync(
-+            &mod_snapshot,
-+            Rect::new(area.x, area.y, transcript_width, available),
-+            self.local_settings.tui.animations,
-+            tui.is_owned_screen(),
-+        );
 +        crate::mod_client::flush();
          if footer_height_changed {
              tui.frame_requester().schedule_frame();
@@ -29726,7 +29713,7 @@ index 4c4119b34..558b42f47 100644
      let mut app = crate::app::test_support::make_test_app().await;
      let config = serde_json::from_value(serde_json::json!({
 diff --git a/codex-rs/tui/src/app/owned_transcript_tests.rs b/codex-rs/tui/src/app/owned_transcript_tests.rs
-index 026fe11ea..4af388195 100644
+index 026fe11ea..5074a4a37 100644
 --- a/codex-rs/tui/src/app/owned_transcript_tests.rs
 +++ b/codex-rs/tui/src/app/owned_transcript_tests.rs
 @@ -34,6 +34,10 @@ pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
@@ -29917,105 +29904,7 @@ index 026fe11ea..4af388195 100644
  async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
-@@ -1731,6 +1756,97 @@ async fn fullscreen_composer_scrolls_without_moving_caret_or_transcript() -> Res
-     Ok(())
- }
-
-+#[tokio::test]
-+#[serial_test::serial]
-+#[ignore = "needs OMD_MODE=omd and a batch-local OMD_MOD_STORE; run with --ignored"]
-+async fn owned_ascii_backdrop_preserves_native_header_and_blank_source_rows() -> Result<()> {
-+    let mut app = crate::app::test_support::make_test_app().await;
-+    app.local_settings.tui.animations = false;
-+    app.chat_widget
-+        .apply_external_edit("draft   with   spaces".into());
-+    app.transcript_cells = vec![
-+        Arc::new(crate::history_cell::SessionHeaderHistoryCell::new(
-+            "gpt-test".into(),
-+            /*reasoning_effort*/ None,
-+            PathBuf::from("/tmp/actual project"),
-+            crate::version::CODEX_CLI_VERSION,
-+        )),
-+        Arc::new(crate::history_cell::PlainHistoryCell::new(vec![
-+            "  transcript  has  intentional spaces".into(),
-+            "".into(),
-+            "    + let value = 1;    // diff spacing".into(),
-+            "  ERROR: permission denied    Retry?".into(),
-+            "  APPROVAL: run command?    (y/n)".into(),
-+        ])),
-+    ];
-+    let mut tui = crate::tui::test_support::make_test_tui()?;
-+    tui.set_owned_screen(/*owned*/ true)?;
-+    let size = Size::new(/*width*/ 80, /*height*/ 24);
-+    tui.screen_size_for_event(&TuiEvent::Resize(size))?;
-+    let mut snapshot = codex_omd::ModViewSnapshot {
-+        view: codex_omd::ModView::parse(serde_json::json!({
-+            "session_title_suffix":" | External profile", "greeting":"Ready to work?"
-+        }))?,
-+        ..Default::default()
-+    };
-+    crate::mod_ui::preview(snapshot.clone());
-+    let bottom = app.render_owned_transcript(&mut tui, size)?;
-+    let empty = app.transcript_view.remaining_area();
-+    assert!(empty.height > 0);
-+    let before = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
-+    snapshot.view.surface_styles.insert(
-+        "backdrop".into(),
-+        serde_json::from_value(serde_json::json!({
-+            "top":"#ffffff","bottom":"#eeeeee","foreground":"#1c1c1c","border":"#888888","opacity":0.85
-+        }))?,
-+    );
-+    let mut frames = Vec::new();
-+    for art in [None, Some("ART")] {
-+        snapshot.view.backdrop = art.map(|text| {
-+            serde_json::from_value(serde_json::json!({"ascii":{"text":text,"position":"tile"}}))
-+                .unwrap()
-+        });
-+        crate::mod_ui::preview(snapshot.clone());
-+        assert_eq!(app.render_owned_transcript(&mut tui, size)?, bottom);
-+        let after =
-+            crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
-+        for y in 0..size.height {
-+            if y < empty.y || y >= empty.bottom() {
-+                assert_eq!(
-+                    (0..size.width)
-+                        .map(|x| after[(x, y)].symbol())
-+                        .collect::<Vec<_>>(),
-+                    (0..size.width)
-+                        .map(|x| before[(x, y)].symbol())
-+                        .collect::<Vec<_>>()
-+                );
-+            }
-+        }
-+        let text = buffer_text(&after);
-+        assert!(text.contains(&format!(
-+            "OpenAI Codex (v{}) | External profile",
-+            crate::version::CODEX_CLI_VERSION
-+        )));
-+        assert!(text.contains("/tmp/actual project"));
-+        assert!(text.contains("Ready to work?"));
-+        if art.is_some() {
-+            assert!(text.contains("ARTART"));
-+        } else {
-+            assert_eq!(after[(empty.x, empty.y)].symbol(), "|");
-+        }
-+        frames.push(format!("border with ASCII {art:?}\n{text}"));
-+    }
-+    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
-+    tui.set_owned_screen(/*owned*/ false)?;
-+    insta::assert_snapshot!(
-+        "owned_ascii_native_whitespace",
-+        frames
-+            .join("\n\n")
-+            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
-+    );
-+    Ok(())
-+}
-+
- #[tokio::test]
- async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Result<()> {
-     let mut app = crate::app::test_support::make_test_app().await;
-@@ -1783,3 +1899,190 @@ async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Res
+@@ -1783,3 +1808,188 @@ async fn fullscreen_composer_remote_images_leave_an_editable_prompt_row() -> Res
      tui.set_owned_screen(/*owned*/ false)?;
      Ok(())
  }
@@ -30087,8 +29976,6 @@ index 026fe11ea..4af388195 100644
 +        app.sync_mod_ui();
 +        crate::mod_ui::preview(codex_omd::ModViewSnapshot {
 +            view: codex_omd::ModView::parse(serde_json::json!({
-+                "backdrop":{"ascii":{"text":"ART","position":"tile"}},
-+                "surface_styles":{"backdrop":{"top":"#ffffff","bottom":"#eeeeee","foreground":"#1c1c1c","border":"#888888","opacity":0.85}},
 +                "sites":{"dialog":{"components":[
 +                {"type":"dialog","id":"theme","label":"Theme","title":"Theme","children":[
 +                    {"type":"button","id":"cover","label":"Close","text":"THEME COVER","action":{"copy":"MOD MOUSE DISPATCH PROBE","label":"fixture"}}
@@ -38292,7 +38179,7 @@ index 047473ad5..88556bfb4 100644
      let mut modifiers = KeyModifiers::NONE;
      let mut key_name = None;
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index dc0fbd054..11643acf0 100644
+index dc0fbd054..00a36eee1 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -165,6 +165,7 @@ pub use insert_history::insert_history_lines;
@@ -38303,15 +38190,14 @@ index dc0fbd054..11643acf0 100644
  mod keymap_setup;
  mod line_truncation;
  pub(crate) mod live_wrap;
-@@ -177,6 +178,19 @@ mod markdown_render;
+@@ -177,6 +178,18 @@ mod markdown_render;
  mod markdown_stream;
  mod markdown_text_merge;
  mod mention_codec;
-+mod mod_backdrop;
-+mod mod_backdrop_sync;
 +mod mod_client;
 +mod mod_components;
 +mod mod_document;
++mod mod_kitty;
 +mod mod_layout;
 +mod mod_module;
 +mod mod_pty;
@@ -38323,7 +38209,7 @@ index dc0fbd054..11643acf0 100644
  mod model_catalog;
  mod model_migration;
  mod motion;
-@@ -185,6 +199,7 @@ mod named_session_lookup;
+@@ -185,6 +198,7 @@ mod named_session_lookup;
  mod notifications;
  #[cfg(any(not(debug_assertions), test))]
  mod npm_registry;
@@ -38331,7 +38217,7 @@ index dc0fbd054..11643acf0 100644
  pub(crate) mod onboarding;
  mod oss_selection;
  mod pager_overlay;
-@@ -563,6 +578,7 @@ async fn start_app_server(
+@@ -563,6 +577,7 @@ async fn start_app_server(
      state_db: &mut Option<StateDbHandle>,
      environment_manager: Arc<EnvironmentManager>,
      embedded_network_policy: codex_app_server_client::EmbeddedNetworkPolicy,
@@ -38339,7 +38225,7 @@ index dc0fbd054..11643acf0 100644
  ) -> color_eyre::Result<AppServerClient> {
      let connection = if matches!(target, AppServerTarget::Embedded) {
          None
-@@ -594,7 +610,7 @@ async fn start_app_server(
+@@ -594,7 +609,7 @@ async fn start_app_server(
              Err(err) => return Err(err),
          }
      }
@@ -38348,7 +38234,7 @@ index dc0fbd054..11643acf0 100644
          arg0_paths,
          config,
          cli_kv_overrides,
-@@ -606,6 +622,7 @@ async fn start_app_server(
+@@ -606,6 +621,7 @@ async fn start_app_server(
          state_db.clone(),
          environment_manager,
          embedded_network_policy,
@@ -38356,7 +38242,7 @@ index dc0fbd054..11643acf0 100644
      )
      .await
      .map(AppServerClient::InProcess)
-@@ -636,6 +653,7 @@ pub(crate) async fn start_app_server_for_picker(
+@@ -636,6 +652,7 @@ pub(crate) async fn start_app_server_for_picker(
          &mut state_db,
          environment_manager,
          embedded_network_policy,
@@ -38364,7 +38250,7 @@ index dc0fbd054..11643acf0 100644
      )
      .await?;
      Ok(
-@@ -663,6 +681,7 @@ pub(crate) async fn start_embedded_app_server_for_picker(
+@@ -663,6 +680,7 @@ pub(crate) async fn start_embedded_app_server_for_picker(
          &mut state_db,
          Arc::new(EnvironmentManager::default_for_tests()),
          Default::default(),
@@ -38372,7 +38258,7 @@ index dc0fbd054..11643acf0 100644
      )
      .await?;
      Ok(
-@@ -1213,6 +1232,7 @@ async fn run_ratatui_app(
+@@ -1213,6 +1231,7 @@ async fn run_ratatui_app(
                  &mut state_db,
                  environment_manager.clone(),
                  embedded_network_policy.clone(),
@@ -38380,7 +38266,7 @@ index dc0fbd054..11643acf0 100644
              ),
          )
          .await;
-@@ -1790,6 +1810,7 @@ async fn run_ratatui_app(
+@@ -1790,6 +1809,7 @@ async fn run_ratatui_app(
                      &mut state_db,
                      environment_manager.clone(),
                      embedded_network_policy.clone(),
@@ -38388,7 +38274,7 @@ index dc0fbd054..11643acf0 100644
                  ),
              )
              .await
-@@ -1880,6 +1901,7 @@ async fn run_ratatui_app(
+@@ -1880,6 +1900,7 @@ async fn run_ratatui_app(
                      &mut state_db,
                      environment_manager.clone(),
                      embedded_network_policy.clone(),
@@ -38892,10 +38778,10 @@ index e0a4d5286..ec75a4488 100644
              animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
              effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
-index da417ce52..ef6b0e7ad 100644
+index da417ce52..d543df9ed 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
 +++ b/codex-rs/tui/src/startup_draft_layout.rs
-@@ -64,16 +64,30 @@ impl Renderable for OwnedStartupLayout<'_> {
+@@ -64,16 +64,29 @@ impl Renderable for OwnedStartupLayout<'_> {
          paragraph.render(header, buf);
          let message = match self.pump.session_action {
              StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => {
@@ -38906,7 +38792,6 @@ index da417ce52..ef6b0e7ad 100644
 +                    height: bottom.y.saturating_sub(header.bottom()),
 +                    ..area
 +                };
-+                crate::mod_ui::render_backdrop(available, available, buf, &snapshot, false);
 +                if snapshot.input["presentation"]["phase"] == "fresh"
 +                    && !self.pump.raw_output_mode
 +                    && crate::mod_ui::welcome_visible(&snapshot, composer)
@@ -53257,12 +53142,11 @@ index 000000000..0a11dc0ae
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..dd108bce2
+index 000000000..bb720fae6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,810 @@
 +use super::*;
-+use codex_omd::ModBackdrop;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
 +use codex_omd::ModComponentAction;
@@ -54065,12 +53949,6 @@ index 000000000..dd108bce2
 +                source: Some(source),
 +                ..
 +            } if source.reference == reference => Some((source.clone(), owned(id))),
-+            _ => None,
-+        })
-+        .or_else(|| match &snapshot.view.backdrop {
-+            Some(ModBackdrop::Image { image, .. }) if image.resource.reference == reference => {
-+                Some((image.resource.clone(), snapshot.contributors.clone()))
-+            }
 +            _ => None,
 +        })
 +}
@@ -67357,10 +67235,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..5341311d9
+index 000000000..c40388abb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,832 @@
+@@ -0,0 +1,835 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -67909,9 +67787,12 @@ index 000000000..5341311d9
 +                .lock()
 +                .map_err(|_| "mod_runtime_poisoned")?
 +                .status();
++            let arguments = request.arguments;
 +            blocking(Box::new(move || {
 +                codex_omd::ModStore::open(host.root.clone())
-+                    .and_then(|store| codex_omd::package_controls::list(&store, Some(&runtime)))
++                    .and_then(|store| {
++                        codex_omd::package_controls::list_fields(&store, Some(&runtime), arguments)
++                    })
 +                    .map_err(|error| error.to_string())
 +            }))
 +            .await
@@ -89869,7 +89750,7 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..8d68fbbee
+index 000000000..799cf7817
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
 @@ -0,0 +1,1370 @@
@@ -91053,11 +90934,11 @@ index 000000000..8d68fbbee
 +pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
 +    let _stage = crate::frame_metrics::stage("decode");
 +    if bytes.len() > 8 * 1024 * 1024 {
-+        return Err("backdrop_image_too_large".into());
++        return Err("image_too_large".into());
 +    }
-+    let format = image::guess_format(bytes).map_err(|_| "backdrop_format_unsupported")?;
++    let format = image::guess_format(bytes).map_err(|_| "image_format_unsupported")?;
 +    if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-+        return Err("backdrop_format_unsupported".into());
++        return Err("image_format_unsupported".into());
 +    }
 +    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
 +    let mut limits = image::Limits::default();
@@ -91067,7 +90948,7 @@ index 000000000..8d68fbbee
 +    reader.limits(limits);
 +    reader
 +        .decode()
-+        .map_err(|_| "backdrop_image_invalid_or_too_large".into())
++        .map_err(|_| "image_invalid_or_too_large".into())
 +}
 +
 +/// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
@@ -91245,10 +91126,10 @@ index 000000000..8d68fbbee
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..76a0f4f96
+index 000000000..1f959b7a8
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,792 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -92025,6 +91906,21 @@ index 000000000..76a0f4f96
 +    assert_eq!(cells["cells"][4], json!(" "));
 +    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
 +    assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
++}
++
++#[test]
++fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
++    let image = image::RgbaImage::new(IMAGE_PIXELS + 1, 1);
++    let mut bytes = Vec::new();
++    image
++        .write_to(
++            &mut std::io::Cursor::new(&mut bytes),
++            image::ImageFormat::Png,
++        )
++        .unwrap();
++    assert!(decode_image(&bytes).is_err());
++    assert!(decode_image(b"GIF89a").is_err());
++    assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -97055,10 +96951,10 @@ index 000000000..e4c857373
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..96dea6046
+index 000000000..5be6bf437
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,249 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97191,10 +97087,7 @@ index 000000000..96dea6046
 +pub use mods::ModAgentDefinition;
 +pub use mods::ModAnchor;
 +pub use mods::ModApprovalScope;
-+pub use mods::ModAsciiBackdrop;
 +pub use mods::ModAutonomy;
-+pub use mods::ModBackdrop;
-+pub use mods::ModBackdropOffset;
 +pub use mods::ModBorder;
 +pub use mods::ModBoxAccent;
 +pub use mods::ModBoxBorder;
@@ -97217,7 +97110,6 @@ index 000000000..96dea6046
 +pub use mods::ModHostCall;
 +pub use mods::ModHttpAccess;
 +pub use mods::ModIcons;
-+pub use mods::ModImageBackdrop;
 +pub use mods::ModInstallRequest;
 +pub use mods::ModInterceptor;
 +pub use mods::ModKeyAction;
@@ -97227,6 +97119,7 @@ index 000000000..96dea6046
 +pub use mods::ModLayoutTabs;
 +pub use mods::ModListRow;
 +pub use mods::ModMcpServer;
++pub use mods::ModOffset;
 +pub use mods::ModOsAccess;
 +pub use mods::ModOverlay;
 +pub use mods::ModOverlayClip;
@@ -97253,7 +97146,6 @@ index 000000000..96dea6046
 +pub use mods::ModStore;
 +pub use mods::ModStyle;
 +pub use mods::ModSubscriptions;
-+pub use mods::ModSurfaceGlass;
 +pub use mods::ModSurfacePaint;
 +pub use mods::ModTab;
 +pub use mods::ModTerminalView;
@@ -99203,10 +99095,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..d8e2c908c
+index 000000000..11c5894ad
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5803 @@
+@@ -0,0 +1,5797 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99238,9 +99130,6 @@ index 000000000..d8e2c908c
 +pub use view::MOD_TEXT_BYTES;
 +pub use view::ModActivity;
 +pub use view::ModAnchor;
-+pub use view::ModAsciiBackdrop;
-+pub use view::ModBackdrop;
-+pub use view::ModBackdropOffset;
 +pub use view::ModBorder;
 +pub use view::ModBoxAccent;
 +pub use view::ModBoxBorder;
@@ -99253,13 +99142,13 @@ index 000000000..d8e2c908c
 +pub use view::ModDirection;
 +pub use view::ModFind;
 +pub use view::ModIcons;
-+pub use view::ModImageBackdrop;
 +pub use view::ModKeyAction;
 +pub use view::ModLayout;
 +pub use view::ModLayoutLeaf;
 +pub use view::ModLayoutSplit;
 +pub use view::ModLayoutTabs;
 +pub use view::ModListRow;
++pub use view::ModOffset;
 +pub use view::ModOverlay;
 +pub use view::ModOverlayClip;
 +pub use view::ModPaint;
@@ -99274,7 +99163,6 @@ index 000000000..d8e2c908c
 +pub use view::ModSpan;
 +pub use view::ModSplit;
 +pub use view::ModStyle;
-+pub use view::ModSurfaceGlass;
 +pub use view::ModSurfacePaint;
 +pub use view::ModTab;
 +pub use view::ModTheme;
@@ -99585,8 +99473,6 @@ index 000000000..d8e2c908c
 +    "tool_feedback_v1",
 +    "terminal_media_v1",
 +    "terminal_surface_paint_v1",
-+    "terminal_backdrop_transform_v1",
-+    "terminal_surface_glass_v1",
 +    "codex_config_v1",
 +    "terminal_image_sample_v1",
 +    "terminal_import_lifetime_v1",
@@ -116156,10 +116042,10 @@ index 000000000..76559f98f
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..28c21bc2f
+index 000000000..521da4648
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2331 @@
+@@ -0,0 +1,2181 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -116213,8 +116099,6 @@ index 000000000..28c21bc2f
 +    pub placeholder: Option<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub layout: Option<ModLayout>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub backdrop: Option<ModBackdrop>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116260,8 +116144,6 @@ index 000000000..28c21bc2f
 +    pub placeholder: Option<String>,
 +    #[serde(default)]
 +    pub layout: Option<ModLayout>,
-+    #[serde(default)]
-+    pub backdrop: Option<ModBackdrop>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 +    #[serde(default)]
@@ -116401,7 +116283,7 @@ index 000000000..28c21bc2f
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 +#[serde(deny_unknown_fields)]
-+pub struct ModBackdropOffset {
++pub struct ModOffset {
 +    pub x: i16,
 +    pub y: i16,
 +}
@@ -116419,19 +116301,6 @@ index 000000000..28c21bc2f
 +    pub border: Option<ModColor>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub opacity: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub glass: Option<ModSurfaceGlass>,
-+}
-+
-+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-+#[serde(deny_unknown_fields)]
-+pub struct ModSurfaceGlass {
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub blur: Option<u8>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub tint: Option<ModColor>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub opacity: Option<f32>,
 +}
 +
 +fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
@@ -116439,125 +116308,8 @@ index 000000000..28c21bc2f
 +        value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
 +    };
 +    styles.iter().all(|(name, paint)| {
-+        matches!(name.as_str(), "composer" | "backdrop" | "approval")
-+            && unit(paint.opacity)
-+            && paint.glass.as_ref().is_none_or(|glass| {
-+                name == "composer"
-+                    && glass.blur.is_none_or(|blur| blur <= 16)
-+                    && unit(glass.opacity)
-+            })
++        matches!(name.as_str(), "composer" | "approval") && unit(paint.opacity)
 +    })
-+}
-+
-+fn valid_backdrop_transform(
-+    position: &Option<String>,
-+    scale: Option<f32>,
-+    opacity: Option<f32>,
-+    offset: &Option<ModBackdropOffset>,
-+) -> bool {
-+    position
-+        .as_deref()
-+        .is_none_or(|value| matches!(value, "center" | "fill" | "fit" | "tile"))
-+        && scale.is_none_or(|value| value.is_finite() && (0.1..=4.0).contains(&value))
-+        && opacity.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-+        && offset.as_ref().is_none_or(|value| {
-+            (-4096..=4096).contains(&value.x) && (-4096..=4096).contains(&value.y)
-+        })
-+}
-+
-+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-+#[serde(deny_unknown_fields)]
-+pub struct ModAsciiBackdrop {
-+    pub text: String,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub position: Option<String>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub dim: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub scale: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub tint: Option<ModColor>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub opacity: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub offset: Option<ModBackdropOffset>,
-+}
-+
-+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-+#[serde(deny_unknown_fields)]
-+pub struct ModImageBackdrop {
-+    pub resource: crate::resource_data::ResourceRef,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub position: Option<String>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub dim: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub scale: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub tint: Option<ModColor>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub opacity: Option<f32>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub offset: Option<ModBackdropOffset>,
-+    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub overlay: Option<ModSurfacePaint>,
-+}
-+
-+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-+#[serde(deny_unknown_fields)]
-+pub struct ModAsciiFallback {
-+    pub ascii: ModAsciiBackdrop,
-+}
-+
-+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-+#[serde(untagged)]
-+pub enum ModBackdrop {
-+    Ascii {
-+        ascii: ModAsciiBackdrop,
-+    },
-+    Image {
-+        image: ModImageBackdrop,
-+        #[serde(default, skip_serializing_if = "Option::is_none")]
-+        fallback: Option<ModAsciiFallback>,
-+    },
-+}
-+
-+impl ModBackdrop {
-+    pub fn valid(&self) -> bool {
-+        let dim = |dim: &Option<f32>| dim.is_none_or(|dim| (0.0..=1.0).contains(&dim));
-+        let ascii = |ascii: &ModAsciiBackdrop| {
-+            !ascii.text.is_empty()
-+                && ascii.text.len() <= 8192
-+                && multiline(&ascii.text, 8192)
-+                && dim(&ascii.dim)
-+                && valid_backdrop_transform(
-+                    &ascii.position,
-+                    ascii.scale,
-+                    ascii.opacity,
-+                    &ascii.offset,
-+                )
-+        };
-+        match self {
-+            Self::Ascii { ascii: backdrop } => ascii(backdrop),
-+            Self::Image { image, fallback } => {
-+                dim(&image.dim)
-+                    && image.overlay.as_ref().is_none_or(|paint| {
-+                        paint
-+                            .opacity
-+                            .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-+                    })
-+                    && valid_backdrop_transform(
-+                        &image.position,
-+                        image.scale,
-+                        image.opacity,
-+                        &image.offset,
-+                    )
-+                    && fallback
-+                        .as_ref()
-+                        .is_none_or(|fallback| ascii(&fallback.ascii))
-+            }
-+        }
-+    }
 +}
 +
 +#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -116624,7 +116376,7 @@ index 000000000..28c21bc2f
 +pub struct ModOverlay {
 +    pub anchor: ModAnchor,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
-+    pub offset: Option<ModBackdropOffset>,
++    pub offset: Option<ModOffset>,
 +    pub width: u16,
 +    pub height: u16,
 +    #[serde(default)]
@@ -118189,13 +117941,6 @@ index 000000000..28c21bc2f
 +                patch.layout.as_ref().is_some_and(|layout| !layout.valid()),
 +            ),
 +            (
-+                "backdrop",
-+                patch
-+                    .backdrop
-+                    .as_ref()
-+                    .is_some_and(|backdrop| !backdrop.valid()),
-+            ),
-+            (
 +                "surface_styles",
 +                !valid_surface_styles(&patch.surface_styles),
 +            ),
@@ -118272,9 +118017,6 @@ index 000000000..28c21bc2f
 +        }
 +        if self.layout.is_some() && claim("layout".into()) {
 +            candidate.layout = self.layout;
-+        }
-+        if self.backdrop.is_some() && claim("backdrop".into()) {
-+            candidate.backdrop = self.backdrop;
 +        }
 +        if self.placeholder.is_some() && claim("placeholder".into()) {
 +            candidate.placeholder = self.placeholder;
@@ -118420,12 +118162,6 @@ index 000000000..28c21bc2f
 +                view.layout.as_ref().is_some_and(|layout| !layout.valid()),
 +            ),
 +            (
-+                "backdrop",
-+                view.backdrop
-+                    .as_ref()
-+                    .is_some_and(|backdrop| !backdrop.valid()),
-+            ),
-+            (
 +                "surface_styles",
 +                !valid_surface_styles(&view.surface_styles),
 +            ),
@@ -118493,10 +118229,10 @@ index 000000000..28c21bc2f
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..e61ebee80
+index 000000000..68c0024d0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,460 @@
+@@ -0,0 +1,436 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -118635,26 +118371,6 @@ index 000000000..e61ebee80
 +}
 +
 +#[test]
-+fn backdrops_bound_text_dim_and_position() {
-+    assert!(view(json!({"backdrop": {"ascii": {"text": "~ ~", "dim": 0.4}}})).is_ok());
-+    let reference = json!({"reference": "r", "sha256": "0".repeat(64)});
-+    assert!(
-+        view(
-+            json!({"backdrop": {"image": {"resource": reference, "position": "fill"},
-+        "fallback": {"ascii": {"text": "#"}}}})
-+        )
-+        .is_ok()
-+    );
-+    for backdrop in [
-+        json!({"ascii": {"text": ""}}),
-+        json!({"ascii": {"text": "x", "dim": 2.0}}),
-+        json!({"image": {"resource": reference, "position": "stretch"}}),
-+    ] {
-+        assert!(view(json!({"backdrop": backdrop})).is_err(), "{backdrop}");
-+    }
-+}
-+
-+#[test]
 +fn documents_and_diffs_validate_and_named_sites_are_allowed() {
 +    let document = json!({"type": "document", "id": "doc", "label": "Doc",
 +        "lines": [[{"text": "one"}], [{"text": "two"}]], "anchors": ["a.rs:1", "a.rs:2"],
@@ -118678,7 +118394,7 @@ index 000000000..e61ebee80
 +}
 +
 +#[test]
-+fn patches_claim_layout_and_backdrop_once() {
++fn patches_claim_layout_once() {
 +    let mut target = ModView::default();
 +    let mut claims = BTreeMap::new();
 +    let layout = json!({"layout": {"content": "transcript"}});
@@ -118719,19 +118435,15 @@ index 000000000..e61ebee80
 +}
 +
 +#[test]
-+fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
++fn appearance_styles_are_bounded_and_merge_by_surface() {
 +    assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
-+    assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
-+    assert!(view(json!({"surface_styles":{"composer":{"glass":{"blur":16,"tint":"#102030","opacity":0.4}}}})).is_ok());
++    assert!(
++        view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}}}))
++            .is_ok()
++    );
 +    for value in [
 +        json!({"surface_styles":{"transcript":{"top":0}}}),
 +        json!({"surface_styles":{"composer":{"opacity":1.01}}}),
-+        json!({"surface_styles":{"composer":{"glass":{"blur":17}}}}),
-+        json!({"surface_styles":{"composer":{"glass":{"opacity":-0.1}}}}),
-+        json!({"surface_styles":{"approval":{"glass":{}}}}),
-+        json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
-+        json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
-+        json!({"backdrop":{"ascii":{"text":"x","tint":"red"}}}),
 +    ] {
 +        assert!(view(value.clone()).is_err(), "{value}");
 +    }
@@ -118739,7 +118451,7 @@ index 000000000..e61ebee80
 +    let mut claims = BTreeMap::new();
 +    for patch in [
 +        json!({"surface_styles":{"composer":{"top":"#123456"}}}),
-+        json!({"surface_styles":{"backdrop":{"top":"#abcdef"}}}),
++        json!({"surface_styles":{"approval":{"top":"#abcdef"}}}),
 +        json!({"surface_styles":{"composer":{"top":"#654321"}}}),
 +    ] {
 +        ModViewPatch::parse(patch)
@@ -118976,10 +118688,10 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..f9afa6bd8
+index 000000000..a3ac98a05
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,586 @@
+@@ -0,0 +1,615 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -119125,6 +118837,35 @@ index 000000000..f9afa6bd8
 +            Some((key, stamps, selections.clone()));
 +    }
 +    Ok(selections)
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct ListArguments {
++    fields: Vec<String>,
++}
++
++/// `packages.list`: [`list`], keeping only the requested `fields` of each package.
++pub fn list_fields(
++    store: &ModStore,
++    runtime: Option<&Value>,
++    arguments: Value,
++) -> io::Result<Value> {
++    let fields = match arguments {
++        Value::Null => None,
++        arguments => Some(
++            serde_json::from_value::<ListArguments>(arguments)
++                .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?
++                .fields,
++        ),
++    };
++    let mut listed = list(store, runtime)?;
++    if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
++        for package in packages.iter_mut().filter_map(Value::as_object_mut) {
++            package.retain(|key, _| fields.iter().any(|field| field == key));
++        }
++    }
++    Ok(listed)
 +}
 +
 +/// Lists every store selection; `runtime` is the serving session's mod status.
@@ -119568,10 +119309,10 @@ index 000000000..f9afa6bd8
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 000000000..fe9749ea2
+index 000000000..60d4647eb
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,277 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -119642,6 +119383,18 @@ index 000000000..fe9749ea2
 +        (Some("sample_mod"), Some(false), Some(true))
 +    );
 +    let generation = listed["generation"].as_u64().unwrap();
++    assert_eq!(list_fields(&store, None, Value::Null).unwrap(), listed);
++    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]})).unwrap();
++    assert_eq!(
++        (narrow["packages"].clone(), narrow["generation"].as_u64()),
++        (
++            json!([{"id": "sample_mod", "enabled": false}]),
++            Some(generation)
++        )
++    );
++    for invalid in [json!({}), json!({"fields": "id"}), json!({"fields": [], "page": 1})] {
++        assert!(list_fields(&store, None, invalid).is_err());
++    }
 +
 +    let enable = preview(
 +        &store,
@@ -145462,66 +145215,6 @@ index 000000000..13e7881b2
 +        }
 +    }
 +}
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_ascii_native_whitespace.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_ascii_native_whitespace.snap
-new file mode 100644
-index 000000000..66ed2ea5a
---- /dev/null
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_ascii_native_whitespace.snap
-@@ -0,0 +1,54 @@
-+---
-+source: tui/src/app/owned_transcript_tests.rs
-+expression: "frames.join(\"\\n\\n\").replace(crate::version::CODEX_CLI_VERSION, \"<VERSION>\")"
-+---
-+border with ASCII None
-+
-+  >_ OpenAI Codex (v<VERSION>) | External profile
-+     /tmp/actual project
-+
-+  Ready to work?
-+
-+  transcript  has  intentional spaces
-+
-+    + let value = 1;    // diff spacing
-+  ERROR: permission denied    Retry?
-+  APPROVAL: run command?    (y/n)
-+|                                                                              |
-+|                                                                              |
-+|                                                                              |
-+|                                                                              |
-+|                                                                              |
-+|                                                                              |
-+--------------------------------------------------------------------------------
-+
-+
-+› draft   with   spaces
-+
-+  Oh My Diff · mod status unavailable · GPT-5.6-Sol default · /tmp/project
-+
-+
-+border with ASCII Some("ART")
-+
-+  >_ OpenAI Codex (v<VERSION>) | External profile
-+     /tmp/actual project
-+
-+  Ready to work?
-+
-+  transcript  has  intentional spaces
-+
-+    + let value = 1;    // diff spacing
-+  ERROR: permission denied    Retry?
-+  APPROVAL: run command?    (y/n)
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+
-+
-+› draft   with   spaces
-+
-+  Oh My Diff · mod status unavailable · GPT-5.6-Sol default · /tmp/project
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
 index 000000000..6d0c92485
@@ -147546,777 +147239,12 @@ index 000000000..bf8d3805c
 +    let (_, defaults) = overlay(&base, &[]).unwrap();
 +    assert!(action_key(&defaults, "global.open_transcript").is_ok());
 +}
-diff --git a/codex-rs/tui/src/mod_backdrop.rs b/codex-rs/tui/src/mod_backdrop.rs
-new file mode 100644
-index 000000000..a804f9b41
---- /dev/null
-+++ b/codex-rs/tui/src/mod_backdrop.rs
-@@ -0,0 +1,549 @@
-+use base64::Engine as _;
-+use base64::engine::general_purpose::STANDARD;
-+use codex_omd::ModAsciiBackdrop;
-+use codex_omd::ModColor;
-+use codex_omd::ModImageBackdrop;
-+use codex_omd::ModSurfaceGlass;
-+use codex_omd::ModSurfacePaint;
-+use codex_omd::client_surface::decode_image;
-+use image::ImageFormat;
-+use ratatui::buffer::Buffer;
-+use ratatui::layout::Rect;
-+use ratatui::style::Color;
-+use ratatui::style::Modifier;
-+use ratatui::style::Style;
-+use std::io::Cursor;
-+
-+pub(crate) const BACKDROP_MIN_COLUMNS: u16 = 60;
-+const KITTY_CHUNK: usize = 4096;
-+
-+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-+pub(crate) struct BackdropEnvironment {
-+    pub(crate) kitty_graphics: bool,
-+    pub(crate) remote: bool,
-+    pub(crate) no_color: bool,
-+    pub(crate) reduced_motion: bool,
-+    pub(crate) columns: u16,
-+    pub(crate) owned_viewport: bool,
-+}
-+
-+impl BackdropEnvironment {
-+    pub(crate) fn graphics_eligible(self) -> bool {
-+        self.owned_viewport
-+            && self.kitty_graphics
-+            && !self.remote
-+            && !self.no_color
-+            && !self.reduced_motion
-+            && self.columns >= BACKDROP_MIN_COLUMNS
-+    }
-+}
-+
-+pub(crate) fn rgb(color: ModColor) -> [u8; 3] {
-+    match color {
-+        ModColor::Rgb(r, g, b) => [r, g, b],
-+        ModColor::Indexed(index) if index >= 232 => [8 + (index - 232) * 10; 3],
-+        ModColor::Indexed(index) if index >= 16 => {
-+            let levels = [0, 95, 135, 175, 215, 255];
-+            let n = index - 16;
-+            [
-+                levels[usize::from(n / 36)],
-+                levels[usize::from(n / 6 % 6)],
-+                levels[usize::from(n % 6)],
-+            ]
-+        }
-+        ModColor::Indexed(index) => [
-+            [0, 0, 0],
-+            [128, 0, 0],
-+            [0, 128, 0],
-+            [128, 128, 0],
-+            [0, 0, 128],
-+            [128, 0, 128],
-+            [0, 128, 128],
-+            [192, 192, 192],
-+            [128, 128, 128],
-+            [255, 0, 0],
-+            [0, 255, 0],
-+            [255, 255, 0],
-+            [0, 0, 255],
-+            [255, 0, 255],
-+            [0, 255, 255],
-+            [255, 255, 255],
-+        ][usize::from(index)],
-+    }
-+}
-+
-+pub(crate) struct Glass<'a> {
-+    pub(crate) transcript: Rect,
-+    pub(crate) surface: Rect,
-+    pub(crate) settings: &'a ModSurfaceGlass,
-+}
-+
-+fn pixels(rect: Rect, area: Rect, canvas: &image::RgbaImage) -> (u32, u32, u32, u32) {
-+    let column = |cell: u16| {
-+        u32::from(cell.saturating_sub(area.x)) * canvas.width() / u32::from(area.width.max(1))
-+    };
-+    let row = |cell: u16| {
-+        u32::from(cell.saturating_sub(area.y)) * canvas.height() / u32::from(area.height.max(1))
-+    };
-+    let (x, y) = (column(rect.x), row(rect.y));
-+    (x, y, column(rect.right()) - x, row(rect.bottom()) - y)
-+}
-+
-+fn apply_glass(canvas: &mut image::RgbaImage, area: Rect, glass: &Glass<'_>) {
-+    let (x, y, width, height) = pixels(glass.surface.intersection(area), area, canvas);
-+    let (width, height) = (
-+        width.min(canvas.width().saturating_sub(x)),
-+        height.min(canvas.height().saturating_sub(y)),
-+    );
-+    if width == 0 || height == 0 {
-+        return;
-+    }
-+    let sigma = f32::from(glass.settings.blur.unwrap_or(6)) * 2.0;
-+    let margin = (sigma * 3.0).ceil() as u32;
-+    let (left, top) = (x.saturating_sub(margin), y.saturating_sub(margin));
-+    let region = image::imageops::crop_imm(
-+        canvas,
-+        left,
-+        top,
-+        (x + width + margin).min(canvas.width()) - left,
-+        (y + height + margin).min(canvas.height()) - top,
-+    )
-+    .to_image();
-+    let region = if sigma > 0.0 {
-+        image::imageops::fast_blur(&region, sigma)
-+    } else {
-+        region
-+    };
-+    let tint = glass.settings.tint.map(rgb);
-+    let amount = glass.settings.opacity.unwrap_or(0.35);
-+    let (transcript_x, transcript_y, transcript_width, transcript_height) =
-+        pixels(glass.transcript.intersection(area), area, canvas);
-+    for (px, py, pixel) in canvas.enumerate_pixels_mut() {
-+        let in_surface = (x..x + width).contains(&px) && (y..y + height).contains(&py);
-+        if in_surface {
-+            *pixel = *region.get_pixel(px - left, py - top);
-+            if let Some(tint) = tint {
-+                for i in 0..3 {
-+                    pixel.0[i] = (f32::from(pixel.0[i]) * (1.0 - amount)
-+                        + f32::from(tint[i]) * amount)
-+                        .round() as u8;
-+                }
-+                pixel.0[3] = pixel.0[3].max((amount * 255.0).round() as u8);
-+            }
-+        } else if !((transcript_x..transcript_x + transcript_width).contains(&px)
-+            && (transcript_y..transcript_y + transcript_height).contains(&py))
-+        {
-+            *pixel = image::Rgba([0; 4]);
-+        }
-+    }
-+}
-+
-+pub(crate) fn transformed_png(
-+    bytes: &[u8],
-+    settings: &ModImageBackdrop,
-+    area: Rect,
-+    paint: Option<&ModSurfacePaint>,
-+    glass: Option<&Glass<'_>>,
-+) -> Result<Vec<u8>, String> {
-+    let decoded = decode_image(bytes)?;
-+    let width = (u32::from(area.width) * 8).clamp(1, 2048);
-+    let height = (u32::from(area.height) * 16).clamp(1, 2048);
-+    let position = settings.position.as_deref().unwrap_or("fit");
-+    let scale = settings.scale.unwrap_or(1.0);
-+    let fit = (width as f32 / decoded.width() as f32).min(height as f32 / decoded.height() as f32);
-+    let fill = (width as f32 / decoded.width() as f32).max(height as f32 / decoded.height() as f32);
-+    let factor = match position {
-+        "fit" => fit,
-+        "fill" => fill,
-+        _ => 1.0,
-+    } * scale;
-+    // Bound the working bitmap, including user enlargement of a large source.
-+    let scaled_width = (decoded.width() as f32 * factor).round().clamp(1.0, 8192.0) as u32;
-+    let scaled_height = (decoded.height() as f32 * factor)
-+        .round()
-+        .clamp(1.0, 8192.0) as u32;
-+    let source = decoded.to_rgba8();
-+    let mut canvas = image::RgbaImage::new(width, height);
-+    let offset = settings.offset.as_ref();
-+    let left =
-+        (i64::from(width) - i64::from(scaled_width)) / 2 + i64::from(offset.map_or(0, |p| p.x)) * 8;
-+    let top = (i64::from(height) - i64::from(scaled_height)) / 2
-+        + i64::from(offset.map_or(0, |p| p.y)) * 16;
-+    let keep = 1.0 - settings.dim.unwrap_or(0.5);
-+    let opacity = settings.opacity.unwrap_or(1.0);
-+    let tint = settings.tint.map(rgb);
-+    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
-+        let (sx, sy) = if position == "tile" {
-+            (
-+                (i64::from(x) - left).rem_euclid(i64::from(scaled_width)),
-+                (i64::from(y) - top).rem_euclid(i64::from(scaled_height)),
-+            )
-+        } else {
-+            (i64::from(x) - left, i64::from(y) - top)
-+        };
-+        if sx < 0 || sy < 0 || sx >= i64::from(scaled_width) || sy >= i64::from(scaled_height) {
-+            continue;
-+        }
-+        let source_x = ((sx as f64 * f64::from(source.width()) / f64::from(scaled_width)) as u32)
-+            .min(source.width() - 1);
-+        let source_y = ((sy as f64 * f64::from(source.height()) / f64::from(scaled_height)) as u32)
-+            .min(source.height() - 1);
-+        *pixel = *source.get_pixel(source_x, source_y);
-+        for i in 0..3 {
-+            let channel = f32::from(pixel.0[i]) * keep;
-+            pixel.0[i] =
-+                (channel + tint.map_or(0.0, |t| f32::from(t[i]) * (1.0 - keep))).round() as u8;
-+        }
-+        pixel.0[3] = (f32::from(pixel.0[3]) * opacity).round() as u8;
-+        if let Some(paint) = paint {
-+            let a = paint.top.or(paint.bottom).map(rgb);
-+            let b = paint.bottom.or(paint.top).map(rgb);
-+            if let (Some(a), Some(b)) = (a, b) {
-+                let gradient = y as f32 / height.saturating_sub(1).max(1) as f32;
-+                let alpha = paint.opacity.unwrap_or(1.0);
-+                for i in 0..3 {
-+                    let overlay = f32::from(a[i]) * (1.0 - gradient) + f32::from(b[i]) * gradient;
-+                    pixel.0[i] =
-+                        (f32::from(pixel.0[i]) * (1.0 - alpha) + overlay * alpha).round() as u8;
-+                }
-+            }
-+        }
-+    }
-+    if let Some(glass) = glass {
-+        apply_glass(&mut canvas, area, glass);
-+    }
-+    let mut png = Vec::new();
-+    image::DynamicImage::ImageRgba8(canvas)
-+        .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
-+        .map_err(|e| e.to_string())?;
-+    Ok(png)
-+}
-+
-+pub(crate) fn kitty_place_below_text(png: &[u8], columns: u16, rows: u16, image_id: u32) -> String {
-+    format!(
-+        "\x1b7\x1b[1;1H{}\x1b8",
-+        kitty_transmit(
-+            png,
-+            &format!("a=T,t=d,f=100,i={image_id},c={columns},r={rows},z=-1,C=1,q=2")
-+        )
-+    )
-+}
-+
-+pub(crate) fn kitty_transmit(payload: &[u8], header: &str) -> String {
-+    let payload = STANDARD.encode(payload);
-+    let chunks: Vec<&[u8]> = payload.as_bytes().chunks(KITTY_CHUNK).collect();
-+    let mut command = String::new();
-+    for (index, chunk) in chunks.iter().enumerate() {
-+        let more = u8::from(index + 1 < chunks.len());
-+        let chunk = std::str::from_utf8(chunk).unwrap_or_default();
-+        if index == 0 {
-+            command.push_str(&format!("\x1b_G{header},m={more};{chunk}\x1b\\"));
-+        } else {
-+            command.push_str(&format!("\x1b_Gm={more};{chunk}\x1b\\"));
-+        }
-+    }
-+    command
-+}
-+
-+pub(crate) fn kitty_remove(image_id: u32) -> String {
-+    format!("\x1b_Ga=d,d=I,i={image_id},q=2;\x1b\\")
-+}
-+
-+#[cfg(test)]
-+pub(crate) fn fill_ascii(buffer: &mut Buffer, area: Rect, art: &str) {
-+    let settings: ModAsciiBackdrop =
-+        serde_json::from_value(serde_json::json!({"text":art, "position":"tile"}))
-+            .expect("static ASCII settings");
-+    fill_ascii_configured(buffer, area, area, &settings);
-+}
-+
-+pub(crate) fn fill_ascii_configured(
-+    buffer: &mut Buffer,
-+    area: Rect,
-+    clip: Rect,
-+    settings: &ModAsciiBackdrop,
-+) {
-+    if area.is_empty() {
-+        return;
-+    }
-+    let rows: Vec<Vec<char>> = settings
-+        .text
-+        .lines()
-+        .map(|line| line.chars().filter(|c| !c.is_control()).collect())
-+        .collect();
-+    let art_width = rows.iter().map(Vec::len).max().unwrap_or(0);
-+    if rows.is_empty() || art_width == 0 {
-+        return;
-+    }
-+    let position = settings.position.as_deref().unwrap_or("tile");
-+    let fit =
-+        (f32::from(area.width) / art_width as f32).min(f32::from(area.height) / rows.len() as f32);
-+    let fill =
-+        (f32::from(area.width) / art_width as f32).max(f32::from(area.height) / rows.len() as f32);
-+    let scale = settings.scale.unwrap_or(1.0)
-+        * match position {
-+            "fit" => fit,
-+            "fill" => fill,
-+            _ => 1.0,
-+        };
-+    let width = (art_width as f32 * scale).round().max(1.0) as i32;
-+    let height = (rows.len() as f32 * scale).round().max(1.0) as i32;
-+    let offset = settings.offset.as_ref();
-+    let left = if position == "tile" {
-+        0
-+    } else {
-+        (i32::from(area.width) - width) / 2
-+    } + i32::from(offset.map_or(0, |p| p.x));
-+    let top = if position == "tile" {
-+        0
-+    } else {
-+        (i32::from(area.height) - height) / 2
-+    } + i32::from(offset.map_or(0, |p| p.y));
-+    let channels = settings.tint.map(rgb).unwrap_or([128; 3]);
-+    let amount = (1.0 - settings.dim.unwrap_or(0.5)) * settings.opacity.unwrap_or(1.0);
-+    let channels = channels.map(|c| (f32::from(c) * amount).round() as u8);
-+    let style = Style::default()
-+        .fg(crate::terminal_palette::best_color((
-+            channels[0],
-+            channels[1],
-+            channels[2],
-+        )))
-+        .add_modifier(Modifier::DIM);
-+    let clip = area.intersection(clip);
-+    for y in clip.top()..clip.bottom() {
-+        // Native text owns its entire row, including unstyled spaces and indentation.
-+        if (area.left()..area.right()).any(|x| {
-+            let cell = &buffer[(x, y)];
-+            cell.symbol() != " "
-+                || cell.bg != Color::Reset
-+                || cell.fg != Color::Reset
-+                || !cell.modifier.is_empty()
-+        }) {
-+            continue;
-+        }
-+        for x in clip.left()..clip.right() {
-+            let cell = &mut buffer[(x, y)];
-+            let mut sx = i32::from(x - area.x) - left;
-+            let mut sy = i32::from(y - area.y) - top;
-+            if position == "tile" {
-+                sx = sx.rem_euclid(width);
-+                sy = sy.rem_euclid(height);
-+            }
-+            if sx < 0 || sy < 0 || sx >= width || sy >= height {
-+                continue;
-+            }
-+            let row = &rows[((sy as f32 / scale) as usize).min(rows.len() - 1)];
-+            let glyph = row
-+                .get((sx as f32 / scale) as usize)
-+                .copied()
-+                .unwrap_or(' ');
-+            if glyph != ' ' && unicode_width::UnicodeWidthChar::width(glyph) == Some(1) {
-+                cell.set_char(glyph).set_style(style);
-+            }
-+        }
-+    }
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+    use pretty_assertions::assert_eq;
-+
-+    fn png() -> Vec<u8> {
-+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 100, 50, 255]));
-+        let mut bytes = Vec::new();
-+        image
-+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-+            .unwrap();
-+        bytes
-+    }
-+
-+    #[test]
-+    fn kitty_placement_is_below_text_and_restores_the_cursor() {
-+        let command = kitty_place_below_text(&png(), 80, 24, 7);
-+        assert!(
-+            command
-+                .starts_with("\x1b7\x1b[1;1H\x1b_Ga=T,t=d,f=100,i=7,c=80,r=24,z=-1,C=1,q=2,m=0;")
-+        );
-+        assert!(command.ends_with("\x1b\\\x1b8"));
-+        assert_eq!(kitty_remove(7), "\x1b_Ga=d,d=I,i=7,q=2;\x1b\\");
-+    }
-+
-+    #[test]
-+    fn ascii_fills_only_blank_default_rows() {
-+        let area = Rect::new(0, 0, 4, 3);
-+        let mut buffer = Buffer::empty(area);
-+        buffer[(1, 0)].set_char('X');
-+        buffer[(2, 1)].set_bg(Color::Blue);
-+        fill_ascii(&mut buffer, area, "ab\ncd");
-+        let symbols: Vec<String> = (0..3)
-+            .map(|y| {
-+                (0..4)
-+                    .map(|x| buffer[(x, y)].symbol().to_string())
-+                    .collect()
-+            })
-+            .collect();
-+        assert_eq!(symbols, [" X  ", "    ", "abab"]);
-+        assert!(buffer[(0, 2)].modifier.contains(Modifier::DIM));
-+    }
-+    #[test]
-+    fn transforms_place_tile_tint_and_gloss_without_mutating_source() {
-+        let settings = |value| serde_json::from_value::<ModImageBackdrop>(value).unwrap();
-+        let reference = serde_json::json!({"reference":"r","sha256":"0".repeat(64)});
-+        let area = Rect::new(0, 0, 4, 2);
-+        let centered =
-+            settings(serde_json::json!({"resource":reference,"position":"center","dim":0}));
-+        let image =
-+            image::load_from_memory(&transformed_png(&png(), &centered, area, None, None).unwrap())
-+                .unwrap()
-+                .to_rgba8();
-+        assert_eq!(image.get_pixel(0, 0).0[3], 0);
-+        assert_eq!(image.get_pixel(15, 15).0, [200, 100, 50, 255]);
-+        let tile = settings(
-+            serde_json::json!({"resource":reference,"position":"tile","dim":0.5,"tint":"#ffffff","opacity":0.5}),
-+        );
-+        let image =
-+            image::load_from_memory(&transformed_png(&png(), &tile, area, None, None).unwrap())
-+                .unwrap()
-+                .to_rgba8();
-+        assert_eq!(image.get_pixel(0, 0).0, [228, 178, 153, 128]);
-+        let paint = serde_json::from_value::<ModSurfacePaint>(
-+            serde_json::json!({"top":"#ffffff","bottom":"#000000","opacity":0.5}),
-+        )
-+        .unwrap();
-+        let gloss = image::load_from_memory(
-+            &transformed_png(&png(), &tile, area, Some(&paint), None).unwrap(),
-+        )
-+        .unwrap()
-+        .to_rgba8();
-+        assert!(gloss.get_pixel(0, 0).0[0] > gloss.get_pixel(0, 31).0[0]);
-+        assert_eq!(
-+            image::load_from_memory(&png())
-+                .unwrap()
-+                .to_rgba8()
-+                .get_pixel(0, 0)
-+                .0,
-+            [200, 100, 50, 255]
-+        );
-+    }
-+
-+    #[test]
-+    fn glass_blurs_and_tints_only_its_surface_and_clears_uncovered_rows() {
-+        let mut source = image::RgbaImage::from_pixel(2, 1, image::Rgba([0, 0, 0, 255]));
-+        source.put_pixel(1, 0, image::Rgba([255, 255, 255, 255]));
-+        let mut bytes = Vec::new();
-+        source
-+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-+            .unwrap();
-+        let reference = serde_json::json!({"reference":"r","sha256":"0".repeat(64)});
-+        let settings = serde_json::from_value::<ModImageBackdrop>(
-+            serde_json::json!({"resource":reference,"position":"fill","dim":0}),
-+        )
-+        .unwrap();
-+        let glass_settings = serde_json::from_value::<ModSurfaceGlass>(
-+            serde_json::json!({"blur":2,"tint":"#000000","opacity":0.5}),
-+        )
-+        .unwrap();
-+        let glass = Glass {
-+            transcript: Rect::new(0, 0, 4, 2),
-+            surface: Rect::new(1, 3, 2, 1),
-+            settings: &glass_settings,
-+        };
-+        let area = Rect::new(0, 0, 4, 4);
-+        let image = image::load_from_memory(
-+            &transformed_png(&bytes, &settings, area, None, Some(&glass)).unwrap(),
-+        )
-+        .unwrap()
-+        .to_rgba8();
-+        assert_eq!(image.get_pixel(15, 8).0, [0, 0, 0, 255]);
-+        assert_eq!(image.get_pixel(16, 8).0, [255, 255, 255, 255]);
-+        assert_eq!(image.get_pixel(16, 40).0[3], 0);
-+        assert_eq!(image.get_pixel(2, 56).0[3], 0);
-+        let (left, right) = (image.get_pixel(15, 56).0, image.get_pixel(16, 56).0);
-+        assert!(
-+            right[0] <= 128 && right[0] - left[0] < 40,
-+            "{left:?} {right:?}"
-+        );
-+        assert_eq!(right[3], 255);
-+
-+        let glass = Glass {
-+            transcript: Rect::new(0, 0, 4, 190),
-+            surface: Rect::new(0, 195, 4, 5),
-+            settings: &glass_settings,
-+        };
-+        let image = image::load_from_memory(
-+            &transformed_png(
-+                &bytes,
-+                &settings,
-+                Rect::new(0, 0, 4, 200),
-+                None,
-+                Some(&glass),
-+            )
-+            .unwrap(),
-+        )
-+        .unwrap()
-+        .to_rgba8();
-+        assert_eq!(image.height(), 2048);
-+        assert_eq!(image.get_pixel(0, 1980).0[3], 0);
-+        assert_eq!(image.get_pixel(0, 2047).0[3], 255);
-+    }
-+
-+    #[test]
-+    fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
-+        let image = image::RgbaImage::new(codex_omd::client_surface::IMAGE_PIXELS + 1, 1);
-+        let mut bytes = Vec::new();
-+        image
-+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-+            .unwrap();
-+        assert!(decode_image(&bytes).is_err());
-+        assert!(decode_image(b"GIF89a").is_err());
-+        assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
-+    }
-+
-+    #[test]
-+    fn ascii_positions_scale_and_preserve_styled_rows() {
-+        let area = Rect::new(0, 0, 6, 6);
-+        let mut buffer = Buffer::empty(area);
-+        buffer[(1, 1)].set_char('X');
-+        buffer[(2, 2)].set_bg(Color::Blue);
-+        let settings = serde_json::from_value(
-+            serde_json::json!({"text":"ab\ncd","position":"center","dim":0.2}),
-+        )
-+        .unwrap();
-+        fill_ascii_configured(&mut buffer, area, area, &settings);
-+        assert_eq!(buffer[(0, 0)].symbol(), " ");
-+        assert_eq!(buffer[(1, 1)].symbol(), "X");
-+        assert_eq!(buffer[(2, 1)].symbol(), " ");
-+        assert_eq!(buffer[(2, 3)].symbol(), "c");
-+        assert_eq!(buffer[(3, 3)].symbol(), "d");
-+        assert_eq!(buffer[(2, 2)].symbol(), " ");
-+    }
-+
-+    #[test]
-+    fn ascii_clip_preserves_full_area_placement_and_protected_blank_rows() {
-+        let area = Rect::new(0, 0, 4, 4);
-+        let clip = Rect::new(0, 2, 4, 2);
-+        for position in ["tile", "center"] {
-+            let mut buffer = Buffer::empty(area);
-+            let settings =
-+                serde_json::from_value(serde_json::json!({"text":"ab\ncd","position":position}))
-+                    .unwrap();
-+            fill_ascii_configured(&mut buffer, area, clip, &settings);
-+            let rows = (area.top()..area.bottom())
-+                .map(|y| {
-+                    (area.left()..area.right())
-+                        .map(|x| buffer[(x, y)].symbol())
-+                        .collect::<String>()
-+                })
-+                .collect::<Vec<_>>();
-+            assert_eq!(
-+                rows,
-+                if position == "tile" {
-+                    ["    ", "    ", "abab", "cdcd"]
-+                } else {
-+                    ["    ", "    ", " cd ", "    "]
-+                }
-+            );
-+        }
-+    }
-+}
-diff --git a/codex-rs/tui/src/mod_backdrop_sync.rs b/codex-rs/tui/src/mod_backdrop_sync.rs
-new file mode 100644
-index 000000000..2db7aaf4d
---- /dev/null
-+++ b/codex-rs/tui/src/mod_backdrop_sync.rs
-@@ -0,0 +1,204 @@
-+use crate::mod_backdrop::BackdropEnvironment;
-+use codex_omd::ModBackdrop;
-+use codex_omd::ModViewSnapshot;
-+use codex_terminal_detection::TerminalName;
-+use ratatui::layout::Rect;
-+use std::io::Write;
-+use std::sync::Mutex;
-+
-+const IMAGE_ID: u32 = 7_314;
-+
-+struct Placed {
-+    key: Option<(String, Rect)>,
-+    decided: Option<(String, Option<Vec<u8>>)>,
-+}
-+
-+static PLACED: Mutex<Placed> = Mutex::new(Placed {
-+    key: None,
-+    decided: None,
-+});
-+
-+static GLASS_SURFACE: Mutex<Option<Rect>> = Mutex::new(None);
-+
-+pub(crate) fn note_glass_surface(area: Rect) {
-+    *GLASS_SURFACE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(area);
-+}
-+
-+fn placed() -> std::sync::MutexGuard<'static, Placed> {
-+    PLACED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+}
-+
-+pub(crate) fn image_active() -> bool {
-+    placed().key.is_some()
-+}
-+
-+fn environment(columns: u16, animations: bool, owned_viewport: bool) -> BackdropEnvironment {
-+    let terminal = codex_terminal_detection::terminal_info();
-+    BackdropEnvironment {
-+        kitty_graphics: matches!(
-+            terminal.name,
-+            TerminalName::Kitty | TerminalName::Ghostty | TerminalName::WezTerm
-+        ),
-+        remote: terminal.multiplexer.is_some()
-+            || ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
-+                .iter()
-+                .any(|name| std::env::var_os(name).is_some()),
-+        no_color: std::env::var_os("NO_COLOR").is_some(),
-+        reduced_motion: !animations,
-+        columns,
-+        owned_viewport,
-+    }
-+}
-+
-+fn load(
-+    snapshot: &ModViewSnapshot,
-+    reference: &codex_omd::resource_data::ResourceRef,
-+) -> Option<Vec<u8>> {
-+    let thread = crate::mod_surface::current_thread();
-+    snapshot.contributors.iter().find_map(|owner| {
-+        let (host, _) = crate::mod_surface::resource_binding(owner, thread.as_deref()).ok()?;
-+        let resources = host.resources();
-+        let record = resources.load(reference, "evidence").ok()?;
-+        resources.blob(record["blob"].as_str()?).ok()
-+    })
-+}
-+
-+fn write(sequence: &str) {
-+    let mut stdout = std::io::stdout();
-+    let _ = stdout.write_all(sequence.as_bytes());
-+    let _ = stdout.flush();
-+}
-+
-+pub(crate) fn teardown() {
-+    clear(&mut placed());
-+}
-+
-+fn clear(placed: &mut Placed) {
-+    if placed.key.take().is_some() {
-+        write(&crate::mod_backdrop::kitty_remove(IMAGE_ID));
-+    }
-+}
-+
-+pub(crate) fn sync(
-+    snapshot: &ModViewSnapshot,
-+    transcript: Rect,
-+    animations: bool,
-+    owned_viewport: bool,
-+) {
-+    let surface = GLASS_SURFACE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .take();
-+    let mut placed = placed();
-+    let Some(ModBackdrop::Image { image, .. }) = snapshot.view.backdrop.as_ref() else {
-+        clear(&mut placed);
-+        return;
-+    };
-+    let glass = surface
-+        .filter(|surface| !surface.is_empty() && !transcript.is_empty())
-+        .zip(
-+            snapshot
-+                .view
-+                .surface_styles
-+                .get("composer")
-+                .and_then(|paint| paint.glass.as_ref()),
-+        )
-+        .map(|(surface, settings)| crate::mod_backdrop::Glass {
-+            transcript,
-+            surface,
-+            settings,
-+        });
-+    let area = glass
-+        .as_ref()
-+        .map_or(transcript, |glass| transcript.union(glass.surface));
-+    let environment = environment(transcript.width, animations, owned_viewport);
-+    let paint = image.overlay.as_ref();
-+    let key = format!(
-+        "{}:{}:{area:?}:{environment:?}:{paint:?}:{:?}",
-+        snapshot.epoch,
-+        serde_json::to_string(image).unwrap_or_default(),
-+        glass
-+            .as_ref()
-+            .map(|glass| (glass.transcript, glass.surface, glass.settings)),
-+    );
-+    if placed.key.as_ref() == Some(&(key.clone(), area)) {
-+        return;
-+    }
-+    let png = match placed.decided.as_ref() {
-+        Some((decided, png)) if *decided == key => png.clone(),
-+        _ => {
-+            let png = (environment.graphics_eligible() && !area.is_empty())
-+                .then(|| load(snapshot, &image.resource))
-+                .flatten()
-+                .and_then(|bytes| {
-+                    crate::mod_backdrop::transformed_png(&bytes, image, area, paint, glass.as_ref())
-+                        .ok()
-+                });
-+            placed.decided = Some((key.clone(), png.clone()));
-+            png
-+        }
-+    };
-+    let Some(png) = png.filter(|_| transcript.width >= crate::mod_backdrop::BACKDROP_MIN_COLUMNS)
-+    else {
-+        clear(&mut placed);
-+        return;
-+    };
-+    let sequence =
-+        crate::mod_backdrop::kitty_place_below_text(&png, area.width, area.height, IMAGE_ID)
-+            .replacen(
-+                "\x1b[1;1H",
-+                &format!("\x1b[{};{}H", area.y + 1, area.x + 1),
-+                1,
-+            );
-+    write(&crate::mod_backdrop::kitty_remove(IMAGE_ID));
-+    write(&sequence);
-+    placed.key = Some((key, area));
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    #[test]
-+    fn graphics_eligibility_uses_production_protocol_remote_motion_color_and_ownership() {
-+        let local = BackdropEnvironment {
-+            kitty_graphics: true,
-+            columns: 80,
-+            owned_viewport: true,
-+            ..Default::default()
-+        };
-+        assert!(local.graphics_eligible());
-+        for fallback in [
-+            BackdropEnvironment {
-+                kitty_graphics: false,
-+                ..local
-+            },
-+            BackdropEnvironment {
-+                remote: true,
-+                ..local
-+            }, // SSH and multiplexers share the remote gate.
-+            BackdropEnvironment {
-+                no_color: true,
-+                ..local
-+            },
-+            BackdropEnvironment {
-+                reduced_motion: true,
-+                ..local
-+            },
-+            BackdropEnvironment {
-+                columns: 40,
-+                ..local
-+            },
-+            BackdropEnvironment {
-+                owned_viewport: false,
-+                ..local
-+            },
-+        ] {
-+            assert!(!fallback.graphics_eligible(), "{fallback:?}");
-+        }
-+    }
-+}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..786539c8e
+index 000000000..0a87ec70a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,1010 @@
+@@ -0,0 +1,1009 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -148922,7 +147850,7 @@ index 000000000..786539c8e
 +            if let Some(directory) = &self.directory {
 +                let _ = std::fs::remove_file(directory.path().join(file_name(id)));
 +            }
-+            self.pending.push(crate::mod_backdrop::kitty_remove(id));
++            self.pending.push(crate::mod_kitty::kitty_remove(id));
 +        }
 +    }
 +
@@ -149073,17 +148001,17 @@ index 000000000..786539c8e
 +        pixels.height,
 +    );
 +    if let Some(name) = shared.then(|| shared_memory(id, &pixels.bytes)).flatten() {
-+        return crate::mod_backdrop::kitty_transmit(name.as_bytes(), &format!("{header},t=s"));
++        return crate::mod_kitty::kitty_transmit(name.as_bytes(), &format!("{header},t=s"));
 +    }
 +    match directory
 +        .map(|directory| directory.join(file_name(id)))
 +        .filter(|path| std::fs::write(path, &pixels.bytes).is_ok())
 +    {
-+        Some(path) => crate::mod_backdrop::kitty_transmit(
++        Some(path) => crate::mod_kitty::kitty_transmit(
 +            path.to_string_lossy().as_bytes(),
 +            &format!("{header},t=t"),
 +        ),
-+        None => crate::mod_backdrop::kitty_transmit(&pixels.bytes, &format!("{header},t=d")),
++        None => crate::mod_kitty::kitty_transmit(&pixels.bytes, &format!("{header},t=d")),
 +    }
 +}
 +
@@ -149188,7 +148116,6 @@ index 000000000..786539c8e
 +
 +/// Deletes every image this process placed; used on exit and suspend.
 +pub(crate) fn teardown() {
-+    crate::mod_backdrop_sync::teardown();
 +    let mut images = images();
 +    images.transmissions.clear();
 +    for (_, id, _, _) in std::mem::take(&mut images.placed).into_values() {
@@ -149329,7 +148256,7 @@ index 000000000..786539c8e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..500ee1f77
+index 000000000..b2c407697
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
 @@ -0,0 +1,688 @@
@@ -149440,14 +148367,14 @@ index 000000000..500ee1f77
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
 +        vec![
-+            crate::mod_backdrop::kitty_remove(id),
-+            crate::mod_backdrop::kitty_remove(next)
++            crate::mod_kitty::kitty_remove(id),
++            crate::mod_kitty::kitty_remove(next)
 +        ]
 +    );
 +    retain(&BTreeSet::new());
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(last)]
++        vec![crate::mod_kitty::kitty_remove(last)]
 +    );
 +    kitty_image("other", "c", png).expect("placed");
 +    let removed = images().placed["other"].1;
@@ -149640,7 +148567,7 @@ index 000000000..500ee1f77
 +    assert_ne!(second, first);
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(first)],
++        vec![crate::mod_kitty::kitty_remove(first)],
 +        "the previous frame is deleted after the new one is drawn"
 +    );
 +    assert_eq!(std::mem::take(&mut images().transmissions)[0].0, second);
@@ -149656,7 +148583,7 @@ index 000000000..500ee1f77
 +    draw(later + crate::mod_raster::FRAME);
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(second)],
++        vec![crate::mod_kitty::kitty_remove(second)],
 +        "a cells blit deletes the frame's image"
 +    );
 +    assert!(!images().placed.contains_key("raster-kitty"));
@@ -149677,7 +148604,7 @@ index 000000000..500ee1f77
 +    .expect("queued");
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(third)],
++        vec![crate::mod_kitty::kitty_remove(third)],
 +        "a resize deletes the frame's image"
 +    );
 +    blit([0, 255, 0], resized + crate::mod_raster::FRAME);
@@ -149697,7 +148624,7 @@ index 000000000..500ee1f77
 +    );
 +    assert_eq!(
 +        std::mem::take(&mut images().pending),
-+        vec![crate::mod_backdrop::kitty_remove(fourth)],
++        vec![crate::mod_kitty::kitty_remove(fourth)],
 +        "a new owner deletes the frame's image"
 +    );
 +    crate::mod_raster::retain(&BTreeSet::new());
@@ -149827,7 +148754,7 @@ index 000000000..500ee1f77
 +    .0;
 +    assert_eq!((resized.len(), placeholders(&resized[0])), (20, 53));
 +    let pending = std::mem::take(&mut images().pending);
-+    assert_eq!(pending[0], crate::mod_backdrop::kitty_remove(previous));
++    assert_eq!(pending[0], crate::mod_kitty::kitty_remove(previous));
 +    let rows = show(false, frame(1280, 863), (106, 40));
 +    assert_eq!(rows[0].spans.len() - 1, 106, "half-block columns");
 +    assert_eq!(rows.len(), 36, "half-block rows keep the aspect");
@@ -151416,6 +150343,82 @@ index 000000000..b6e0959f6
 +                (DiffKind::Added, Some("src/a.rs:+12".into())),
 +            ]
 +        );
++    }
++}
+diff --git a/codex-rs/tui/src/mod_kitty.rs b/codex-rs/tui/src/mod_kitty.rs
+new file mode 100644
+index 000000000..0445a6b2e
+--- /dev/null
++++ b/codex-rs/tui/src/mod_kitty.rs
+@@ -0,0 +1,70 @@
++use base64::Engine as _;
++use base64::engine::general_purpose::STANDARD;
++use codex_omd::ModColor;
++
++const KITTY_CHUNK: usize = 4096;
++
++pub(crate) fn rgb(color: ModColor) -> [u8; 3] {
++    match color {
++        ModColor::Rgb(r, g, b) => [r, g, b],
++        ModColor::Indexed(index) if index >= 232 => [8 + (index - 232) * 10; 3],
++        ModColor::Indexed(index) if index >= 16 => {
++            let levels = [0, 95, 135, 175, 215, 255];
++            let n = index - 16;
++            [
++                levels[usize::from(n / 36)],
++                levels[usize::from(n / 6 % 6)],
++                levels[usize::from(n % 6)],
++            ]
++        }
++        ModColor::Indexed(index) => [
++            [0, 0, 0],
++            [128, 0, 0],
++            [0, 128, 0],
++            [128, 128, 0],
++            [0, 0, 128],
++            [128, 0, 128],
++            [0, 128, 128],
++            [192, 192, 192],
++            [128, 128, 128],
++            [255, 0, 0],
++            [0, 255, 0],
++            [255, 255, 0],
++            [0, 0, 255],
++            [255, 0, 255],
++            [0, 255, 255],
++            [255, 255, 255],
++        ][usize::from(index)],
++    }
++}
++
++pub(crate) fn kitty_transmit(payload: &[u8], header: &str) -> String {
++    let payload = STANDARD.encode(payload);
++    let chunks: Vec<&[u8]> = payload.as_bytes().chunks(KITTY_CHUNK).collect();
++    let mut command = String::new();
++    for (index, chunk) in chunks.iter().enumerate() {
++        let more = u8::from(index + 1 < chunks.len());
++        let chunk = std::str::from_utf8(chunk).unwrap_or_default();
++        if index == 0 {
++            command.push_str(&format!("\x1b_G{header},m={more};{chunk}\x1b\\"));
++        } else {
++            command.push_str(&format!("\x1b_Gm={more};{chunk}\x1b\\"));
++        }
++    }
++    command
++}
++
++pub(crate) fn kitty_remove(image_id: u32) -> String {
++    format!("\x1b_Ga=d,d=I,i={image_id},q=2;\x1b\\")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use pretty_assertions::assert_eq;
++
++    #[test]
++    fn kitty_remove_deletes_the_image_by_id_quietly() {
++        assert_eq!(kitty_remove(7), "\x1b_Ga=d,d=I,i=7,q=2;\x1b\\");
 +    }
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
@@ -157847,10 +156850,10 @@ index 000000000..c37432788
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..07072fbf1
+index 000000000..f1da22638
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1032 @@
+@@ -0,0 +1,1034 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -158864,9 +157867,11 @@ index 000000000..07072fbf1
 +        "packages.list" | "packages.index" | "packages.preview" | "packages.reload" => {
 +            let store = codex_omd::ModStore::open(store(paths)?)?;
 +            match operation {
-+                "packages.list" => {
-+                    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_ref())
-+                }
++                "packages.list" => codex_omd::package_controls::list_fields(
++                    &store,
++                    crate::omd::mod_status().as_ref(),
++                    call.arguments,
++                ),
 +                "packages.index" => codex_omd::package_controls::index(&store, call.arguments),
 +                "packages.preview" => codex_omd::package_controls::preview(&store, call.arguments)
 +                    .map(|preview| preview.public),
@@ -159721,10 +158726,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..1c281cb91
+index 000000000..95e57ff55
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4690 @@
+@@ -0,0 +1,4634 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -162451,7 +161456,6 @@ index 000000000..1c281cb91
 +    buffer: &mut Buffer,
 +    snapshot: &ModViewSnapshot,
 +) {
-+    render_backdrop(chat, chat, buffer, snapshot, false);
 +    render(area, chat, buffer, snapshot);
 +}
 +
@@ -162836,31 +161840,17 @@ index 000000000..1c281cb91
 +    buffer: &mut Buffer,
 +    paint: &codex_omd::ModSurfacePaint,
 +    base: Option<Color>,
-+    border_clip: Option<Rect>,
 +) {
 +    if area.is_empty() || std::env::var_os("NO_COLOR").is_some() {
 +        return;
 +    }
-+    let a = paint.top.or(paint.bottom).map(crate::mod_backdrop::rgb);
-+    let b = paint.bottom.or(paint.top).map(crate::mod_backdrop::rgb);
++    let a = paint.top.or(paint.bottom).map(crate::mod_kitty::rgb);
++    let b = paint.bottom.or(paint.top).map(crate::mod_kitty::rgb);
 +    let alpha = paint.opacity.unwrap_or(1.0);
 +    let fallback = crate::terminal_palette::default_bg()
 +        .map(|(r, g, b)| [r, g, b])
 +        .unwrap_or([0; 3]);
 +    for y in area.top()..area.bottom() {
-+        // A clipped backdrop border yields the whole row to native text and its spacing.
-+        let border_row = paint.border.is_some()
-+            && border_clip.is_none_or(|clip| {
-+                y >= clip.top()
-+                    && y < clip.bottom()
-+                    && !(area.left()..area.right()).any(|x| {
-+                        let cell = &buffer[(x, y)];
-+                        cell.symbol() != " "
-+                            || cell.bg != Color::Reset
-+                            || cell.fg != Color::Reset
-+                            || !cell.modifier.is_empty()
-+                    })
-+            });
 +        for x in area.left()..area.right() {
 +            let cell = &mut buffer[(x, y)];
 +            let can_paint_background = cell.bg == Color::Reset || Some(cell.bg) == base;
@@ -162884,15 +161874,13 @@ index 000000000..1c281cb91
 +            {
 +                let actual_background = match cell.bg {
 +                    Color::Rgb(r, g, b) => [r, g, b],
-+                    Color::Indexed(index) => crate::mod_backdrop::rgb(ModColor::Indexed(index)),
++                    Color::Indexed(index) => crate::mod_kitty::rgb(ModColor::Indexed(index)),
 +                    _ => fallback,
 +                };
 +                cell.set_fg(color(readable(fg, actual_background)));
 +            }
 +            if can_paint_background
 +                && alpha > 0.0
-+                && border_row
-+                && border_clip.is_none_or(|clip| x >= clip.left() && x < clip.right())
 +                && let Some(border) = paint.border
 +                && cell.symbol() == " "
 +                && area.width >= 4
@@ -162932,7 +161920,7 @@ index 000000000..1c281cb91
 +
 +/// Keeps the requested colour when it reads against the background, else white or black.
 +fn readable(fg: ModColor, background: [u8; 3]) -> ModColor {
-+    if contrast(crate::mod_backdrop::rgb(fg), background) >= 4.5 {
++    if contrast(crate::mod_kitty::rgb(fg), background) >= 4.5 {
 +        fg
 +    } else if contrast([255; 3], background) >= contrast([0; 3], background) {
 +        ModColor::Rgb(255, 255, 255)
@@ -162945,16 +161933,13 @@ index 000000000..1c281cb91
 +    let Some(paint) = snapshot().view.surface_styles.get(name).cloned() else {
 +        return;
 +    };
-+    if paint.glass.is_some() {
-+        crate::mod_backdrop_sync::note_glass_surface(area);
-+    }
-+    paint_surface(area, buffer, &paint, base, /*border_clip*/ None);
++    paint_surface(area, buffer, &paint, base);
 +    if name != APPROVAL_VIEW_ID {
 +        return;
 +    }
 +    let rgb = |color: Color, default: Option<(u8, u8, u8)>| match color {
 +        Color::Rgb(r, g, b) => Some([r, g, b]),
-+        Color::Indexed(index) => Some(crate::mod_backdrop::rgb(ModColor::Indexed(index))),
++        Color::Indexed(index) => Some(crate::mod_kitty::rgb(ModColor::Indexed(index))),
 +        Color::Reset => default.map(|(r, g, b)| [r, g, b]),
 +        _ => None,
 +    };
@@ -162969,33 +161954,6 @@ index 000000000..1c281cb91
 +                cell.set_fg(color(readable(ModColor::Rgb(fg[0], fg[1], fg[2]), bg)));
 +            }
 +        }
-+    }
-+}
-+
-+pub(crate) fn render_backdrop(
-+    area: Rect,
-+    glyph_area: Rect,
-+    buffer: &mut Buffer,
-+    snapshot: &ModViewSnapshot,
-+    image_active: bool,
-+) {
-+    if std::env::var_os("NO_COLOR").is_some() || area.is_empty() {
-+        return;
-+    }
-+    if !image_active
-+        && area.width >= crate::mod_backdrop::BACKDROP_MIN_COLUMNS
-+        && let Some(ascii) = match snapshot.view.backdrop.as_ref() {
-+            Some(codex_omd::ModBackdrop::Ascii { ascii }) => Some(ascii),
-+            Some(codex_omd::ModBackdrop::Image { fallback, .. }) => {
-+                fallback.as_ref().map(|value| &value.ascii)
-+            }
-+            None => None,
-+        }
-+    {
-+        crate::mod_backdrop::fill_ascii_configured(buffer, area, glyph_area, ascii);
-+    }
-+    if let Some(paint) = snapshot.view.surface_styles.get("backdrop") {
-+        paint_surface(area, buffer, paint, /*base*/ None, Some(glyph_area));
 +    }
 +}
 +
@@ -163060,18 +162018,9 @@ index 000000000..1c281cb91
 +pub(crate) fn render_owned(
 +    screen: Rect,
 +    chat: Rect,
-+    transcript: Rect,
-+    empty_transcript: Rect,
 +    buffer: &mut Buffer,
 +    snapshot: &ModViewSnapshot,
 +) {
-+    render_backdrop(
-+        transcript,
-+        empty_transcript,
-+        buffer,
-+        snapshot,
-+        crate::mod_backdrop_sync::image_active(),
-+    );
 +    let Some(placement) = placement(screen, snapshot) else {
 +        render(screen, chat, buffer, snapshot);
 +        return;
@@ -164417,7 +163366,7 @@ index 000000000..1c281cb91
 +}
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..e0cb74377
+index 000000000..805ff768c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
 @@ -0,0 +1,255 @@
@@ -164633,7 +163582,7 @@ index 000000000..e0cb74377
 +        {
 +            let _frame = footer_frame();
 +            footer_layout(area.width).render(area, &mut buffer);
-+            render_owned(screen, screen, screen, screen, &mut buffer, &snapshot);
++            render_owned(screen, screen, &mut buffer, &snapshot);
 +            let hit = INTERACTION
 +                .lock()
 +                .unwrap()
@@ -164678,10 +163627,10 @@ index 000000000..e0cb74377
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..2e6a29010
+index 000000000..9ecd96438
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2388 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -165335,13 +164284,7 @@ index 000000000..2e6a29010
 +        buffer[(2, 1)].set_char('X').set_fg(Color::Red);
 +        buffer[(3, 1)].set_bg(Color::Blue);
 +        let paint=serde_json::from_value(serde_json::json!({"top":"#ffffff","bottom":"#000000","foreground":"#aabbcc","border":"#888888","opacity":0.5})).unwrap();
-+        paint_surface(
-+            area,
-+            &mut buffer,
-+            &paint,
-+            /*base*/ None,
-+            /*border_clip*/ None,
-+        );
++        paint_surface(area, &mut buffer, &paint, /*base*/ None);
 +        assert_eq!(buffer[(2, 1)].symbol(), "X");
 +        assert_eq!(buffer[(2, 1)].fg, Color::Red);
 +        assert_eq!(buffer[(3, 1)].bg, Color::Blue);
@@ -165366,13 +164309,7 @@ index 000000000..2e6a29010
 +            .set_char('N')
 +            .set_bg(crate::terminal_palette::rgb_color((255, 255, 255)));
 +        let paint=serde_json::from_value(serde_json::json!({"top":"#ffffff","bottom":"#ffffff","foreground":"#1c1c1c","opacity":1})).unwrap();
-+        paint_surface(
-+            area,
-+            &mut buffer,
-+            &paint,
-+            /*base*/ None,
-+            /*border_clip*/ None,
-+        );
++        paint_surface(area, &mut buffer, &paint, /*base*/ None);
 +        assert_eq!(
 +            buffer[(1, 1)].bg,
 +            crate::terminal_palette::rgb_color((255, 255, 255))
@@ -165390,13 +164327,7 @@ index 000000000..2e6a29010
 +        )
 +        .unwrap();
 +        let mut buffer = Buffer::empty(area);
-+        paint_surface(
-+            area,
-+            &mut buffer,
-+            &transparent,
-+            /*base*/ None,
-+            /*border_clip*/ None,
-+        );
++        paint_surface(area, &mut buffer, &transparent, /*base*/ None);
 +        assert_eq!(buffer[(0, 0)].symbol(), " ");
 +        assert_eq!(
 +            buffer[(0, 0)].bg,
@@ -165418,91 +164349,6 @@ index 000000000..2e6a29010
 +    ] {
 +        assert_eq!(tone_style_with_colors(tone, false), Style::default());
 +    }
-+}
-+
-+#[test]
-+fn narrow_paper_backdrop_keeps_solid_surface_while_omitting_ascii_decoration() {
-+    let colors = crate::terminal_probe::DefaultColors {
-+        fg: (240, 240, 240),
-+        bg: (0, 0, 0),
-+    };
-+    crate::terminal_palette::with_test_default_colors(colors, || {
-+        let area = Rect::new(0, 0, 40, 4);
-+        let mut buffer = Buffer::empty(area);
-+        buffer[(1, 1)].set_char('P');
-+        let snapshot = snapshot(
-+            serde_json::json!({"backdrop":{"ascii":{"text":"DECORATION"}},"surface_styles":{"backdrop":{"top":"#ffffff","bottom":"#ffffff","foreground":"#1c1c1c","opacity":1}}}),
-+        );
-+        render_backdrop(area, area, &mut buffer, &snapshot, false);
-+        assert_eq!(buffer[(1, 1)].symbol(), "P");
-+        assert_eq!(
-+            buffer[(1, 1)].fg,
-+            crate::terminal_palette::rgb_color((28, 28, 28))
-+        );
-+        assert_eq!(
-+            buffer[(1, 1)].bg,
-+            crate::terminal_palette::rgb_color((255, 255, 255))
-+        );
-+        assert!(!rows(&buffer, area).contains("DECORATION"));
-+    });
-+}
-+
-+#[test]
-+#[serial_test::serial]
-+fn ascii_inline_preserves_native_text_whitespace_and_overlay_fields() {
-+    let area = Rect::new(0, 0, 80, 8);
-+    let mut buffer = Buffer::empty(area);
-+    Paragraph::new(vec![
-+        Line::from("  >_ OpenAI Codex (v<VERSION>) | External profile"),
-+        Line::from("  model: gpt-test    status: ready"),
-+        Line::from("    + let value = 1;    // diff spacing"),
-+        Line::from("  Error: permission denied    Retry?"),
-+        Line::from("  Approval: run command?    (y/n)"),
-+    ])
-+    .render(Rect { height: 5, ..area }, &mut buffer);
-+    Paragraph::new("> draft   with   spaces").render(
-+        Rect {
-+            y: 7,
-+            height: 1,
-+            ..area
-+        },
-+        &mut buffer,
-+    );
-+    let before = rows(&buffer, area);
-+    let native = buffer;
-+    let mut snapshot = snapshot(serde_json::json!({"surface_styles":{"backdrop":{
-+        "top":"#ffffff","bottom":"#eeeeee","foreground":"#1c1c1c","border":"#888888","opacity":0.85
-+    }}}));
-+    let mut frames = Vec::new();
-+    for art in [None, Some("ART")] {
-+        let mut buffer = native.clone();
-+        snapshot.view.backdrop = art.map(|text| {
-+            serde_json::from_value(serde_json::json!({"ascii":{"text":text,"position":"tile"}}))
-+                .unwrap()
-+        });
-+        render_inline(area, area, &mut buffer, &snapshot);
-+        let after = rows(&buffer, area);
-+        assert_eq!(
-+            after.lines().take(5).collect::<Vec<_>>(),
-+            before.lines().take(5).collect::<Vec<_>>()
-+        );
-+        assert_eq!(after.lines().last(), before.lines().last());
-+        if art.is_some() {
-+            assert!(after.lines().nth(5).unwrap().starts_with("ARTART"));
-+        } else {
-+            assert_eq!(buffer[(0, 5)].symbol(), "|");
-+            assert_eq!(buffer[(79, 5)].symbol(), "|");
-+        }
-+        frames.push(format!(
-+            "border with ASCII {art:?}\n{}",
-+            after
-+                .lines()
-+                .map(str::trim_end)
-+                .collect::<Vec<_>>()
-+                .join("\n")
-+        ));
-+    }
-+    insta::assert_snapshot!("ascii_inline_native_whitespace", frames.join("\n\n"));
 +}
 +
 +#[test]
@@ -165594,14 +164440,11 @@ index 000000000..2e6a29010
 +        let value = serde_json::json!({
 +            "foreground":234,"background":231,"title":"Workspace","sidebar_width":20,
 +            "panels":[{"title":"Workspace","lines":["status retained"]}],
-+            "backdrop":{"ascii":{"text":"ART","position":"tile"}},
 +            "surface_styles":{
-+                "backdrop":{"top":"#ffffff","bottom":"#ffffff","foreground":"#1c1c1c"},
 +                "composer":{"top":"#eeeeee","bottom":"#dddddd","foreground":"#1c1c1c","border":"#888888"}}
 +        });
 +        preview(snapshot(value));
 +        let current = super::snapshot();
-+        assert!(current.view.backdrop.is_some());
 +        let header = header_rows(area, &current);
 +        let chat = chat_area(area, &current, header);
 +        assert!(chat.width < area.width);
@@ -165617,7 +164460,6 @@ index 000000000..2e6a29010
 +            "-"
 +        );
 +        assert_ne!(buffer[(composer.x + 1, composer.y + 1)].bg, Color::Reset);
-+        assert!(rows(&buffer, area).contains("ART"));
 +        assert!(rows(&buffer, area).contains("status retained"));
 +
 +        let mut dialog = current;
@@ -165658,7 +164500,6 @@ index 000000000..2e6a29010
 +#[allow(clippy::print_stdout)]
 +fn appearance_render_cost_fixture() {
 +    use std::hint::black_box;
-+    use std::io::Cursor;
 +    use std::time::Instant;
 +
 +    fn summary(mut samples: Vec<f64>) -> serde_json::Value {
@@ -165700,7 +164541,7 @@ index 000000000..2e6a29010
 +                serde_json::json!({"top":"#262626","bottom":"#262626","foreground":"#eeeeee"}),
 +            )
 +            .unwrap();
-+            let glass=serde_json::from_value(serde_json::json!({"top":"#3a3a3a","bottom":"#202020","foreground":"#eeeeee","border":"#aaaaaa","opacity":0.85})).unwrap();
++            let bordered=serde_json::from_value(serde_json::json!({"top":"#3a3a3a","bottom":"#202020","foreground":"#eeeeee","border":"#aaaaaa","opacity":0.85})).unwrap();
 +            let baseline = measure(
 +                || {
 +                    black_box(base.clone());
@@ -165710,28 +164551,16 @@ index 000000000..2e6a29010
 +            let plain = measure(
 +                || {
 +                    let mut buffer = base.clone();
-+                    paint_surface(
-+                        area,
-+                        &mut buffer,
-+                        &solid,
-+                        /*base*/ None,
-+                        /*border_clip*/ None,
-+                    );
++                    paint_surface(area, &mut buffer, &solid, /*base*/ None);
 +                    assert_eq!(buffer[(1, 1)].symbol(), "T");
 +                    black_box(buffer);
 +                },
 +                20,
 +            );
-+            let glossy = measure(
++            let bordered_paint = measure(
 +                || {
 +                    let mut buffer = base.clone();
-+                    paint_surface(
-+                        area,
-+                        &mut buffer,
-+                        &glass,
-+                        /*base*/ None,
-+                        /*border_clip*/ None,
-+                    );
++                    paint_surface(area, &mut buffer, &bordered, /*base*/ None);
 +                    assert_eq!(buffer[(1, 1)].symbol(), "T");
 +                    black_box(buffer);
 +                },
@@ -165739,49 +164568,14 @@ index 000000000..2e6a29010
 +            );
 +            cell_results.push(serde_json::json!({"columns":width,"rows":height,
 +                "cell_struct_bytes":base.content.len()*std::mem::size_of::<ratatui::buffer::Cell>(),
-+                "buffer_clone":baseline,"solid_paint":plain,"gloss_paint":glossy}));
++                "buffer_clone":baseline,"solid_paint":plain,"bordered_paint":bordered_paint}));
 +        }
 +    });
-+    let image = image::RgbaImage::from_fn(512, 256, |x, y| {
-+        image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8, 255])
-+    });
-+    let mut source = Vec::new();
-+    image
-+        .write_to(&mut Cursor::new(&mut source), image::ImageFormat::Png)
-+        .unwrap();
-+    let settings = serde_json::from_value::<codex_omd::ModImageBackdrop>(serde_json::json!({
-+        "resource":{"reference":"fixture","sha256":"0".repeat(64)},"position":"fill","scale":1.2,
-+        "dim":0.75,"tint":"#262626","opacity":0.8,"offset":{"x":2,"y":-1}}))
-+    .unwrap();
-+    let overlay = serde_json::from_value(
-+        serde_json::json!({"top":"#3a3a3a","bottom":"#202020","opacity":0.85}),
-+    )
-+    .unwrap();
-+    let mut image_results = Vec::new();
-+    for (width, height, count) in [(80, 24, 3), (120, 40, 3), (256, 128, 2)] {
-+        let area = Rect::new(0, 0, width, height);
-+        let mut encoded_bytes = 0;
-+        let timing = measure(
-+            || {
-+                let png =
-+                    crate::mod_backdrop::transformed_png(&source, &settings, area, Some(&overlay), None)
-+                        .unwrap();
-+                encoded_bytes = png.len();
-+                black_box(png);
-+            },
-+            count,
-+        );
-+        let canvas_width = (u32::from(width) * 8).min(2048);
-+        let canvas_height = (u32::from(height) * 16).min(2048);
-+        image_results.push(serde_json::json!({"columns":width,"rows":height,"canvas_width":canvas_width,
-+            "canvas_height":canvas_height,"source_rgba_bytes":512*256*4,
-+            "canvas_rgba_bytes":canvas_width*canvas_height*4,"encoded_bytes":encoded_bytes,"decode_transform_gloss_encode":timing}));
-+    }
 +    println!(
 +        "APPEARANCE_COST {}",
-+        serde_json::json!({"profile":"debug test process; cached image hits and terminal graphic transmission excluded",
-+        "cells":cell_results,"images":image_results,"process_rss_before_kib":before_rss,"process_rss_after_kib":rss(),
-+        "memory_limit":"cell struct bytes exclude heap string capacity; source/canvas RGBA bytes exclude encoder scratch; RSS is a test-process sample, not an allocator or instantaneous peak measurement"})
++        serde_json::json!({"profile":"debug test process; terminal graphic transmission excluded",
++        "cells":cell_results,"process_rss_before_kib":before_rss,"process_rss_after_kib":rss(),
++        "memory_limit":"cell struct bytes exclude heap string capacity; RSS is a test-process sample, not an allocator or instantaneous peak measurement"})
 +    );
 +}
 +#[test]
@@ -168132,35 +166926,6 @@ index 000000000..45daa4104
 +        }
 +    }
 +}
-diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__ascii_inline_native_whitespace.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__ascii_inline_native_whitespace.snap
-new file mode 100644
-index 000000000..af0c120cb
---- /dev/null
-+++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__ascii_inline_native_whitespace.snap
-@@ -0,0 +1,23 @@
-+---
-+source: tui/src/mod_ui_tests.rs
-+expression: "frames.join(\"\\n\\n\")"
-+---
-+border with ASCII None
-+  >_ OpenAI Codex (v<VERSION>) | External profile
-+  model: gpt-test    status: ready
-+    + let value = 1;    // diff spacing
-+  Error: permission denied    Retry?
-+  Approval: run command?    (y/n)
-+|                                                                              |
-+|                                                                              |
-+> draft   with   spaces
-+
-+border with ASCII Some("ART")
-+  >_ OpenAI Codex (v<VERSION>) | External profile
-+  model: gpt-test    status: ready
-+    + let value = 1;    // diff spacing
-+  Error: permission denied    Retry?
-+  Approval: run command?    (y/n)
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+ARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTARTAR
-+> draft   with   spaces
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
 new file mode 100644
 index 000000000..c1c65cecf

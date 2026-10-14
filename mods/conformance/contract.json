@@ -282,7 +282,6 @@
     "render_sites:tool_result": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "render_sites:turn_duration": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "render_sites:user_message": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "view_fields:backdrop": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"backdrop:"},"decision":"terminal.view"},
     "view_fields:background": {"status":"experimental","reason":"No verified top-level TerminalView consumer in the launch collection; nested component styles do not qualify."},
     "view_fields:footer": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "view_fields:foreground": {"status":"experimental","reason":"No verified top-level TerminalView consumer in the launch collection; nested component styles do not qualify."},
@@ -1264,13 +1263,13 @@
     {
       "id": "terminal.paint",
       "group": "terminal",
-      "decision": "Generic surface gradients and transformed image/ASCII backdrops",
+      "decision": "Generic surface gradients",
       "observe": "not applicable",
-      "alter": "`surface_styles` for composer/backdrop/approval framing; backdrop placement, scale, offset, dim, opacity, tint and image overlay paint",
+      "alter": "`surface_styles` for composer/approval framing",
       "replace": null,
-      "timing": "inline or owned viewport render; media cached until resource, transform, environment or geometry changes",
-      "ownership": "mod: colors, composition and contrast policy; host: bounded decode/render and native text/semantic preservation",
-      "limits": "scale 0.1-4, offsets -4096..4096 cells, dim/opacity 0-1, RGB or indexed colors; no-color drops styling; graphics only detected local Kitty protocol in owned viewport; ASCII/plain-color fallback; decorative backdrops omitted below 60 columns, solid colors retained",
+      "timing": "inline or owned viewport render",
+      "ownership": "mod: colors, composition and contrast policy; host: bounded render and native text/semantic preservation",
+      "limits": "opacity 0-1, RGB or indexed colors; no-color drops styling",
       "native": "hooks cannot style terminal surfaces",
       "covers": {
         "capabilities": [],
@@ -1279,13 +1278,10 @@
         "operations": []
       },
       "evidence": [
-        "patch:appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface",
-        "patch:transforms_place_tile_tint_and_gloss_without_mutating_source",
+        "patch:appearance_styles_are_bounded_and_merge_by_surface",
         "patch:surface_paint_preserves_text_semantics_and_special_backgrounds",
         "patch:paper_surface_on_dark_terminal_paints_solid_background_and_readable_native_fill",
-        "patch:narrow_paper_backdrop_keeps_solid_surface_while_omitting_ascii_decoration",
         "patch:inline_snapshot_keeps_ascii_palette_composer_dialog_and_workspace_bounded",
-        "patch:graphics_eligibility_uses_production_protocol_remote_motion_color_and_ownership",
         "patch:native_approval_stays_visible_and_owns_enter_over_retained_mod_dialog",
         "patch:no_color_panels_drop_theme_indices"
       ],
@@ -2513,7 +2509,7 @@
     },
     {
       "id": "terminal_patch_composition",
-      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, backdrop, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
+      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
       "evidence": [
         "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
         "rust:a_failed_terminal_patch_is_transactional"

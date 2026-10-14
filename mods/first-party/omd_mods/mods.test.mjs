@@ -36,7 +36,8 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
     if (call.operation === 'packages.list') return { generation: 7, reload_error: null, packages: [
       item('omd_lsp_sync', { source: 'local', enabled: true, effective: true }), item('omd_advisor', { enabled: true, pending: 'reload' }),
       item('omd_workflow', { settings_schema: { type: 'object', properties: { greeting: { type: 'boolean', default: true }, density: { type: 'string', enum: ['full', 'compact'], default: 'full' } } }, settings: { greeting: true, density: 'full' } }),
-      item('omd_preview', { failed: 'callback_timeout: notes' })] };
+      item('omd_preview', { failed: 'callback_timeout: notes' })]
+      .map(entry => call.arguments ? Object.fromEntries(call.arguments.fields.map(field => [field, entry[field]])) : entry) };
     if (call.operation === 'packages.preview') return { action: 'update', id: 'omd_lsp_sync', changes: { packages: [{ id: 'omd_lsp_sync', version: { from: '1.0.0', to: '1.1.0' } }] }, grants_added: ['exec'], conflicts: [] };
     if (call.operation === 'settings.write') return { settings: call.arguments.values };
     return { status: 'applied', generation: 8 };
@@ -46,6 +47,7 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   const opened = run({ event: 'command', name: 'mods', payload: '' }, host);
   assert.equal(opened.state, null, 'opening does not change durable state');
   let state = opened.ui_state;
+  assert.ok(state.packages.every(entry => !('path' in entry) && !('settings' in entry) && !('grants' in entry)), 'the listing keeps only the fields it shows');
   const dialog = view(state);
   assert.deepEqual(opened.value.terminal.sites.dialog.components[1], dialog);
   assert.equal(dialog.title, 'Mods');

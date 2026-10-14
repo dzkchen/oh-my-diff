@@ -68,6 +68,18 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         (Some("sample_mod"), Some(false), Some(true))
     );
     let generation = listed["generation"].as_u64().unwrap();
+    assert_eq!(list_fields(&store, None, Value::Null).unwrap(), listed);
+    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]})).unwrap();
+    assert_eq!(
+        (narrow["packages"].clone(), narrow["generation"].as_u64()),
+        (
+            json!([{"id": "sample_mod", "enabled": false}]),
+            Some(generation)
+        )
+    );
+    for invalid in [json!({}), json!({"fields": "id"}), json!({"fields": [], "page": 1})] {
+        assert!(list_fields(&store, None, invalid).is_err());
+    }
 
     let enable = preview(
         &store,

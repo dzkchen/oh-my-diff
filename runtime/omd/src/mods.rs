@@ -29,9 +29,6 @@ pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
-pub use view::ModAsciiBackdrop;
-pub use view::ModBackdrop;
-pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
@@ -44,13 +41,13 @@ pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
-pub use view::ModImageBackdrop;
 pub use view::ModKeyAction;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
 pub use view::ModLayoutTabs;
 pub use view::ModListRow;
+pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -65,7 +62,6 @@ pub use view::ModSpacing;
 pub use view::ModSpan;
 pub use view::ModSplit;
 pub use view::ModStyle;
-pub use view::ModSurfaceGlass;
 pub use view::ModSurfacePaint;
 pub use view::ModTab;
 pub use view::ModTheme;
@@ -376,8 +372,6 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_feedback_v1",
     "terminal_media_v1",
     "terminal_surface_paint_v1",
-    "terminal_backdrop_transform_v1",
-    "terminal_surface_glass_v1",
     "codex_config_v1",
     "terminal_image_sample_v1",
     "terminal_import_lifetime_v1",

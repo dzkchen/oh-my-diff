@@ -546,9 +546,12 @@ pub(super) async fn dispatch(
                 .lock()
                 .map_err(|_| "mod_runtime_poisoned")?
                 .status();
+            let arguments = request.arguments;
             blocking(Box::new(move || {
                 codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| codex_omd::package_controls::list(&store, Some(&runtime)))
+                    .and_then(|store| {
+                        codex_omd::package_controls::list_fields(&store, Some(&runtime), arguments)
+                    })
                     .map_err(|error| error.to_string())
             }))
             .await

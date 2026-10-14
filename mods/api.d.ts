@@ -186,13 +186,7 @@ export type LayoutNode =
   | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle }
   | { split: 'horizontal' | 'vertical'; ratio?: number[]; gap?: number; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
-export type BackdropTransform = { position?: 'center' | 'fill' | 'fit' | 'tile'; dim?: number; scale?: number; tint?: ThemeColor; opacity?: number; offset?: { x: number; y: number } };
-export type AsciiBackdrop = BackdropTransform & { text: string };
-export type TerminalBackdrop =
-  | { ascii: AsciiBackdrop }
-  | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
-/** `glass` (composer only) draws the image backdrop under the surface, blurred and tinted; elsewhere the gradient stays. */
-export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number; glass?: { blur?: number; tint?: ThemeColor; opacity?: number } };
+export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
 /** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
 export type TerminalOverlay = {
   anchor: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center' | { component: string };
@@ -224,7 +218,7 @@ export interface TerminalView {
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   placeholder?: string;
-  layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
+  layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
@@ -449,7 +443,8 @@ export interface HostOperations {
   'prompts.status': { arguments: { consent: string }; result: { state: 'pending' | 'missing' } | { state: 'delivered'; client_id: string; turn_id: string } | { state: 'unconfirmed'; client_id: string } };
   'prompts.revoke': { arguments: { consent: string }; result: { revoked: number } };
   'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
-  'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
+  /** `fields` keeps only those keys of each package. */
+  'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string }; result: { index: string; packages: PackageCatalogEntry[] } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };

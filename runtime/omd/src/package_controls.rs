@@ -145,6 +145,35 @@ fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
     Ok(selections)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListArguments {
+    fields: Vec<String>,
+}
+
+/// `packages.list`: [`list`], keeping only the requested `fields` of each package.
+pub fn list_fields(
+    store: &ModStore,
+    runtime: Option<&Value>,
+    arguments: Value,
+) -> io::Result<Value> {
+    let fields = match arguments {
+        Value::Null => None,
+        arguments => Some(
+            serde_json::from_value::<ListArguments>(arguments)
+                .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?
+                .fields,
+        ),
+    };
+    let mut listed = list(store, runtime)?;
+    if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
+        for package in packages.iter_mut().filter_map(Value::as_object_mut) {
+            package.retain(|key, _| fields.iter().any(|field| field == key));
+        }
+    }
+    Ok(listed)
+}
+
 /// Lists every store selection; `runtime` is the serving session's mod status.
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let selections = selections(store)?;
