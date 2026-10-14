@@ -5193,6 +5193,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         "fs.external",
         "mcp",
         "history_write",
+        "request_policy",
     ];
     let path = write(
         "delegate",
@@ -5234,17 +5235,32 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 7);
-    assert!(
-        status["exposure"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|text| text.as_str().unwrap().starts_with("middleware:"))
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 8);
+    for name in ["middleware", "request_policy"] {
+        assert!(
+            status["exposure"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|text| text.as_str().unwrap().starts_with(&format!("{name}:")))
+        );
+        assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&name));
+    }
+    let policy = status["exposure"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|text| text.starts_with("request_policy:"))
+        .unwrap();
+    assert!(policy.contains("refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused."), "{policy}");
+    assert_eq!(
+        runtime.status()["request_policy_unavailable"],
+        "delegate registers no required model_send interceptor"
     );
-    assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&"middleware"));
     contended(|| store.revoke("delegate"));
     runtime.reload().unwrap();
+    assert_eq!(runtime.status()["request_policy_unavailable"], Value::Null);
     assert!(
         runtime.grants("delegate").is_none(),
         "a revoked mod is disabled"

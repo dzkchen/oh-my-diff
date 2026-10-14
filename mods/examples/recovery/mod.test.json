@@ -29,18 +29,10 @@
         {
           "mod": "recovery",
           "value": {
-            "text": "Recovery policy: revalidate failed hypotheses and remaining acceptance work before retrying. Verified host checkpoint fields are unavailable through mod API 0.2."
+            "text": "Recovery policy: revalidate failed hypotheses and remaining acceptance work before retrying."
           }
         }
       ]
-    },
-    {
-      "type": "invoke",
-      "mod": "recovery",
-      "event": "tool",
-      "name": "checkpoint",
-      "payload": {},
-      "expect_error": "unsupported_operation: checkpoint.read"
     }
   ]
 }

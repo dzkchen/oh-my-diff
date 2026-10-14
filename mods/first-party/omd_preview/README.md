@@ -1,6 +1,6 @@
 # omd_preview
 
-Opt-in first-party mod (`0.2.0-preview.1`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod that
 renders a response or a local Markdown, code or diff file as a themed HTML page
 and opens it in the browser, draws Mermaid diagrams in responses as text and
 shows the draft's pasted images above the composer.

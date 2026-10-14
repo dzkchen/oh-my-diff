@@ -15,13 +15,11 @@ stable status, nor replace the later public-release qualification.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0.162.1 | 0.1.0, experimental | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
-API 0.1 packages and declarations are retired from this development host. The
-earlier 0.1 support-window rows described pre-release builds and are historical
-evidence, not current executable compatibility. API 0.2 provides generic host
+Only API `0.2.0-experimental.5` loads. It provides generic host
 operations for execution, workspace access, snapshots, agents, contracts, evidence,
 store, processes, terminal rendering and services. Until the first public
 release the host supports only the current API: every API bump drops earlier
-versions, and in-repository packages move to the new version with it. The rows are not a promise
+versions, and in-repository packages move to the new version with it. The matrix is not a promise
 that every intervening or future version works. Before activation the host checks the
 package schema, API row, optional exact host-release list, required host features,
 declared authority, dependencies, and service imports. `omd-mod status` reports
@@ -80,13 +78,9 @@ checks package scope and trust, saves the current state as a forward-recovery
 copy, and atomically restores the selected backup. The package source must then
 be rolled back or upgraded to a release that understands the restored state.
 
-The retained cross-release cases are historical synthetic version fixtures: old `.4` through
-`.7` mods on the `.8` host, deliberate host/API/schema/feature incompatibility,
-compatible and incompatible provider/consumer versions, interrupted migration,
-and state rollback with source/settings/state preservation. No earlier public
-stable OMD mod release exists, so there is no real supported release transition
-to execute yet. That gate remains mandatory for the first supported successor
-release and may not be replaced with these fixtures.
+No public stable OMD mod release exists yet, so there is no real supported
+release transition to execute. The first supported successor release must
+execute one; synthetic fixtures do not replace it.
 
 Only the exact accumulated host/session fixtures and explicit package migration
 pairs are supported. OMD does not claim arbitrary-version session interchange,

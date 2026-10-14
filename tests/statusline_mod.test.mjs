@@ -241,7 +241,7 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
     return typeof stdout === 'function' ? stdout() : { exit_code: 0, timed_out: false, stdout, stderr: '' };
   };
   const padded = '\x1b[0m'.repeat(1024) + 'late\x1b[31mred';
-  const hostile = '\x1b[31mrain\x1b[0m \x1b]8;;https://example.com/w\x07forecast\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07bad\x1b]8;;\x07\x1b[2J\x1b]0;title\x07‮evil\n2nd line';
+  const hostile = '\x1b[31mrain\x1b[0m \x1b]8;;https://example.com/w\x07forecast\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07bad\x1b]8;;\x07\x1b[2J\x1b]0;title\x07\u202Eevil\n2nd line';
   const state = feed(started(), [['model_response', response('r1')]]);
   const viewed = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 90, rows: 30 } }, state, settings }).state;
   const done = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(hostile) })).state;

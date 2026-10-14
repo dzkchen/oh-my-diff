@@ -1,6 +1,6 @@
 # omd_lsp_view
 
-Opt-in first-party mod (`0.2.0-preview.1`, API `0.2.0-experimental.5`): a
+Opt-in first-party mod: a
 code-intelligence view over the language servers that
 [`omd_lsp_sync`](../omd_lsp_sync/README.md) already runs. It adds no second
 client; enable both.

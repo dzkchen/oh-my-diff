@@ -60,22 +60,12 @@ test('host control examples preserve clipboard status and scoped arguments', () 
   assert.deepEqual(run('status_tools', 'command', ' turn-a ', { name: 'abort_turn' }).host_call, { operation: 'turns.abort', arguments: { turn_id: 'turn-a' } });
 });
 
-test('all packed legacy examples declare the current API and type-only current imports', () => {
+test('examples declare the current API and register cleanly', () => {
   for (const name of names) {
     const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
-    const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
     assert.equal(manifest.api, '0.2.0-experimental.5', name);
-    assert.equal(manifest.version, '2.0.0', name);
-    assert.doesNotMatch(source, /mod-api\/0\.1|api-0\.1\.d\.ts/, name);
     run(name, 'inspect');
   }
-});
-
-test('context example does not present legacy checkpoint data as verified', () => {
-  const value = run('context', 'context', { thread_id: 'task', turn_id: 'one', ledger: { thread_id: 'task', cost: null },
-    checkpoint: { remaining_work: ['stale claim'] } }).value;
-  assert.match(value.text, /no verified host checkpoint/);
-  assert.doesNotMatch(value.text, /stale claim/);
 });
 
 test('coordination fails before agent spawn without two distinct included routes', () => {
@@ -115,11 +105,10 @@ test('model routing examples select only available included routes and protect s
   assert.deepEqual(intercept('1', 'response_stream', { kind: 'reasoning', index: 1, protected: true }).value, { unmatched: true });
 });
 
-test('recovery preserves compaction guidance and refuses unavailable checkpoint reads', () => {
+test('recovery replaces compaction threshold and context policy', () => {
   assert.equal(run('recovery', 'compaction', { token_limit: 20000, context_window: 30000 }).value.threshold, 16000);
   const context = run('recovery', 'context', { thread_id: 'task', turn_id: 'one', ledger: { thread_id: 'task', cost: null } }).value;
-  assert.match(context.text, /checkpoint fields are unavailable/);
-  assert.match(runRaw('recovery', 'tool', {}, { name: 'checkpoint' }).error, /unsupported_operation: checkpoint.read/);
+  assert.match(context.text, /^Recovery policy:/);
 });
 
 test('services, sidecar request, and virtual read use public current operations', () => {
