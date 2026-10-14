@@ -2135,7 +2135,7 @@ process connects with the SDK in
 `@oh-my-diff/mod-api/client`: `connect({url, token?, command?, name, renderer,
 operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?,
 onNotification?, onReconnect?, onClose?})` is dependency-free ESM for browsers
-and Node 22+ over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
+and Node over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
 `stdio` (Node; spawns `codex app-server`). The session's `attach`, `update`,
 `detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
 `recovery` and `request(method, params)` cover every `omd/*` and app-server
@@ -2788,7 +2788,7 @@ has no host maximum, so a provider's context window is configuration.
 | --- | --- |
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
-| `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
+| `omd-mod-author examples DIR` | Every public author example |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed |
 | `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
