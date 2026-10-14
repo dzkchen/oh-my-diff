@@ -3413,7 +3413,6 @@ impl ModHost {
             let keep = selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
-                    && m.sha256 == loaded.selection.sha256
                     && m.scope == loaded.selection.scope
                     && loaded
                         .package
