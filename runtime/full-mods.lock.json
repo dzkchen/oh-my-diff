@@ -302,13 +302,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "41031471e795c369241fa4e3870efbc6f74cbcf3ecc0f87f66a2cfa82a859aa4",
+        "index.ts": "cdf9c79270e4dcc87f49ec9de561926bc2e46476b58f5669eaa88313549e7716",
         "mod.json": "e5a79280d59ae47b25c3fad63c131493c6c07bdb87b944c73f5e35fb77b1dac2",
-        "segments.ts": "f636735a03ec4a637d4ce3a06a344577fea21acaec650dbe89cc259e17a1d09c",
-        "sources.ts": "bcab442b301711c65caea4b5e6b65216c869a689d93b0903a3870df8be0aae38"
+        "segments.ts": "4af630da4c439a8e47845b004b5754ec745c0acec87f933162ef39cba4e49e33",
+        "sources.ts": "eda2ba7393750ce30061dc0b1e434e7ad448c75e74a3a35b6bdd1d25e0c54ed1"
       },
       "id": "omd_statusline",
-      "package_sha256": "8d9b2d078668ae7ddc729ed31530c906d90ef98e76a4529a180df4ff55d72fd5",
+      "package_sha256": "5cb59421978891cb86c7fb5354f7cc18b10f686bc97c203b8ab4911236307ec4",
       "source": "mods/first-party/omd_statusline",
       "version": "0.1.0-preview.1"
     },

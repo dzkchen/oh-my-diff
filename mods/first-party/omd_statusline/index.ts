@@ -34,9 +34,10 @@ export default function activate(api: ModAPI) {
   };
 
   const refreshGit = () => {
-    const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', GIT_SCRIPT], timeout_ms: 3000, max_output_bytes: 65_536 });
+    const key = saved().cwd ?? '';
+    // The checkout in argv makes a state-conflict retry after a directory change rerun Git instead of replaying the old output.
+    const run = api.host.tryCall('exec.run', { program: 'sh', argv: ['-c', GIT_SCRIPT, key], timeout_ms: 3000, max_output_bytes: 65_536 });
     update(data => {
-      const key = data.cwd ?? '';
       data.git = !run.ok ? { ...parseGit(key, ''), error: visible(run.error, 80) }
         : run.value.exit_code !== 0 || run.value.timed_out ? { ...parseGit(key, ''), error: run.value.timed_out ? 'timed out' : 'not a repository' }
         : parseGit(key, run.value.stdout);
@@ -95,7 +96,7 @@ export default function activate(api: ModAPI) {
     const data = saved();
     const last = data.scripts[id];
     if (!force && last?.spec === spec && now - last.at < script.interval_s * 500) return;
-    const stdin = JSON.stringify(payload(data, config, id, now, data.viewport)).slice(0, 65_536);
+    const stdin = JSON.stringify(payload(data, config, id, now, data.viewport));
     const run = api.host.tryCall('exec.run', { program: script.command[0], argv: script.command.slice(1), stdin, timeout_ms: script.timeout_ms, max_output_bytes: 8192 });
     const spans = run.ok && run.value.exit_code === 0 && !run.value.timed_out ? ansi(run.value.stdout) : [];
     const status = !run.ok || run.value.exit_code !== 0 && !run.value.timed_out ? 'failed' : run.value.timed_out ? 'timeout' : spans.length ? 'ok' : 'empty';
@@ -104,7 +105,7 @@ export default function activate(api: ModAPI) {
 
   const timers = [
     api.time.every('git', config.refresh_s * 1000, refreshGit),
-    api.time.every('github', 30_000, () => pollGithub()),
+    ...config.github ? [api.time.every('github', 30_000, () => pollGithub())] : [],
     api.time.every('tick', 60_000, () => {
       const data = saved();
       const now = Date.now();
@@ -120,16 +121,17 @@ export default function activate(api: ModAPI) {
     for (const timer of timers) timer.start();
     update(data => { data.beat = Date.now(); data.armed = armedFor; });
   };
-  const refreshAll = () => {
+  const refresh = (force: boolean) => {
     refreshGit();
-    pollGithub(true);
-    for (const script of configured.scripts) runScript(script.id, true);
+    pollGithub(force);
+    for (const script of configured.scripts) runScript(script.id, force);
   };
+  const soon = api.time.after('refresh_soon', 1000, () => refresh(false));
   // Subprocess and network refreshes wait until startup has settled so they never compete with the first commands.
   const settle = api.time.after('settle', 2000, () => {
     const rates = api.usage.rateLimits();
     if (rates.available) update(data => limits(data, rates.value));
-    refreshAll();
+    refresh(true);
   });
 
   const limits = (data: Data, value: unknown) => {
@@ -166,7 +168,7 @@ export default function activate(api: ModAPI) {
   };
   api.on('start', configure);
   api.on('resume', configure);
-  api.on('session', ({ phase }) => { if (phase === 'idle') arm(); });
+  api.on('idle', () => arm());
 
   const apply = (data: Data, entry: Seen, sign: number) => {
     const [input, output, reasoning, cached, write, kind, amount] = entry;
@@ -201,12 +203,11 @@ export default function activate(api: ModAPI) {
   api.on('turn_end', () => {
     update(data => {
       data.tools = {};
-      if (data.pending && JSON.stringify(config) === JSON.stringify(data.pending.to)) data.pending = null;
+      // The turn after the one an apply landed in runs with the host's current settings, whichever route changed them.
+      if (data.pending) data.pending = data.pending.turns || JSON.stringify(config) === JSON.stringify(data.pending.to) ? null : { ...data.pending, turns: 1 };
     });
     arm();
-    refreshGit();
-    pollGithub();
-    for (const script of configured.scripts) runScript(script.id);
+    soon.start();
   });
   api.on('compaction_end', ({ outcome }) => {
     if (outcome === 'compacted' || outcome === 'replaced') update(data => { data.context.compactions += 1; data.context.compacted = Date.now(); });
@@ -232,15 +233,12 @@ export default function activate(api: ModAPI) {
     if (current !== null && thread !== null && thread !== current) return;
     if (method === 'thread/settings/updated') {
       const next = object(update_.threadSettings);
-      let moved = false;
       update(data => {
         const model = typeof next.model === 'string' ? next.model : data.model.requested;
         const provider = typeof next.modelProvider === 'string' ? next.modelProvider : data.model.provider;
         if (model !== data.model.requested || provider !== data.model.provider) data.context.switched = data.context.used !== null;
         data.model = { ...data.model, requested: model, provider, served: model !== data.model.requested ? null : data.model.served, effort: typeof next.effort === 'string' ? next.effort : data.model.effort };
-        if (typeof next.cwd === 'string' && next.cwd !== data.cwd) { data.cwd = next.cwd; moved = true; }
       });
-      if (moved) refreshAll();
     } else if (method === 'thread/tokenUsage/updated') {
       const size = number(object(update_.tokenUsage).modelContextWindow);
       if (size !== null) update(data => { data.context.window = size; });
@@ -251,15 +249,20 @@ export default function activate(api: ModAPI) {
       update(data => { data.plan = steps.length ? { done: steps.filter(step => step.status === 'completed').length, total: steps.length, step: active ? visible(active.step, 60) : null } : null; });
     }
   });
+  api.on('thread_settings', ({ cwd }) => {
+    if (cwd.after === cwd.before) return;
+    update(data => { data.cwd = cwd.after; });
+    refresh(true);
+  });
   api.on('channel', ({ channel, data, publisher }) => {
     if (channel !== 'omd_statusline/refresh') return;
     const sent = object(data);
     if (publisher === 'omd_statusline' && 'pending' in sent) {
       const pending = object(sent.pending);
-      update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)) } : null; });
+      return update(next => { next.pending = Array.isArray(pending.from) ? { from: pending.from.filter((item: unknown) => typeof item === 'string').slice(-8), to: settings(object(pending.to)), turns: 0 } : null; });
     }
     arm(true);
-    refreshAll();
+    refresh(true);
   });
 
   const editor = (): Editor => {
@@ -274,11 +277,14 @@ export default function activate(api: ModAPI) {
     const [first = '', second = ''] = rest;
     if (verb === 'set') {
       const value = rest.slice(1).join(' ');
-      const raw: Record<string, Json> = { ...state.draft, [first]: first === 'bars' || first === 'github' ? value === 'true' : first === 'refresh_s' ? Number(value) : value };
-      return { ...state, draft: settings(raw), notice: null };
+      const raw: Record<string, Json> = { ...state.draft, [first]: typeof state.draft[first as keyof Settings] === 'boolean' && (value === 'true' || value === 'false') ? value === 'true' : first === 'refresh_s' ? Number(value) : value };
+      return { ...state, draft: settings(raw, state.draft), notice: null };
     }
     if (verb === 'pick') return { ...state, selected: ids().includes(first) ? first : state.selected };
-    if (verb === 'reset') return { ...state, draft: { ...DEFAULTS }, notice: 'Defaults restored in the preview' };
+    if (verb === 'reset') {
+      const { tones, github, refresh_s, scripts } = state.draft;
+      return { ...state, draft: { ...DEFAULTS, tones, github, refresh_s, scripts }, notice: 'Defaults restored in the preview' };
+    }
     const direction = verb === 'move' && (first === 'up' || first === 'down') ? first : second;
     const segment = (direction === first ? '' : first) || state.selected;
     if (!segment || !ids().includes(segment)) return state;
@@ -333,8 +339,9 @@ export default function activate(api: ModAPI) {
       const listed = api.host.tryCall('credentials.list', null);
       const owned = listed.ok ? listed.value.find(item => item.kind === 'secret' && item.origin === GITHUB_ORIGIN) : undefined;
       const asked = api.host.tryCall('credentials.request', owned ? { action: 'refresh', profile: owned.id } : { action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: GITHUB_ORIGIN });
+      if (!asked.ok || asked.value.status !== 'completed') return { display: `GitHub token not saved${asked.ok ? '' : `: ${asked.error}`}` };
       api.host.tryCall('events.publish', { channel: 'refresh', data: null });
-      return { display: !asked.ok ? `GitHub token not saved: ${asked.error}` : asked.value.status === 'completed' ? 'GitHub token saved; pull request and CI status refresh now' : 'GitHub token not saved' };
+      return { display: 'GitHub token saved; pull request and CI status refresh now' };
     }
     if (verb === 'refresh') {
       const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });

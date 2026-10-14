@@ -33763,7 +33763,7 @@ index fb95a9701..e1a7846e0 100644
 
  impl RequestUserInputOverlay {
 diff --git a/codex-rs/tui/src/bottom_pane/slash_commands.rs b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-index 4c455ed8c..4ce226643 100644
+index 4c455ed8c..72ab8ba6f 100644
 --- a/codex-rs/tui/src/bottom_pane/slash_commands.rs
 +++ b/codex-rs/tui/src/bottom_pane/slash_commands.rs
 @@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
@@ -33824,16 +33824,24 @@ index 4c455ed8c..4ce226643 100644
  }
 
  #[derive(Clone, Copy, Debug, Default)]
-@@ -84,6 +104,8 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
+@@ -70,6 +90,7 @@ pub(crate) struct BuiltinCommandFlags {
+
+ /// Return the built-ins that should be visible/usable for the current input.
+ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static str, SlashCommand)> {
++    let builtins = crate::omd::builtins();
+     built_in_slash_commands()
+         .into_iter()
+         .filter(|(_, cmd)| flags.allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
+@@ -84,6 +105,8 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
              flags.daybreak_command_description.is_some() || *cmd != SlashCommand::Daybreak
          })
          .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
-+        .filter(|(_, cmd)| !crate::omd::command_hidden(cmd.command()))
++        .filter(|(_, cmd)| !builtins.command_hidden(cmd.command()))
 +        .filter(|(_, cmd)| *cmd != SlashCommand::Omd || crate::omd::is_active())
          .collect()
  }
 
-@@ -91,10 +113,27 @@ pub(crate) fn commands_for_input(
+@@ -91,10 +114,28 @@ pub(crate) fn commands_for_input(
      flags: BuiltinCommandFlags,
      service_tier_commands: &[ServiceTierCommand],
  ) -> Vec<SlashCommandItem> {
@@ -33853,16 +33861,17 @@ index 4c455ed8c..4ce226643 100644
 +) -> (Vec<SlashCommandItem>, Vec<serde_json::Value>) {
      let mut commands = Vec::new();
      let tiers_enabled = flags.service_tier_commands_enabled;
++    let builtins = crate::omd::builtins();
      for (_, cmd) in builtins_for_input(flags) {
 -        commands.push(SlashCommandItem::Builtin(cmd));
 +        commands.push(
-+            crate::omd::command_replacement(cmd.command())
++            crate::omd::command_replacement(&builtins, cmd.command())
 +                .map_or(SlashCommandItem::Builtin(cmd), SlashCommandItem::Mod),
 +        );
          if cmd == SlashCommand::Model && tiers_enabled {
              commands.extend(
                  service_tier_commands
-@@ -104,10 +143,39 @@ pub(crate) fn commands_for_input(
+@@ -104,10 +145,39 @@ pub(crate) fn commands_for_input(
              );
          }
      }
@@ -33904,7 +33913,7 @@ index 4c455ed8c..4ce226643 100644
  }
 
  /// Find a single built-in command by a recognized name or alias, after applying feature gating.
-@@ -137,20 +205,27 @@ pub(crate) fn find_slash_command(
+@@ -137,20 +207,27 @@ pub(crate) fn find_slash_command(
      flags: BuiltinCommandFlags,
      service_tier_commands: &[ServiceTierCommand],
  ) -> Option<SlashCommandItem> {
@@ -33920,7 +33929,7 @@ index 4c455ed8c..4ce226643 100644
 -                .find(|command| command.name == name)
 -                .cloned()
 -                .map(SlashCommandItem::ServiceTier)
-+    let found = crate::omd::command_replacement(name)
++    let found = crate::omd::command_replacement(&crate::omd::builtins(), name)
 +        .map(SlashCommandItem::Mod)
 +        .or_else(|| find_builtin_command(name, flags).map(SlashCommandItem::Builtin))
 +        .or_else(|| {
@@ -115354,10 +115363,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..7fb0d8d5a
+index 000000000..07f0cecc3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,618 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -115848,9 +115857,11 @@ index 000000000..7fb0d8d5a
 +}
 +
 +fn reused_pool() -> usize {
-+    REUSED_POOL
-+        .lock()
-+        .unwrap_or_else(PoisonError::into_inner)
++    reused_size(&REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner))
++}
++
++fn reused_size(sizes: &BTreeMap<u64, usize>) -> usize {
++    sizes
 +        .values()
 +        .max()
 +        .copied()
@@ -115976,10 +115987,10 @@ index 000000000..7fb0d8d5a
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..243f09290
+index 000000000..33d2919e0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,496 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -115990,11 +116001,10 @@ index 000000000..243f09290
 +
 +#[test]
 +fn reused_pool_fits_the_host_with_the_most_terminal_handlers() {
-+    super::size_reused_pool(u64::MAX - 1, Some(5));
-+    super::size_reused_pool(u64::MAX, Some(0));
-+    assert!(super::reused_pool() >= 5);
-+    super::size_reused_pool(u64::MAX - 1, None);
-+    super::size_reused_pool(u64::MAX, None);
++    let sizes = |entries: &[(u64, usize)]| super::reused_size(&entries.iter().copied().collect());
++    assert_eq!(sizes(&[(1, 5), (2, 0)]), 5);
++    assert_eq!(sizes(&[]), 2);
++    assert_eq!(sizes(&[(1, 20)]), 8);
 +}
 +
 +#[test]
@@ -116385,11 +116395,11 @@ index 000000000..243f09290
 +        WARM.lock()
 +            .unwrap()
 +            .iter()
-+            .filter(|runner| !runner.serve)
++            .filter(|runner| runner.key.starts_with("kind-command-"))
 +            .count()
-+            <= 2
++            <= super::reused_pool()
 +    );
-+    for key in ["kind-render", "kind-command-2", "kind-command-3"] {
++    for key in ["kind-render", "kind-command-0", "kind-command-1", "kind-command-2", "kind-command-3"] {
 +        super::invalidate_warm(key);
 +    }
 +}
@@ -160390,10 +160400,10 @@ index 000000000..7fe88d891
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..1fe277922
+index 000000000..00a6aaecb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,1145 @@
+@@ -0,0 +1,1176 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -161058,6 +161068,37 @@ index 000000000..1fe277922
 +        "Shadowed · bare /model unavailable: conflicts with built-in /model"
 +    );
 +    assert_eq!(commands[4].description, "Tally (/counter:tally)");
++}
++
++#[test]
++#[serial_test::serial]
++fn a_replaced_builtin_lists_the_replacing_command_description_and_arguments() {
++    let previous = CATALOG.lock().unwrap().take();
++    let temp = tempfile::tempdir().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    std::fs::write(
++        store.join(codex_omd::builtins_snapshot(&std::env::current_dir().unwrap())),
++        serde_json::json!({"schema":1,"hidden_commands":{},"disabled_modes":{},
++            "replaced_commands":{"statusline":["status","edit"]}})
++        .to_string(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&store);
++    let mut edit = test_entry(
++        "status:edit",
++        "edit",
++        "Edit the status line",
++        mod_target("status", "edit"),
++    );
++    edit.args_hint = Some("[apply|cancel]".to_owned());
++    *CATALOG.lock().unwrap() = Some((Instant::now(), build(vec![edit])));
++    let row = crate::omd::command_replacement(&crate::omd::builtins(), "statusline");
++    *CATALOG.lock().unwrap() = previous;
++    let row = row.unwrap();
++    assert_eq!(
++        (row.description.as_str(), row.args_hint.as_deref()),
++        ("Edit the status line", Some("[apply|cancel]"))
++    );
 +}
 +
 +#[test]
@@ -171169,10 +171210,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..fcdcc7872
+index 000000000..27ba8608f
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,777 @@
+@@ -0,0 +1,787 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -171386,7 +171427,10 @@ index 000000000..fcdcc7872
 +        codex_omd::BuiltinSnapshot,
 +    );
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
-+    let root = mod_paths().and_then(|paths| Some((paths.store?, paths.repository)));
++    let root = std::env::current_dir()
++        .ok()
++        .and_then(|launch| mod_paths_for(&launch))
++        .and_then(|paths| Some((paths.store?, paths.repository)));
 +    let mut cache = CACHE
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -171404,12 +171448,19 @@ index 000000000..fcdcc7872
 +    snapshot
 +}
 +
-+pub(crate) fn command_replacement(command: &str) -> Option<crate::mod_runtime::ModSlashCommand> {
-+    let (id, target) = builtins().command_replacement(command)?.clone();
++pub(crate) fn command_replacement(
++    builtins: &codex_omd::BuiltinSnapshot,
++    command: &str,
++) -> Option<crate::mod_runtime::ModSlashCommand> {
++    let (id, target) = builtins.command_replacement(command)?.clone();
++    let own = crate::mod_runtime::find(&format!("{id}:{target}"));
 +    Some(crate::mod_runtime::ModSlashCommand {
 +        invocation: command.to_owned(),
-+        description: format!("Replaced by {id}:{target}"),
-+        args_hint: None,
++        description: own.as_ref().map_or_else(
++            || format!("Replaced by {id}:{target}"),
++            |own| own.description.split(" · bare /").next().unwrap_or_default().to_owned(),
++        ),
++        args_hint: own.and_then(|own| own.args_hint),
 +        immediate: true,
 +        target: crate::mod_runtime::ModSlashTarget {
 +            id,
@@ -171424,10 +171475,6 @@ index 000000000..fcdcc7872
 +        .into_iter()
 +        .map(|(action, (_, key))| (action, key))
 +        .collect()
-+}
-+
-+pub(crate) fn command_hidden(command: &str) -> bool {
-+    builtins().command_hidden(command)
 +}
 +
 +pub(crate) fn status_line_disabled() -> bool {
@@ -171872,8 +171919,9 @@ index 000000000..fcdcc7872
 +    fn builtin_controls_hide_commands_and_disable_modes_but_never_recovery() {
 +        let root = TempDir::new().unwrap();
 +        let store = store_fixture(&root);
++        let launch = std::env::current_dir().unwrap();
 +        std::fs::write(
-+            store.join(codex_omd::builtins_snapshot(&store)),
++            store.join(codex_omd::builtins_snapshot(&launch)),
 +            serde_json::json!({"schema":1,"hidden_commands":{"plan":["fixture"]},
 +                "disabled_modes":{"plan":["fixture"]},
 +                "disabled_surfaces":{"status_line":["fixture"]},
@@ -171882,14 +171930,17 @@ index 000000000..fcdcc7872
 +        )
 +        .unwrap();
 +        let _omd = omd_environment(&store);
-+        assert!(command_hidden("plan"));
-+        assert!(!command_hidden("omd"));
-+        assert!(!command_hidden("model"));
++        assert!(
++            builtins().command_hidden("plan"),
++            "a thread in another checkout reads the launch directory's built-ins, as the host writes them"
++        );
++        assert!(!builtins().command_hidden("omd"));
++        assert!(!builtins().command_hidden("model"));
 +        assert!(mode_disabled(codex_protocol::config_types::ModeKind::Plan));
 +        assert!(!mode_disabled(
 +            codex_protocol::config_types::ModeKind::Default
 +        ));
-+        assert!(command_replacement("review").is_some());
++        assert!(command_replacement(&builtins(), "review").is_some());
 +        assert!(
 +            crate::bottom_pane::slash_commands::commands_for_input(Default::default(), &[])
 +                .iter()
@@ -171906,15 +171957,15 @@ index 000000000..fcdcc7872
 +            "sessions in another repository keep their built-ins"
 +        );
 +        {
-+            let _home = EnvGuard::set("HOME", store.to_str());
++            let _home = EnvGuard::set("HOME", launch.to_str());
 +            assert!(!status_line_disabled());
-+            assert!(!command_hidden("plan"));
++            assert!(!builtins().command_hidden("plan"));
 +            assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));
-+            assert!(command_replacement("review").is_none());
++            assert!(command_replacement(&builtins(), "review").is_none());
 +        }
-+        assert!(command_hidden("plan"));
++        assert!(builtins().command_hidden("plan"));
 +        let _direct = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
-+        assert!(!command_hidden("plan"));
++        assert!(!builtins().command_hidden("plan"));
 +        assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));
 +    }
 +

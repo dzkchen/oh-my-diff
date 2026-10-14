@@ -13,7 +13,7 @@ const manifest = JSON.parse(read('mod.json'));
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
 const surface = {
-  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', session: 'lifecycle', turn_end: 'lifecycle', tool_result: 'lifecycle',
+  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', idle: 'lifecycle', thread_settings: 'lifecycle', turn_end: 'lifecycle', tool_result: 'lifecycle',
     compaction_end: 'lifecycle', model_response: 'model', agent: 'middleware', tool_call: 'middleware', app_notification: 'threads', component_event: 'terminal' },
   intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts',
 };
@@ -43,14 +43,14 @@ const host = (overrides = {}) => ({ operation, arguments: args }) => {
   throw new Error(`unexpected host call ${operation}`);
 };
 
+const run = (input, receipts) => JSON.parse(runnerSync({ source, filename: fileURLToPath(new URL('index.ts', dir)), entrypoint: 'index.ts', assets, api: manifest.api, surface,
+  capabilities: manifest.capabilities, settings: {}, state: null, virtual_time_ms: NOW, hook_budget_ms: 10_000, ...input, receipts }).stdout);
 function call(input, answer = host()) {
   const receipts = [];
   const calls = [];
   for (;;) {
-    const result = runnerSync({ source, filename: fileURLToPath(new URL('index.ts', dir)), entrypoint: 'index.ts', assets, api: manifest.api, surface, capabilities: manifest.capabilities,
-      settings: {}, state: null, virtual_time_ms: NOW, hook_budget_ms: 10_000, ...input, receipts });
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.error, undefined, `${output.error}\n${result.stderr}`);
+    const output = run(input, receipts);
+    assert.equal(output.error, undefined, output.error);
     if (!output.host_call) return { ...output, calls, ui: output.ui_state === undefined ? null : JSON.parse(output.ui_state) };
     calls.push(output.host_call);
     const value = (() => { try { return answer(output.host_call); } catch (error) { return error; } })();
@@ -104,6 +104,7 @@ test('session telemetry is request-idempotent, separates workers from the lead c
   assert.match(ledger({ settled_task_charge_microusd: 4_000_000 }), / ~\$4\.00 est\. /, 'settled charges this mod did not see still count');
   const switched = feed(state, [['app_notification', { method: 'thread/settings/updated', params: { threadId: 'lead', threadSettings: { model: 'gpt-6.2', modelProvider: 'openai' } }, thread_id: 'lead', coalesced: 0, dropped: 0 }]]);
   assert.match(lines(view(switched))[0], /^gpt-6\.2 · .*~38%/);
+  assert.doesNotMatch(lines(view(state, { preset: 'custom', layout: 'model limits' }))[0], /5h/, 'a one-line layout shows the tightest window whatever its preset');
   const compacted = feed(state, [['compaction_end', { turn_id: 't', trigger: 'auto', outcome: 'compacted', by: null, provider_call: true }, { virtual_time_ms: NOW + 1000 }]]);
   assert.match(lines(view(compacted))[0], /~38% 170k left ⟳1/);
   assert.deepEqual(lines(view(null)), []);
@@ -128,6 +129,9 @@ test('narrow terminals drop trailing segments, ASCII glyphs replace symbols and 
   const ascii = view(state, { glyphs: 'ascii', preset: 'detailed' });
   assert.ok(lines(ascii).every(text => !/[↑↓↻⎇█░·]/.test(text)));
   for (const item of rows(ascii)) assert.ok(item.spans.length <= 12);
+  const wide = { ...state, git: { ...state.git, branch: '機能'.repeat(12) } };
+  const cells = text => [...text].reduce((sum, char) => sum + (/[　-鿿]/.test(char) ? 2 : 1), 0);
+  assert.ok(lines(view(wide, { preset: 'custom', layout: 'git' }, { client: { kind: 'terminal', columns: 30, rows: 20 } })).every(text => cells(text) <= 26), 'wide characters count two cells');
   const above = view(state, { placement: 'above' });
   assert.deepEqual(Object.keys(above.sites), ['above_composer']);
   assert.equal(above.sites.above_composer.components[0].type, 'slot');
@@ -145,10 +149,25 @@ test('git results from another checkout are discarded and a non-repository hides
   const moved = { ...state, cwd: '/elsewhere' };
   const raced = call({ event: 'timer', payload: { key: 'time:git' }, state: moved }, host({ 'exec.run': () => ({ exit_code: 0, timed_out: false, stdout: GIT, stderr: '' }) })).state;
   assert.equal(raced.git.key, '/elsewhere');
+  const timer = { event: 'timer', payload: { key: 'time:git' }, state };
+  const recorded = call(timer).calls.map(item => ({ call: item, value: host()(item) }));
+  assert.match(run({ ...timer, state: moved }, recorded).error ?? '', /replay_diverged/, 'a state-conflict retry after a directory change reruns Git');
   assert.doesNotMatch(lines(view(state, {}, { ledger: { thread_id: 'lead', cwd: '/other', cost: null } }))[0], /feat\/line/);
   const outside = settled(host({ 'exec.run': () => ({ exit_code: 3, timed_out: false, stdout: '', stderr: 'fatal: not a git repository' }) }));
   assert.equal(outside.git.error, 'not a repository');
   assert.doesNotMatch(lines(view(outside))[0], /⎇/);
+});
+
+test('turn ends, idles and directory changes refresh outside the turn through events the host serves', () => {
+  const state = started();
+  const ended = call({ event: 'turn_end', payload: { turn_id: 't', outcome: 'completed' }, state });
+  assert.ok(!ended.calls.some(item => item.operation === 'exec.run' || item.operation === 'http.request'), 'a turn end runs no subprocess or network work');
+  assert.ok(ended.calls.some(item => item.operation === 'events.schedule' && item.arguments.key === 'time:refresh_soon'));
+  assert.ok(call({ event: 'idle', payload: { cause: 'TurnComplete' }, state: { ...state, beat: NOW - 200_000 } }).calls.some(item => item.operation === 'events.schedule'), 'idle re-arms stale timers');
+  const notified = call({ event: 'app_notification', payload: { method: 'thread/settings/updated', params: { threadId: 'lead', threadSettings: { cwd: '/wt' } }, thread_id: 'lead', coalesced: 0, dropped: 0 }, state });
+  assert.ok(!notified.calls.some(item => item.operation === 'exec.run' || item.operation === 'http.request'), 'the terminal-side notification refreshes nothing');
+  const moved = call({ event: 'thread_settings', payload: { cwd: { before: '/repo', after: '/wt' }, roots: { added: [], removed: [] }, model: { before: null, after: null } }, state });
+  assert.deepEqual([moved.state.cwd, moved.state.git.key], ['/wt', '/wt']);
 });
 
 test('a status listing over the output cap keeps the branch, remote and diff summary', () => {
@@ -207,7 +226,10 @@ test('pull request and CI status cover auth, success, rate limits, offline backo
   const switched = { ...due, git: { ...due.git, branch: 'main' } };
   assert.equal(call({ event: 'timer', payload: { key: 'time:github' }, state: switched }, host({ ...profile,
     'http.request': args => ({ status: 200, url: args.url, headers: {}, redirects: [], body: GRAPHQL, truncated: false, bytes: 1 }) })).state.github.key, 'dzkchen/oh-my-diff#main');
-  assert.equal(call({ event: 'timer', payload: { key: 'time:github' }, state: due, settings: { github: false } }).state.github.status, 'idle');
+  const off = { github: false, preset: 'detailed' };
+  assert.doesNotMatch(lines(view(ok, off))[1], /PR|CI/, 'turning GitHub off hides the last result');
+  const armed = call({ event: 'start', payload: {}, settings: off }).calls.filter(item => item.operation === 'events.schedule').map(item => item.arguments.key);
+  assert.ok(armed.includes('time:git') && !armed.includes('time:github'), 'turning GitHub off stops its poll');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
@@ -218,6 +240,7 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
     runs.push(args);
     return typeof stdout === 'function' ? stdout() : { exit_code: 0, timed_out: false, stdout, stderr: '' };
   };
+  const padded = '\x1b[0m'.repeat(1024) + 'late\x1b[31mred';
   const hostile = '\x1b[31mrain\x1b[0m \x1b]8;;https://example.com/w\x07forecast\x1b]8;;\x07 \x1b]8;;javascript:alert(1)\x07bad\x1b]8;;\x07\x1b[2J\x1b]0;title\x07‮evil\n2nd line';
   const state = feed(started(), [['model_response', response('r1')]]);
   const viewed = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 90, rows: 30 } }, state, settings }).state;
@@ -228,6 +251,8 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
   assert.deepEqual(spans.slice(-4), [{ text: 'rain', tone: 'failure' }, { text: ' ' }, { text: 'forecast', link: 'https://example.com/w' }, { text: ' badevil' }]);
   assert.equal(spans.map(span => span.text).join(''), 'gpt-6.1-sol · rain forecast badevil');
   assert.ok(spans.every(span => !span.link || span.link.startsWith('https://')));
+  const late = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(padded) })).state;
+  assert.doesNotMatch(lines(view(late, settings))[0] ?? '', /\[/, 'escape sequences past the scanned prefix never reach the line');
   const timedOut = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(() => ({ exit_code: null, timed_out: true, stdout: '', stderr: '' })) })).state;
   assert.match(lines(view(timedOut, settings))[0], /weather: timed out/);
   const crashed = call({ event: 'timer', payload: { key: 'time:script_weather' }, state: viewed, settings }, host({ 'exec.run': run(() => ({ exit_code: 139, timed_out: false, stdout: 'partial', stderr: 'segfault' })) })).state;
@@ -269,12 +294,16 @@ test('the editor previews drafts live, applies only changes and cancels without 
   assert.deepEqual(applied.state, state, 'apply writes no durable state beside the settings');
   const published = applied.calls.findIndex(item => item.operation === 'events.publish');
   assert.ok(published >= 0 && published < applied.calls.indexOf(write), 'the apply is announced before the settings write');
-  const recorded = call({ event: 'channel', payload: { publisher: 'omd_statusline', channel: 'omd_statusline/refresh', data: applied.calls[published].arguments.data, correlation: null, sequence: 1, dropped: 0 }, state }).state;
+  const announcement = call({ event: 'channel', payload: { publisher: 'omd_statusline', channel: 'omd_statusline/refresh', data: applied.calls[published].arguments.data, correlation: null, sequence: 1, dropped: 0 }, state });
+  assert.deepEqual(announcement.calls, [], 'recording an apply refreshes nothing');
+  const recorded = announcement.state;
   const written = { placement: 'above', preset: 'custom', layout: 'model context limits omd; git' };
   assert.deepEqual(Object.keys(view(recorded, {}).sites), ['above_composer'], 'a host still on the superseded settings draws the applied ones');
   assert.deepEqual(Object.keys(view(recorded, written).sites), ['above_composer']);
   assert.deepEqual(Object.keys(view(recorded, { preset: 'detailed' }).sites), ['below_composer'], 'settings changed elsewhere afterwards win');
-  assert.notEqual(call({ event: 'turn_end', payload: { turn_id: 't', outcome: 'completed' }, state: recorded, settings: {} }).state.pending, null);
+  const once = call({ event: 'turn_end', payload: { turn_id: 't', outcome: 'completed' }, state: recorded, settings: {} }).state;
+  assert.notEqual(once.pending, null);
+  assert.equal(call({ event: 'turn_end', payload: { turn_id: 't2', outcome: 'completed' }, state: once, settings: {} }).state.pending, null, 'the next turn runs with the settings the host has, however they changed');
   assert.equal(call({ event: 'turn_end', payload: { turn_id: 't', outcome: 'completed' }, state: recorded, settings: written }).state.pending, null);
   const second = call({ event: 'command', name: 'edit', payload: 'apply', state: recorded, ui_state: { open: true, draft: { ...written, preset: 'detailed' } }, settings: written });
   const announced = second.calls.find(item => item.operation === 'events.publish').arguments.data.pending;
@@ -286,6 +315,9 @@ test('the editor previews drafts live, applies only changes and cancels without 
   const escaped = call({ event: 'component_event', payload: { component: 'omd_statusline_dialog', kind: 'close', origin: 'user' }, state, ui_state: split }).ui;
   assert.equal(escaped.open, false, 'any user dismissal closes the editor');
   assert.equal(command('reset', split).ui.draft.preset, 'compact');
+  const kept = command('reset', { ...split, draft: { ...split.draft, github: false, scripts: '[]', refresh_s: 60, tones: 'git=accent' } }).ui.draft;
+  assert.deepEqual([kept.preset, kept.github, kept.scripts, kept.refresh_s, kept.tones], ['compact', false, '[]', 60, 'git=accent'], 'reset restores only what the editor shows');
+  assert.equal(command('set placement Above', changed).ui.draft.placement, 'above', 'an invalid value keeps the current one');
   assert.equal(command('apply', opened.ui).calls.some(item => item.operation === 'settings.write'), false);
   const stale = command('apply', escaped);
   assert.equal(stale.calls.length, 0);
@@ -310,4 +342,6 @@ test('/statusline github rotates the existing token instead of enrolling a dupli
   call({ event: 'command', name: 'edit', payload: 'github' }, answer([]));
   call({ event: 'command', name: 'edit', payload: 'github' }, answer([{ id: 'p7', label: 'GitHub (status line)', kind: 'secret', provider: null, origin: 'https://api.github.com', status: 'ready', default: false }]));
   assert.deepEqual(requests, [{ action: 'enroll', kind: 'secret', label: 'GitHub (status line)', origin: 'https://api.github.com' }, { action: 'refresh', profile: 'p7' }]);
+  const declined = call({ event: 'command', name: 'edit', payload: 'github' }, host({ 'credentials.list': () => [], 'credentials.request': () => ({ status: 'cancelled', profile: null }) }));
+  assert.ok(!declined.calls.some(item => item.operation === 'events.publish'), 'a declined token refreshes nothing');
 });

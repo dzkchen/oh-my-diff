@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "895c06195f969439afe274894ca92da406e1f193d67a816e4badbf7e40ebbbc3"
+    "sha256": "8efb99dc23569369093d5d3cf957d47b4a9a93bf7af4933c9dab02c5834fe4fd"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1265,11 +1265,11 @@
     },
     "codex-rs/omd/src/mods/process.rs": {
       "before": null,
-      "after": "9e6d164607172791e4895af1db248982052d8e84b2692c283bd91d53873a8226"
+      "after": "c5a65560d7f681a936b34bddc46f19d3e46563ad041e2ded7957121185704a42"
     },
     "codex-rs/omd/src/mods/process_tests.rs": {
       "before": null,
-      "after": "aca9b18ff96b9a057395b46324d828cab04e193c33132c93423d1f7ade1502bd"
+      "after": "1a15be21a52fff246e1d77934e4980442d6a4b843d5bff579b2ce13290d18f86"
     },
     "codex-rs/omd/src/mods/render.rs": {
       "before": null,
@@ -1881,7 +1881,7 @@
     },
     "codex-rs/tui/src/bottom_pane/slash_commands.rs": {
       "before": "9a13d56881065eb026c3425a93ff22f8c73d7d8cb228403ec63ea51bd55ceff2",
-      "after": "fd853f5c88c88177099a340776087081f8f1d87cc0b09399f5a2ab8ce3804f1d"
+      "after": "e209b5eb026c35011dc5a13ad44c2e543489e2e63bb5d2e6205f5c2fd124dbfa"
     },
     "codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__chat_composer__tests__vim_replace_completion_suffix.snap": {
       "before": "56d5cae6f637a48a4e52595d85262c63e4955d42f6ecbe29c4fb0ebe5325a60c",
@@ -2569,7 +2569,7 @@
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
-      "after": "225e7130acd2e500d4874a578c93c76b67d8f4dc3d676d6ca94bbf7dd8230fe0"
+      "after": "386015b74354448f5d0f01ec3d968c616e02b63f44beb471ab1b2ebf25a046a2"
     },
     "codex-rs/tui/src/mod_surface.rs": {
       "before": null,
@@ -2605,7 +2605,7 @@
     },
     "codex-rs/tui/src/omd.rs": {
       "before": null,
-      "after": "a5f0fb908635e2d9fb9b8141ed511e0639294a5640cccd3940e89eb07b7d0624"
+      "after": "ffc6624e827ed8d282e1238dd16ebda4a309e85056c05a67fb4403a25a4a6386"
     },
     "codex-rs/tui/src/pager_overlay/transcript.rs": {
       "before": "1da6164a63acad68767f86f2e73f7e5fa1441b138fb8f6b19e5fa7c471be203f",

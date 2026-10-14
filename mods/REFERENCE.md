@@ -756,7 +756,9 @@ proves only what its policies detect.
 `api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`,
 registered during activation, hides slash commands, disables collaboration
 modes and turns off native surfaces from the next idle boundary until the mod
-is disabled, unloaded or fails. `surfaces: {disable: ['status_line']}` turns
+is disabled, unloaded or fails. Controls belong to the directory OMD was
+launched in and cover every thread of that session, including threads in its
+worktrees. `surfaces: {disable: ['status_line']}` turns
 off the upstream `/statusline` row at its source: its configured items are
 neither computed nor polled and reserve no height, the user's `tui.status_line`
 setting is untouched, and the row still draws when other mods publish `status`
@@ -1991,7 +1993,8 @@ Operations:
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {action}` runs a key action from user contexts;
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
-  `approval.*`) and routes a built-in command to a mod command.
+  `approval.*`) and routes a built-in command to a mod command; the slash
+  popup lists the built-in with that command's description and arguments.
 
 ### External clients (`omd-client/1`)
 

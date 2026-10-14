@@ -40,7 +40,7 @@ export type Data = {
   limits: { minutes: number | null; used: number; resets: number | null }[]; credits: string | null;
   tools: Record<string, number>; agents: Record<string, string>; plan: { done: number; total: number; step: string | null } | null;
   git: Git | null; github: Github; scripts: Record<string, ScriptResult>; tick: number; beat: number | null; armed: string | null; viewport: { columns: number; rows: number } | null; mods: Mods | null;
-  pending: { from: string[]; to: Settings } | null;
+  pending: { from: string[]; to: Settings; turns: number } | null;
 };
 export const EMPTY: Data = {
   thread: null, started: null, cwd: null, model: { requested: null, served: null, effort: null, provider: null, billing: null },
@@ -51,8 +51,20 @@ export const EMPTY: Data = {
 };
 
 export const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '').slice(0, limit);
-const width = (text: string) => [...text].length;
-const clip = (text: string, max: number) => width(text) > max ? `${[...text].slice(0, Math.max(0, max - 1)).join('')}…` : text;
+const cells = (char: string) => /\p{M}|‍|️/u.test(char) ? 0
+  : /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꥠ-꥿가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u.test(char) ? 2 : 1;
+const width = (text: string) => [...text].reduce((sum, char) => sum + cells(char), 0);
+const clip = (text: string, max: number) => {
+  if (width(text) <= max) return text;
+  let kept = '';
+  let used = 0;
+  for (const char of text) {
+    if (used + cells(char) > max - 1) break;
+    kept += char;
+    used += cells(char);
+  }
+  return `${kept}…`;
+};
 export const count = (n: number) => n < 1000 ? String(Math.round(n)) : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(1)}M`;
 export const usd = (value: number) => `$${value < 10 ? value.toFixed(2) : value.toFixed(1)}`;
 export const span = (ms: number) => {
@@ -61,8 +73,8 @@ export const span = (ms: number) => {
 };
 const windowName = (minutes: number | null) => minutes === null ? 'limit' : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 
-export function settings(raw: Readonly<Record<string, Json>>): Settings {
-  const pick = <K extends keyof Settings>(key: K, valid: (value: Json) => boolean) => (valid(raw[key]) ? raw[key] : DEFAULTS[key]) as Settings[K];
+export function settings(raw: Readonly<Record<string, Json>>, fallback: Settings = DEFAULTS): Settings {
+  const pick = <K extends keyof Settings>(key: K, valid: (value: Json) => boolean) => (valid(raw[key]) ? raw[key] : fallback[key]) as Settings[K];
   const text = (value: Json) => typeof value === 'string' && value.length <= 2048;
   return {
     placement: pick('placement', value => value === 'below' || value === 'above'),
@@ -122,7 +134,7 @@ export const charge = (basis: string, microusd: number | null, reported: { usd: 
 export const githubKey = (git: Git | null) => git?.remote && git.branch ? `${git.remote.owner}/${git.remote.repo}#${git.branch}` : null;
 
 type Part = TerminalSpan[] | null;
-type Env = { data: Data; config: Settings; now: number; ascii: boolean; limits: Record<string, [number, number]>; cwd: string | null; settled: number | null; mods: Mods | null };
+type Env = { data: Data; config: Settings; now: number; ascii: boolean; limits: Record<string, [number, number]>; cwd: string | null; settled: number | null; mods: Mods | null; single: boolean };
 
 const level = (env: Env, name: string, value: number): TerminalTone => {
   const [warn, alert] = env.limits[name] ?? [Infinity, Infinity];
@@ -171,7 +183,7 @@ const parts: Record<string, (env: Env) => Part> = {
   limits: env => {
     const windows = env.data.limits.filter(item => item.resets === null || item.resets > env.now);
     if (!windows.length) return null;
-    const shown = env.config.preset === 'compact' ? [windows.reduce((a, b) => b.used > a.used ? b : a)] : windows;
+    const shown = env.single ? [windows.reduce((a, b) => b.used > a.used ? b : a)] : windows;
     return shown.flatMap((item, index) => [...index ? [{ text: ' ' }] : [], { text: `${windowName(item.minutes)} ` }, { text: `${Math.round(item.used)}%`, tone: level(env, 'limits', item.used) },
       ...item.resets !== null ? [{ text: env.ascii ? ` r${span(item.resets - env.now)}` : ` ↻${span(item.resets - env.now)}`, tone: 'muted' as const }] : []]);
   },
@@ -190,9 +202,9 @@ const parts: Record<string, (env: Env) => Part> = {
     const files = git.staged + git.unstaged + git.untracked;
     return files || git.added || git.removed ? [{ text: `+${git.added}`, tone: 'success' }, { text: ` -${git.removed}`, tone: 'failure' }, { text: ` ${files}f`, tone: 'muted' }] : null;
   },
-  pr: ({ data, ascii }) => {
+  pr: ({ data, ascii, config }) => {
     const github = data.github;
-    if (github.status === 'idle') return null;
+    if (github.status === 'idle' || !config.github) return null;
     if (github.status === 'auth') return [{ text: 'PR: /statusline github', tone: 'muted' }];
     if (github.status === 'loading') return [{ text: 'PR …', tone: 'muted' }];
     if (github.status !== 'ok') return [{ text: `PR ${github.status === 'rate_limited' ? 'rate-limited' : github.status}`, tone: 'muted' }, ...github.pr ? [{ text: ` #${github.pr.number}`, tone: 'muted' as const, link: github.pr.url }] : []];
@@ -204,8 +216,8 @@ const parts: Record<string, (env: Env) => Part> = {
     return [{ text: `PR #${pr.number}`, bold: true, link: pr.url }, { text: ` ${state[0]}`, tone: state[1] as TerminalTone },
       ...review ? [{ text: ` ${review[0]}`, tone: review[1] as TerminalTone }] : [], ...merge ? [{ text: ` ${merge}`, tone: 'attention' as const }] : []];
   },
-  ci: ({ data, ascii }) => {
-    const ci = data.github.status === 'ok' ? data.github.ci : null;
+  ci: ({ data, ascii, config }) => {
+    const ci = data.github.status === 'ok' && config.github ? data.github.ci : null;
     if (!ci) return null;
     const link = ci.url ?? undefined;
     if (ci.failed) return [{ text: `CI ${ascii ? 'x' : '✗'} ${ci.failed}`, tone: 'failure', link }];
@@ -238,12 +250,13 @@ const script = (env: Env, id: string, spec: string | undefined): Part => {
 export function render(data: Data, config: Settings, input: { now: number; columns: number; cwd: string | null; settled: number | null }): TerminalSpan[][] {
   const configured = scripts(config.scripts).scripts;
   const specs = Object.fromEntries(configured.map(item => [item.id, JSON.stringify(item)]));
+  const rows = layout(config, configured.map(item => item.id));
   const env: Env = { data, config, now: input.now, ascii: config.glyphs === 'ascii', limits: { ...thresholds(DEFAULTS.thresholds), ...thresholds(config.thresholds) },
-    cwd: input.cwd, settled: input.settled, mods: data.mods };
+    cwd: input.cwd, settled: input.settled, mods: data.mods, single: rows.length === 1 };
   const custom = tones(config.tones);
   const separator: TerminalSpan = { text: env.ascii ? ' | ' : ' · ', tone: 'muted' };
   const columns = Math.max(10, input.columns);
-  return layout(config, configured.map(item => item.id)).map(ids => {
+  return rows.map(ids => {
     const pieces = ids.map(id => {
       const spans = id.startsWith('script:') ? script(env, id.slice(7), specs[id.slice(7)]) : parts[id](env);
       const tone = custom[id];

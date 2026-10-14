@@ -11,8 +11,9 @@ native row and the built-in `/statusline` return unchanged; your
 `/statusline` opens a dialog with a live preview of the draft: placement,
 preset, the segment list (Show/hide, Earlier, Later, Next line for multiline
 layouts), glyphs, progress bars and thresholds. Apply saves the changed
-settings, Cancel, Esc or dismissing the dialog discards the draft, Reset loads the defaults into the
-preview. The same settings are editable in `/mods` and from a shell with
+settings, Cancel, Esc or dismissing the dialog discards the draft, Reset loads the defaults of the settings the dialog shows into the
+preview (`tones`, `github`, `refresh_s` and `scripts` keep their values), and
+an invalid `/statusline set` value keeps the current one. The same settings are editable in `/mods` and from a shell with
 `omd-mod settings STORE omd_statusline '{"preset": "detailed"}'`.
 
 | Setting | Default | Meaning |
@@ -44,7 +45,7 @@ terminal drops trailing segments; colors follow the theme and `NO_COLOR`.
 | `context` | `usage.summarize` context (or the last lead request's input plus output) and the window from `config/read` or `thread/tokenUsage/updated` | `~` and muted after a compaction, rewind or model switch until the next response; compactions as `⟳N` |
 | `tokens`, `cache` | `usage.summarize` per request, idempotent by request and attempt; cache TTL from `omd_cache_ttl_seconds` | Hidden before the first measured request |
 | `cost` | Cost basis per request: provider-billed or provider-reported is billed, settled configured rates are an estimate (`~`, `est.`), subscription requests are `included`; the session ledger's settled charge replaces that sum when it is larger | `+?` while requests are unsettled or unpriced; never an invoice |
-| `limits` | `account/rateLimits/read` and `account/rateLimits/updated` windows with reset countdowns | Hidden without account limits; `compact` shows the tightest window |
+| `limits` | `account/rateLimits/read` and `account/rateLimits/updated` windows with reset countdowns | Hidden without account limits; a one-line layout shows the tightest window |
 | `git`, `changes` | `git status --porcelain=v2`, `git diff --shortstat HEAD` and `git rev-parse` through `exec.run` on a timer and after edits | Hidden outside a repository and while a result belongs to another checkout |
 | `pr`, `ci` | GitHub GraphQL through `http.request` to `api.github.com` with your enrolled token | `PR: /statusline github` without a token, `PR …` while loading, `rate-limited`, `offline` or `error` with backoff |
 | `session` | Thread ID and the time since the thread started in this store | Hidden before `start` |
@@ -52,8 +53,11 @@ terminal drops trailing segments; colors follow the theme and `NO_COLOR`.
 | `cwd` | Session working directory | Hidden |
 | `omd` | The terminal event's mod counts, which the native row showed before | `N failed · /omd` in the failure tone; if this mod itself fails, the native row returns with the host's recovery text |
 
-Nothing runs while drawing: Git, scripts and GitHub run in timer and lifecycle
-callbacks, and the line draws their cached results.
+Nothing runs while drawing or while a turn ends: Git, scripts and GitHub run
+in timer callbacks (one second after a turn ends or a tool edits files), at
+once when the thread's working directory changes, and the line draws their
+cached results. Widths count terminal cells, so wide characters never wrap the
+line.
 
 ## Pull requests and CI
 

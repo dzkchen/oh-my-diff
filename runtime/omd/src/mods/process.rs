@@ -488,9 +488,11 @@ pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
 }
 
 fn reused_pool() -> usize {
-    REUSED_POOL
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+    reused_size(&REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+fn reused_size(sizes: &BTreeMap<u64, usize>) -> usize {
+    sizes
         .values()
         .max()
         .copied()

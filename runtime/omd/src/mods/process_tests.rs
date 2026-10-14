@@ -8,11 +8,10 @@ use std::time::Duration;
 
 #[test]
 fn reused_pool_fits_the_host_with_the_most_terminal_handlers() {
-    super::size_reused_pool(u64::MAX - 1, Some(5));
-    super::size_reused_pool(u64::MAX, Some(0));
-    assert!(super::reused_pool() >= 5);
-    super::size_reused_pool(u64::MAX - 1, None);
-    super::size_reused_pool(u64::MAX, None);
+    let sizes = |entries: &[(u64, usize)]| super::reused_size(&entries.iter().copied().collect());
+    assert_eq!(sizes(&[(1, 5), (2, 0)]), 5);
+    assert_eq!(sizes(&[]), 2);
+    assert_eq!(sizes(&[(1, 20)]), 8);
 }
 
 #[test]
@@ -403,11 +402,11 @@ fn reused_callback_runners_never_evict_render_runners() {
         WARM.lock()
             .unwrap()
             .iter()
-            .filter(|runner| !runner.serve)
+            .filter(|runner| runner.key.starts_with("kind-command-"))
             .count()
-            <= 2
+            <= super::reused_pool()
     );
-    for key in ["kind-render", "kind-command-2", "kind-command-3"] {
+    for key in ["kind-render", "kind-command-0", "kind-command-1", "kind-command-2", "kind-command-3"] {
         super::invalidate_warm(key);
     }
 }

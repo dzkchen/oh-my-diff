@@ -85,7 +85,7 @@ export function parseGithub(body: string, owner: string, repo: string, branch: s
 const TONE: Record<number, TerminalTone> = { 30: 'muted', 31: 'failure', 32: 'success', 33: 'attention', 34: 'accent', 35: 'accent', 36: 'accent', 37: 'normal', 90: 'muted', 91: 'failure', 92: 'success', 93: 'attention', 94: 'accent', 95: 'accent', 96: 'accent', 97: 'normal' };
 
 export function ansi(output: string): TerminalSpan[] {
-  const line = output.replace(/\r\n?/g, '\n').split('\n').find(part => part.replace(/\x1b\[[0-9;]*m/g, '').trim()) ?? '';
+  const line = (output.replace(/\r\n?/g, '\n').split('\n').find(part => part.replace(/\x1b\[[0-9;]*m/g, '').trim()) ?? '').slice(0, 4096);
   const spans: TerminalSpan[] = [];
   let current: Omit<TerminalSpan, 'text'> = {};
   let text = '';
@@ -96,7 +96,7 @@ export function ansi(output: string): TerminalSpan[] {
   };
   const pattern = /\x1b\[([0-9;]*)m|\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]?/g;
   let last = 0;
-  for (const match of line.slice(0, 4096).matchAll(pattern)) {
+  for (const match of line.matchAll(pattern)) {
     text += line.slice(last, match.index);
     last = match.index! + match[0].length;
     if (match[1] !== undefined) {
