@@ -649,6 +649,16 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     exposure
 }
+
+/// The bounded install-profile label reported for an `OMD_INSTALL_PROFILE` value.
+pub fn install_profile(value: &str) -> &'static str {
+    match value {
+        "full" => "full",
+        "platform_only" => "platform_only",
+        "private" => "private",
+        _ => "unknown",
+    }
+}
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
     ("migrate", "store"),
@@ -5708,11 +5718,7 @@ impl ModHost {
         install_profile: Option<&str>,
         mode: &str,
     ) -> Value {
-        let install_profile = match install_profile {
-            Some(profile @ ("full" | "platform_only" | "private")) => profile,
-            Some(_) => "unknown",
-            None => "unreported",
-        };
+        let install_profile = install_profile.map_or("unreported", self::install_profile);
         json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
             "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
                 "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})

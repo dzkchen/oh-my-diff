@@ -223,6 +223,7 @@ pub use mods::effective_settings;
 pub use mods::event_shared;
 pub use mods::file_stamp;
 pub use mods::host_namespace;
+pub use mods::install_profile;
 pub use mods::intercept_shared;
 pub use mods::invalid_render_tree;
 pub use mods::invoke_shared;
