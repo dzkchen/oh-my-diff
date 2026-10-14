@@ -39554,10 +39554,20 @@ index f12313ff4..84fa7f63c 100644
      }
 
 diff --git a/codex-rs/tui/src/render/highlight.rs b/codex-rs/tui/src/render/highlight.rs
-index 41b1d239c..d8b580109 100644
+index 41b1d239c..a075f0ea0 100644
 --- a/codex-rs/tui/src/render/highlight.rs
 +++ b/codex-rs/tui/src/render/highlight.rs
-@@ -409,6 +409,11 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
+@@ -119,6 +119,9 @@ pub(crate) fn set_theme_override(
+             name.as_deref(),
+             codex_home.as_deref(),
+         ));
++    } else {
++        #[cfg(not(test))]
++        std::thread::spawn(theme_lock);
+     }
+     if !override_set_ok || !codex_home_set_ok {
+         // This should never happen in practice — set_theme_override is only
+@@ -409,6 +412,11 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
      model_themes::resolve(name)
  }
 
