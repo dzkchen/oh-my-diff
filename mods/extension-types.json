@@ -534,7 +534,7 @@
       "path": "mods/first-party/omd_frecency",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+."
+      "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_profiles",

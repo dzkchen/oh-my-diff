@@ -32,14 +32,13 @@ unverified and forgets none.
 **Owner.** The mod owns the exclusive `completion` replacement for `@`
 mentions. The host sends each mod command's argument completion to that
 command's own mod, so command completion stays with the command's mod.
-Disabling the mod restores Codex's ranking. The `omd.frecency` service
-exports the same ranking to other mods.
+Disabling the mod restores Codex's ranking.
 
 Each ranking runs `git status` (3 s limit) and reads the store; a missing Git
 repository only removes the Git boost.
 
 Capabilities: `composer` (`@` ranking), `input` and `lifecycle` (learning), `store`, `exec`
-(`git status`, `git ls-files`), `fs.read` (existence checks) and `services`.
+(`git status`, `git ls-files`) and `fs.read` (existence checks).
 
 Ported from [`@ff-labs/pi-fff`](https://github.com/dmtrKovalenko/fff/tree/main/packages/pi-fff)
 0.11.0 (Dmitriy Kovalenko, MIT; see `THIRD_PARTY_NOTICES.md`): frecency,

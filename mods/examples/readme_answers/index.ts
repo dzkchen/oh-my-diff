@@ -1,15 +1,6 @@
 import type { ModAPI } from '@oh-my-diff/mod-api';
 
-const head = (text: string, budget: number) => {
-  let [used, end] = [0, 0];
-  for (const character of text) {
-    const point = character.codePointAt(0) ?? 0;
-    used += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
-    if (used > budget) break;
-    end += character.length;
-  }
-  return text.slice(0, end);
-};
+const head = (text: string, budget: number) => text.slice(0, new TextEncoder().encodeInto(text, new Uint8Array(budget)).read);
 
 export default function activate(api: ModAPI) {
   api.tool({ name: 'ask_readme', description: 'Answer a question from the repository README with a configured worker route, reusing the cached README prefix.',

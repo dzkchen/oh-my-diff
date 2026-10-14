@@ -100,8 +100,8 @@ the mod registers no composer callback.
 
 Capabilities: `commands`, `terminal`, `store`, `sessions` (reads responses
 through `thread/turns/list` and listening ports through `sessions.ports`), `exec` (the renderer runs as a writing command under
-`.omd/preview`), `fs.read`, `fs.write`, `events`, `lifecycle` (the watch timer)
-and `composer` (draft images). There is no pandoc, puppeteer, LaTeX or PDF
+`.omd/preview`), `fs.read`, `fs.write`, `events`, `lifecycle` (the watch timer),
+`composer` (draft images) and `inventory` (the current thread id). There is no pandoc, puppeteer, LaTeX or PDF
 export.
 
 Ported from [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview)

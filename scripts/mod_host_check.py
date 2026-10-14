@@ -22,7 +22,7 @@ TUI_OPERATIONS = {
     "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.panes",
     "terminal.notice", "terminal.selection", "terminal.copy", "terminal.blit", "terminal.pty",
     "app.routes", "turns.activity", "turns.abort", "events.publish", "credentials.list", "settings.write",
-    "packages.list", "packages.index", "packages.preview", "packages.reload",
+    "packages.list", "packages.index", "packages.preview", "packages.reload", "session.info",
 }
 MOCKS = {
     "store.get": None, "store.put": {"revision": 1}, "store.delete": {"deleted": True},

@@ -2739,6 +2739,11 @@ any it refuses.
   callback. Persist state through `api.state`; module globals
   do not survive general callbacks. Render hooks retain activation under their
   existing matching-input rules.
+- Text encoding: every context has the standard `TextEncoder`. Host limits
+  count UTF-8 bytes: `new TextEncoder().encode(text).length` measures a
+  string, `text.slice(0, encoder.encodeInto(text, new Uint8Array(limit)).read)`
+  cuts it to `limit` bytes without splitting a character, and `encode` feeds
+  `crypto.subtle`. There is no `TextDecoder`, `Buffer` or `structuredClone`.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
   `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
   `JSON.stringify(value)` output, including quotes, keys and escapes. Strings

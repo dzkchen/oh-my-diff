@@ -10,15 +10,6 @@ function plain(value: unknown): value is Row {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function utf8Length(value: string): number {
-  let length = 0;
-  for (const character of value) {
-    const code = character.codePointAt(0)!;
-    length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return length;
-}
-
 function image(url: unknown): Row {
   const match = typeof url === 'string' ? /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+=*)$/.exec(url) : null;
   if (!match) throw new Error('unsupported_image_input');
@@ -260,7 +251,7 @@ export default function activate(api: ModAPI): void {
     required: ['prompt'], additionalProperties: false } }, (input): Json => {
     const value = input as Row;
     if (!plain(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return { status: 'invalid', reason: 'prompt_required' };
-    if (utf8Length(value.prompt) > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
+    if (new TextEncoder().encode(value.prompt).length > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
     if (!ensure()) return { status: 'unavailable', reason: 'claude_route_not_configured' };
     const write = value.mode === 'write';
     const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,

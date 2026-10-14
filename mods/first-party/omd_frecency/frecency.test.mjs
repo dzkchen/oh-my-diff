@@ -49,10 +49,6 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
   assert.equal(mention('parser', ['src/Parser.java', 'src/parser.ts']).paths[0], 'test/parser_test.ts');
   assert.deepEqual(mention('', []).paths, ['test/parser_test.ts', 'src/parser.ts', 'src/moved.ts', 'docs/new notes.md']);
   assert.equal(run('completion', { kind: 'argument', command: 'note', query: '', line: '' }, () => { throw new Error('no host call'); }).value, null);
-  const { host } = repository(null, '');
-  assert.deepEqual(run('service', { query: 'tree', paths: ['src/tree.ts', 'src/treat.ts'] }, host, 'omd.frecency.rank').value, { paths: ['src/tree.ts', 'src/treat.ts'] });
-  assert.deepEqual(run('service', { query: 'index logo', paths: ['mods/omd_logo/index.ts'] }, host, 'omd.frecency.rank').value, { paths: ['mods/omd_logo/index.ts'] });
-  assert.equal(run('service', { query: 'tree', paths: Array.from({ length: 60 }, (_, index) => `src/tree${index}.ts`) }, host, 'omd.frecency.rank').value.paths.length, 60);
 });
 
 test('backfilled history is statted page by page, so deleted files never surface and are forgotten in one save', () => {

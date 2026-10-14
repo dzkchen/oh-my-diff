@@ -3,25 +3,13 @@ import type { ModAPI, ProcessChunk, TerminalPatch } from '@oh-my-diff/mod-api';
 const LIMIT = 49_152;
 type Output = { run: number; command: string; text: string; status: string; held?: Record<string, string> };
 
-const bytes = (text: string) => {
-  let count = 0;
-  for (const character of text) {
-    const point = character.codePointAt(0) ?? 0;
-    count += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
-  }
-  return count;
-};
+const utf8 = new TextEncoder();
+const bytes = (text: string) => utf8.encode(text).length;
 
 const fit = (text: string, limit: number) => {
   const clean = text.replace(/\p{Cc}/gu, ' ');
   if (bytes(clean) <= limit) return clean;
-  let [cut, used] = ['', 3];
-  for (const character of clean) {
-    used += bytes(character);
-    if (used > limit) break;
-    cut += character;
-  }
-  return `${cut}…`;
+  return `${clean.slice(0, utf8.encodeInto(clean, new Uint8Array(limit - 3)).read)}…`;
 };
 
 const decoded = (base64: string) => base64.length * 3 / 4 - (base64.match(/=*$/)?.[0].length ?? 0);
