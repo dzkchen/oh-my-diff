@@ -2,7 +2,8 @@ import type { Json, ModAPI, TerminalComponent, TerminalPatch, TerminalTone } fro
 
 type Status = 'pending' | 'inProgress' | 'completed';
 type Step = { step: string; status: Status };
-type State = { plans: Record<string, { steps: Step[]; seq: number }>; seq: number; collapsed: boolean; all: boolean };
+type State = { plans: Record<string, { steps: Step[]; seq: number }>; seq: number };
+type View = { collapsed: boolean; all: boolean };
 
 const THREADS = 16;
 const STEPS = 40;
@@ -18,8 +19,9 @@ function fit(steps: Step[], rows: number): { shown: Step[]; hidden: Step[] } {
 }
 
 export default function activate(api: ModAPI) {
-  const load = (): State => ({ plans: {}, seq: 0, collapsed: false, all: false, ...(api.state.get() as Partial<State> | null) });
+  const load = (): State => ({ plans: {}, seq: 0, ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
+  const view = (): View => ({ collapsed: false, all: false, ...(api.uiState.get() as Partial<View> | null) });
   const rows = Math.max(2, Math.min(40, Number(api.settings.rows) || 8));
 
   api.on('app_notification', ({ method, params, thread_id }) => {
@@ -29,7 +31,7 @@ export default function activate(api: ModAPI) {
     const state = load();
     if (method === 'turn/plan/updated') {
       const steps = (update.plan ?? []).slice(0, STEPS).map(item => ({
-        step: String(item.step ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 120),
+        step: [...String(item.step ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')].slice(0, 120).join(''),
         status: (Object.hasOwn(GLYPH, String(item.status)) ? item.status : 'pending') as Status,
       }));
       state.plans[thread] = { steps, seq: ++state.seq };
@@ -40,16 +42,16 @@ export default function activate(api: ModAPI) {
   });
 
   api.command('todos', value => {
-    const state = load();
-    if (String(value ?? '').trim() === 'toggle') state.collapsed = !state.collapsed;
-    else state.all = !state.all;
-    save(state);
+    const current = view();
+    if (String(value ?? '').trim() === 'toggle') current.collapsed = !current.collapsed;
+    else current.all = !current.all;
+    api.uiState.set(current as unknown as Json);
     return null;
   }, { description: 'Toggle the plan panel between its row limit and every step (Alt+p collapses it)' });
 
   api.on('terminal', ({ ledger }): TerminalPatch | null => {
-    const state = load();
-    const steps = ledger ? state.plans[ledger.thread_id]?.steps ?? [] : [];
+    const steps = ledger ? load().plans[ledger.thread_id]?.steps ?? [] : [];
+    const state = view();
     if (!steps.length) return null;
     const done = steps.filter(step => step.status === 'completed').length;
     const line = (id: string, label: string, spans: { text: string; tone?: TerminalTone }[]): TerminalComponent => ({ type: 'line', id: `omd_plan_panel_${id}`, label, spans });

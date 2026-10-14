@@ -2189,10 +2189,13 @@ every lead thread the session starts, resumes or forks while the package is
 active: `{"codex_config": {"tools.update_plan.enabled": true}}`. Keys come from a
 closed host allowlist (`tools.update_plan.enabled`) and must be `true`, and the
 package must list `codex_config_v1` in `required_features`; anything else fails
-inspection with `invalid_codex_config`. The host reads the active packages once
-when the session opens, so enabling or disabling a package takes effect in the
-next session. It overrides an explicit `false` in the user's config for that
-session and writes nothing to `config.toml`.
+inspection with `invalid_codex_config`. The host recomputes the keys whenever it
+reloads the active packages (at the next turn boundary after a change), so a
+package enabled mid-session applies to lead threads started after that reload;
+threads that already exist keep their configuration. It overrides an explicit
+`false` in the user's config for those threads and writes nothing to
+`config.toml`. Install, update and trust previews and `omd-mod status` list a
+package's `codex_config` with its other authority.
 
 ### Composer completion (`completion_v1`)
 
@@ -3330,11 +3333,12 @@ limits is dropped whole. Exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
-The host reuses a mod's last `terminal` patch, or a command's `{terminal}`
-result, without a callback while its settings, durable state, UI state and the
-`terminal` event input are unchanged,
-so a view that shows elapsed time refreshes it through a state change, such as
-an `events.schedule` timer.
+The host reuses a mod's last `terminal` patch without a callback while its
+settings, durable state, UI state and the `terminal` event input are unchanged.
+A patch from a callback that read the clock (`Date.now()` or `new Date()`) is
+reused for at most one second, so elapsed times and countdowns stay current on
+the next redraw. A command's `{terminal}` result likewise stands for at most
+one second; after that the next view update runs the `terminal` handler.
 
 ### Protected authority (macOS)
 

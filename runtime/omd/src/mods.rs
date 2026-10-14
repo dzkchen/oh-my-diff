@@ -2450,6 +2450,8 @@ struct Reply {
     ui_state: Value,
     #[serde(default)]
     ui_read: bool,
+    #[serde(default)]
+    clock_read: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2668,7 +2670,8 @@ pub struct ModHost {
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
-    renders: BTreeMap<String, (String, Value)>,
+    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    clock_reads: BTreeSet<String>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -2676,6 +2679,7 @@ pub struct ModHost {
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    codex_config: Arc<Mutex<BTreeSet<String>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
@@ -3143,6 +3147,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            clock_reads: BTreeSet::new(),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -3150,6 +3155,7 @@ impl ModHost {
             brokered: None,
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
+            codex_config: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
@@ -3648,10 +3654,9 @@ impl ModHost {
         self.environment.clone()
     }
 
-    pub fn codex_config(&self) -> BTreeSet<String> {
-        self.active()
-            .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
-            .collect()
+    /// Codex config keys the active packages turn on, readable while another caller holds the runtime.
+    pub fn codex_config(&self) -> Arc<Mutex<BTreeSet<String>>> {
+        self.codex_config.clone()
     }
 
     fn retain_environment(&self) {
@@ -3683,6 +3688,12 @@ impl ModHost {
             .collect();
         if let Ok(mut published) = self.intercepted_surfaces.lock() {
             *published = intercepted;
+        }
+        if let Ok(mut published) = self.codex_config.lock() {
+            *published = self
+                .active()
+                .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
+                .collect();
         }
         process::reserve_reused(
             self.active()
@@ -4674,7 +4685,7 @@ impl ModHost {
                     .ui
                     .as_ref()
                     .map(|(scope, _)| scope.as_str())
-                    .zip(ui.as_ref().map(|state| state.revision)),
+                    .zip(ui.as_ref().map(|state| &state.value)),
             );
             if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
                 current.command_view = Some(AcceptedCommandView {
@@ -4682,6 +4693,13 @@ impl ModHost {
                     stamp,
                     parsed: parsed_command,
                 });
+            }
+        }
+        if event == "terminal" {
+            if reply.clock_read {
+                self.clock_reads.insert(loaded.package.id.clone());
+            } else {
+                self.clock_reads.remove(&loaded.package.id);
             }
         }
         Ok((reply.value, reply.state))
@@ -5010,14 +5028,14 @@ impl ModHost {
         )
     }
 
-    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, u64)>) -> String {
+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
         digest(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
                 state,
                 ui.map(|(scope, _)| scope),
-                ui.map(|(_, revision)| revision)
+                ui.map(|(_, value)| value)
             ])
             .to_string()
             .as_bytes(),
@@ -5035,20 +5053,16 @@ impl ModHost {
                 .get(&scope)
                 .and_then(std::sync::Weak::upgrade),
         };
-        let revision = match ui {
-            Some(state) => state.lock().ok()?.revision,
-            None => 0,
+        let ui = match ui {
+            Some(state) => state.lock().ok()?.value.clone(),
+            None => Value::Null,
         };
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let state = self
             .store
             .scoped_state(&location, loaded.package.state_version)
             .ok()?;
-        Some(Self::terminal_stamp(
-            loaded,
-            &state,
-            Some((&scope, revision)),
-        ))
+        Some(Self::terminal_stamp(loaded, &state, Some((&scope, &ui))))
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -5061,8 +5075,10 @@ impl ModHost {
                 let key = self
                     .terminal_state_key(&id, thread.as_deref())
                     .map(|stamp| format!("{stamp}:{payload_hash}"));
-                if let (Some(key), Some((cached, value))) = (&key, self.renders.get(&id))
+                // A handler that read the clock is rerun once its result is a second old.
+                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                     && key == cached
+                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
                 {
                     return (id, Ok(value.clone()));
                 }
@@ -5076,7 +5092,8 @@ impl ModHost {
                 );
                 match (&result, key) {
                     (Ok(value), Some(key)) => {
-                        self.renders.insert(id.clone(), (key, value.clone()));
+                        let clock = self.clock_reads.contains(&id).then(Instant::now);
+                        self.renders.insert(id.clone(), (key, value.clone(), clock));
                     }
                     _ => {
                         self.renders.remove(&id);
@@ -5129,9 +5146,11 @@ impl ModHost {
             Some((id, parsed))
         };
         self.renders.remove(id);
+        // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
             let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
-            self.renders.insert(id.to_owned(), (key, patch));
+            self.renders
+                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
         let results = self
             .active()
@@ -5770,7 +5789,7 @@ impl ModHost {
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,
-                    "autonomy": m.package.autonomy, "withheld": m.withheld,
+                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
                     "exposure": authority_exposure(&m.package.capabilities)});
                 status }).collect::<Vec<_>>()});

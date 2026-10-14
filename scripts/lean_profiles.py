@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
-DEFAULT_ACTIVE = ("omd_continue", "omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_panel",
+DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_plan_panel",
                   "omd_plan_removal", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
@@ -179,8 +179,6 @@ def selected_text(record):
                       f"export OMD_NODE={shlex.quote(record['author']['node'])}"])
     # Oh My Diff runs Codex in embedded mode, so the launcher keeps the shared background server from starting.
     flags = ["-c", "features.daemon_auto_start=false"] if selection != "direct" else []
-    if selection == "full":
-        flags += ["-c", "tools.update_plan.enabled=true"]
     for provider in record.get("providers", {}).values() if selection != "direct" else ():
         key = provider["env_key"]
         lines.append(f'{key}="$(cat {shlex.quote(provider["token"])} 2>/dev/null)"; export {key}')

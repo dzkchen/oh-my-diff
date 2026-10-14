@@ -319,6 +319,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             .cloned()
             .ok_or_else(|| failure(format!("package_not_installed: {id}")))
     };
+    let mut codex_config = Value::Null;
     let (id, request, plan, selection, added) = match arguments.action.as_str() {
         "install" => {
             let index = arguments.index.clone().or_else(|| store.package_index());
@@ -409,6 +410,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
                 .filter(|capability| !current.capabilities.contains(capability))
                 .cloned()
                 .collect();
+            codex_config = inspected["manifest"]["codex_config"].clone();
             let trusted = Selection {
                 sha256,
                 capabilities,
@@ -427,7 +429,7 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         (None, Some(selection)) if arguments.action == "trust" => {
             json!({"sha256": selection.sha256, "enabled": selection.enabled,
                 "exec_environment": selection.exec_environment,
-                "secret_environment": selection.secret_environment})
+                "secret_environment": selection.secret_environment, "codex_config": codex_config})
         }
         _ => json!({"enabled": arguments.action == "enable"}),
     };

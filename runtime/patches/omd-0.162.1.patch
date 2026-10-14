@@ -60386,10 +60386,10 @@ index 000000000..683f2b20d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..0abd5e033
+index 000000000..1a84cdabf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2421 @@
+@@ -0,0 +1,2425 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -60552,7 +60552,7 @@ index 000000000..0abd5e033
 +    intercepted: Arc<Mutex<Vec<&'static str>>>,
 +    required: Arc<Mutex<Vec<&'static str>>>,
 +    environment: Arc<codex_omd::host::Environment>,
-+    codex_config: std::collections::BTreeSet<String>,
++    codex_config: Arc<Mutex<std::collections::BTreeSet<String>>>,
 +    agents: agents::Agents,
 +    services: services::Services,
 +    views: Arc<view::Views>,
@@ -61419,7 +61419,11 @@ index 000000000..0abd5e033
 +            ));
 +        }
 +        config.model_provider.supports_websockets = false;
-+        if self.codex_config.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
++        if self
++            .codex_config
++            .lock()
++            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
++        {
 +            config.update_plan_enabled = true;
 +        }
 +        let mut filesystem = profile.file_system_sandbox_policy();
@@ -99095,10 +99099,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..11c5894ad
+index 000000000..5761677b7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5797 @@
+@@ -0,0 +1,5816 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -101551,6 +101555,8 @@ index 000000000..11c5894ad
 +    ui_state: Value,
 +    #[serde(default)]
 +    ui_read: bool,
++    #[serde(default)]
++    clock_read: bool,
 +    value: Value,
 +    #[serde(default)]
 +    calls: Vec<ModHostCall>,
@@ -101769,7 +101775,8 @@ index 000000000..11c5894ad
 +    dynamic_tools: BTreeMap<String, Vec<ModTool>>,
 +    checkout: Option<PathBuf>,
 +    valid_views: BTreeMap<String, Value>,
-+    renders: BTreeMap<String, (String, Value)>,
++    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
++    clock_reads: BTreeSet<String>,
 +    rendered: HashMap<String, render::Rendered>,
 +    chains: Vec<Value>,
 +    access: Vec<Value>,
@@ -101777,6 +101784,7 @@ index 000000000..11c5894ad
 +    brokered: Option<(Instant, String, Authority)>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
++    codex_config: Arc<Mutex<BTreeSet<String>>>,
 +    environment: Arc<crate::host::Environment>,
 +    policies: Vec<PathBuf>,
 +    managed: Option<Managed>,
@@ -102244,6 +102252,7 @@ index 000000000..11c5894ad
 +            checkout: None,
 +            valid_views: BTreeMap::new(),
 +            renders: BTreeMap::new(),
++            clock_reads: BTreeSet::new(),
 +            rendered: HashMap::new(),
 +            chains: Vec::new(),
 +            access: Vec::new(),
@@ -102251,6 +102260,7 @@ index 000000000..11c5894ad
 +            brokered: None,
 +            required_surfaces: Arc::default(),
 +            intercepted_surfaces: Arc::default(),
++            codex_config: Arc::default(),
 +            environment: Arc::default(),
 +            policies: Vec::new(),
 +            managed: None,
@@ -102749,10 +102759,9 @@ index 000000000..11c5894ad
 +        self.environment.clone()
 +    }
 +
-+    pub fn codex_config(&self) -> BTreeSet<String> {
-+        self.active()
-+            .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
-+            .collect()
++    /// Codex config keys the active packages turn on, readable while another caller holds the runtime.
++    pub fn codex_config(&self) -> Arc<Mutex<BTreeSet<String>>> {
++        self.codex_config.clone()
 +    }
 +
 +    fn retain_environment(&self) {
@@ -102784,6 +102793,12 @@ index 000000000..11c5894ad
 +            .collect();
 +        if let Ok(mut published) = self.intercepted_surfaces.lock() {
 +            *published = intercepted;
++        }
++        if let Ok(mut published) = self.codex_config.lock() {
++            *published = self
++                .active()
++                .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
++                .collect();
 +        }
 +        process::reserve_reused(
 +            self.active()
@@ -103775,7 +103790,7 @@ index 000000000..11c5894ad
 +                    .ui
 +                    .as_ref()
 +                    .map(|(scope, _)| scope.as_str())
-+                    .zip(ui.as_ref().map(|state| state.revision)),
++                    .zip(ui.as_ref().map(|state| &state.value)),
 +            );
 +            if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
 +                current.command_view = Some(AcceptedCommandView {
@@ -103783,6 +103798,13 @@ index 000000000..11c5894ad
 +                    stamp,
 +                    parsed: parsed_command,
 +                });
++            }
++        }
++        if event == "terminal" {
++            if reply.clock_read {
++                self.clock_reads.insert(loaded.package.id.clone());
++            } else {
++                self.clock_reads.remove(&loaded.package.id);
 +            }
 +        }
 +        Ok((reply.value, reply.state))
@@ -104111,14 +104133,14 @@ index 000000000..11c5894ad
 +        )
 +    }
 +
-+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, u64)>) -> String {
++    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
 +        digest(
 +            json!([
 +                loaded.selection.sha256,
 +                loaded.selection.settings,
 +                state,
 +                ui.map(|(scope, _)| scope),
-+                ui.map(|(_, revision)| revision)
++                ui.map(|(_, value)| value)
 +            ])
 +            .to_string()
 +            .as_bytes(),
@@ -104136,20 +104158,16 @@ index 000000000..11c5894ad
 +                .get(&scope)
 +                .and_then(std::sync::Weak::upgrade),
 +        };
-+        let revision = match ui {
-+            Some(state) => state.lock().ok()?.revision,
-+            None => 0,
++        let ui = match ui {
++            Some(state) => state.lock().ok()?.value.clone(),
++            None => Value::Null,
 +        };
 +        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
 +        let state = self
 +            .store
 +            .scoped_state(&location, loaded.package.state_version)
 +            .ok()?;
-+        Some(Self::terminal_stamp(
-+            loaded,
-+            &state,
-+            Some((&scope, revision)),
-+        ))
++        Some(Self::terminal_stamp(loaded, &state, Some((&scope, &ui))))
 +    }
 +
 +    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -104162,8 +104180,10 @@ index 000000000..11c5894ad
 +                let key = self
 +                    .terminal_state_key(&id, thread.as_deref())
 +                    .map(|stamp| format!("{stamp}:{payload_hash}"));
-+                if let (Some(key), Some((cached, value))) = (&key, self.renders.get(&id))
++                // A handler that read the clock is rerun once its result is a second old.
++                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
 +                    && key == cached
++                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
 +                {
 +                    return (id, Ok(value.clone()));
 +                }
@@ -104177,7 +104197,8 @@ index 000000000..11c5894ad
 +                );
 +                match (&result, key) {
 +                    (Ok(value), Some(key)) => {
-+                        self.renders.insert(id.clone(), (key, value.clone()));
++                        let clock = self.clock_reads.contains(&id).then(Instant::now);
++                        self.renders.insert(id.clone(), (key, value.clone(), clock));
 +                    }
 +                    _ => {
 +                        self.renders.remove(&id);
@@ -104230,9 +104251,11 @@ index 000000000..11c5894ad
 +            Some((id, parsed))
 +        };
 +        self.renders.remove(id);
++        // A command's result stands in for the `terminal` handler for a second, like a clock read.
 +        if matched && let Some(stamp) = stamp {
 +            let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
-+            self.renders.insert(id.to_owned(), (key, patch));
++            self.renders
++                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
 +        }
 +        let results = self
 +            .active()
@@ -104871,7 +104894,7 @@ index 000000000..11c5894ad
 +                status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
 +                    "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
 +                    "policy": m.package.policy, "peer_access": m.package.peer_access,
-+                    "autonomy": m.package.autonomy, "withheld": m.withheld,
++                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
 +                    "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
 +                    "exposure": authority_exposure(&m.package.capabilities)});
 +                status }).collect::<Vec<_>>()});
@@ -108264,10 +108287,10 @@ index 000000000..383bf405b
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..48b2680a1
+index 000000000..21b66d37f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2798 @@
+@@ -0,0 +1,2804 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -109864,10 +109887,16 @@ index 000000000..48b2680a1
 +            state_version: package.state_version,
 +            dependencies: package.dependencies.clone(),
 +            capabilities: package.capabilities.clone(),
-+            authority: json!({"exposure":authority_exposure(&package.capabilities),
-+                "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
-+                "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
-+                "peer_access":package.peer_access,"autonomy":package.autonomy}),
++            authority: {
++                let mut authority = json!({"exposure":authority_exposure(&package.capabilities),
++                    "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
++                    "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
++                    "peer_access":package.peer_access,"autonomy":package.autonomy});
++                if !package.codex_config.is_empty() {
++                    authority["codex_config"] = json!(package.codex_config);
++                }
++                authority
++            },
 +            exec_environment: package.exec_environment.clone(),
 +            settings_schema_sha256: digest(
 +                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
@@ -113756,10 +113785,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..81343c1f0
+index 000000000..394d0a8bb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,939 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -113817,10 +113846,11 @@ index 000000000..81343c1f0
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
 +let now = request.virtual_time_ms;
++let clockRead = false;
 +if (Number.isSafeInteger(now)) {
 +  globalThis.Date = class extends Date {
-+    constructor(...args) { super(...(args.length ? args : [now])); }
-+    static now() { return now; }
++    constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
++    static now() { clockRead = true; return now; }
 +  };
 +}
 +const handlers = new Map();
@@ -113863,6 +113893,7 @@ index 000000000..81343c1f0
 +  Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
 +  receipts = request.receipts;
 +  if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
++  clockRead = false;
 +  if (request.event === 'component') {
 +    state = structuredCloneFallback(next.state);
 +    uiState = structuredCloneFallback(next.ui_state ?? null);
@@ -114531,7 +114562,7 @@ index 000000000..81343c1f0
 +  }),
 +});
 +globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
++  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead, clock_read: clockRead}), request, calls,
 +  pending: () => pending, ready: () => {
 +    activatedState = structuredCloneFallback(state); activating = false;
 +  }, suspension, serve, base, component: step };
@@ -114699,10 +114730,10 @@ index 000000000..81343c1f0
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..76559f98f
+index 000000000..41501d4f8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1337 @@
+@@ -0,0 +1,1329 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -114911,14 +114942,7 @@ index 000000000..76559f98f
 +        return None;
 +    }
 +    let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-+    verified
-+        .0
-+        .iter()
-+        .all(|(file, expected)| {
-+            std::fs::symlink_metadata(file)
-+                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-+        })
-+        .then(|| (verified.1.clone(), verified.2.clone()))
++    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 +}
 +
 +fn inspect_package(
@@ -115353,7 +115377,7 @@ index 000000000..76559f98f
 +            self.root.join("managed.json"),
 +        ]
 +        .iter()
-+        .map(|path| std::fs::metadata(path).ok().map(|metadata| file_stamp(&metadata)))
++        .map(|path| super::configuration_stamp(path))
 +        .collect::<Vec<_>>();
 +        Some(json!([self.root, stamps]))
 +    }
@@ -115371,10 +115395,9 @@ index 000000000..76559f98f
 +    }
 +
 +    pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
-+        stamps.iter().all(|(file, expected)| {
-+            std::fs::symlink_metadata(file)
-+                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-+        })
++        stamps
++            .iter()
++            .all(|(file, expected)| super::configuration_stamp(file) == Some(*expected))
 +    }
 +
 +    pub fn verify_selections(&self) -> Result<()> {
@@ -118688,10 +118711,10 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..a3ac98a05
+index 000000000..3f31922fd
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,615 @@
+@@ -0,0 +1,617 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -119013,6 +119036,7 @@ index 000000000..a3ac98a05
 +            .cloned()
 +            .ok_or_else(|| failure(format!("package_not_installed: {id}")))
 +    };
++    let mut codex_config = Value::Null;
 +    let (id, request, plan, selection, added) = match arguments.action.as_str() {
 +        "install" => {
 +            let index = arguments.index.clone().or_else(|| store.package_index());
@@ -119103,6 +119127,7 @@ index 000000000..a3ac98a05
 +                .filter(|capability| !current.capabilities.contains(capability))
 +                .cloned()
 +                .collect();
++            codex_config = inspected["manifest"]["codex_config"].clone();
 +            let trusted = Selection {
 +                sha256,
 +                capabilities,
@@ -119121,7 +119146,7 @@ index 000000000..a3ac98a05
 +        (None, Some(selection)) if arguments.action == "trust" => {
 +            json!({"sha256": selection.sha256, "enabled": selection.enabled,
 +                "exec_environment": selection.exec_environment,
-+                "secret_environment": selection.secret_environment})
++                "secret_environment": selection.secret_environment, "codex_config": codex_config})
 +        }
 +        _ => json!({"enabled": arguments.action == "enable"}),
 +    };
@@ -119309,10 +119334,10 @@ index 000000000..a3ac98a05
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 000000000..60d4647eb
+index 000000000..8081363ee
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,314 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -119588,6 +119613,43 @@ index 000000000..60d4647eb
 +    assert_eq!(
 +        list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
 +        "reload"
++    );
++}
++
++#[test]
++fn install_and_trust_previews_show_codex_config() {
++    let (_temp, store, root) = setup();
++    let configure = |path: &PathBuf| {
++        let mut manifest: Value =
++            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++        manifest["codex_config"] = json!({"tools.update_plan.enabled": true});
++        manifest["compatibility"] = json!({"required_features": ["codex_config_v1"]});
++        std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
++    };
++    let installed = fixture_package(&root, "planner", &["commands"], json!([]));
++    configure(&installed);
++    let install = preview(
++        &store,
++        json!({"action": "install", "source": {"kind": "local", "path": installed}}),
++    )
++    .unwrap();
++    assert_eq!(
++        install.public["changes"]["packages"][0]["authority"]["to"]["codex_config"],
++        json!({"tools.update_plan.enabled": true})
++    );
++    let selected = fixture_package(&root, "author_mod", &["commands"], json!([]));
++    let sha256 = ModStore::inspect_package(&selected).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store
++        .trust(selected.clone(), &sha256, vec!["commands".into()], "user")
++        .unwrap();
++    configure(&selected);
++    let trust = preview(&store, json!({"action": "trust", "id": "author_mod"})).unwrap();
++    assert_eq!(
++        trust.public["changes"]["codex_config"],
++        json!({"tools.update_plan.enabled": true})
 +    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
@@ -129944,10 +130006,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..0f1e5df0a
+index 000000000..eefa8fc0f
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5782 @@
+@@ -0,0 +1,5825 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131884,6 +131946,15 @@ index 000000000..0f1e5df0a
 +            .title
 +            .is_none()
 +    );
++    std::thread::sleep(std::time::Duration::from_millis(1100));
++    assert_eq!(
++        runtime
++            .terminal_view(json!({}), || true)
++            .view
++            .title
++            .as_deref(),
++        Some("First")
++    );
 +    for change in ["change", "durable"] {
 +        let value = runtime
 +            .invoke(
@@ -131954,14 +132025,36 @@ index 000000000..0f1e5df0a
 +#[test]
 +fn terminal_handlers_rerun_only_when_state_or_input_changes() {
 +    let source = "export default api => { api.command('bump', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: String(Date.now())})); }";
-+    let (temp, _, _) = fixture(source, &["commands", "terminal", "store"]);
++    let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
++    let root = temp.path().canonicalize().unwrap();
++    let steady = package(
++        &root,
++        "steady",
++        "export default api => api.on('terminal', () => ({status: ['steady']}));",
++        &["terminal"],
++    );
++    trust(&store, &steady, &["terminal"]);
 +    let mut runtime = host(&temp);
 +    let title = |runtime: &mut ModHost, payload: Value| {
 +        std::thread::sleep(std::time::Duration::from_millis(20));
 +        runtime.terminal_view(payload, || true).view.title.unwrap()
 +    };
++    let invocations = |runtime: &ModHost| {
++        runtime.status()["mods"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|entry| entry["id"] == "steady")
++            .unwrap()["telemetry"]["invocations"]
++            .clone()
++    };
 +    let first = title(&mut runtime, json!({"event": "draw"}));
 +    assert_eq!(title(&mut runtime, json!({"event": "draw"})), first);
++    let steady_runs = invocations(&runtime);
++    std::thread::sleep(std::time::Duration::from_millis(1100));
++    let ticked = title(&mut runtime, json!({"event": "draw"}));
++    assert_ne!(ticked, first);
++    assert_eq!(invocations(&runtime), steady_runs);
 +    let input = title(&mut runtime, json!({"event": "resize"}));
 +    assert_ne!(input, first);
 +    runtime
@@ -132819,11 +132912,23 @@ index 000000000..0f1e5df0a
 +    }
 +    let plain = write("plain", json!({}));
 +    trust(&store, &plain, &[]);
-+    let runtime = ModHost::open(root.join("store")).unwrap();
++    let mut runtime = ModHost::open(root.join("store")).unwrap();
++    let published = runtime.codex_config();
 +    assert_eq!(
-+        runtime.codex_config().into_iter().collect::<Vec<_>>(),
++        published.lock().unwrap().iter().collect::<Vec<_>>(),
 +        ["tools.update_plan.enabled"]
 +    );
++    let planner_status = runtime.status()["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|entry| entry["id"] == "planner")
++        .unwrap()["authority"]["codex_config"]
++        .clone();
++    assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
++    store.enable(&planner, false).unwrap();
++    runtime.reload().unwrap();
++    assert!(published.lock().unwrap().is_empty());
 +}
 +
 +fn error_of(runtime: &ModHost, id: &str) -> String {
@@ -142738,15 +142843,6 @@ index 000000000..1918d8535
 +    assert!(length >= 2000, "{length}");
 +    assert_eq!(builds, 1);
 +}
-diff --git a/codex-rs/tui/src/app/.tests.rs.pending-snap b/codex-rs/tui/src/app/.tests.rs.pending-snap
-new file mode 100644
-index 000000000..48227f231
---- /dev/null
-+++ b/codex-rs/tui/src/app/.tests.rs.pending-snap
-@@ -0,0 +1,3 @@
-+{"run_id":"1791870317-73272000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
-+{"run_id":"1791870369-287352000","line":3063,"new":{"module_name":"codex_tui__app__tests","snapshot_name":"open_agent_picker_prompts_when_subagents_disabled","metadata":{"source":"tui/src/app/tests.rs","assertion_line":3063,"expression":"render_bottom_popup(&app.chat_widget, 80)"},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  Oh                                                                        roj…\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"},"old":{"module_name":"codex_tui__app__tests","metadata":{},"snapshot":"      Enable subagents?\n› As  Subagents are disabled in this TUI session.\n\n  gp\n    › 1. Yes, enable  Save on the server for new threads without changing\n                      this thread\n      2. Not now      Keep subagents disabled\n\n      enter select · esc back"}}
-+{"run_id":"1791898619-429635000","line":2289,"new":null,"old":null}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
 index 000000000..09b7a26fc

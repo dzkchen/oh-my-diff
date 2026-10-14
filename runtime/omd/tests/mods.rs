@@ -1934,6 +1934,15 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
             .title
             .is_none()
     );
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(
+        runtime
+            .terminal_view(json!({}), || true)
+            .view
+            .title
+            .as_deref(),
+        Some("First")
+    );
     for change in ["change", "durable"] {
         let value = runtime
             .invoke(
@@ -2004,14 +2013,36 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
 #[test]
 fn terminal_handlers_rerun_only_when_state_or_input_changes() {
     let source = "export default api => { api.command('bump', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: String(Date.now())})); }";
-    let (temp, _, _) = fixture(source, &["commands", "terminal", "store"]);
+    let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
+    let root = temp.path().canonicalize().unwrap();
+    let steady = package(
+        &root,
+        "steady",
+        "export default api => api.on('terminal', () => ({status: ['steady']}));",
+        &["terminal"],
+    );
+    trust(&store, &steady, &["terminal"]);
     let mut runtime = host(&temp);
     let title = |runtime: &mut ModHost, payload: Value| {
         std::thread::sleep(std::time::Duration::from_millis(20));
         runtime.terminal_view(payload, || true).view.title.unwrap()
     };
+    let invocations = |runtime: &ModHost| {
+        runtime.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == "steady")
+            .unwrap()["telemetry"]["invocations"]
+            .clone()
+    };
     let first = title(&mut runtime, json!({"event": "draw"}));
     assert_eq!(title(&mut runtime, json!({"event": "draw"})), first);
+    let steady_runs = invocations(&runtime);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let ticked = title(&mut runtime, json!({"event": "draw"}));
+    assert_ne!(ticked, first);
+    assert_eq!(invocations(&runtime), steady_runs);
     let input = title(&mut runtime, json!({"event": "resize"}));
     assert_ne!(input, first);
     runtime
@@ -2869,11 +2900,23 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
     }
     let plain = write("plain", json!({}));
     trust(&store, &plain, &[]);
-    let runtime = ModHost::open(root.join("store")).unwrap();
+    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    let published = runtime.codex_config();
     assert_eq!(
-        runtime.codex_config().into_iter().collect::<Vec<_>>(),
+        published.lock().unwrap().iter().collect::<Vec<_>>(),
         ["tools.update_plan.enabled"]
     );
+    let planner_status = runtime.status()["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "planner")
+        .unwrap()["authority"]["codex_config"]
+        .clone();
+    assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
+    store.enable(&planner, false).unwrap();
+    runtime.reload().unwrap();
+    assert!(published.lock().unwrap().is_empty());
 }
 
 fn error_of(runtime: &ModHost, id: &str) -> String {

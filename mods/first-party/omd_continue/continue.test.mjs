@@ -35,11 +35,12 @@ test('continue submits the fixed instruction with only host-observed interruptio
   const aborted = turn('aborted', {
     reason: 'interrupted',
     tool_calls: [{ call_id: 'a', tool: 'apply_patch', started_at: 'a', finished_at: 'b', outcome: 'succeeded' }, { call_id: 'b', tool: 'exec_command', started_at: 'a', finished_at: null, outcome: null },
-      { call_id: 'c', tool: 'exec_command', started_at: 'a', finished_at: 'b', outcome: 'aborted' }],
-    processes: [{ id: 'b', kind: 'exec', command: 'sleep   30', running: true, exit_code: null }, { id: 'c', kind: 'exec', command: 'make', running: null, exit_code: null }],
+      ...['c', 'd', 'e'].map(call_id => ({ call_id, tool: 'exec_command', started_at: 'a', finished_at: 'b', outcome: 'aborted' }))],
+    processes: [{ id: 'b', kind: 'exec', command: `sleep   30 ${'x'.repeat(110)}🙂 tail`, running: true, exit_code: null }, { id: 'c', kind: 'exec', command: 'make', running: null, exit_code: null }],
     files: ['a', 'a', ...'bcdefghij'].map(path => ({ path, before: null, after: 'x', source: 'tool' })), truncated: true,
   });
   assert.equal(command([aborted], 'tests first').submit, `${INSTRUCTION}\n\nNote: tests first\n\nHost-observed interruption summary:\n`
-    + '- Last turn: aborted (interrupted)\n- Unfinished tool calls: exec_command (no recorded result), exec_command (aborted)\n- Still running: exec sleep 30\n'
+    + '- Last turn: aborted (interrupted)\n- Unfinished tool calls: exec_command (no recorded result), exec_command (aborted) ×3\n'
+    + `- Still running: exec sleep 30 ${'x'.repeat(110)}🙂\n`
     + '- Files changed in that turn: a, b, c, d, e, f, g, h (+2 more)\n- The host activity record for that turn is truncated.');
 });

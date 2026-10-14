@@ -1,6 +1,6 @@
 # `/continue`
 
-`omd_continue` adds a user-typed `/continue [note]` command that resumes interrupted work in the current session. It is not `/resume` (session selection) and never runs on its own. It is active by default in OMD+ and can be installed explicitly in OMD Core. It needs `commands` and `sessions`, adds no model-visible tool and registers no event, so ordinary turns are unchanged.
+`omd_continue` adds a user-typed `/continue [note]` command that resumes interrupted work in the current session. It is not `/resume` (session selection) and never runs on its own. OMD+ installs it disabled (turn it on in `/mods`), and it can be installed explicitly in OMD Core. It needs `commands` and `sessions`, adds no model-visible tool and registers no event. While it is enabled, the host records turn activity around every tool call (see below).
 
 The command submits one turn containing this fixed instruction, followed by your note:
 
@@ -11,6 +11,7 @@ After the note comes a bounded summary read from the host's turn-activity ledger
 - While a turn is running, the command refuses with a short note.
 - When the last turn completed, or no turn was recorded, it shows a note and submits nothing, unless you add a note (`/continue check the build`).
 - The ledger persists in the mod store, so it works after an error, a Ctrl-C, `codex resume` and a crash. After a crash the last turn shows as `interrupted`.
+- Repeated unfinished calls are counted (`exec_command (aborted) ×3`).
 - The host records the ledger only while an enabled mod's source calls `turns.activity`, so turns from before this mod was enabled have no summary. While recording, the host's workspace observer stats the workspace around each tool call and rereads only files whose size, ctime or inode changed.
 
 Changing the instruction needs a recorded reason.

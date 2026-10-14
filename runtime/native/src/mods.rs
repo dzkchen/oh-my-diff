@@ -160,7 +160,7 @@ pub(super) struct Core {
     intercepted: Arc<Mutex<Vec<&'static str>>>,
     required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
-    codex_config: std::collections::BTreeSet<String>,
+    codex_config: Arc<Mutex<std::collections::BTreeSet<String>>>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -1027,7 +1027,11 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             ));
         }
         config.model_provider.supports_websockets = false;
-        if self.codex_config.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
+        if self
+            .codex_config
+            .lock()
+            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
+        {
             config.update_plan_enabled = true;
         }
         let mut filesystem = profile.file_system_sandbox_policy();

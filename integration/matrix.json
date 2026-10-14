@@ -914,7 +914,6 @@
         "omd_workflow"
       ],
       "first_party_default_active": [
-        "omd_continue",
         "omd_inspector",
         "omd_logo",
         "omd_model_picker",
@@ -1099,7 +1098,7 @@
         "kind": "mod",
         "path": "mods/first-party/omd_continue",
         "disposition": "launch",
-        "tier": "default-active",
+        "tier": "opt-in",
         "profiles": [
           "full"
         ]

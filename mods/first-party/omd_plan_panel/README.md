@@ -23,7 +23,8 @@ when the next turn starts.
 - **Row limit.** At most `rows` steps (default 8). When a plan is longer, completed
   steps are dropped first, then unfinished steps are truncated, and the last
   row reads `+N more (X completed, Y pending)`. `/todos` toggles between the
-  limit and every step.
+  limit and every step. Both toggles apply to the current thread only and reset
+  when OMD restarts.
 - **Session scope.** Each `turn/plan/updated` notification replaces the plan of
   the thread that sent it, and the panel shows only the plan of the session's
   own thread, so sub-agents neither show nor overwrite it. Plans live in the

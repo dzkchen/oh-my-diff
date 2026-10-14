@@ -20,16 +20,20 @@ export default function activate(api: ModAPI) {
   const key = (item: Listed) => `${item.scope}:${item.id}`;
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
+  const matches = (argument: string) => (item: PackageState) => item.installed && (key(item) === argument || item.id === argument);
   const describe = (argument: string): PackageState | null => {
     const listed = api.host.tryCall('packages.list', null);
-    return listed.ok ? listed.value.packages.find(item => item.installed && (key(item) === argument || item.id === argument)) ?? null : null;
+    return listed.ok ? listed.value.packages.find(matches(argument)) ?? null : null;
   };
   const refresh = (state: Saved, notice: string | null): Saved => {
-    const listed = api.host.tryCall('packages.list', { fields: [...FIELDS] });
+    const listed = api.host.tryCall('packages.list', state.details ? null : { fields: [...FIELDS] });
     if (!listed.ok) return { ...state, packages: [], details: null, notice: `The mod list is unavailable (${listed.error})` };
-    const packages = listed.value.packages.map(({ settings_schema, ...item }) => ({ ...item, configurable: properties({ settings_schema }).length > 0 }))
-      .sort((a, b) => compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
-    return { ...state, packages, details: state.details && describe(key(state.details)), generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
+    const packages = listed.value.packages.map(entry => {
+      const { settings_schema, ...item } = Object.fromEntries(FIELDS.map(field => [field, entry[field]])) as Pick<PackageState, typeof FIELDS[number]>;
+      return { ...item, configurable: properties({ settings_schema }).length > 0 };
+    }).sort((a, b) => compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
+    const details = state.details && (listed.value.packages.find(matches(key(state.details))) ?? null);
+    return { ...state, packages, details, generation: listed.value.generation, reloadError: listed.value.reload_error, notice };
   };
   const apply = (state: Saved, request: PackageRequest, label: string): Saved => {
     const result = api.host.tryCall('packages.apply', { ...request, expected_generation: state.generation });
@@ -56,7 +60,7 @@ export default function activate(api: ModAPI) {
   const find = (state: Saved, argument: string) => state.packages.find(item => item.installed && (key(item) === argument || item.id === argument));
   const write = (state: Saved, argument: string): Saved => {
     const [target = '', name = '', ...rest] = argument.split(' ');
-    const item = describe(target);
+    const item = state.details && matches(target)(state.details) ? state.details : describe(target);
     const property = item && properties(item).find(([entry]) => entry === name)?.[1];
     if (!item || !property) return { ...state, notice: 'That setting is unavailable' };
     const text = rest.join(' ');
@@ -108,7 +112,14 @@ export default function activate(api: ModAPI) {
     const plan = changes as { packages?: Json[]; removed?: Json[]; version?: Json };
     return plan.packages ? plan.packages.map(version).join(', ') : plan.removed ? `remove ${plan.removed.map(version).join(', ')}` : plan.version ? `roll back ${version(plan).trim()}` : 'no package changes';
   };
-  const reviewText = (review: Review) => `${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}`;
+  const configured = (changes: Json) => {
+    const plan = changes as { codex_config?: Record<string, Json> | null; packages?: { authority?: { to?: { codex_config?: Record<string, Json> } } }[] };
+    return [...new Set([...Object.keys(plan.codex_config ?? {}), ...(plan.packages ?? []).flatMap(item => Object.keys(item.authority?.to?.codex_config ?? {}))])];
+  };
+  const reviewText = (review: Review) => {
+    const config = configured(review.changes);
+    return `${review.label}: ${changed(review.changes)} · new permissions: ${review.grants.join(', ') || 'none'}${config.length ? ` · Codex config: ${config.join(', ')}` : ''}`;
+  };
   api.command('mods', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/);
     const current = saved();

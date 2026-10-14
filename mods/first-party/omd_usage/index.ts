@@ -43,7 +43,7 @@ export default function activate(api: ModAPI) {
   const hud = (change: (hud: Hud) => void) => { const state = saved(); change(state.hud); save(state); };
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
-  const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, limit);
+  const visible = (value: string, limit = 160) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')].slice(0, limit).join('');
   const fit = (text: string, max: number) => [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
   const paid = (cost: Record<string, Json> | null) => typeof cost?.settled_task_charge_microusd === 'number' ? `$${(cost.settled_task_charge_microusd / 1e6).toFixed(2)} paid API` : 'no paid API use recorded';
   const usd = (value: number) => `$${value < 10 ? value.toFixed(2) : value.toFixed(1)}`;
@@ -354,18 +354,14 @@ export default function activate(api: ModAPI) {
     const read = api.usage.rateLimits();
     if (read.available) hud(state => limits(state, object(read.value), Date.now()));
     publish();
-    if (counting()) ticker.start();
   };
   api.on('start', configure);
   api.on('resume', configure);
-  const counting = () => {
-    const { hud: h } = saved(); const now = Date.now(); const last = context(h)?.last;
-    return (last ? cacheTtl(h, last) ?? 0 : 0) > now || quota(h, now).some(slot => (slot.current.resets ?? 0) > now);
-  };
-  // Redraws cache and quota-reset countdowns once a minute until they pass; the tick adds no observation.
+  const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last) : null; };
+  // Redraws a cache countdown once a minute until it passes; the tick adds no observation.
   const ticker = api.time.every('countdown', 60_000, () => {
     hud(state => { state.tick += 1; });
-    return counting();
+    return (expiry() ?? 0) > Date.now();
   });
   api.on('model_response', response => {
     const usage = object(response.usage);
@@ -382,7 +378,7 @@ export default function activate(api: ModAPI) {
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
     }));
     publish();
-    if (counting()) ticker.start();
+    if (expiry() !== null) ticker.start();
   });
   api.on('turn_start', ({ turn_id }) => hud(state => { state.turn = turn_id; }));
   api.on('turn_end', () => {
@@ -414,7 +410,6 @@ export default function activate(api: ModAPI) {
     if (method === 'account/rateLimits/updated') {
       hud(state => limits(state, update, Date.now()));
       publish();
-      if (counting()) ticker.start();
       return;
     }
     const state = saved();

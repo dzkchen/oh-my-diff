@@ -206,14 +206,7 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
         return None;
     }
     let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-    verified
-        .0
-        .iter()
-        .all(|(file, expected)| {
-            std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-        })
-        .then(|| (verified.1.clone(), verified.2.clone()))
+    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
 fn inspect_package(
@@ -648,7 +641,7 @@ impl ModStore {
             self.root.join("managed.json"),
         ]
         .iter()
-        .map(|path| std::fs::metadata(path).ok().map(|metadata| file_stamp(&metadata)))
+        .map(|path| super::configuration_stamp(path))
         .collect::<Vec<_>>();
         Some(json!([self.root, stamps]))
     }
@@ -666,10 +659,9 @@ impl ModStore {
     }
 
     pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
-        stamps.iter().all(|(file, expected)| {
-            std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-        })
+        stamps
+            .iter()
+            .all(|(file, expected)| super::configuration_stamp(file) == Some(*expected))
     }
 
     pub fn verify_selections(&self) -> Result<()> {

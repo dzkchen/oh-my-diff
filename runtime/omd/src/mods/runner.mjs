@@ -55,10 +55,11 @@ const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
 request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
+let clockRead = false;
 if (Number.isSafeInteger(now)) {
   globalThis.Date = class extends Date {
-    constructor(...args) { super(...(args.length ? args : [now])); }
-    static now() { return now; }
+    constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
+    static now() { clockRead = true; return now; }
   };
 }
 const handlers = new Map();
@@ -101,6 +102,7 @@ function serve(line) {
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
+  clockRead = false;
   if (request.event === 'component') {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
@@ -769,7 +771,7 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead, clock_read: clockRead}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve, base, component: step };

@@ -1594,10 +1594,16 @@ impl ModStore {
             state_version: package.state_version,
             dependencies: package.dependencies.clone(),
             capabilities: package.capabilities.clone(),
-            authority: json!({"exposure":authority_exposure(&package.capabilities),
-                "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
-                "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
-                "peer_access":package.peer_access,"autonomy":package.autonomy}),
+            authority: {
+                let mut authority = json!({"exposure":authority_exposure(&package.capabilities),
+                    "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
+                    "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
+                    "peer_access":package.peer_access,"autonomy":package.autonomy});
+                if !package.codex_config.is_empty() {
+                    authority["codex_config"] = json!(package.codex_config);
+                }
+                authority
+            },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: digest(
                 &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),

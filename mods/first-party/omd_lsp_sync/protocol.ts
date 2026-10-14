@@ -204,7 +204,7 @@ export function state(value: Json, adapter: Adapter): State {
 
 export function failure(s: State, reason: string, stale = false): void {
   s.status = stale ? 'stale' : 'fallback';
-  s.reason = reason.slice(0, 256);
+  s.reason = [...reason].slice(0, 256).join('');
 }
 
 export const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';

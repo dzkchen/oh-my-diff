@@ -36,7 +36,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods, omd_update | omd_logo, omd_mods, omd_update | none |
-| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_continue, omd_frecency, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_continue, omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
+| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_continue, omd_frecency, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ Deleted and not restored: `benchmarks/`.
 | `omd_model_picker` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_model_picker` |
 | `omd_plan_removal` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_plan_removal` |
 | `omd_plan_panel` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_plan_panel` |
-| `omd_continue` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_continue` |
+| `omd_continue` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_continue` |
 | `omd_tool_lines` | mod | default-active (OMD+) | — | — | `mods/first-party/omd_tool_lines` |
 | `omd_preview` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_preview` |
 | `omd_lsp_sync` | mod | opt-in (OMD+) | — | — | `mods/first-party/omd_lsp_sync` |
