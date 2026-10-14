@@ -2,8 +2,8 @@
 
 [`index.json`](index.json) is the repository-backed index of reviewed release
 candidates. [`development.json`](development.json) keeps experiments
-separate. As of September 29, 2026, no entry has passed the full
-Phase 11/12 release support gates, so none is labeled `supported`. The
+separate. No entry has passed the release support gates yet, so none is
+labeled `supported`. The
 reviewed entries are candidates, not an active bundle, a public compatibility
 promise, or evidence of independent community adoption. The OMD+ installed
 collection may grow with every qualified package; only a measured low-overhead
@@ -128,8 +128,8 @@ the recovery path if a mod fails.
 3. **Release.** Pin an exact source revision and digest, publish the tested
    host/API and package versions, support window, known limits, dependencies,
    conflict notes, rollback path and evidence. Move an entry to `supported`
-   only after the applicable Phase 11 functional/package checks and Phase 12
-   per-package value and no-material-regression gates. Add `release_evidence`
+   only after the applicable functional/package checks and the per-package
+   value and no-material-regression gates. Add `release_evidence`
    to the index; the checker refuses unsupported promotion. The maintainer
    verifies both install paths before packaging OMD+. No hosted registry
    or marketplace account is required.
@@ -161,7 +161,7 @@ candidate/development separation.
 
 ## Workflow gap routing
 
-The pinned Phase 10 OMP/Claude/OMD author matrix and capability slate inform
+A pinned OMP/Claude/OMD author matrix and capability slate inform
 this queue. [The review register](REVIEWS.md) retains the selected decisions in
 this repository. A catalog gap is a task to test, not a reason to activate new
 code by default.

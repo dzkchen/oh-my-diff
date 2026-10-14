@@ -3,7 +3,7 @@
 `mod_conformance.py` and `integration_matrix.py` check source inventories by default.
 A source reference can resolve even when its test is disabled, undiscovered, or has
 weak assertions. Inventory success is never verified coverage. The recorded results
-in the integration matrix are historical claims, not freshly executed results.
+in the integration matrix are earlier claims, not freshly executed results.
 
 Release qualification uses the same commands with `--release` and one or more
 `--executed-evidence RECEIPT` arguments. Conformance requires every evidence ID
@@ -55,8 +55,9 @@ python3 scripts/execution_evidence.py --bindings /path/to/node-bindings.json \
   'node --test --test-reporter=junit --test-reporter-destination="$OMD_TEST_EVIDENCE_JUNIT" mods/runner.test.mjs'
 ```
 
-For Rust, build the test target from the patched tree for the candidate revision
-using `batch_tree.py cargo <batch> evidence test -p <crate> --test <target> --no-run`.
+For Rust, build the test target in the patched tree for the candidate revision
+([`runtime/README.md`](../runtime/README.md)) with
+`cargo test -p <crate> --test <target> --no-run` from its `codex-rs` directory.
 Use the exact executable emitted by that build. The libtest adapter first lists
 that binary's tests, then executes each selected name with `--exact`; absent or
 ignored tests cannot produce passing evidence. Its classname is the source path:
