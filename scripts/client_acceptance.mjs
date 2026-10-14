@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { createInterface } from 'node:readline';
-import { connect, encodeFrame, unsupported } from '../mods/author/client.mjs';
+import { connect, unsupported } from '../mods/author/client.mjs';
+import { encodeFrame } from '../mods/author/frames.mjs';
 
 const [mode, url, repo] = process.argv.slice(2);
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();

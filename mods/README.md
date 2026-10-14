@@ -111,11 +111,6 @@ and returns its `{tree, post, next_ms}`. Steps also cover
 interceptor chains, key, pointer and component interaction, clients, reloads
 and virtual time; see [Offline scenarios](REFERENCE.md#offline-scenarios).
 
-The terminal fixture copies the bounded selection and reports backend delivery;
-the OS tools fixture's `/locale` with no argument restores the inherited locale.
-Examples using the new controls declare their required host feature labels;
-see [compatibility](COMPATIBILITY.md) when adopting those operations.
-
 For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
@@ -126,7 +121,8 @@ inactive except nine default packages (`omd_inspector`, `omd_logo`,
 implements task controls through mod-owned schema-2 contracts selected
 separately with `/omd_workflow:contract ID@VERSION` or `omd-package contract select ID@VERSION`.
 
-Packages outside the launch collection are not in this tree.
+[`first-party/`](first-party) holds only the launch collection; every other
+package, including the [`ports/`](ports) above, installs from the catalog.
 
 ## Validation
 

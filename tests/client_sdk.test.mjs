@@ -7,7 +7,8 @@ import { createServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect, encodeFrame, frameReader, unsupported } from '../mods/author/client.mjs';
+import { connect, unsupported } from '../mods/author/client.mjs';
+import { encodeFrame, frameReader } from '../mods/author/frames.mjs';
 
 const renderer = { kind: 'text', formats: ['text'], pointer: 'none', reducedMotion: true };
 

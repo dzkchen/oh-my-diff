@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 export function checkedSources(files, coverage, syntaxOnly) {
   return [...new Set(files)].filter(file => !/\.(test|spec)\.[cm]?[jt]sx?$/.test(file))
-    .filter(file => /^(mods\/(author|examples|first-party|optional)\/|plugins\/bundled\/).*\.[cm]?[jt]sx?$/.test(file)
+    .filter(file => /^(mods\/(author|examples|first-party)\/|plugins\/bundled\/).*\.[cm]?[jt]sx?$/.test(file)
       || /^mods\/[^/]+\.d\.[cm]?ts$/.test(file))
     .sort().map(file => {
       const config = coverage.get(file);

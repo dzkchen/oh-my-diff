@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { once } from 'node:events';
-import activate, { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, runClaude, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from '../mods/first-party/omd_claude_cli/transport.mjs';
+import activate, { translateRequest, responseEvents, reasoningItem } from './index.ts';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, runClaude, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from './transport.mjs';
 
+const pkg = fileURLToPath(new URL('./', import.meta.url));
 const model = 'claude-sonnet-5';
 const prompt = {
   model, stream: true, instructions: 'Follow user instructions.',
@@ -483,7 +486,7 @@ test('provider answers readiness, rejects unknown models and hands its shared po
   await writeFile(route, JSON.stringify({ port, claude: fake, default: model,
     models: [{ slug: model, cli: model, family: 'sonnet', efforts: [], thinking: false, window: 200000 }] }));
   const token = 'local-fixture-token-without-account-access';
-  const start = ready => spawn(process.execPath, [new URL('../mods/first-party/omd_claude_cli/transport.mjs', import.meta.url).pathname,
+  const start = ready => spawn(process.execPath, [new URL('./transport.mjs', import.meta.url).pathname,
     'serve', route, root, 'fixture'], { env: { PATH: '/usr/bin:/bin', OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: 'ignore' });
   const ready = async expected => {
     for (let attempt = 0; attempt < 60; attempt++) {

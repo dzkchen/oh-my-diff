@@ -353,9 +353,9 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "python:test_symbol_rename_and_code_action_apply_exact_text_scopes",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP symbol rename and code action apply exact text scopes",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ],
       "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
@@ -371,9 +371,9 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "python:test_semantic_reads_are_scoped_and_actions_are_discovery_only",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP semantic reads are scoped and actions are discovery only",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ],
       "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
@@ -389,9 +389,9 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "python:test_semantic_request_rejects_untracked_target_and_foreign_store",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP semantic request rejects an untracked target and a foreign store",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ],
       "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
@@ -408,9 +408,9 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "python:test_installed_python_server_synchronizes_open_change_close",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP installed Python server synchronizes document open, change and close",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ],
       "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
@@ -425,9 +425,9 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "python:test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP code action apply requires an exact preview and rejects a deferred edit",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ],
       "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
       "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
@@ -490,7 +490,7 @@
       ],
       "status": "default_off",
       "fixtures": [
-        "script:tests/workflow_mod.test.mjs",
+        "script:mods/first-party/omd_workflow/workflow.test.mjs",
         "rust:omd/tests/generic_host.rs::contract_documents_gate_on_bound_receipts_and_detect_weaker_selections"
       ],
       "limitations": "Reviewed and solo schema-2 documents and policy use generic host gates. Evidence uses local scripted providers; live provider qualification remains open.",
@@ -670,13 +670,13 @@
       ],
       "result": "One TypeScript mod manages separate Python, TypeScript/JavaScript, Rust and Java server sessions over process.*. Semantic reads are scope-checked, edits are exact-scope and hash-bound with a host backup, an absent server is a visible non-success fallback, and a failed post-edit synchronisation restores the backup.",
       "evidence": [
-        "python:test_symbol_rename_and_code_action_apply_exact_text_scopes",
-        "python:test_semantic_reads_are_scoped_and_actions_are_discovery_only",
-        "python:test_semantic_request_rejects_untracked_target_and_foreign_store",
-        "python:test_installed_python_server_synchronizes_open_change_close",
-        "python:test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit",
-        "python:test_failed_semantic_sync_restores_exact_backup",
-        "python:test_fake_server_requests_rename_changes_and_idle"
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP symbol rename and code action apply exact text scopes",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP semantic reads are scoped and actions are discovery only",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP semantic request rejects an untracked target and a foreign store",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP installed Python server synchronizes document open, change and close",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP code action apply requires an exact preview and rejects a deferred edit",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP failed semantic sync restores the exact backup",
+        "node:mods/first-party/omd_lsp_sync/lsp_sync.test.mjs:LSP server requests are answered and rename changes resolve to exact writes"
       ]
     },
     {
@@ -743,7 +743,7 @@
       ],
       "result": "The workflow mod uses generic host services for checked integration and completion with local scripted providers; live provider qualification remains open.",
       "evidence": [
-        "script:tests/workflow_mod.test.mjs",
+        "script:mods/first-party/omd_workflow/workflow.test.mjs",
         "rust:omd/tests/generic_host.rs::finding_receipt_replay_requires_explicit_independent_resolution"
       ]
     },

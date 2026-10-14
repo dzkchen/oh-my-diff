@@ -6,9 +6,9 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callback } from './mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const mod = new URL('../mods/first-party/omd_preview/', import.meta.url);
+const mod = new URL('./', import.meta.url);
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const read = name => readFileSync(new URL(name, mod), 'utf8');
 const source = read('index.ts');
