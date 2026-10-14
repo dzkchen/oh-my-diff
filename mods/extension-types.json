@@ -189,12 +189,6 @@
       "why_mod": "Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives."
     },
     {
-      "path": "mods/examples/approval_guard",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Tightens live native approval decisions before hooks and automatic review, which hooks cannot force."
-    },
-    {
       "path": "mods/examples/ghost_history",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -205,30 +199,6 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft."
-    },
-    {
-      "path": "mods/examples/key_remap",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Rewrites matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
-    },
-    {
-      "path": "mods/examples/input_guard",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Drops matched keystrokes through the composer_key interceptor chain before the prompt box applies them."
-    },
-    {
-      "path": "mods/examples/shortcodes",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Supplies composer completion rows for its own token triggers, which skills and hooks cannot add to the prompt box."
-    },
-    {
-      "path": "mods/examples/mention_guard",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Redirects or refuses the host's read of @-mentioned files through the mention interceptor chain."
     },
     {
       "path": "mods/examples/approval_delegate",
@@ -297,18 +267,6 @@
       "why_mod": "Lists the TCP listeners of the current session's background terminals from the live host."
     },
     {
-      "path": "mods/examples/checkout_board",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Keeps one state per Git checkout that every OMD session working there shares."
-    },
-    {
-      "path": "mods/examples/readme_answers",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Answers questions from the README through one-shot completions whose README prefix is marked for the provider's prompt cache."
-    },
-    {
       "path": "mods/examples/quiet_inline",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -333,24 +291,6 @@
       "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
     },
     {
-      "path": "mods/examples/frame_stream",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look."
-    },
-    {
-      "path": "mods/examples/raster_canvas",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Draws an animated raster with pointer hover, drag and an anchored overlay."
-    },
-    {
-      "path": "mods/examples/game_input",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks."
-    },
-    {
       "path": "mods/examples/client_tag",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -367,12 +307,6 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
-    },
-    {
-      "path": "mods/examples/live_output",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Streams a sandboxed command's raw stdout and stderr above the composer as they are written."
     },
     {
       "path": "mods/examples/approval_desk",
@@ -397,12 +331,6 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Turns live app-server notifications into terminal notifications with focus state."
-    },
-    {
-      "path": "mods/examples/output_budget",
-      "extension_type": "mod",
-      "role": "conformance_fixture",
-      "why_mod": "Replaces model-visible tool output at the live tool boundary while the host keeps the original."
     },
     {
       "path": "mods/examples/package_panel",
