@@ -117,8 +117,6 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 fn profiling() -> bool {
     static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -2899,9 +2897,7 @@ fn invoke(
     let thread = state_thread(&payload);
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+    let now_ms = crate::peers::now_ms();
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();

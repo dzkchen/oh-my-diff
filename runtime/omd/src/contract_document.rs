@@ -173,22 +173,6 @@ pub fn sha256_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-fn canonical(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let mut keys = object.keys().collect::<Vec<_>>();
-            keys.sort();
-            Value::Object(
-                keys.into_iter()
-                    .map(|key| (key.clone(), canonical(&object[key])))
-                    .collect(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-        other => other.clone(),
-    }
-}
-
 impl ContractDocument {
     pub fn parse(value: &Value) -> Result<Self, String> {
         let document: Self =
@@ -202,11 +186,8 @@ impl ContractDocument {
     }
 
     pub fn digest(&self) -> String {
-        let value = canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
-        format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&value).unwrap_or_default())
-        )
+        let value = crate::broker::canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
+        format!("{:x}", Sha256::digest(value))
     }
 
     pub fn validate(&self) -> Result<(), String> {

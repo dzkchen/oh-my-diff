@@ -164,10 +164,10 @@ function configure(settings: Readonly<Record<string, Json>>) {
     else if (kind === 'path' && value) exempt.paths.push(pathPattern(value));
     else exempt.ignored++;
   }
+  const known = { secrets: secrets.filter(name => name in SECRETS), pii: pii.filter(name => name in PII) };
   return {
-    rules: [...secrets.filter(name => name in SECRETS).map(name => [name, SECRETS[name]] as const),
-      ...pii.filter(name => name in PII).map(name => [name, PII[name]] as const)],
-    secrets: secrets.filter(name => name in SECRETS), pii: pii.filter(name => name in PII),
+    rules: [...known.secrets.map(name => [name, SECRETS[name]] as const), ...known.pii.map(name => [name, PII[name]] as const)],
+    ...known,
     unknown: [...secrets.filter(name => !(name in SECRETS)), ...pii.filter(name => !(name in PII))],
     scopes: strings(settings.scopes), paths: String(settings.paths), sensitive: strings(settings.sensitive_paths).map(pathPattern),
     unscanned: String(settings.unscanned), exempt,

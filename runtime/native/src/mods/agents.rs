@@ -181,7 +181,7 @@ fn integration_receipt(
         findings: Vec::new(),
         resolves: Vec::new(),
         submitted_by: submitted_by.to_owned(),
-        at: operations::now(),
+        at: u128::from(codex_omd::peers::now_ms()),
     }
 }
 
@@ -1516,10 +1516,7 @@ impl Agents {
             &format!(
                 "integration-{}-{}.json",
                 execution::hash(handle.as_bytes()),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|elapsed| elapsed.as_millis())
-                    .unwrap_or_default()
+                codex_omd::peers::now_ms()
             ),
             &json!({"schema":2,"agent":handle,"candidate_sha256":candidate_sha256,
                 "changed_paths":changed,"apply":applied}),

@@ -1,4 +1,5 @@
 use super::*;
+use codex_omd::peers::now_ms;
 use codex_protocol::turn_input::StartIfIdleSubmission;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
@@ -115,12 +116,6 @@ impl Queue {
 #[derive(Default)]
 pub(super) struct Queues {
     threads: Mutex<BTreeMap<String, Queue>>,
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 fn notify(core: &Arc<Core>, lead: &Lead, owner: String, payload: Value) {
