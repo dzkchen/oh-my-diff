@@ -364,7 +364,7 @@ test('profile switches stay on the thread, ask before paid routes and report ref
     if (operation === 'app.request' && updateError) throw new Error(updateError);
     return { 'routes.list': [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant'), { ...route('other', 'included_subscription'), provider: 'openai' }],
       'credentials.list': [{ id: 'cred-work', label: 'work', kind: 'chatgpt' }], 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true },
-      'store.get': { value: true, revision: 1, provenance: { thread_id: 'thread-1' } }, 'store.put': { revision: 2 }, 'app.request': {} }[operation];
+      'session.info': { thread_id: 'thread-1' }, 'app.request': {} }[operation];
   });
   let state = invoke(null, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'paid/up', provider: 'omd_profiles', reasoning: 'high' }).state;
   assert.equal(state.current, 'paid');

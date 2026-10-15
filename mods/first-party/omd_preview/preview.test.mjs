@@ -26,6 +26,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     const { operation, arguments: args } = call;
     calls.push(call);
     const key = `${repository}\0${args?.key}`;
+    if (operation === 'session.info') return { thread_id: 'thread-1' };
     if (operation === 'store.get') return stores.get(key) ?? null;
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
@@ -33,7 +34,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       racing = null;
       const revision = (stores.get(key)?.revision ?? null);
       if (revision !== args.expected_revision) throw new Error('store_revision_conflict');
-      stores.set(key, { value: args.value, revision: (revision ?? 0) + 1, provenance: { thread_id: 'thread-1' } });
+      stores.set(key, { value: args.value, revision: (revision ?? 0) + 1 });
       return { revision: (revision ?? 0) + 1 };
     }
     if (operation === 'app.request') {
@@ -240,7 +241,7 @@ test('a watch that loses its save race says it is not watched', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-race-')));
   try {
     writeFileSync(join(repository, 'a.md'), '# A\n');
-    racing = key => stores.set(key, { value: { watch: ['b.md'], hashes: {} }, revision: 9, provenance: { thread_id: 'thread-1' } });
+    racing = key => stores.set(key, { value: { watch: ['b.md'], hashes: {} }, revision: 9 });
     const { value, calls } = invoke(repository, null, 'command', 'a.md --watch', 'preview');
     assert.equal(value.display, 'Opened a.md in the browser; not watched: store_revision_conflict');
     assert.deepEqual(watching(repository).watch, ['b.md']);

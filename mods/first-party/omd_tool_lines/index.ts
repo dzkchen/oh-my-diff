@@ -2,14 +2,8 @@ import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderParsedCommand, Re
 
 type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean };
 
-const bytes = (text: string) => {
-  let total = 0;
-  for (const char of text) {
-    const point = char.codePointAt(0)!;
-    total += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
-  }
-  return total;
-};
+const utf8 = new TextEncoder();
+const bytes = (text: string) => utf8.encode(text).length;
 
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;

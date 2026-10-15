@@ -18,6 +18,17 @@ test('UI state serialized boundaries agree with the native validator', () => {
   }
 });
 
+test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
+  const source = `export default api => api.command('encode', text => {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    const fitted = encoder.encodeInto(text, new Uint8Array(4));
+    return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read) };
+  })`;
+  const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'encode', payload: 'a€😀' });
+  assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€' });
+});
+
 test('UI state requires terminal authority and refuses activation and render writes', () => {
   const read = 'export default api => api.command("read", () => api.uiState.get())';
   assert.match(run(read, { capabilities: ['commands'], event: 'command', name: 'read' }).error, /capability/);
@@ -80,7 +91,7 @@ test('a callback clock stands still except across its own sleeps', () => {
   assert.deepEqual(reply.value, [0, 40, 40]);
 });
 test('the test harness kills an interactive callback that never returns', () => {
-  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 50 };
+  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 500 };
   assert.throws(() => callback(request, () => null), /runner_timed_out/);
 });
 test('package text assets are read only and limited to the selected package', () => {

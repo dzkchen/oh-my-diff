@@ -21,9 +21,7 @@ export function createClient(api: ModAPI) {
   const readFiles = (paths: string[]) => budget({ paths }, a => api.host.tryCall('workspace.read', a));
   let dirty = false;
   const save = (s: State) => {
-    const root = object(api.state.get()) ?? {};
-    const existing = object(root.servers ?? null);
-    const prior = existing ?? (string(root.repository ?? null) ? { python: state(api.state.get(), 'python') as unknown as Json } : {});
+    const prior = object(object(api.state.get())?.servers ?? null) ?? {};
     const stored = { ...s, diagnostics: { ...s.diagnostics } };
     const body = () => ({ servers: { ...prior, [s.adapter]: stored } }) as unknown as Json;
     for (const path in stored.diagnostics) {
