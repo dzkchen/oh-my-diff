@@ -8,12 +8,12 @@
   "description": "Declines an approval or answers a question nobody responded to within two minutes, so a turn keeps going while you are away",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_auto_continue"},
-  "capabilities": ["store", "events", "approvals", "terminal"],
+  "capabilities": ["store", "events", "approvals", "terminal", "lifecycle"],
   "subscriptions": {
     "channels": ["omd_auto_continue/*"],
     "app": ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request"]
   },
-  "compatibility": {"required_features": ["app_respond_v1", "app_v1", "events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
+  "compatibility": {"required_features": ["app_respond_v1", "app_v1", "events_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {

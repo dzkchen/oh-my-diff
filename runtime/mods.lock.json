@@ -36,15 +36,16 @@
         "store",
         "events",
         "approvals",
-        "terminal"
+        "terminal",
+        "lifecycle"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "233d7b223708eeaf667b894e0884adeba6a2229c5857de9279e99807310b0ef0",
-        "mod.json": "0c34850a6cc08872b6de5ddef9f74524f07ab7b095e63d1a8e8d517077445600"
+        "index.ts": "74ca754d7cac7c705ff4eb3f8ffb4f247fddefdf964663fa5d9ca275fb270aac",
+        "mod.json": "19d8f26491a6a1117efb37157cb812fd07801ab0b85dde491bdd72f44f612bc7"
       },
       "id": "omd_auto_continue",
-      "package_sha256": "7666ef21270bcbfe65dbab7bc1f0d729e7b438346d9e3bf849391bd0a8d2d201",
+      "package_sha256": "f1371f4e2e63379083c3143cd4a3cd03d609ccb20024c02b58a311f759c96f7c",
       "source": "mods/first-party/omd_auto_continue",
       "version": "0.1.0-preview.1"
     },

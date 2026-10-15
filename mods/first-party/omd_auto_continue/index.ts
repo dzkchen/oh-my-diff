@@ -14,20 +14,13 @@ const KINDS: Record<string, Kind> = {
 };
 const ANSWER = 'No answer within the time limit (the user may be away). Proceed with your best judgment, preferring the recommended option, and state the assumption you made.';
 const RETRY_MS = 10_000;
-const STALE_MS = 60_000;
 const FINAL = /^app_(request_not_pending|request_not_subscribed|response_refused|request_id_invalid)/;
 const WHAT: Record<Kind, string> = { approval: 'the approval was declined', permission: 'the permission request was denied', question: 'the question was answered with "use your best judgment"', elicitation: 'the MCP request was declined' };
 
 export default function activate(api: ModAPI) {
   const seconds = Number(api.settings.timeout_seconds ?? 120);
   const limit = Number.isFinite(seconds) && seconds > 0 ? Math.round(Math.min(Math.max(seconds, 1), 86_400) * 1000) : 0;
-  // Request ids restart with the app-server, so an entry long past its deadline belongs to an earlier session.
-  const load = (): State => {
-    const state: State = { pending: {}, ...(api.state.get() as Partial<State> | null) };
-    const now = Date.now();
-    for (const [key, item] of Object.entries(state.pending)) if (item.deadline < now - STALE_MS) delete state.pending[key];
-    return state;
-  };
+  const load = (): State => ({ pending: {}, ...(api.state.get() as Partial<State> | null) });
   const arm = (state: State) => {
     const next = Math.min(...Object.values(state.pending).map(item => item.deadline));
     if (Number.isFinite(next)) api.host.tryCall('events.schedule', { key: 'deadline', delay_ms: Math.max(1000, next - Date.now()) });
@@ -48,7 +41,7 @@ export default function activate(api: ModAPI) {
       : [];
     api.host.tryCall('events.publish', { channel: CHANNEL, data: { request_id: event.request_id, phase: event.phase, kind, questions } });
     if (event.phase === 'requested') {
-      api.host.tryCall('terminal.notice', { text: `No answer in ${Math.round(limit / 1000)} s continues without it`, kind: 'info', placement: 'toast', ttl_ms: 8000 });
+      api.host.tryCall('terminal.notice', { text: `Auto-continues in ${Math.round(limit / 1000)} s if unanswered`, kind: 'info', placement: 'toast', ttl_ms: 8000 });
     }
   });
 
@@ -79,4 +72,12 @@ export default function activate(api: ModAPI) {
     api.state.set(state);
     arm(state);
   });
+
+  // Request ids restart with the app-server, and a fork inherits its parent's state: neither may answer a stale id.
+  const reset = () => {
+    api.state.set({ pending: {} });
+    api.host.tryCall('events.cancel', { key: 'deadline' });
+  };
+  api.on('start', reset);
+  api.on('resume', event => { if (event.restarted) reset(); });
 }

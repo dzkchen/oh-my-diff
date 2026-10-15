@@ -11,7 +11,7 @@ When a request appears, a toast says how long you have. Answering before the dea
 
 A transcript note visible to you and the model then says the request timed out (you may be away), so the model continues with work that does not depend on it.
 
-The mod answers through the host's `app.respond` operation, which accepts only these results: it cannot approve anything, so approving stays with you or a mod holding an `approve` grant. It needs the interactive terminal; `codex exec` and headless hosts refuse it.
+The mod answers through the host's `app.respond` operation, which accepts only these results: it cannot approve a command, file change, permission or MCP request, so approving those stays with you or a mod holding an `approve` grant. A question answer is the mod's best-judgment instruction, which the model receives as your reply. It needs the interactive terminal; `codex exec` and headless hosts refuse it.
 
 If you are viewing another thread when the time runs out, the mod retries every 10 seconds until you return or answer.
 

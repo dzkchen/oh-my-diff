@@ -57,7 +57,14 @@ test('answered, already-resolved and disabled requests are left alone', () => {
   const viewing = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('client_surface_context_changed') : {} });
   assert.equal(viewing.state.pending['1'].deadline, NOW + 130_000, 'another thread in view retries instead of dropping the request');
   assert.deepEqual(viewing.calls.at(-1), ['events.schedule', { key: 'deadline', delay_ms: 10_000 }]);
-  assert.deepEqual(run('channel', hop({ request_id: 9, phase: 'resolved', kind: 'approval', questions: [] }), state, { now: NOW + 200_000 }).state.pending, {}, 'stale entries from an earlier session are dropped');
+  const late = run('timer', { key: 'deadline' }, state, { now: NOW + 3_600_000 });
+  assert.deepEqual(late.calls[0], ['app.respond', { request_id: 1, result: { permissions: {} } }], 'a timer delayed by sleep still answers');
+  assert.deepEqual(run('resume', { thread_id: 't', last_turn: null, restarted: false }, state).calls, []);
+  for (const [event, payload] of [['resume', { thread_id: 't', last_turn: null, restarted: true }], ['start', {}]]) {
+    const reset = run(event, payload, state);
+    assert.deepEqual(reset.state.pending, {}, `${event} drops entries from an earlier session or the forked parent`);
+    assert.deepEqual(reset.calls, [['events.cancel', { key: 'deadline' }]]);
+  }
   const elicitation = run('channel', hop({ request_id: 3, phase: 'requested', kind: 'elicitation', questions: [] }), null).state;
   assert.deepEqual(run('timer', { key: 'deadline' }, elicitation, { now: NOW + 120_000 }).calls[0], ['app.respond', { request_id: 3, result: { action: 'decline' } }]);
 });
