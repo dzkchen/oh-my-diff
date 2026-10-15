@@ -1142,7 +1142,7 @@ index b30500b71..38b324a41 100644
   "filetime",
   "libc",
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 048234021..64752c4c7 100644
+index 048234021..93ec283b5 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -1153,15 +1153,16 @@ index 048234021..64752c4c7 100644
      "aws-auth",
      "analytics",
      "agent-graph-store",
-@@ -169,6 +171,7 @@ edition = "2024"
+@@ -169,6 +171,8 @@ edition = "2024"
  license = "Apache-2.0"
 
  [workspace.dependencies]
++codex-omd = { path = "omd" }
 +codex-omd-extension = { path = "ext/omd" }
  # Internal
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
-@@ -381,7 +384,7 @@ file-id = "0.2.3"
+@@ -381,7 +385,7 @@ file-id = "0.2.3"
  flate2 = "1.1.8"
  futures = { version = "0.3", default-features = false }
  gethostname = "1.1.0"
@@ -1170,7 +1171,7 @@ index 048234021..64752c4c7 100644
  gix-url = "0.35.2"
  glob = "0.3"
  globset = "0.4"
-@@ -505,7 +508,7 @@ supports-color = "3.0.2"
+@@ -505,7 +509,7 @@ supports-color = "3.0.2"
  syntect = "5"
  sys-locale = "0.3.2"
  system-configuration = "0.7"
@@ -15878,14 +15879,14 @@ index a28bdec2e..286dcdcff 100644
 +#[path = "websocket_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index 0ef30505c..e0d79252c 100644
+index 0ef30505c..7c83555ca 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,8 @@ doctest = false
  workspace = true
 
  [dependencies]
-+codex-omd = { path = "../omd" }
++codex-omd = { workspace = true }
 +codex-omd-extension = { workspace = true }
  codex-utils-process = { workspace = true }
  anyhow = { workspace = true }
@@ -19021,10 +19022,18 @@ index aa77c4661..d9752bed4 100644
  fn portable_root_manifest_can_be_packed_and_unpacked() {
      let source = tempdir().expect("source tempdir");
 diff --git a/codex-rs/core/Cargo.toml b/codex-rs/core/Cargo.toml
-index cfd723688..a17e6b6d6 100644
+index cfd723688..bc67a0ea7 100644
 --- a/codex-rs/core/Cargo.toml
 +++ b/codex-rs/core/Cargo.toml
-@@ -108,6 +108,7 @@ rmcp = { workspace = true, default-features = false, features = [
+@@ -55,6 +55,7 @@ codex-hooks = { workspace = true }
+ codex-http-client = { workspace = true }
+ codex-install-context = { workspace = true }
+ codex-network-proxy = { workspace = true }
++codex-omd = { workspace = true }
+ codex-otel = { workspace = true }
+ codex-plugin = { workspace = true }
+ codex-model-provider = { workspace = true }
+@@ -108,6 +109,7 @@ rmcp = { workspace = true, default-features = false, features = [
  serde = { workspace = true, features = ["derive"] }
  serde_json = { workspace = true }
  sha1 = { workspace = true }
@@ -19032,14 +19041,6 @@ index cfd723688..a17e6b6d6 100644
  shlex = { workspace = true }
  similar = { workspace = true }
  tempfile = { workspace = true }
-@@ -138,6 +139,7 @@ openssl-sys = { workspace = true, features = ["vendored"] }
- openssl-sys = { workspace = true, features = ["vendored"] }
-
- [target.'cfg(unix)'.dependencies]
-+codex-omd = { path = "../omd" }
- codex-shell-escalation = { workspace = true }
-
- [dev-dependencies]
 diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
 index 5864a5df7..13b23516b 100644
 --- a/codex-rs/core/config.schema.json
@@ -20911,7 +20912,7 @@ index b53b8445c..be5ecce8e 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index bc086f866..25cbf4866 100644
+index bc086f866..c889ec3fc 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -256,6 +256,7 @@ mod mcp_prewarm;
@@ -20922,24 +20923,10 @@ index bc086f866..25cbf4866 100644
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -516,7 +517,64 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -516,7 +517,50 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
-+#[cfg(unix)]
-+type WorkspaceLease = codex_omd::workspace_lease::Lease;
-+#[cfg(not(unix))]
-+type WorkspaceLease = ();
-+
-+#[cfg(unix)]
-+fn shared_workspace_lease(path: &std::path::Path) -> std::io::Result<WorkspaceLease> {
-+    codex_omd::workspace_lease::shared(path)
-+}
-+#[cfg(not(unix))]
-+fn shared_workspace_lease(_path: &std::path::Path) -> std::io::Result<WorkspaceLease> {
-+    Ok(())
-+}
-+
 +fn selected_workspace_paths(
 +    manager: &EnvironmentManager,
 +    selections: &[TurnEnvironmentSelection],
@@ -20979,7 +20966,7 @@ index bc086f866..25cbf4866 100644
 +        let acquired = paths
 +            .into_iter()
 +            .filter(|path| !held.contains_key(path))
-+            .map(|path| shared_workspace_lease(&path).map(|lease| (path, lease)))
++            .map(|path| codex_omd::workspace_lease::shared(&path).map(|lease| (path, lease)))
 +            .collect::<std::io::Result<Vec<_>>>()?;
 +        held.extend(acquired);
 +        Ok(())
@@ -20987,7 +20974,7 @@ index bc086f866..25cbf4866 100644
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1112,6 +1170,22 @@ impl SessionIo {
+@@ -1112,6 +1156,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -21010,7 +20997,7 @@ index bc086f866..25cbf4866 100644
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1493,6 +1567,100 @@ impl Session {
+@@ -1493,6 +1553,100 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -21111,7 +21098,7 @@ index bc086f866..25cbf4866 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -1946,6 +2114,20 @@ impl Session {
+@@ -1946,6 +2100,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -21132,7 +21119,7 @@ index bc086f866..25cbf4866 100644
 
              let previous_config = notify_config_contributors
                  .then(|| self.build_effective_session_config(&state.session_configuration));
-@@ -3764,6 +3946,7 @@ impl Session {
+@@ -3764,6 +3932,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -21140,7 +21127,7 @@ index bc086f866..25cbf4866 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3771,6 +3954,27 @@ impl Session {
+@@ -3771,6 +3940,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -21168,7 +21155,7 @@ index bc086f866..25cbf4866 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4185,6 +4389,10 @@ impl Session {
+@@ -4185,6 +4375,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -21179,7 +21166,7 @@ index bc086f866..25cbf4866 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4194,6 +4402,7 @@ impl Session {
+@@ -4194,6 +4388,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21187,7 +21174,7 @@ index bc086f866..25cbf4866 100644
                  })
                  .await
              {
-@@ -4281,6 +4490,10 @@ impl Session {
+@@ -4281,6 +4476,10 @@ impl Session {
                  }
              }
          }
@@ -21198,7 +21185,7 @@ index bc086f866..25cbf4866 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4290,6 +4503,7 @@ impl Session {
+@@ -4290,6 +4489,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21206,7 +21193,7 @@ index bc086f866..25cbf4866 100644
                  })
                  .await
              {
-@@ -4487,7 +4701,7 @@ impl Session {
+@@ -4487,7 +4687,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -21269,19 +21256,20 @@ index 8c4203bf1..930f6ad99 100644
                  .map_err(std::io::Error::other)?;
          }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index 263f08f2f..a461ba3c1 100644
+index 263f08f2f..e849e8483 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
-@@ -58,6 +58,8 @@ type McpToolApprovalMetadataMap =
+@@ -58,6 +58,9 @@ type McpToolApprovalMetadataMap =
  ///
  /// A session has at most 1 running task at a time, and can be interrupted by user input.
  pub(crate) struct Session {
-+    pub(super) workspace_leases:
-+        std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, WorkspaceLease>>,
++    pub(super) workspace_leases: std::sync::Mutex<
++        std::collections::BTreeMap<std::path::PathBuf, codex_omd::workspace_lease::Lease>,
++    >,
      pub(crate) thread_id: ThreadId,
      pub(crate) installation_id: String,
      pub(super) tx_event: Sender<Event>,
-@@ -97,6 +99,8 @@ pub(crate) struct Session {
+@@ -97,6 +100,8 @@ pub(crate) struct Session {
      pub(super) fork_persistence: ForkPersistence,
      pub(super) forked_from_ordinal_exclusive: Option<u64>,
      pub(super) next_internal_sub_id: AtomicU64,
@@ -21290,7 +21278,7 @@ index 263f08f2f..a461ba3c1 100644
  }
 
  #[derive(Clone)]
-@@ -797,6 +801,31 @@ impl Session {
+@@ -797,6 +802,31 @@ impl Session {
          git_enrichment_policy: GitEnrichmentPolicy,
          windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
      ) -> anyhow::Result<Arc<Self>> {
@@ -21309,7 +21297,7 @@ index 263f08f2f..a461ba3c1 100644
 +        let workspace_leases = workspace_paths
 +            .into_iter()
 +            .map(|path| {
-+                shared_workspace_lease(&path)
++                codex_omd::workspace_lease::shared(&path)
 +                    .map_err(|error| {
 +                        anyhow::anyhow!(
 +                            "Cannot acquire workspace lease for {}: {error}",
@@ -21322,7 +21310,7 @@ index 263f08f2f..a461ba3c1 100644
          debug!(
              "Configuring session: model={}; provider={:?}",
              session_configuration
-@@ -1012,6 +1041,12 @@ impl Session {
+@@ -1012,6 +1042,12 @@ impl Session {
              thread_extension_init,
          );
          thread_extension_data.insert(crate::context::GuardianReviewEvidence::default());
@@ -21335,7 +21323,7 @@ index 263f08f2f..a461ba3c1 100644
          // Kick off independent async setup tasks in parallel to reduce startup latency.
          //
          // - initialize thread persistence with new or resumed session info
-@@ -1682,6 +1717,9 @@ impl Session {
+@@ -1682,6 +1718,9 @@ impl Session {
                  extension_metrics::from_session_telemetry(session_telemetry.clone());
              let workspace_routing = thread_extension_data
                  .get_or_init(|| config.workspace_routing_context());
@@ -21345,7 +21333,7 @@ index 263f08f2f..a461ba3c1 100644
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor.on_thread_start(codex_extension_api::ThreadStartInput {
                      config: config.as_ref(),
-@@ -1812,6 +1850,7 @@ impl Session {
+@@ -1812,6 +1851,7 @@ impl Session {
              };
              let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
              let sess = Arc::new(Session {
@@ -21353,7 +21341,7 @@ index 263f08f2f..a461ba3c1 100644
                  thread_id,
                  installation_id,
                  tx_event: tx_event.clone(),
-@@ -1844,6 +1883,7 @@ impl Session {
+@@ -1844,6 +1884,7 @@ impl Session {
                  fork_persistence,
                  forked_from_ordinal_exclusive,
                  next_internal_sub_id: AtomicU64::new(0),
@@ -21383,7 +21371,7 @@ index c7a5de027..724125dbc 100644
          // Save changed settings first. The manager then installs any new environment list before
          // waking waiting work. The next step cannot read either until we release this lock.
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index 496114a11..6b4ed0b46 100644
+index 496114a11..aa49cb8da 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -3,6 +3,8 @@ use crate::agent::LocalAgentControl;
@@ -21395,7 +21383,160 @@ index 496114a11..6b4ed0b46 100644
  #[path = "turn_start_mcp_tests.rs"]
  mod turn_start_mcp_tests;
  use super::step_settings::ResolvedStepSettings;
-@@ -4486,6 +4488,7 @@ async fn set_rate_limits_retains_previous_credits() {
+@@ -1607,6 +1609,152 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
+     Ok(())
+ }
+
++#[tokio::test]
++async fn approval_gates_deny_skipped_calls_and_lift_only_user_rule_forbids() -> anyhow::Result<()> {
++    use crate::tools::sandboxing::ExecApprovalRequirement;
++    use crate::tools::sandboxing::ToolError;
++
++    struct Gate(Arc<std::sync::Mutex<Vec<String>>>);
++
++    impl codex_extension_api::ApprovalGateContributor for Gate {
++        fn gate_approval<'a>(
++            &'a self,
++            input: codex_extension_api::ApprovalGateInput<'a>,
++        ) -> codex_extension_api::ExtensionFuture<'a, codex_extension_api::ApprovalGate> {
++            self.0.lock().unwrap().push(input.host_decision.to_owned());
++            Box::pin(std::future::ready(match input.host_decision {
++                "skip" => codex_extension_api::ApprovalGate::Deny("gated".to_string()),
++                _ => codex_extension_api::ApprovalGate::Approve("lifted".to_string()),
++            }))
++        }
++    }
++
++    struct ProbeToolRuntime {
++        requirement: ExecApprovalRequirement,
++        command: &'static str,
++        runs: usize,
++    }
++
++    impl crate::tools::sandboxing::Approvable<TurnEnvironment> for ProbeToolRuntime {
++        fn exec_approval_requirement(
++            &self,
++            _req: &TurnEnvironment,
++        ) -> Option<ExecApprovalRequirement> {
++            Some(self.requirement.clone())
++        }
++
++        fn approval_action(
++            &self,
++            _req: &TurnEnvironment,
++            call_id: &str,
++        ) -> std::io::Result<crate::tools::sandboxing::ApprovalAction> {
++            Ok(crate::tools::sandboxing::ApprovalAction::ExecCommand {
++                id: call_id.to_string(),
++                environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
++                command: vec![self.command.to_string()],
++                hook_command: self.command.to_string(),
++                cwd: PathUri::from_abs_path(&std::env::temp_dir().abs()),
++                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
++                additional_permissions: None,
++                justification: None,
++                tty: false,
++                proposed_execpolicy_amendment: None,
++            })
++        }
++    }
++
++    impl crate::tools::sandboxing::Sandboxable for ProbeToolRuntime {
++        fn sandbox_preference(&self) -> codex_sandboxing::SandboxablePreference {
++            codex_sandboxing::SandboxablePreference::Auto
++        }
++    }
++
++    impl crate::tools::sandboxing::ToolRuntime<TurnEnvironment, ()> for ProbeToolRuntime {
++        fn turn_environment<'a>(&self, req: &'a TurnEnvironment) -> &'a TurnEnvironment {
++            req
++        }
++
++        async fn run(
++            &mut self,
++            _req: &TurnEnvironment,
++            _attempt: &crate::tools::sandboxing::SandboxAttempt<'_>,
++            _ctx: &crate::tools::sandboxing::ToolCtx,
++        ) -> Result<(), ToolError> {
++            self.runs += 1;
++            Ok(())
++        }
++    }
++
++    let (mut session, _) = make_session_and_context().await;
++    let decisions = Arc::new(std::sync::Mutex::new(Vec::new()));
++    let mut extensions =
++        codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++    extensions.approval_gate_contributor(Arc::new(Gate(Arc::clone(&decisions))));
++    session.services.extensions = Arc::new(extensions.build());
++    let mut user_rules = codex_execpolicy::PolicyParser::new();
++    user_rules.parse(
++        "user.rules",
++        r#"prefix_rule(pattern=["rm"], decision="forbidden")"#,
++    )?;
++    session.services.exec_policy = Arc::new(crate::exec_policy::ExecPolicyManager::new(Arc::new(
++        user_rules.build(),
++    )));
++    let session = Arc::new(session);
++    let turn = session.new_default_turn().await;
++    let tool_ctx = crate::tools::sandboxing::ToolCtx {
++        cancellation_token: CancellationToken::new(),
++        session: Arc::clone(&session),
++        step_context: StepContext::for_test(Arc::clone(&turn)),
++        call_id: "gated-call".to_string(),
++        tool_name: codex_tools::ToolName::plain("probe"),
++    };
++    let forbidden = ExecApprovalRequirement::Forbidden {
++        reason: "policy".to_string(),
++    };
++    for (requirement, command, expected) in [
++        (
++            ExecApprovalRequirement::Skip {
++                bypass_sandbox: false,
++                proposed_execpolicy_amendment: None,
++            },
++            "ls",
++            Some("gated"),
++        ),
++        (forbidden.clone(), "ls", Some("policy")),
++        (forbidden, "rm", None),
++    ] {
++        let mut tool = ProbeToolRuntime {
++            requirement,
++            command,
++            runs: 0,
++        };
++        let result = crate::tools::orchestrator::ToolOrchestrator::new()
++            .run(
++                &mut tool,
++                turn.initial_environments
++                    .primary()
++                    .expect("turn should have a primary environment"),
++                &tool_ctx,
++            )
++            .await;
++        match expected {
++            Some(expected) => {
++                assert!(matches!(result, Err(ToolError::Rejected(reason)) if reason == expected));
++                assert_eq!(tool.runs, 0);
++            }
++            None => {
++                assert!(result.is_ok());
++                assert_eq!(tool.runs, 1);
++            }
++        }
++    }
++    assert_eq!(
++        *decisions.lock().unwrap(),
++        vec!["skip".to_string(), "forbidden".to_string()]
++    );
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> anyhow::Result<()> {
+     let permission_profile = PermissionProfile::workspace_write();
+@@ -4486,6 +4634,7 @@ async fn set_rate_limits_retains_previous_credits() {
          spend_control_reached: None,
          plan_type: Some(codex_protocol::account::PlanType::Plus),
          rate_limit_reached_type: None,
@@ -21403,7 +21544,7 @@ index 496114a11..6b4ed0b46 100644
      };
      state.set_rate_limits(initial.clone());
 
-@@ -4508,6 +4511,7 @@ async fn set_rate_limits_retains_previous_credits() {
+@@ -4508,6 +4657,7 @@ async fn set_rate_limits_retains_previous_credits() {
          spend_control_reached: None,
          plan_type: None,
          rate_limit_reached_type: None,
@@ -21411,7 +21552,7 @@ index 496114a11..6b4ed0b46 100644
      };
      state.set_rate_limits(update.clone());
 
-@@ -4524,6 +4528,7 @@ async fn set_rate_limits_retains_previous_credits() {
+@@ -4524,6 +4674,7 @@ async fn set_rate_limits_retains_previous_credits() {
              spend_control_reached: initial.spend_control_reached,
              plan_type: initial.plan_type,
              rate_limit_reached_type: None,
@@ -21419,7 +21560,7 @@ index 496114a11..6b4ed0b46 100644
          })
      );
  }
-@@ -4613,6 +4618,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
+@@ -4613,6 +4764,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
          spend_control_reached: None,
          plan_type: Some(codex_protocol::account::PlanType::Plus),
          rate_limit_reached_type: None,
@@ -21427,7 +21568,7 @@ index 496114a11..6b4ed0b46 100644
      };
      state.set_rate_limits(initial.clone());
 
-@@ -4631,6 +4637,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
+@@ -4631,6 +4783,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
          spend_control_reached: None,
          plan_type: Some(codex_protocol::account::PlanType::Pro),
          rate_limit_reached_type: None,
@@ -21435,7 +21576,7 @@ index 496114a11..6b4ed0b46 100644
      };
      state.set_rate_limits(update.clone());
 
-@@ -4647,6 +4654,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
+@@ -4647,6 +4800,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
              spend_control_reached: initial.spend_control_reached,
              plan_type: update.plan_type,
              rate_limit_reached_type: None,
@@ -21443,7 +21584,7 @@ index 496114a11..6b4ed0b46 100644
          })
      );
  }
-@@ -6545,11 +6553,12 @@ async fn relative_cwd_update_without_environments_resolves_under_session_cwd() {
+@@ -6545,11 +6699,12 @@ async fn relative_cwd_update_without_environments_resolves_under_session_cwd() {
 
  #[tokio::test]
  async fn environment_settings_preserve_explicit_primary_cwd() {
@@ -21457,7 +21598,7 @@ index 496114a11..6b4ed0b46 100644
          let environments = vec![local(environment_cwd.clone())];
          (original_cwd, environment_cwd, environments)
      };
-@@ -6575,6 +6584,16 @@ async fn environment_settings_preserve_explicit_primary_cwd() {
+@@ -6575,6 +6730,16 @@ async fn environment_settings_preserve_explicit_primary_cwd() {
      );
  }
 
@@ -21474,7 +21615,7 @@ index 496114a11..6b4ed0b46 100644
  #[tokio::test]
  async fn absolute_cwd_update_with_turn_environment_is_allowed() {
      let (session, _turn_context, _rx) = make_session_and_context_with_rx().await;
-@@ -7062,6 +7081,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -7062,6 +7227,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
      };
 
      let session = Session {
@@ -21482,7 +21623,7 @@ index 496114a11..6b4ed0b46 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
-@@ -7094,6 +7114,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
+@@ -7094,6 +7260,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
          fork_persistence: ForkPersistence::Copied,
          forked_from_ordinal_exclusive: None,
          next_internal_sub_id: AtomicU64::new(0),
@@ -21490,7 +21631,7 @@ index 496114a11..6b4ed0b46 100644
      };
      let per_turn_config = session.build_per_turn_config(
          &session_configuration,
-@@ -8324,10 +8345,11 @@ fn submission_dispatch_span_uses_debug_for_realtime_audio() {
+@@ -8324,10 +8491,11 @@ fn submission_dispatch_span_uses_debug_for_realtime_audio() {
 
  #[tokio::test]
  async fn turn_environments_set_primary_environment() {
@@ -21503,7 +21644,7 @@ index 496114a11..6b4ed0b46 100644
 
      let (turn_context, _) = session
          .new_turn_with_sub_id(
-@@ -8444,10 +8466,11 @@ async fn new_task_does_not_change_an_already_running_tasks_environments() {
+@@ -8444,10 +8612,11 @@ async fn new_task_does_not_change_an_already_running_tasks_environments() {
 
  #[tokio::test]
  async fn task_turn_does_not_overlay_legacy_fallback_cwd_onto_stored_thread_environments() {
@@ -21516,7 +21657,7 @@ index 496114a11..6b4ed0b46 100644
      session
          .update_settings(SessionSettingsUpdate {
              environments: Some(TurnEnvironmentSelections::new(
-@@ -9330,6 +9353,7 @@ where
+@@ -9330,6 +9499,7 @@ where
      };
 
      let session = Arc::new(Session {
@@ -21524,7 +21665,7 @@ index 496114a11..6b4ed0b46 100644
          thread_id,
          installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
          tx_event,
-@@ -9362,6 +9386,7 @@ where
+@@ -9362,6 +9532,7 @@ where
          fork_persistence: ForkPersistence::Copied,
          forked_from_ordinal_exclusive: None,
          next_internal_sub_id: AtomicU64::new(0),
@@ -21532,7 +21673,7 @@ index 496114a11..6b4ed0b46 100644
      });
      let per_turn_config = session.build_per_turn_config(
          &session_configuration,
-@@ -9445,6 +9470,33 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
+@@ -9445,6 +9616,33 @@ pub(crate) async fn make_session_and_context_with_rx() -> (
      make_session_and_context_with_dynamic_tools_and_rx(Vec::new()).await
  }
 
@@ -21566,7 +21707,7 @@ index 496114a11..6b4ed0b46 100644
  #[tokio::test]
  async fn cancelled_step_capture_finishes_warning_delivery() {
      struct WarningProvider {
-@@ -12990,6 +13042,106 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+@@ -12990,6 +13188,106 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
      );
  }
 
@@ -24276,7 +24417,7 @@ index 25468f374..af2abec32 100644
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6..e98ddbb19 100644
+index e26d83da6..3d36917fd 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -24303,7 +24444,7 @@ index e26d83da6..e98ddbb19 100644
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,183 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,196 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -24325,6 +24466,15 @@ index e26d83da6..e98ddbb19 100644
 +            })
 +            .await;
 +    }
++}
++
++pub(crate) fn wants_call_facts(session: &Session) -> bool {
++    let extensions = &session.services.extensions;
++    !extensions.tool_reaction_contributors().is_empty()
++        || extensions
++            .tool_lifecycle_contributors()
++            .iter()
++            .any(|contributor| contributor.wants_call_facts())
 +}
 +
 +/// Returns an extension's synthetic output when one answers the call instead of running it.
@@ -24350,16 +24500,20 @@ index e26d83da6..e98ddbb19 100644
 +        .turn
 +        .extension_data
 +        .get_or_init(codex_extension_api::ToolCallFacts::default);
-+    let schema = invocation
-+        .step_context
-+        .tool_router
-+        .tool_runtime(&invocation.tool_name)
-+        .and_then(|runtime| match runtime.spec() {
-+            codex_tools::ToolSpec::Function(tool) => serde_json::to_value(&tool.parameters).ok(),
-+            _ => None,
-+        });
-+    if let Ok(mut facts) = facts.0.lock() {
-+        facts.entry(invocation.call_id.clone()).or_default().schema = schema;
++    if wants_call_facts(&invocation.session) {
++        let schema = invocation
++            .step_context
++            .tool_router
++            .tool_runtime(&invocation.tool_name)
++            .and_then(|runtime| match runtime.spec() {
++                codex_tools::ToolSpec::Function(tool) => {
++                    serde_json::to_value(&tool.parameters).ok()
++                }
++                _ => None,
++            });
++        if let Ok(mut facts) = facts.0.lock() {
++            facts.entry(invocation.call_id.clone()).or_default().schema = schema;
++        }
 +    }
 +
 +    let mut response = None;
@@ -24487,7 +24641,7 @@ index e26d83da6..e98ddbb19 100644
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +290,31 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +303,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -24497,39 +24651,41 @@ index e26d83da6..e98ddbb19 100644
 +    outcome: ToolCallOutcome,
 +    result_sha256: Option<&str>,
 +) {
-+    let mut digest = Sha256::new();
-+    digest.update(invocation.tool_name.to_string().as_bytes());
-+    digest.update([0]);
-+    match &invocation.payload {
-+        ToolPayload::Function { arguments } => {
-+            digest.update(b"function\0");
-+            digest.update(arguments.as_bytes());
++    let call_sha256 = wants_call_facts(&invocation.session).then(|| {
++        let mut digest = Sha256::new();
++        digest.update(invocation.tool_name.to_string().as_bytes());
++        digest.update([0]);
++        match &invocation.payload {
++            ToolPayload::Function { arguments } => {
++                digest.update(b"function\0");
++                digest.update(arguments.as_bytes());
++            }
++            ToolPayload::ToolSearch { arguments } => {
++                digest.update(b"tool_search\0");
++                digest.update(arguments.query.as_bytes());
++                digest.update([0]);
++                digest.update(format!("{:?}", arguments.limit).as_bytes());
++            }
++            ToolPayload::Custom { input } => {
++                digest.update(b"custom\0");
++                digest.update(input.as_bytes());
++            }
 +        }
-+        ToolPayload::ToolSearch { arguments } => {
-+            digest.update(b"tool_search\0");
-+            digest.update(arguments.query.as_bytes());
-+            digest.update([0]);
-+            digest.update(format!("{:?}", arguments.limit).as_bytes());
-+        }
-+        ToolPayload::Custom { input } => {
-+            digest.update(b"custom\0");
-+            digest.update(input.as_bytes());
-+        }
-+    }
-+    let call_sha256 = format!("{:x}", digest.finalize());
++        format!("{:x}", digest.finalize())
++    });
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +322,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +337,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
-+        Some(&call_sha256),
++        call_sha256.as_deref(),
 +        result_sha256,
      )
      .await;
  }
-@@ -133,10 +342,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +357,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -24543,7 +24699,7 @@ index e26d83da6..e98ddbb19 100644
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +356,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +371,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -24552,7 +24708,7 @@ index e26d83da6..e98ddbb19 100644
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,9 +370,37 @@ async fn notify_tool_finish_parts(
+@@ -156,9 +385,37 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -24590,7 +24746,7 @@ index e26d83da6..e98ddbb19 100644
  }
 
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
-@@ -169,6 +411,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +426,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -24626,7 +24782,7 @@ index 41ed0189b..b6ae97f78 100644
  pub(crate) mod tool_dispatch_trace;
  mod tool_namespaces_info;
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index 3d7e2b62c..d73ecde5c 100644
+index 3d7e2b62c..de96bd708 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -141,7 +141,17 @@ impl ToolOrchestrator {
@@ -24656,139 +24812,34 @@ index 3d7e2b62c..d73ecde5c 100644
          let owner_network_policy = sandbox_config.network_policy.is_some();
          let workspace_roots = environment.workspace_roots();
          let executor_managed_process_sandbox = tool.uses_executor_managed_process_sandbox(req);
-@@ -188,16 +197,128 @@ impl ToolOrchestrator {
+@@ -187,6 +196,14 @@ impl ToolOrchestrator {
+                         .request_approval(action, approval_ctx)
                          .await?;
                      already_approved = true;
++                } else if crate::tools::approval_gate::on_skip(
++                    tool_ctx,
++                    || tool.approval_action(req, &tool_ctx.call_id).ok(),
++                    strict_auto_review,
++                )
++                .await?
++                {
++                    already_approved = true;
                  } else {
--                    otel.tool_decision(
--                        &tool_ctx.tool_name,
--                        otel_ci,
--                        &ReviewDecision::Approved,
--                        Some(ToolDecisionSource::Config),
--                    );
-+                    if !tool_ctx
-+                        .session
-+                        .services
-+                        .extensions
-+                        .approval_gate_contributors()
-+                        .is_empty()
-+                        && let Ok(action) = tool.approval_action(req, &tool_ctx.call_id)
-+                    {
-+                        let mut approval_ctx = ApprovalContext {
-+                            review_context: GuardianReviewContext::from(&tool_ctx.step_context),
-+                            cancellation_token: Some(tool_ctx.cancellation_token.clone()),
-+                            call_id: tool_ctx.call_id.clone(),
-+                            tool_name: tool_ctx.tool_name.clone(),
-+                            strict_auto_review,
-+                            approval_reason: None,
-+                            retry_reason: None,
-+                            network_approval_context: None,
-+                        };
-+                        match crate::tools::approval_gate::gate(
-+                            &tool_ctx.session,
-+                            &action,
-+                            &approval_ctx,
-+                            "skip",
-+                        )
-+                        .await
-+                        {
-+                            codex_extension_api::ApprovalGate::Continue
-+                            | codex_extension_api::ApprovalGate::Approve(_) => {}
-+                            codex_extension_api::ApprovalGate::Deny(reason) => {
-+                                let kind = crate::tools::approval_gate::kind(&action);
-+                                crate::tools::approval_gate::report(
-+                                    &tool_ctx.session,
-+                                    kind,
-+                                    &approval_ctx,
-+                                    "denied",
-+                                    "mod",
-+                                )
-+                                .await;
-+                                return Err(ToolError::Rejected(reason));
-+                            }
-+                            codex_extension_api::ApprovalGate::Ask(reason) => {
-+                                approval_ctx.approval_reason = Some(reason);
-+                                tool_ctx
-+                                    .session
-+                                    .resolve_approval(action, approval_ctx, true)
-+                                    .await?;
-+                                already_approved = true;
-+                            }
-+                        }
-+                    }
-+                    if !already_approved {
-+                        otel.tool_decision(
-+                            &tool_ctx.tool_name,
-+                            otel_ci,
-+                            &ReviewDecision::Approved,
-+                            Some(ToolDecisionSource::Config),
-+                        );
-+                    }
+                     otel.tool_decision(
+                         &tool_ctx.tool_name,
+@@ -197,7 +214,14 @@ impl ToolOrchestrator {
                  }
              }
              ExecApprovalRequirement::Forbidden { reason } => {
 -                return Err(ToolError::Rejected(reason.clone()));
-+                let gated = !tool_ctx
-+                    .session
-+                    .services
-+                    .extensions
-+                    .approval_gate_contributors()
-+                    .is_empty();
-+                let action = tool.approval_action(req, &tool_ctx.call_id).ok();
-+                let approval_ctx = ApprovalContext {
-+                    review_context: GuardianReviewContext::from(&tool_ctx.step_context),
-+                    cancellation_token: Some(tool_ctx.cancellation_token.clone()),
-+                    call_id: tool_ctx.call_id.clone(),
-+                    tool_name: tool_ctx.tool_name.clone(),
++                crate::tools::approval_gate::override_forbidden(
++                    tool_ctx,
++                    || tool.approval_action(req, &tool_ctx.call_id).ok(),
++                    reason,
 +                    strict_auto_review,
-+                    approval_reason: Some(reason.clone()),
-+                    retry_reason: None,
-+                    network_approval_context: None,
-+                };
-+                let overridable = match &action {
-+                    Some(crate::tools::approvals::ApprovalAction::ExecCommand {
-+                        command,
-+                        environment_id,
-+                        ..
-+                    }) if gated => {
-+                        let environments = approval_ctx.review_context.environments();
-+                        let environment_policy = environments
-+                            .turn_environments()
-+                            .find(|environment| {
-+                                environment.selection.environment_id == *environment_id
-+                            })
-+                            .and_then(|environment| environment.config().exec_policy.as_ref());
-+                        tool_ctx
-+                            .session
-+                            .services
-+                            .exec_policy
-+                            .forbidden_only_by_user_rules(command, environment_policy)
-+                    }
-+                    _ => false,
-+                };
-+                let Some(action) = action.filter(|_| overridable) else {
-+                    return Err(ToolError::Rejected(reason.clone()));
-+                };
-+                match crate::tools::approval_gate::gate(
-+                    &tool_ctx.session,
-+                    &action,
-+                    &approval_ctx,
-+                    "forbidden",
 +                )
-+                .await
-+                {
-+                    codex_extension_api::ApprovalGate::Approve(approval) => {
-+                        crate::tools::approval_gate::approved_by_extension(
-+                            &tool_ctx.session,
-+                            &action,
-+                            &approval_ctx,
-+                            approval,
-+                        )
-+                        .await;
-+                        already_approved = true;
-+                    }
-+                    _ => return Err(ToolError::Rejected(reason.clone())),
-+                }
++                .await?;
++                already_approved = true;
              }
              ExecApprovalRequirement::NeedsApproval { reason, .. } => {
                  let action = tool
@@ -25240,7 +25291,7 @@ index 3daefd392..7a75b0e59 100644
          records: Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>,
          finish_started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index e0acae262..173b765f4 100644
+index e0acae262..fb88808ec 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -43,12 +43,48 @@ use futures::future::BoxFuture;
@@ -25359,7 +25410,7 @@ index e0acae262..173b765f4 100644
          {
              let mut active = invocation.session.active_turn.lock().await;
              if let Some(active_turn) = active.as_mut() {
-@@ -554,6 +610,56 @@ impl ToolRegistry {
+@@ -554,6 +610,53 @@ impl ToolRegistry {
              }
          }
 
@@ -25381,10 +25432,7 @@ index e0acae262..173b765f4 100644
 +                    result: Box::new(FunctionToolOutput::from_text(output, Some(success))),
 +                    post_tool_use_payload: None,
 +                };
-+                let result_sha256 =
-+                    serde_json::to_vec(&result.result.to_response_item("", &result.payload))
-+                        .ok()
-+                        .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
++                let result_sha256 = result_sha256(&invocation, &result);
 +                notify_tool_finish_if_unclaimed(
 +                    &invocation,
 +                    call_state.as_deref(),
@@ -25416,7 +25464,7 @@ index e0acae262..173b765f4 100644
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -627,6 +733,7 @@ impl ToolRegistry {
+@@ -627,6 +730,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -25424,7 +25472,7 @@ index e0acae262..173b765f4 100644
                      )
                      .await;
                      return Err(err);
-@@ -649,6 +756,7 @@ impl ToolRegistry {
+@@ -649,6 +753,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -25432,7 +25480,7 @@ index e0acae262..173b765f4 100644
                          )
                          .await;
                          return Err(err);
-@@ -753,13 +861,19 @@ impl ToolRegistry {
+@@ -753,13 +858,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -25455,7 +25503,7 @@ index e0acae262..173b765f4 100644
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -777,6 +891,31 @@ impl ToolRegistry {
+@@ -777,6 +888,28 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -25473,10 +25521,7 @@ index e0acae262..173b765f4 100644
 +                        model_visible: FunctionToolOutput::from_text(text, Some(success)),
 +                    });
 +                }
-+                let result_sha256 =
-+                    serde_json::to_vec(&result.result.to_response_item("", &result.payload))
-+                        .ok()
-+                        .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
++                let result_sha256 = result_sha256(&invocation, &result);
 +                notify_tool_finish_if_unclaimed(
 +                    &invocation,
 +                    call_state.as_deref(),
@@ -25487,7 +25532,7 @@ index e0acae262..173b765f4 100644
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -787,6 +926,13 @@ impl ToolRegistry {
+@@ -787,6 +920,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -25501,7 +25546,18 @@ index e0acae262..173b765f4 100644
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -798,12 +944,13 @@ async fn notify_tool_finish_if_unclaimed(
+@@ -794,16 +934,24 @@ impl ToolRegistry {
+     }
+ }
+
++fn result_sha256(invocation: &ToolInvocation, result: &AnyToolResult) -> Option<String> {
++    crate::tools::lifecycle::wants_call_facts(&invocation.session)
++        .then(|| serde_json::to_vec(&result.result.to_response_item("", &result.payload)).ok())
++        .flatten()
++        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
++}
++
+ async fn notify_tool_finish_if_unclaimed(
      invocation: &ToolInvocation,
      call_state: Option<&ToolCallState>,
      outcome: ToolCallOutcome,
@@ -25517,10 +25573,10 @@ index e0acae262..173b765f4 100644
  }
 
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 895d8d4b9..355a002c4 100644
+index 895d8d4b9..143a8a3ec 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -842,3 +842,162 @@ fn test_invocation(
+@@ -842,3 +842,215 @@ fn test_invocation(
          },
      }
  }
@@ -25621,6 +25677,59 @@ index 895d8d4b9..355a002c4 100644
 +                matches!(&records[0], RecordedToolLifecycle::Start {tool_name,..} if tool_name.name == "replacement")
 +            );
 +        }
++    }
++}
++
++struct DigestRecorder {
++    wants: bool,
++    digests: Arc<std::sync::Mutex<Vec<(bool, bool)>>>,
++}
++
++impl codex_extension_api::ToolLifecycleContributor for DigestRecorder {
++    fn wants_call_facts(&self) -> bool {
++        self.wants
++    }
++
++    fn on_tool_finish<'a>(
++        &'a self,
++        input: codex_extension_api::ToolFinishInput<'a>,
++    ) -> codex_extension_api::ToolLifecycleFuture<'a> {
++        let digests = (input.call_sha256.is_some(), input.result_sha256.is_some());
++        Box::pin(async move {
++            self.digests.lock().unwrap().push(digests);
++        })
++    }
++}
++
++#[tokio::test]
++async fn call_digests_are_computed_only_when_a_contributor_wants_them() {
++    for wants in [false, true] {
++        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
++        let digests = Arc::new(std::sync::Mutex::new(Vec::new()));
++        let mut builder =
++            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
++        builder.tool_lifecycle_contributor(Arc::new(DigestRecorder {
++            wants,
++            digests: Arc::clone(&digests),
++        }));
++        session.services.extensions = Arc::new(builder.build());
++        let registry = ToolRegistry::from_tools([Arc::new(LifecycleTestHandler {
++            tool_name: codex_tools::ToolName::plain("ok_tool"),
++            result: LifecycleTestResult::Ok { success: true },
++        }) as Arc<dyn CoreToolRuntime>]);
++        registry
++            .dispatch_any_with_state(
++                test_invocation(
++                    Arc::new(session),
++                    Arc::new(turn),
++                    "digest-call",
++                    codex_tools::ToolName::namespaced(DEFAULT_FUNCTION_NAMESPACE, "ok_tool"),
++                ),
++                /*call_state*/ None,
++            )
++            .await
++            .unwrap();
++        assert_eq!(*digests.lock().unwrap(), vec![(wants, wants)]);
 +    }
 +}
 +
@@ -26889,14 +26998,14 @@ index 94b48774d..91f303242 100644
              state
                  .processor
 diff --git a/codex-rs/exec/Cargo.toml b/codex-rs/exec/Cargo.toml
-index 42a75a053..3ec8aed75 100644
+index 42a75a053..ab3cbae7c 100644
 --- a/codex-rs/exec/Cargo.toml
 +++ b/codex-rs/exec/Cargo.toml
 @@ -26,6 +26,7 @@ anyhow = { workspace = true }
  clap = { workspace = true, features = ["derive"] }
  codex-arg0 = { workspace = true }
  codex-app-server-client = { workspace = true }
-+codex-omd = { path = "../omd" }
++codex-omd = { workspace = true }
  codex-app-server-protocol = { workspace = true }
  codex-cloud-config = { workspace = true }
  codex-config = { workspace = true }
@@ -26991,7 +27100,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 61cdbe4da..a50859c56 100644
+index 61cdbe4da..42ac5fa13 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -27210,7 +27319,17 @@ index 61cdbe4da..a50859c56 100644
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -371,6 +517,17 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -367,10 +513,27 @@ pub trait ToolContributor: Send + Sync {
+ /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
+ /// and hooks for policy that changes tool payloads.
+ pub trait ToolLifecycleContributor: Send + Sync {
++    /// Whether the host records each call's schema in `ToolCallFacts` and the digests in `ToolFinishInput`;
++    /// any registered `ToolReactionContributor` also turns them on.
++    fn wants_call_facts(&self) -> bool {
++        false
++    }
++
+     /// Observe direct calls before readiness, dispatch waiting, and hooks, including blocked calls.
      /// Excludes nested code-mode calls. Observers must return promptly.
      fn on_tool_dispatch(&self, _input: ToolDispatchInput<'_>) {}
 
@@ -27228,7 +27347,7 @@ index 61cdbe4da..a50859c56 100644
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -387,6 +544,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -387,6 +550,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -27240,7 +27359,7 @@ index 61cdbe4da..a50859c56 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -405,6 +567,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -405,6 +573,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -27416,7 +27535,7 @@ index b614d536f..63f6a4b60 100644
  pub struct ThreadStartInput<'a, C> {
      /// Host configuration visible at thread start.
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-index 3b31eaaf5..92e18ac0b 100644
+index 3b31eaaf5..3ba5c3f46 100644
 --- a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 @@ -19,6 +19,15 @@ use crate::ExtensionData;
@@ -27476,7 +27595,7 @@ index 3b31eaaf5..92e18ac0b 100644
      pub source: ToolCallSource,
      /// Host-observed result of the tool call.
      pub outcome: ToolCallOutcome,
-+    /// SHA-256 of the executed tool name and payload, excluding the call id.
++    /// SHA-256 of the executed tool name and payload, excluding the call id; see `wants_call_facts`.
 +    pub call_sha256: Option<&'a str>,
 +    /// SHA-256 of the accepted model-visible result, excluding the call id.
 +    pub result_sha256: Option<&'a str>,
@@ -28799,7 +28918,7 @@ index 1dd5b4e76..0bbeec6e6 100644
  #[derive(Debug)]
  pub struct PreparedFork {
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 45f586651..386c5fdd7 100644
+index 45f586651..a7338a08d 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -22,6 +22,8 @@ doctest = false
@@ -28816,7 +28935,7 @@ index 45f586651..386c5fdd7 100644
  codex-model-provider-info = { workspace = true }
  codex-models-manager = { workspace = true }
 +codex-network-proxy = { workspace = true }
-+codex-omd = { path = "../omd" }
++codex-omd = { workspace = true }
  codex-otel = { workspace = true }
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
@@ -46967,10 +47086,10 @@ index 000000000..e90443b07
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 000000000..b81dee166
+index 000000000..39d378a65
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,626 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -47055,6 +47174,9 @@ index 000000000..b81dee166
 +    thread_id: &str,
 +    mut items: Vec<RolloutItem>,
 +) -> Vec<RolloutItem> {
++    if rewriters.is_empty() {
++        return items;
++    }
 +    let mut entries = Vec::new();
 +    let unchanged = HistoryRewriteProvenance {
 +        revision: String::new(),
@@ -47073,7 +47195,7 @@ index 000000000..b81dee166
 +            false
 +        });
 +    }
-+    if entries.is_empty() || rewriters.is_empty() {
++    if entries.is_empty() {
 +        return items;
 +    }
 +    let mut by = Vec::new();
@@ -47824,10 +47946,10 @@ index 000000000..c94a7157f
 +}
 diff --git a/codex-rs/core/src/tools/approval_gate.rs b/codex-rs/core/src/tools/approval_gate.rs
 new file mode 100644
-index 000000000..3a3b0dfed
+index 000000000..33f890244
 --- /dev/null
 +++ b/codex-rs/core/src/tools/approval_gate.rs
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,255 @@
 +use std::sync::Arc;
 +
 +use codex_extension_api::ApprovalGate;
@@ -47835,9 +47957,12 @@ index 000000000..3a3b0dfed
 +use codex_extension_api::ApprovalResultInput;
 +use codex_protocol::protocol::ReviewDecision;
 +
++use crate::guardian::GuardianReviewContext;
 +use crate::session::session::Session;
 +use crate::tools::approvals::ApprovalAction;
 +use crate::tools::approvals::ApprovalContext;
++use crate::tools::sandboxing::ToolCtx;
++use crate::tools::sandboxing::ToolError;
 +
 +const DETAIL_BYTES: usize = 64 * 1024;
 +
@@ -47981,6 +48106,103 @@ index 000000000..3a3b0dfed
 +                source,
 +            })
 +            .await;
++    }
++}
++
++fn context(
++    tool_ctx: &ToolCtx,
++    strict_auto_review: bool,
++    approval_reason: Option<String>,
++) -> ApprovalContext {
++    ApprovalContext {
++        review_context: GuardianReviewContext::from(&tool_ctx.step_context),
++        cancellation_token: Some(tool_ctx.cancellation_token.clone()),
++        call_id: tool_ctx.call_id.clone(),
++        tool_name: tool_ctx.tool_name.clone(),
++        strict_auto_review,
++        approval_reason,
++        retry_reason: None,
++        network_approval_context: None,
++    }
++}
++
++/// Gates a call that needs no approval; `Ok(true)` when a gate asked and the user approved it.
++pub(crate) async fn on_skip(
++    tool_ctx: &ToolCtx,
++    action: impl FnOnce() -> Option<ApprovalAction>,
++    strict_auto_review: bool,
++) -> Result<bool, ToolError> {
++    let session = &tool_ctx.session;
++    if session
++        .services
++        .extensions
++        .approval_gate_contributors()
++        .is_empty()
++    {
++        return Ok(false);
++    }
++    let Some(action) = action() else {
++        return Ok(false);
++    };
++    let mut approval_ctx = context(tool_ctx, strict_auto_review, None);
++    match gate(session, &action, &approval_ctx, "skip").await {
++        ApprovalGate::Continue | ApprovalGate::Approve(_) => Ok(false),
++        ApprovalGate::Deny(reason) => {
++            report(session, kind(&action), &approval_ctx, "denied", "mod").await;
++            Err(ToolError::Rejected(reason))
++        }
++        ApprovalGate::Ask(reason) => {
++            approval_ctx.approval_reason = Some(reason);
++            session.resolve_approval(action, approval_ctx, true).await?;
++            Ok(true)
++        }
++    }
++}
++
++/// Lets a gate approve a command that only the user's own exec-policy rules forbid.
++pub(crate) async fn override_forbidden(
++    tool_ctx: &ToolCtx,
++    action: impl FnOnce() -> Option<ApprovalAction>,
++    reason: &str,
++    strict_auto_review: bool,
++) -> Result<(), ToolError> {
++    let session = &tool_ctx.session;
++    let rejected = || ToolError::Rejected(reason.to_owned());
++    if session
++        .services
++        .extensions
++        .approval_gate_contributors()
++        .is_empty()
++    {
++        return Err(rejected());
++    }
++    let approval_ctx = context(tool_ctx, strict_auto_review, Some(reason.to_owned()));
++    let action = action()
++        .filter(|action| match action {
++            ApprovalAction::ExecCommand {
++                command,
++                environment_id,
++                ..
++            } => {
++                let environments = approval_ctx.review_context.environments();
++                let environment_policy = environments
++                    .turn_environments()
++                    .find(|environment| environment.selection.environment_id == *environment_id)
++                    .and_then(|environment| environment.config().exec_policy.as_ref());
++                session
++                    .services
++                    .exec_policy
++                    .forbidden_only_by_user_rules(command, environment_policy)
++            }
++            _ => false,
++        })
++        .ok_or_else(rejected)?;
++    match gate(session, &action, &approval_ctx, "forbidden").await {
++        ApprovalGate::Approve(approval) => {
++            approved_by_extension(session, &action, &approval_ctx, approval).await;
++            Ok(())
++        }
++        _ => Err(rejected()),
 +    }
 +}
 diff --git a/codex-rs/core/src/tools/batch.rs b/codex-rs/core/src/tools/batch.rs
@@ -50703,7 +50925,7 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..b8ca7705d
+index 000000000..b3c205f50
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,45 @@
@@ -50733,7 +50955,7 @@ index 000000000..b8ca7705d
 +codex-history = { workspace = true }
 +codex-model-provider = { workspace = true }
 +codex-network-proxy = { workspace = true }
-+codex-omd = { path = "../../omd" }
++codex-omd = { workspace = true }
 +codex-protocol = { workspace = true }
 +codex-tools = { workspace = true }
 +codex-utils-absolute-path = { workspace = true }
@@ -57578,10 +57800,10 @@ index 000000000..6e3836677
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 000000000..c4f9be011
+index 000000000..81169d2c6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,634 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -57624,23 +57846,64 @@ index 000000000..c4f9be011
 +    pub(super) task: Arc<Task>,
 +    pub(super) owner: String,
 +    pub(super) active: bool,
++    pub(super) runtime: tokio::runtime::Handle,
 +}
 +
 +impl Drop for Child {
 +    fn drop(&mut self) {
-+        if !self.active {
-+            return;
++        if self.active {
++            stop_dropped(
++                &self.runtime,
++                self.thread.clone(),
++                self.task.clone(),
++                self.owner.clone(),
++                false,
++                None,
++                (),
++            );
 +        }
-+        let thread = self.thread.clone();
-+        let task = self.task.clone();
-+        let owner = self.owner.clone();
-+        tokio::spawn(async move {
-+            let _ = thread.submit(Op::Interrupt).await;
-+            let _ = thread.submit(Op::CleanBackgroundTerminals).await;
-+            let _ = tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await;
-+            let _ = task.finish_worker(&owner);
-+        });
 +    }
++}
++
++pub(super) async fn shutdown(
++    thread: &codex_core::CodexThread,
++) -> Result<codex_protocol::error::Result<()>, tokio::time::error::Elapsed> {
++    let _ = thread.submit(Op::CleanBackgroundTerminals).await;
++    tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await
++}
++
++/// Interrupts and shuts down a worker's thread, then stops the worker and, with `discard`, drops its unconsumed result.
++pub(super) async fn stop_worker(
++    thread: &codex_core::CodexThread,
++    task: &Task,
++    worker: &str,
++    discard: bool,
++) {
++    let _ = thread.submit(Op::Interrupt).await;
++    let _ = shutdown(thread).await;
++    let _ = task.finish_worker(worker);
++    if discard {
++        let _ = task.discard_worker_result(worker);
++    }
++}
++
++/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and drops `keep` last.
++pub(super) fn stop_dropped(
++    runtime: &tokio::runtime::Handle,
++    thread: Arc<codex_core::CodexThread>,
++    task: Arc<Task>,
++    worker: String,
++    discard: bool,
++    job: Option<tokio::task::JoinHandle<()>>,
++    keep: impl Send + 'static,
++) {
++    runtime.spawn(async move {
++        if let Some(job) = job {
++            let _ = job.await;
++        }
++        stop_worker(&thread, &task, &worker, discard).await;
++        drop(keep);
++    });
 +}
 +
 +pub(super) fn intersect(
@@ -61804,10 +62067,10 @@ index 000000000..310f9cf88
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..c6c8e82a5
+index 000000000..cdaab0282
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2448 @@
+@@ -0,0 +1,2457 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63247,7 +63510,12 @@ index 000000000..c6c8e82a5
 +    }
 +
 +    fn rewrites_persisted_text(&self) -> bool {
-+        true
++        self.core
++            .persist_runtime
++            .try_lock()
++            .map_or(true, |runtime| {
++                runtime.intercepts("history_persist").is_some() || runtime.refresh_due()
++            })
 +    }
 +
 +    fn rewrite_persisted_text<'a>(
@@ -63828,6 +64096,10 @@ index 000000000..c6c8e82a5
 +}
 +
 +impl ToolLifecycleContributor for Mods {
++    fn wants_call_facts(&self) -> bool {
++        true
++    }
++
 +    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
 +        Box::pin(async move {
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -65075,14 +65347,13 @@ index 000000000..304f44c7d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..3ab1e4389
+index 000000000..c34da73f5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2623 @@
+@@ -0,0 +1,2612 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
-+use codex_protocol::protocol::Op;
 +use codex_protocol::turn_input::TurnInputRequest;
 +use codex_protocol::user_input::UserInput;
 +use std::collections::BTreeSet;
@@ -65646,6 +65917,7 @@ index 000000000..3ab1e4389
 +    result: Arc<Mutex<Option<Result<String, String>>>>,
 +    failure: Arc<Mutex<Option<Value>>>,
 +    job: Option<tokio::task::JoinHandle<()>>,
++    runtime: tokio::runtime::Handle,
 +    consumed: bool,
 +    task: Arc<Task>,
 +    worker: String,
@@ -65839,13 +66111,7 @@ index 000000000..3ab1e4389
 +            job.abort();
 +            let _ = job.await;
 +        }
-+        let _ = self.thread.submit(Op::Interrupt).await;
-+        let _ = self.thread.submit(Op::CleanBackgroundTerminals).await;
-+        let _ = tokio::time::timeout(Duration::from_secs(5), self.thread.shutdown_and_wait()).await;
-+        let _ = self.task.finish_worker(&self.worker);
-+        if !self.consumed {
-+            let _ = self.task.discard_worker_result(&self.worker);
-+        }
++        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
 +        self.workspace.take();
 +    }
 +}
@@ -65854,19 +66120,15 @@ index 000000000..3ab1e4389
 +    fn drop(&mut self) {
 +        if let Some(job) = self.job.take() {
 +            job.abort();
-+            let task = self.task.clone();
-+            let worker = self.worker.clone();
-+            let thread = self.thread.clone();
-+            let workspace = self.workspace.take();
-+            tokio::spawn(async move {
-+                let _ = job.await;
-+                let _ = thread.submit(Op::Interrupt).await;
-+                let _ = thread.submit(Op::CleanBackgroundTerminals).await;
-+                let _ =
-+                    tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await;
-+                let _ = task.discard_worker_result(&worker);
-+                drop(workspace);
-+            });
++            execution::stop_dropped(
++                &self.runtime,
++                self.thread.clone(),
++                self.task.clone(),
++                self.worker.clone(),
++                !self.consumed,
++                Some(job),
++                self.workspace.take(),
++            );
 +        } else if !self.consumed {
 +            let _ = self.task.discard_worker_result(&self.worker);
 +        }
@@ -67526,6 +67788,7 @@ index 000000000..3ab1e4389
 +            task: session.task.clone(),
 +            owner: id.clone(),
 +            active: true,
++            runtime: tokio::runtime::Handle::current(),
 +        };
 +        let result = Arc::new(Mutex::new(None));
 +        let failure = Arc::new(Mutex::new(None));
@@ -67608,10 +67871,7 @@ index 000000000..3ab1e4389
 +            .await
 +            .map_err(|_| "native_agent_deadline".to_owned())
 +            .and_then(|r| r);
-+            let _ = child.thread.submit(Op::CleanBackgroundTerminals).await;
-+            let cleanup =
-+                tokio::time::timeout(Duration::from_secs(5), child.thread.shutdown_and_wait())
-+                    .await;
++            let cleanup = execution::shutdown(&child.thread).await;
 +            if let Ok(mut accounts) = accounts.0.lock() {
 +                accounts.remove(&thread_id.to_string());
 +            }
@@ -67671,6 +67931,7 @@ index 000000000..3ab1e4389
 +                result,
 +                failure,
 +                job: Some(job),
++                runtime: tokio::runtime::Handle::current(),
 +                consumed: false,
 +                task: session.task.clone(),
 +                worker: id.clone(),
@@ -71604,10 +71865,10 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..b6ed5e740
+index 000000000..c335b71fc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5614 @@
+@@ -0,0 +1,5634 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -74807,6 +75068,22 @@ index 000000000..b6ed5e740
 +        return;
 +    };
 +    let extension = mods(&fixture.core);
++    fixture
++        .core
++        .persist_runtime
++        .lock()
++        .unwrap()
++        .refresh_guarded(&|| true)
++        .unwrap();
++    assert!(!extension.rewrites_persisted_text());
++    let held = fixture.core.persist_runtime.lock().unwrap();
++    assert!(extension.rewrites_persisted_text());
++    drop(held);
++    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
++    install(&store, &fixture._dir.path().join("packages"), &Package {
++        id: "late", capabilities: &["commands"], manifest: Value::Null,
++        source: "export default api => api.command('noop', () => null)",
++    });
 +    assert!(extension.rewrites_persisted_text());
 +    let entries = [codex_extension_api::PersistedText {
 +        kind: "message",
@@ -74825,6 +75102,7 @@ index 000000000..b6ed5e740
 +        panic!("poison the persist runtime");
 +    })
 +    .join();
++    assert!(extension.rewrites_persisted_text());
 +    assert_eq!(extension.rewrite_persisted_text(input()).await, None);
 +    fixture
 +        .core
@@ -74902,6 +75180,7 @@ index 000000000..b6ed5e740
 +    }];
 +    let input = || codex_extension_api::PersistedTextInput { thread_id: "t", entries: &entries };
 +    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, ["masked"]);
++    assert!(extension.rewrites_persisted_text());
 +    assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
 +    std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
 +    assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, [codex_omd::PERSIST_WITHHELD]);
@@ -75053,6 +75332,7 @@ index 000000000..b6ed5e740
 +                    Err(error) => panic!("{error}"),
 +                }
 +            };
++            socket.set_nonblocking(false).unwrap();
 +            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
 +            let mut request = [0; 4096];
 +            socket.read(&mut request).unwrap();
@@ -75101,6 +75381,7 @@ index 000000000..b6ed5e740
 +                    Err(error) => panic!("{error}"),
 +                }
 +            };
++            socket.set_nonblocking(false).unwrap();
 +            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
 +            let mut request = [0; 4096];
 +            socket.read(&mut request).unwrap();
@@ -101774,10 +102055,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..8aaae1cfb
+index 000000000..001fe0786
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5977 @@
+@@ -0,0 +1,5985 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -105088,6 +105369,20 @@ index 000000000..8aaae1cfb
 +        self.configuration_sha256.clear();
 +    }
 +
++    fn current(&self, stamp: Option<FileStamp>) -> bool {
++        stamp.is_some()
++            && stamp == self.configuration_stamp
++            && self
++                .brokered
++                .as_ref()
++                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
++    }
++
++    /// Whether a refresh would re-read the configuration and authority instead of keeping them.
++    pub fn refresh_due(&self) -> bool {
++        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
++    }
++
 +    fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
@@ -105096,13 +105391,7 @@ index 000000000..8aaae1cfb
 +        let config_profile = Profile::new("configuration_read_hash");
 +        let path = self.store.root.join("mods.json");
 +        let stamp = configuration_stamp(&path);
-+        if stamp.is_some()
-+            && stamp == self.configuration_stamp
-+            && self
-+                .brokered
-+                .as_ref()
-+                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
-+        {
++        if self.current(stamp) {
 +            return Ok(false);
 +        }
 +        self.configuration_stamp = None;
@@ -127464,10 +127753,10 @@ index 000000000..a128af3ed
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..ba8978e8c
+index 000000000..3701f567d
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1322 @@
+@@ -0,0 +1,1317 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -128189,7 +128478,6 @@ index 000000000..ba8978e8c
 +            if !metadata.is_file() {
 +                return Err(invalid("snapshot requires regular files"));
 +            }
-+            #[cfg(unix)]
 +            {
 +                use std::os::unix::fs::MetadataExt;
 +                if metadata.nlink() != 1 {
@@ -128211,13 +128499,10 @@ index 000000000..ba8978e8c
 +            if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
 +                return Err(invalid("source changed during snapshot"));
 +            }
-+            #[cfg(unix)]
 +            let executable = {
 +                use std::os::unix::fs::PermissionsExt;
 +                metadata.permissions().mode() & 0o111 != 0
 +            };
-+            #[cfg(not(unix))]
-+            let executable = false;
 +            files.insert(name.clone(), File { bytes, executable });
 +            observed.insert(name.clone(), Some(metadata));
 +        }
@@ -128312,7 +128597,6 @@ index 000000000..ba8978e8c
 +            let mut output = parent;
 +            output.write_all(&file.bytes)?;
 +            output.sync_all()?;
-+            #[cfg(unix)]
 +            {
 +                use std::os::unix::fs::PermissionsExt;
 +                output.set_permissions(fs::Permissions::from_mode(if file.executable {
@@ -128792,21 +129076,19 @@ index 000000000..ba8978e8c
 +}
 diff --git a/codex-rs/omd/src/workspace_lease.rs b/codex-rs/omd/src/workspace_lease.rs
 new file mode 100644
-index 000000000..63d80c21f
+index 000000000..600f92122
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace_lease.rs
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,174 @@
 +use std::fs::{self, File};
 +use std::io;
-+#[cfg(unix)]
 +use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 +use std::path::{Path, PathBuf};
 +
 +pub struct Lease {
-+    _file: Option<File>,
++    _file: File,
 +}
 +
-+#[cfg(unix)]
 +pub fn directory() -> PathBuf {
 +    let uid = rustix::process::geteuid().as_raw();
 +    PathBuf::from("/tmp")
@@ -128815,7 +129097,6 @@ index 000000000..63d80c21f
 +        .join(format!("codex-workspace-leases-{uid}"))
 +}
 +
-+#[cfg(unix)]
 +fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
 +    let path = path.canonicalize()?;
 +    let root = path
@@ -128837,7 +129118,6 @@ index 000000000..63d80c21f
 +    Ok((root.to_owned(), key))
 +}
 +
-+#[cfg(unix)]
 +fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
 +    let (_, key) = identity(path, exclusive)?;
 +    let uid = rustix::process::geteuid().as_raw();
@@ -128887,24 +129167,7 @@ index 000000000..63d80c21f
 +        file.try_lock_shared()
 +    }
 +    .map_err(|_| io::Error::other("workspace_in_use"))?;
-+    Ok(Lease { _file: Some(file) })
-+}
-+
-+#[cfg(not(unix))]
-+pub fn directory() -> PathBuf {
-+    std::env::temp_dir().join("codex-workspace-leases")
-+}
-+
-+#[cfg(not(unix))]
-+fn acquire(_path: &Path, exclusive: bool) -> io::Result<Lease> {
-+    if exclusive {
-+        Err(io::Error::new(
-+            io::ErrorKind::Unsupported,
-+            "workspace_ownership_unavailable",
-+        ))
-+    } else {
-+        Ok(Lease { _file: None })
-+    }
++    Ok(Lease { _file: file })
 +}
 +
 +pub fn shared(path: &Path) -> io::Result<Lease> {
@@ -128914,7 +129177,7 @@ index 000000000..63d80c21f
 +    acquire(path, true)
 +}
 +
-+#[cfg(all(test, unix))]
++#[cfg(test)]
 +mod tests {
 +    use super::*;
 +

@@ -719,7 +719,6 @@ impl Snapshot {
             if !metadata.is_file() {
                 return Err(invalid("snapshot requires regular files"));
             }
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
                 if metadata.nlink() != 1 {
@@ -741,13 +740,10 @@ impl Snapshot {
             if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
                 return Err(invalid("source changed during snapshot"));
             }
-            #[cfg(unix)]
             let executable = {
                 use std::os::unix::fs::PermissionsExt;
                 metadata.permissions().mode() & 0o111 != 0
             };
-            #[cfg(not(unix))]
-            let executable = false;
             files.insert(name.clone(), File { bytes, executable });
             observed.insert(name.clone(), Some(metadata));
         }
@@ -842,7 +838,6 @@ impl Snapshot {
             let mut output = parent;
             output.write_all(&file.bytes)?;
             output.sync_all()?;
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 output.set_permissions(fs::Permissions::from_mode(if file.executable {

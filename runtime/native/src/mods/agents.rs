@@ -1,7 +1,6 @@
 use super::*;
 use codex_core::CodexThread;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
 use std::collections::BTreeSet;
@@ -565,6 +564,7 @@ struct Agent {
     result: Arc<Mutex<Option<Result<String, String>>>>,
     failure: Arc<Mutex<Option<Value>>>,
     job: Option<tokio::task::JoinHandle<()>>,
+    runtime: tokio::runtime::Handle,
     consumed: bool,
     task: Arc<Task>,
     worker: String,
@@ -758,13 +758,7 @@ impl Agent {
             job.abort();
             let _ = job.await;
         }
-        let _ = self.thread.submit(Op::Interrupt).await;
-        let _ = self.thread.submit(Op::CleanBackgroundTerminals).await;
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.thread.shutdown_and_wait()).await;
-        let _ = self.task.finish_worker(&self.worker);
-        if !self.consumed {
-            let _ = self.task.discard_worker_result(&self.worker);
-        }
+        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
         self.workspace.take();
     }
 }
@@ -773,19 +767,15 @@ impl Drop for Agent {
     fn drop(&mut self) {
         if let Some(job) = self.job.take() {
             job.abort();
-            let task = self.task.clone();
-            let worker = self.worker.clone();
-            let thread = self.thread.clone();
-            let workspace = self.workspace.take();
-            tokio::spawn(async move {
-                let _ = job.await;
-                let _ = thread.submit(Op::Interrupt).await;
-                let _ = thread.submit(Op::CleanBackgroundTerminals).await;
-                let _ =
-                    tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await;
-                let _ = task.discard_worker_result(&worker);
-                drop(workspace);
-            });
+            execution::stop_dropped(
+                &self.runtime,
+                self.thread.clone(),
+                self.task.clone(),
+                self.worker.clone(),
+                !self.consumed,
+                Some(job),
+                self.workspace.take(),
+            );
         } else if !self.consumed {
             let _ = self.task.discard_worker_result(&self.worker);
         }
@@ -2445,6 +2435,7 @@ impl Agents {
             task: session.task.clone(),
             owner: id.clone(),
             active: true,
+            runtime: tokio::runtime::Handle::current(),
         };
         let result = Arc::new(Mutex::new(None));
         let failure = Arc::new(Mutex::new(None));
@@ -2527,10 +2518,7 @@ impl Agents {
             .await
             .map_err(|_| "native_agent_deadline".to_owned())
             .and_then(|r| r);
-            let _ = child.thread.submit(Op::CleanBackgroundTerminals).await;
-            let cleanup =
-                tokio::time::timeout(Duration::from_secs(5), child.thread.shutdown_and_wait())
-                    .await;
+            let cleanup = execution::shutdown(&child.thread).await;
             if let Ok(mut accounts) = accounts.0.lock() {
                 accounts.remove(&thread_id.to_string());
             }
@@ -2590,6 +2578,7 @@ impl Agents {
                 result,
                 failure,
                 job: Some(job),
+                runtime: tokio::runtime::Handle::current(),
                 consumed: false,
                 task: session.task.clone(),
                 worker: id.clone(),
