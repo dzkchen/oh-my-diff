@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "intercept",
+      "surface": "render",
+      "payload": {
+        "component": "spinner",
+        "id": "fixture",
+        "surface": "fullscreen",
+        "viewport": {
+          "columns": 100,
+          "rows": 40
+        },
+        "lifecycle": "live",
+        "owner": null,
+        "props": {
+          "header": "Working",
+          "elapsed_seconds": 5
+        }
+      },
+      "expect": {
+        "result": {
+          "tree": [
+            {
+              "type": "line",
+              "id": "render_hooks_spinner",
+              "label": "Working",
+              "spans": [
+                {
+                  "text": "◓ ",
+                  "tone": "accent",
+                  "bold": true
+                },
+                {
+                  "text": "Working"
+                },
+                {
+                  "text": " · 5s",
+                  "tone": "muted"
+                }
+              ]
+            }
+          ]
+        },
+        "input": {
+          "component": "spinner",
+          "id": "fixture",
+          "surface": "fullscreen",
+          "viewport": {
+            "columns": 100,
+            "rows": 40
+          },
+          "lifecycle": "live",
+          "owner": null,
+          "props": {
+            "header": "Working",
+            "elapsed_seconds": 5
+          }
+        },
+        "answered_by": "render_hooks",
+        "trace": [
+          {
+            "index": 0,
+            "mod": "render_hooks",
+            "outcome": "returned",
+            "attempts": 0,
+            "returned": {
+              "tree": [
+                {
+                  "type": "line",
+                  "id": "render_hooks_spinner",
+                  "label": "Working",
+                  "spans": [
+                    {
+                      "text": "◓ ",
+                      "tone": "accent",
+                      "bold": true
+                    },
+                    {
+                      "text": "Working"
+                    },
+                    {
+                      "text": " · 5s",
+                      "tone": "muted"
+                    }
+                  ]
+                }
+              ]
+            },
+            "received": {
+              "component": "spinner",
+              "id": "fixture",
+              "surface": "fullscreen",
+              "viewport": {
+                "columns": 100,
+                "rows": 40
+              },
+              "lifecycle": "live",
+              "owner": null,
+              "props": {
+                "header": "Working",
+                "elapsed_seconds": 5
+              }
+            },
+            "location": "index.ts:6:7",
+            "required": false
+          }
+        ],
+        "core_calls": []
+      }
+    },
+    {
+      "type": "intercept",
+      "surface": "render",
+      "payload": {
+        "component": "tool_call",
+        "id": "fixture-tool",
+        "surface": "fullscreen",
+        "viewport": {
+          "columns": 100,
+          "rows": 40
+        },
+        "lifecycle": "final",
+        "owner": null,
+        "props": {
+          "kind": "function",
+          "tool": "read_file",
+          "status": "failed"
+        }
+      },
+      "core": [
+        {
+          "value": {
+            "tree": []
+          }
+        }
+      ],
+      "expect": {
+        "result": {
+          "tree": []
+        },
+        "input": {
+          "component": "tool_call",
+          "id": "fixture-tool",
+          "surface": "fullscreen",
+          "viewport": {
+            "columns": 100,
+            "rows": 40
+          },
+          "lifecycle": "final",
+          "owner": null,
+          "props": {
+            "kind": "function",
+            "tool": "read_file",
+            "status": "failed"
+          }
+        },
+        "answered_by": null,
+        "trace": [],
+        "core_calls": [
+          {
+            "component": "tool_call",
+            "id": "fixture-tool",
+            "surface": "fullscreen",
+            "viewport": {
+              "columns": 100,
+              "rows": 40
+            },
+            "lifecycle": "final",
+            "owner": null,
+            "props": {
+              "kind": "function",
+              "tool": "read_file",
+              "status": "failed"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -171,7 +171,7 @@ export function textWorkspaceEdit(repository: string, response: Json): Result<Re
 
 export function state(value: Json, adapter: Adapter): State {
   const root = object(value) ?? {};
-  const saved = object(object(root.servers ?? null)?.[adapter] ?? null) ?? (adapter === 'python' ? root : {});
+  const saved = object(object(root.servers ?? null)?.[adapter] ?? null) ?? {};
   const documents: Record<string, Document> = {};
   for (const [path, entry] of Object.entries(object(saved.documents ?? null) ?? {})) {
     const data = object(entry);
@@ -189,7 +189,7 @@ export function state(value: Json, adapter: Adapter): State {
     : null;
   return {
     adapter,
-    server: string(saved.server ?? null) ?? (adapter === 'python' && saved.running === true ? 'pylsp' : null),
+    server: string(saved.server ?? null),
     repository: string(saved.repository ?? null) ?? '',
     running: saved.running === true,
     next_id: number(saved.next_id ?? null) ?? 1,
@@ -204,20 +204,9 @@ export function state(value: Json, adapter: Adapter): State {
 
 export function failure(s: State, reason: string, stale = false): void {
   s.status = stale ? 'stale' : 'fallback';
-  s.reason = reason.slice(0, 256);
+  s.reason = [...reason].slice(0, 256).join('');
 }
 
 export const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';
-export const serializedBytes = (value: unknown) => {
-  const text = JSON.stringify(value) ?? '';
-  let bytes = 0;
-  for (let index = 0; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    if (code < 0x80) bytes++;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) { bytes += 4; index++; }
-    else bytes += 3;
-  }
-  return bytes;
-};
+export const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 export const size = (value: unknown) => serializedBytes(value) + 96;

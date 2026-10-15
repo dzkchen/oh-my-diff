@@ -140,7 +140,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     if let Some(parent) = forked
         && let Err(error) =
             codex_omd::data_store::fork_thread_data(&lead.host.root, &parent.to_string(), &thread)
-        && !error.to_string().starts_with("store_thread_exists")
+        && error.kind() != std::io::ErrorKind::AlreadyExists
     {
         core.views.diagnostic(
             &core.host,
@@ -544,19 +544,7 @@ pub(in crate::mods) fn schedule(
     caller: &Caller<'_>,
     arguments: Value,
 ) -> Result<Value, String> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Input {
-        key: String,
-        delay_ms: u64,
-    }
-    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-    if input.key.is_empty()
-        || input.key.len() > 64
-        || !(TIMER_FLOOR_MS..=86_400_000).contains(&input.delay_ms)
-    {
-        return Err("timer_invalid".into());
-    }
+    let (key, delay_ms) = codex_omd::host::validate_timer_request("events.schedule", &arguments)?;
     let weak = core
         .expansion
         .core
@@ -571,7 +559,7 @@ pub(in crate::mods) fn schedule(
     let slot = (
         lead.thread.to_string(),
         caller.id.to_owned(),
-        input.key.clone(),
+        key.clone(),
     );
     if !timers.contains_key(&slot)
         && timers
@@ -582,11 +570,11 @@ pub(in crate::mods) fn schedule(
     {
         return Err("timer_limit".into());
     }
-    let (owner, key, thread) = (caller.id.to_owned(), input.key.clone(), lead.thread);
+    let (owner, timer_key, thread) = (caller.id.to_owned(), key.clone(), lead.thread);
     if let Ok(mut queue) = core.expansion.pending.lock() {
         queue.retain(|item| {
             !matches!(item, Pending::Timer { thread: t, owner: o, key: k, .. }
-            if *t == thread && o == &owner && k == &key)
+            if *t == thread && o == &owner && k == &timer_key)
         });
     }
     let source = caller.source.to_owned();
@@ -595,14 +583,14 @@ pub(in crate::mods) fn schedule(
         .timer_sequence
         .fetch_add(1, Ordering::Relaxed);
     let task = tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(input.delay_ms)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         if let Some(core) = weak.upgrade() {
             push_timer(
                 &core.expansion,
                 Pending::Timer {
                     thread,
                     owner,
-                    key,
+                    key: timer_key,
                     source,
                     incarnation,
                 },
@@ -614,7 +602,7 @@ pub(in crate::mods) fn schedule(
     {
         previous.abort();
     }
-    Ok(json!({"key": input.key, "delay_ms": input.delay_ms}))
+    Ok(json!({"key": key, "delay_ms": delay_ms}))
 }
 
 pub(in crate::mods) fn cancel(
@@ -623,7 +611,7 @@ pub(in crate::mods) fn cancel(
     caller: &str,
     arguments: &Value,
 ) -> Result<Value, String> {
-    let key = arguments["key"].as_str().ok_or("timer_invalid")?;
+    let (key, _) = codex_omd::host::validate_timer_request("events.cancel", arguments)?;
     let mut timers = core
         .expansion
         .timers
@@ -638,7 +626,7 @@ pub(in crate::mods) fn cancel(
         let before = queue.len();
         queue.retain(|item| {
             !matches!(item, Pending::Timer { thread, owner, key: k, .. }
-            if *thread == lead.thread && owner == caller && k == key)
+            if *thread == lead.thread && owner == caller && k == &key)
         });
         cancelled |= queue.len() != before;
     }

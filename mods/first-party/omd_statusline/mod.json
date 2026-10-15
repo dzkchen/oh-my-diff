@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "omd_statusline",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Configurable status line below or above the composer: model, context, usage limits, cost, Git, pull request and CI status, and your own scripts",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_statusline"},
+  "capabilities": ["terminal", "store", "commands", "events", "lifecycle", "model", "middleware", "threads", "config", "account", "inventory", "exec", "http", "credentials", "builtins"],
+  "assets": ["segments.ts", "sources.ts"],
+  "http_access": {"origins": ["https://api.github.com"], "credentials": ["owned"]},
+  "subscriptions": {
+    "channels": ["omd_statusline/refresh"],
+    "app": ["account/updated", "account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
+  },
+  "compatibility": {"required_features": ["app_v1", "builtins_v1", "credentials_v1", "events_v1", "exec_v1", "package_imports_v1", "package_text_assets_v1", "state_scopes_v1", "store_thread_v1", "structured_access_v1", "terminal_box_model_v1", "terminal_lists_v1", "terminal_rich_line_v1", "timers_v1", "ui_composition_v1", "ui_controls_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "placement": {"type": "string", "enum": ["below", "above"], "default": "below"},
+      "preset": {"type": "string", "enum": ["compact", "detailed", "custom"], "default": "compact"},
+      "layout": {"type": "string", "default": "model effort provider context tokens cache cost limits; git changes pr ci session tools agents plan omd"},
+      "hidden": {"type": "string", "default": ""},
+      "glyphs": {"type": "string", "enum": ["unicode", "ascii"], "default": "unicode"},
+      "bars": {"type": "boolean", "default": true},
+      "thresholds": {"type": "string", "default": "context=70,90 limits=70,90 cost=5,20"},
+      "tones": {"type": "string", "default": ""},
+      "github": {"type": "boolean", "default": true},
+      "refresh_s": {"type": "number", "default": 30},
+      "scripts": {"type": "string", "default": ""}
+    },
+    "additionalProperties": false
+  }
+}

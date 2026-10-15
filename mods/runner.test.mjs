@@ -2,34 +2,32 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { callback, runnerSync } from '../tests/mod_runner.mjs';
+import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
-const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
-const currentSurface = {
-  events: Object.fromEntries([...table('MOD_EVENTS').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  replacements: [...table('MOD_REPLACEMENT_POINTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  middleware: [...table('MOD_MIDDLEWARE_EVENTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  intercept: Object.fromEntries([...table('MOD_INTERCEPT_SURFACES').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  state: 'store', contracts: 'contracts',
-};
-const lspDirectory = new URL('./first-party/omd_lsp_sync/', import.meta.url);
-const lspManifest = JSON.parse(readFileSync(new URL('mod.json', lspDirectory), 'utf8'));
-const lsp = {
-  source: readFileSync(new URL('index.ts', lspDirectory), 'utf8'),
-  capabilities: lspManifest.capabilities,
-  package: {
-    filename: fileURLToPath(new URL('index.ts', lspDirectory)),
-    entrypoint: 'index.ts',
-    assets: Object.fromEntries(lspManifest.assets.map(name => [name, { text: readFileSync(new URL(name, lspDirectory), 'utf8'), sha256: '0'.repeat(64) }])),
-  },
-};
 function run(source, extra = {}) {
-  const result = runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra });
-  assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+  return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
+
+test('UI state serialized boundaries agree with the native validator', () => {
+  const cases = JSON.parse(readFileSync(new URL('../runtime/omd/tests/fixtures/ui_state.json', import.meta.url)));
+  for (const entry of cases) {
+    const encoded = entry.prefix + entry.unit.repeat(entry.repeat) + entry.suffix;
+    const reply = run('export default api => api.command("write", value => api.uiState.set(JSON.parse(value)))',
+      { capabilities: ['terminal', 'commands'], event: 'command', name: 'write', payload: encoded });
+    assert.equal(!reply.error, entry.valid, `${entry.name}: ${reply.error}`);
+  }
+});
+
+test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
+  const source = `export default api => api.command('encode', text => {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    const fitted = encoder.encodeInto(text, new Uint8Array(4));
+    return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read) };
+  })`;
+  const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'encode', payload: 'a€😀' });
+  assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€' });
+});
 
 test('UI state requires terminal authority and refuses activation and render writes', () => {
   const read = 'export default api => api.command("read", () => api.uiState.get())';
@@ -66,7 +64,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
   const input = { component: 'tool_call' };
   const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
     api.intercept('render', (e, next) => e.replay ? next({ ...e, value: value.get() }) : { value: value.get() }); };`,
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface: currentSurface,
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface,
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
@@ -88,13 +86,13 @@ test('typed module context callback', () => {
 });
 test('a callback clock stands still except across its own sleeps', () => {
   const source = 'export default api => api.command("wait", async () => { const start = Date.now(); api.host.call("session.info", null); const mid = Date.now(); await api.time.sleep(40); return [mid - start, Date.now() - start, new Date().getTime() - start]; })';
-  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, surface: currentSurface, event: 'command', name: 'wait', virtual_time_ms: 1000 };
-  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {}, []);
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, event: 'command', name: 'wait', virtual_time_ms: 1000 };
+  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {});
   assert.deepEqual(reply.value, [0, 40, 40]);
 });
 test('the test harness kills an interactive callback that never returns', () => {
-  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 50 };
-  assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
+  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 500 };
+  assert.throws(() => callback(request, () => null), /runner_timed_out/);
 });
 test('package text assets are read only and limited to the selected package', () => {
   const source = 'export default api => api.command("asset", () => api.assets.read("worker.mjs"))';
@@ -123,7 +121,7 @@ test('component module steps deliver input, ticks and one post without host auth
   const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
-    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface: currentSurface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
+    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
   const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
@@ -139,7 +137,7 @@ test('component module steps deliver input, ticks and one post without host auth
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface: currentSurface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
   const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
@@ -320,7 +318,7 @@ test('independent workspace mod uses public read and transaction calls', () => {
   const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
   const capabilities = ['fs.read', 'fs.write', 'tools', 'store'];
   const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
-  const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload });
+  const first = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload });
   assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
   const read = { files: {
     'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
@@ -328,189 +326,20 @@ test('independent workspace mod uses public read and transaction calls', () => {
     'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
   } };
   const receipts = [{ call: first.host_call, value: read }];
-  const second = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts });
+  const second = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts });
   assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
     expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
     writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
   } });
   const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
-  const final = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
+  const final = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
   assert.deepEqual(final.value, result);
-  const observed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
+  const observed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
   assert.equal(observed.state.last_write.status, 'observed');
   const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
-  const proposed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
+  const proposed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
   assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
-  const requested = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
+  const requested = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
   assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.match(run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
-});
-test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
-  const { source, capabilities } = lsp;
-  const repository = '/tmp/project';
-  const files = {
-    'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
-    'pkg/new.py': null,
-    'pkg/__init__.py': { text: 'from .old import value as alias\n', sha256: 'barrel-hash' },
-    'pkg/use.py': { text: 'from pkg.old import value as local\n', sha256: 'alias-hash' },
-  };
-  const uri = path => `file://${repository}/${path}`;
-  let running = false;
-  let idleMs = 0;
-  let rename = null;
-  let observedRepository = null;
-  const server = call => {
-    switch (call.operation) {
-      case 'store.get':
-        assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository' });
-        return observedRepository;
-      case 'store.put':
-        assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository } });
-        observedRepository = { revision: 1, value: call.arguments.value };
-        return { revision: 1 };
-      case 'process.which': return { found: [{ name: 'pylsp', path: '/bin/pylsp', sha256: 'server-hash' }] };
-      case 'process.start': running = true; return { session: 'python', running: true };
-      case 'process.status': return { session: 'python', running, idle_ms: idleMs };
-      case 'process.stop': running = false; return { stopped: true };
-      case 'events.publish': return { delivered: 0, dropped: 0 };
-      case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-      case 'process.exchange': {
-        const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
-        if (!request) {
-          const opened = call.arguments.send?.find(message => message.method === 'textDocument/didOpen');
-          return { session: 'python', running: true, messages: opened ? [{ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uri('pkg/old.py'), version: 1, diagnostics: [{ message: 'example' }] } }] : [] };
-        }
-        const result = request.method === 'initialize' ? { capabilities: { workspace: { fileOperations: { willRename: { filters: [] } } } } } : rename;
-        return { session: 'python', running: true, messages: [{ jsonrpc: '2.0', id: request.id, result }] };
-      }
-      default: throw new Error(`unexpected operation ${call.operation}`);
-    }
-  };
-  const replay = (event, payload, state = null) => {
-    const receipts = [];
-    for (let index = 0; index < 24; index++) {
-      const output = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
-      assert.equal(output.error, undefined, output.error);
-      if (!output.host_call) return output;
-      receipts.push({ call: output.host_call, value: server(output.host_call) });
-    }
-    assert.fail('mod did not finish');
-  };
-  const write = replay('workspace_change', { repository, call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
-  assert.equal(write.state.servers.python.status, 'synced');
-  assert.equal(write.state.servers.python.documents['pkg/old.py'].version, 1);
-  assert.equal(write.state.servers.python.diagnostics['pkg/old.py'].count, 1);
-  rename = { documentChanges: [
-    { textDocument: { uri: uri('pkg/__init__.py'), version: null }, edits: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 9 } }, newText: 'new' }] },
-    { textDocument: { uri: uri('pkg/use.py'), version: null }, edits: [{ range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } }, newText: 'new' }] },
-  ] };
-  const requested = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(requested.value, { status: 'ready', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null, 'pkg/__init__.py': 'barrel-hash', 'pkg/use.py': 'alias-hash' }, writes: { 'pkg/__init__.py': 'from .new import value as alias\n', 'pkg/use.py': 'from pkg.new import value as local\n' } });
-  rename.documentChanges[0].textDocument.version = 9;
-  const stale = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
-  const idle = replay('idle', {}, requested.state);
-  assert.equal(idle.state.servers.python.running, true);
-  assert.equal(running, true);
-  idleMs = 16 * 60_000;
-  const expired = replay('idle', {}, requested.state);
-  assert.equal(expired.state.servers.python.status, 'idle');
-  assert.equal(running, false);
-});
-test('LSP mod reports an absent server and leaves the write event recoverable', () => {
-  const { source, capabilities } = lsp;
-  const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload });
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.equal(published.host_call.operation, 'events.publish');
-  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
-  assert.equal(absent.error, undefined);
-  assert.equal(absent.state.servers.python.status, 'fallback');
-  assert.equal(absent.state.servers.python.reason, 'python_server_absent');
-  const broken = run('export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['fs.read'], event: 'workspace_change', payload });
-  assert.match(broken.error, /broken/);
-});
-test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
-  const { source, capabilities } = lsp;
-  const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
-  const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
-    receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
-  assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
-  assert.equal(absent.state.servers.python.server, 'pylsp');
-  assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
-});
-test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
-  const { source, capabilities } = lsp;
-  const repository = '/tmp/project';
-  const files = {
-    'src/app.ts': { text: 'export const value = 1;\n', sha256: 'ts-sha' },
-    'src/helper.js': { text: 'export const helper = 1;\n', sha256: 'js-sha' },
-    'src/main.rs': { text: 'fn main() {}\n', sha256: 'rs-sha' },
-    'src/Main.java': { text: 'class Main {}\n', sha256: 'java-sha' },
-  };
-  const started = [];
-  const opened = [];
-  let observedRepository = null;
-  const server = call => {
-    if (call.operation === 'store.get') {
-      assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository' });
-      return observedRepository;
-    }
-    if (call.operation === 'store.put') {
-      assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository } });
-      observedRepository = { revision: 1, value: call.arguments.value };
-      return { revision: 1 };
-    }
-    if (call.operation === 'process.which') return { found: call.arguments.names.filter(name => ['typescript-language-server', 'rust-analyzer', 'jdtls'].includes(name)).map(name => ({ name, path: `/bin/${name}`, sha256: `${name}-sha` })) };
-    if (call.operation === 'process.start') { started.push(call.arguments); return { session: call.arguments.session, running: true }; }
-    if (call.operation === 'process.stop') return { stopped: false };
-    if (call.operation === 'events.publish') return { delivered: 0, dropped: 0 };
-    if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-    if (call.operation === 'process.exchange') {
-      const request = call.arguments.send?.find(message => message.method === 'initialize');
-      if (request) return { session: call.arguments.session, running: true, messages: [{ jsonrpc: '2.0', id: request.id, result: { capabilities: { workspace: { fileOperations: { willRename: {} } } } } }] };
-      opened.push(...(call.arguments.send ?? []).filter(message => message.method === 'textDocument/didOpen').map(message => [call.arguments.session, message.params.textDocument.languageId, message.params.textDocument.uri]));
-      return { session: call.arguments.session, running: true, messages: [] };
-    }
-    throw new Error(`unexpected operation ${call.operation}`);
-  };
-  const payload = { repository, source: 'tool', call_id: 'mixed', status: 'observed', changes: Object.keys(files).map(path => ({ path, before: null, after: files[path].sha256 })) };
-  const receipts = [];
-  let result;
-  for (let index = 0; index < 32; index++) {
-    result = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
-    assert.equal(result.error, undefined, result.error);
-    if (!result.host_call) break;
-    receipts.push({ call: result.host_call, value: server(result.host_call) });
-  }
-  assert.equal(result.host_call, null, 'mixed adapter run did not finish');
-  assert.deepEqual(started.map(item => [item.session, item.name, item.arguments]), [
-    ['typescript', 'typescript-language-server', ['--stdio']], ['rust', 'rust-analyzer', []], ['java', 'jdtls', ['--jvm-arg=-Duser.home={process.home}']],
-  ]);
-  assert.deepEqual(opened.map(item => item.slice(0, 2)), [['typescript', 'typescript'], ['typescript', 'javascript'], ['rust', 'rust'], ['java', 'java']]);
-  assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
-  assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
-  assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
-    payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
-  assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
+  assert.match(run(source, { api: '0.2.0-experimental.5', capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
 });

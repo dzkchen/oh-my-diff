@@ -214,6 +214,8 @@ fn selection_status_explains_precedence_and_changed_source() {
         "shadowed_by_project_scope"
     );
     assert_eq!(status["selections"][1]["effective"], true);
+    let listed = codex_omd::package_controls::list(&store, None).unwrap();
+    assert!(listed["packages"].as_array().unwrap().iter().all(|item| item["failed"].is_null()));
     std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
@@ -967,6 +969,49 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
         (true, true),
         "pinned content ignores replacement refs and verified fetches ignore cached URL rewrites"
     );
+}
+
+#[test]
+fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repository = root.join("repository");
+    std::fs::create_dir(&repository).unwrap();
+    let package = mod_package(&repository, "large", "1.0.0", &[], json!([]));
+    edit_manifest(&package, |manifest| {
+        manifest["provenance"]["source"] = json!(repository.display().to_string())
+    });
+    git(&repository, &["init"]);
+    git(
+        &repository,
+        &["config", "user.email", "fixture@example.com"],
+    );
+    git(&repository, &["config", "user.name", "Fixture"]);
+    let store = store(&temp);
+    let mut refusals = Vec::new();
+    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+        let path = package.join(file);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.resize(4 << 20, b'\n');
+        std::fs::write(&path, bytes).unwrap();
+        git(&repository, &["add", "."]);
+        git(&repository, &["commit", "-m", file]);
+        let install = ModInstallRequest {
+            source: ModPackageSource::Repository {
+                repository: repository.display().to_string(),
+                revision: git_output(&repository, &["rev-parse", "HEAD"]),
+                subdirectory: "large".into(),
+            },
+            ..request(&package, &[])
+        };
+        refusals.push((refusal(&store, install), limit));
+    }
+    for (refusal, limit) in refusals {
+        assert!(
+            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
+            "{refusal}"
+        );
+    }
 }
 
 #[test]

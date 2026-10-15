@@ -71,10 +71,9 @@ export default function activate(api: ModAPI) {
         const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Use a paid API profile', message: `${profile.name} (${profile.model}) bills its API account per request. Switch at the next request?` });
         if (!answer.ok || answer.value.status !== 'accepted') return { display: 'Kept the current profile.' };
       }
-      const before = api.host.call('store.get', { key: 'thread' });
-      api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
-      const threadId = api.host.call('store.get', { key: 'thread' })?.provenance.thread_id;
-      if (!threadId) return { display: 'Profile switch failed: current thread unavailable.' };
+      const session = api.host.tryCall('session.info', null);
+      if (!session.ok) return { display: 'Profile switch failed: current thread unavailable.' };
+      const threadId = session.value.thread_id;
       const updated = api.host.tryCall('app.request', { method: 'thread/settings/update', params: { threadId, model: profile.model, effort: profile.reasoning } });
       if (!updated.ok) return { display: `Profile switch failed: ${updated.error}` };
       store({ pending: profile.name, notice: null });

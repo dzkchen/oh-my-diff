@@ -1,6 +1,7 @@
 use super::Result;
 use super::failure;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::BufRead;
 use std::io::BufReader;
@@ -126,7 +127,7 @@ fn runner(node: &Path) -> Result<Child> {
     warm.map_or_else(|| spawn(node), Ok)
 }
 
-const INPUT_LIMIT: usize = 1_048_576;
+pub(super) const INPUT_LIMIT: usize = 1_048_576;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
@@ -246,11 +247,24 @@ fn retire_pinned(owner: &str, part: String) {
         unmounted.retain(|(.., at)| at.elapsed() < WARM_IDLE);
         unmounted.push((owner.to_owned(), part.clone(), Instant::now()));
     }
-    for runner in
-        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part))
-    {
-        runner.stop();
+    let mut retired =
+        retire_warm(|runner| runner.pinned.as_deref() == Some(owner) && runner.key.contains(&part));
+    if retired.is_empty() {
+        return;
     }
+    if let Ok(mut mounted) = MOUNTED.lock() {
+        for runner in &mut retired {
+            if let Some(by) = runner.pinned.take() {
+                mounted.remove(&(by, runner.key.clone()));
+            }
+        }
+    }
+    // Callers hold view and instance locks; the runners are already out of the pool and the mount count.
+    std::thread::spawn(move || {
+        for runner in retired {
+            runner.stop();
+        }
+    });
 }
 
 pub(super) fn unmount(owner: &str, id: &str, component: &str) {
@@ -269,6 +283,8 @@ static STEPPING: (Mutex<BTreeSet<String>>, Condvar) = (Mutex::new(BTreeSet::new(
 const WARM_RUNNERS: usize = 4;
 const PINNED_RUNNERS: usize = 4;
 const REUSED_RUNNERS: usize = 2;
+const MAX_REUSED_RUNNERS: usize = 8;
+static REUSED_POOL: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
 const WARM_IDLE: Duration = Duration::from_secs(60);
 
 struct Stepping(Option<String>);
@@ -460,6 +476,30 @@ where
     Ok(value)
 }
 
+/// Keeps one warm callback runner per active package with a `terminal` handler, so view refreshes
+/// don't evict each other's runners and a command finds its package's runner warm. Every host in
+/// the process shares the pool, so it fits the host with the most handlers; `None` forgets a host.
+pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
+    let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
+    match terminal_handlers {
+        Some(count) => sizes.insert(host, count),
+        None => sizes.remove(&host),
+    };
+}
+
+fn reused_pool() -> usize {
+    reused_size(&REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+fn reused_size(sizes: &BTreeMap<u64, usize>) -> usize {
+    sizes
+        .values()
+        .max()
+        .copied()
+        .unwrap_or_default()
+        .clamp(REUSED_RUNNERS, MAX_REUSED_RUNNERS)
+}
+
 fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
     WARM.lock()
         .map(|mut runners| runners.extract_if(.., retire).collect())
@@ -474,7 +514,7 @@ fn pool(mut runner: Warm) {
     let size = match kind {
         (_, Some(_)) => usize::MAX,
         (true, None) => WARM_RUNNERS,
-        (false, None) => REUSED_RUNNERS,
+        (false, None) => reused_pool(),
     };
     let evicted = match WARM.lock() {
         Ok(mut runners) => {

@@ -14,18 +14,20 @@ const stableSdkRoot = (() => {
   const current = match ? `${match[1]}/current${match[2]}` : null;
   return current && existsSync(current) && realpathSync(current) === realpathSync(sdkRoot) ? current : sdkRoot;
 })();
-const apiVersion = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version;
+const sdkPackage = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8'));
+const apiVersion = sdkPackage.version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
-const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request', 'release_check', 'snapshot_review', 'render_hooks', 'reactive_dashboard'];
+const publicExamples = sdkPackage.files.filter(file => file.startsWith('examples/')).map(file => file.slice('examples/'.length));
 
+/** @returns {never} */
 function fail(message) {
   throw new Error(message);
 }
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: options.cwd, encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit' });
-  if (result.error?.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
+  if (result.error && 'code' in result.error && result.error.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
   if (result.error) throw result.error;
   if (result.status !== 0) fail((result.stderr || result.stdout || `${program} failed`).trim());
   return options.capture ? result.stdout.trim() : '';
@@ -86,122 +88,21 @@ export default function activate(api: ModAPI) {
 `;
 }
 
-function scenarioFor(name, example = 'minimal') {
-  const contractStatus = { status: 'active', active: { schema: 2, id: 'paired_review', version: 1, description: 'Paired review', assurance: 'independent-review-candidate', gates: { complete: [] } }, provenance: null, receipts: [], finding_ledger: {}, restrictions: [], scoped_restrictions: [] };
-  const scenarios = {
-    minimal: {
-      schema: 1,
-      virtual_time_ms: 1000,
-      steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'author', expect: { display: 'Hello author' } }],
-    },
-    routing: {
-      schema: 1,
-      settings: { routing: { route: 'sol' } },
-      steps: [{ type: 'event', event: 'routing', payload: { routes: [{ name: 'sol', model: 'm1', provider: 'p', available: true, billing: 'included_subscription' }, { name: 'astra', model: 'm2', provider: 'p', available: true, billing: 'included_subscription' }] }, expect: [{ mod: 'routing', value: { route: 'sol' } }] }],
-    },
-    coordination: {
-      schema: 1,
-      host_operations: {
-        'routes.list': [{ result: [{ name: 'sol', model: 'm1', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }, { name: 'astra', model: 'm2', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }] }],
-        'workspace.snapshot': [{ result: { snapshot: { reference: 'snapshot:fixture', sha256: 'a'.repeat(64) }, candidate_sha256: 'a'.repeat(64) } }],
-        'agents.spawn': [{ result: { handle: 'a', route: 'sol', permissions: 'read_only' } }, { result: { handle: 'b', route: 'astra', permissions: 'read_only' } }],
-        'agents.wait': [{ result: { status: 'completed', text: 'one', consumed: true, evidence: { reference: 'native-thread:a', sha256: 'b'.repeat(64) } } }, { result: { status: 'completed', text: 'two', consumed: true, evidence: { reference: 'native-thread:b', sha256: 'c'.repeat(64) } } }],
-      },
-      steps: [{ type: 'invoke', mod: 'coordination', event: 'tool', name: 'compare', payload: { prompt: 'inspect' } }],
-    },
-    context: {
-      schema: 1,
-      steps: [{ type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u' } }],
-    },
-    recovery: {
-      schema: 1,
-      steps: [
-        { type: 'event', event: 'compaction', payload: { token_limit: 32000, context_window: 64000 } },
-        { type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u' } },
-        { type: 'invoke', mod: 'recovery', event: 'tool', name: 'checkpoint', payload: {}, expect_error: 'unsupported_operation: checkpoint.read' },
-      ],
-    },
-    kernel: {
-      schema: 1,
-      steps: [
-        { type: 'intercept', surface: 'model_request', payload: { request_id: 'r1', route: 'sol', routes: [{ name: 'sol', available: true, billing: 'included_subscription' }, { name: 'astra', available: true, billing: 'included_subscription' }], effort: null, sections: [] }, core: [{ value: { route: 'astra', effort: null, cache: { from: null } } }] },
-        { type: 'intercept', surface: 'response_stream', payload: { kind: 'text', index: 0, text: 'experimental API', protected: false }, core: [{ value: { chunks: [{ kind: 'text', index: 0, text: 'preview API', protected: false }] } }] },
-      ],
-    },
-    counter: {
-      schema: 1,
-      steps: [{ type: 'invoke', mod: 'counter', event: 'tool', name: 'count', payload: {}, expect: { count: 1 } }],
-    },
-    terminal: {
-      schema: 1,
-      steps: [
-        { type: 'event', event: 'terminal', payload: { event: 'draw', ledger: null } },
-        { type: 'invoke', mod: 'terminal', event: 'command', name: 'layout', payload: 'review', expect: { display: 'Layout request: review' } },
-      ],
-    },
-    workflow: {
-      schema: 1,
-      host_operations: {
-        'contract.status': [{ result: contractStatus }],
-        'contract.restrict': [{ result: { restricted: true } }],
-      },
-      steps: [
-        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'workflow', payload: {}, expect: contractStatus },
-        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'no_delegation', payload: {}, expect: { restricted: true } },
-      ],
-    },
-    'service-consumer': {
-      schema: 1,
-      packages: ['../service-provider'],
-      steps: [{ type: 'invoke', mod: 'service_consumer', event: 'command', name: 'format', payload: '  typed service  ', expect: 'typed service' }],
-    },
-    'service-provider': { schema: 1, steps: [{ type: 'status' }] },
-    workspace: { schema: 1, steps: [{ type: 'invoke', mod: 'workspace_author', event: 'tool', name: 'move', payload: null, expect_error: 'invalid_move' }] },
-    virtual_reader: { schema: 1, steps: [{ type: 'invoke', mod: 'example_virtual_reader', event: 'virtual_read', name: 'fixture', payload: { uri: 'fixture://manual/intro' } }] },
-    scoped_data: { schema: 1, host_operations: { 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'example_scoped_data', event: 'command', name: 'inspect', payload: null, expect: null }] },
-    service_request: { schema: 1, host_operations: { 'sidecars.invoke': [{ result: { provider: 'example_echo', program_sha256: 'a'.repeat(64), source_hashes: {}, result: { echo: 'extension-owned request' }, untrusted: true } }] }, steps: [{ type: 'invoke', mod: 'example_service_request', event: 'tool', name: 'probe', payload: {} }] },
-    review_probe: { schema: 1, steps: [{ type: 'invoke', mod: 'example_review_probe', event: 'turn_end', name: '', payload: { turn_id: 'fixture', outcome: 'aborted' } }] },
-    render_hooks: {
-      schema: 1,
-      steps: [
-        { type: 'intercept', surface: 'render', payload: { component: 'spinner', id: 'fixture', surface: 'fullscreen', viewport: { columns: 100, rows: 40 }, lifecycle: 'live', owner: null, props: { header: 'Working', elapsed_seconds: 5 } } },
-        { type: 'intercept', surface: 'render', payload: { component: 'tool_call', id: 'fixture-tool', surface: 'fullscreen', viewport: { columns: 100, rows: 40 }, lifecycle: 'final', owner: null, props: { kind: 'function', tool: 'read_file', status: 'failed' } }, core: [{ value: { tree: [] } }] },
-      ],
-    },
-    reactive_dashboard: {
-      schema: 1,
-      steps: [
-        { type: 'invoke', mod: 'reactive_dashboard', event: 'command', name: 'search', payload: ' logs ', expect: null },
-        { type: 'event', event: 'terminal', payload: { event: 'draw', ledger: null }, expect: [{ mod: 'reactive_dashboard', value: { sidebar_width: 32, sites: { sidebar: { components: [
-          { type: 'input', id: 'dashboard_query', label: 'Filter', value: 'logs', placeholder: 'type to filter', action: { command: 'reactive_dashboard:search' } },
-          { type: 'text', id: 'dashboard_summary', label: 'Summary', text: 'logs · 1 searches · 0 ticks', tone: 'muted' },
-        ] } } } }] },
-      ],
-    },
-    snapshot_review: { schema: 1, host_operations: { 'task.status': [{ result: { ledger: { thread_id: 'author-preview' } } }], 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'snapshot_review', event: 'tool', name: 'start', payload: {}, expect_error: 'capture_first' }] },
+function minimalScenarios(name) {
+  return {
+    'mod.test.json': { schema: 1, virtual_time_ms: 1000, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'author', expect: { display: 'Hello author' } }] },
+    'debug.test.json': { schema: 1, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'fail', expect_error: 'INTENTIONAL_AUTHOR_FAILURE' }] },
   };
-  return scenarios[example] || scenarios.minimal;
-}
-
-function debugScenario(name, example = 'minimal') {
-  if (example === 'coordination') {
-    return { schema: 1, steps: [{ type: 'invoke', mod: 'coordination', event: 'tool', name: 'compare', payload: null, expect_error: 'prompt required' }] };
-  }
-  if (example === 'minimal') {
-    return { schema: 1, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'fail', expect_error: 'INTENTIONAL_AUTHOR_FAILURE' }] };
-  }
-  return { schema: 1, steps: [{ type: 'invoke', mod: ({ service_request: 'example_service_request', workspace: 'workspace_author', virtual_reader: 'example_virtual_reader', scoped_data: 'example_scoped_data', review_probe: 'example_review_probe' })[name] ?? name.replaceAll('-', '_'), event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
 }
 
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function writeProjectFiles(directory, name, example) {
+async function writeProjectFiles(directory, name, scenarios) {
   await writeJson(join(directory, 'package.json'), packageJson(name));
   await writeJson(join(directory, 'tsconfig.json'), tsconfig());
-  await writeJson(join(directory, 'mod.test.json'), scenarioFor(name, example));
-  await writeJson(join(directory, 'debug.test.json'), debugScenario(name, example));
+  for (const [file, scenario] of Object.entries(scenarios)) await writeJson(join(directory, file), scenario);
 }
 
 // The SDK is a local file dependency, so the scaffold and its lockfile install without the network.
@@ -217,7 +118,7 @@ async function createProject(directory, name) {
   await writeJson(join(directory, 'mod.json'), { schema: 1, id: name, version: '0.1.0', api: apiVersion, state_version: 1,
     license: 'UNLICENSED', provenance: { maintainer: 'CHANGE ME', source: 'CHANGE ME' }, capabilities: ['commands'] });
   await writeFile(join(directory, 'index.ts'), minimalSource());
-  await writeProjectFiles(directory, name);
+  await writeProjectFiles(directory, name, minimalScenarios(name));
   lock(directory);
 }
 
@@ -227,9 +128,9 @@ async function copyExample(directory, name) {
   if (!statSync(source).isDirectory()) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
-  await writeProjectFiles(directory, name, name);
-  const suppliedScenario = join(source, 'mod.test.json');
-  if (existsSync(suppliedScenario)) cpSync(suppliedScenario, join(directory, 'mod.test.json'));
+  const { id } = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
+  const debug = { schema: 1, steps: [{ type: 'invoke', mod: id, event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
+  await writeProjectFiles(directory, name, existsSync(join(directory, 'debug.test.json')) ? {} : { 'debug.test.json': debug });
 }
 
 async function copyExamples(directory) {
@@ -251,14 +152,17 @@ function jsxSources(directory, folder = '') {
 function compileJsx(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return;
-  let ts;
+  const ts = typescript(directory);
+  for (const source of sources) compileJsxFile(ts, directory, source);
+}
+
+function typescript(directory) {
   try {
-    ts = createRequire(join(directory, 'package.json'))('typescript');
+    return createRequire(join(directory, 'package.json'))('typescript');
   } catch (error) {
-    if (error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
+    if (error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND') fail('jsx_requires_typescript: pnpm add -D typescript@5.9.3');
     throw error;
   }
-  for (const source of sources) compileJsxFile(ts, directory, source);
 }
 
 function compileJsxFile(ts, directory, source) {
@@ -300,8 +204,12 @@ function checkProject(directory) {
   const sources = jsxSources(directory);
   if (!sources.length) return command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
   // TypeScript drops a .tsx from a program that also lists its generated .ts, so check the sources rather than their output.
+  const ts = typescript(directory);
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(directory, 'tsconfig.json'), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')) });
+  const generated = new Set(sources.map(source => resolve(directory, source.slice(0, -1))));
+  const files = [...new Set([...parsed.fileNames.map(file => resolve(file)).filter(file => !generated.has(file)), ...sources.map(source => resolve(directory, source))])];
   const jsxConfig = join(directory, 'tsconfig.omd-jsx.json');
-  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files: sources }));
+  writeFileSync(jsxConfig, JSON.stringify({ extends: './tsconfig.json', include: ['.omd/*.d.ts'], files }));
   try {
     command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.omd-jsx.json'], { cwd: directory });
   } finally {
@@ -429,7 +337,7 @@ function watchProject(directory, store, once) {
     try {
       reload();
     } catch (error) {
-      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error.message })}\n`);
+      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error instanceof Error ? error.message : String(error) })}\n`);
     }
   };
   let pending;

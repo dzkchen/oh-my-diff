@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import json
-import re
 import sys
 from pathlib import Path
 
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
 DOCUMENT = ROOT / "mods/EXTENSION_TYPES.md"
-ROLES = {"bundled", "candidate", "author_example", "conformance_fixture"}
+ROLES = {"bundled", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
 PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party")
 
@@ -19,12 +19,6 @@ def package_paths():
         for base in PACKAGE_ROOTS
         for path in base.rglob("mod.json")
     }
-
-
-def author_examples():
-    source = (ROOT / "mods/author/cli.mjs").read_text()
-    match = re.search(r"const publicExamples = \[(.*?)\];", source, re.S)
-    return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
 def identified(registry):
@@ -59,21 +53,18 @@ def check(registry):
             problems.append(f"{label}: missing mod rationale")
 
     bundled = {package["path"]: package for package in packages if package["role"] == "bundled"}
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    locked = {package["source"]: package for package in preview["packages"].values()}
+    locked = {package["source"]: package for package in support.mods_lock()["packages"].values()}
     if set(bundled) != set(locked):
-        problems.append("bundled classifications differ from runtime/preview-v1.lock.json")
+        problems.append("bundled classifications differ from runtime/mods.lock.json")
     for path, package in bundled.items():
         if locked.get(path, {}).get("extension_type") != package["extension_type"]:
-            problems.append(f"{path}: preview lock extension type differs")
+            problems.append(f"{path}: mods lock extension type differs")
 
     published = {
         Path(package["path"]).name
         for package in packages
         if package["role"] == "author_example"
     }
-    if set(author_examples()) != published:
-        problems.append(f"author CLI examples differ: declared={author_examples()}, classified={sorted(published)}")
     files = json.loads((ROOT / "mods/package.json").read_text())["files"]
     shipped = {value.removeprefix("examples/") for value in files if value.startswith("examples/")}
     if shipped != published:
@@ -100,18 +91,17 @@ def render(registry):
     out = [
         "# Extension types",
         "",
-        "<!-- Generated from mods/extension-types.json by scripts/mod_extension_types.py --write. -->",
+        "<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->",
         "",
         registry["rule"],
         "",
         "A conformance fixture is retained source and executable coverage, not a package offered",
-        "to users. The author SDK packs only author examples. The current private-preview bundle",
-        "contains only the packages labeled `bundled` below.",
+        "to users. The author SDK packs only author examples. The first-party mod lock",
+        "(`runtime/mods.lock.json`) pins only the packages labeled `bundled` below.",
         "",
     ]
     sections = (
         ("Bundled packages", "bundled"),
-        ("Unqualified first-party candidates", "candidate"),
         ("Author examples", "author_example"),
         ("Conformance fixtures", "conformance_fixture"),
     )
@@ -135,7 +125,7 @@ def render(registry):
         "",
         "The small context, counter, guard, interception, service, reader, and tool cases remain",
         "available to repository conformance checks. They are not copied by `omd-mod-author examples`,",
-        "not packed as SDK examples, and not part of the private-preview bundle.",
+        "not packed as SDK examples, and not part of the first-party mod lock.",
         "",
     ])
     return "\n".join(out)
@@ -144,14 +134,10 @@ def render(registry):
 def main():
     registry = json.loads(REGISTRY.read_text())
     problems = check(registry)
-    rendered = render(registry)
-    if "--write" in sys.argv[1:]:
-        DOCUMENT.write_text(rendered)
-        print(f"wrote {DOCUMENT.relative_to(ROOT)}")
-    elif not DOCUMENT.is_file() or DOCUMENT.read_text() != rendered:
-        problems.append("mods/EXTENSION_TYPES.md is stale; rerun scripts/mod_extension_types.py --write")
     if problems:
         raise SystemExit("\n".join(problems))
+    support.check_or_write(DOCUMENT, render(registry), "--write" in sys.argv[1:],
+                           "mods/EXTENSION_TYPES.md is stale; rerun python3 -m scripts.mod_extension_types --write")
     print(f"extension types: {len(registry['packages'])} packages and {len(registry['synthetic_fixtures'])} synthetic fixtures")
 
 

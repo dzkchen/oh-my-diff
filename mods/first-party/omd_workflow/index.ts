@@ -30,8 +30,7 @@ const mutation = (properties: Record<string, Json> = {}, required: string[] = []
 required: [...required, 'operation_id', 'expected_revision'], additionalProperties: false });
 const canonical = (value: Json): Json => Array.isArray(value) ? value.map(canonical)
   : object(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
-const digest = async (value: Json) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(encodeURIComponent(JSON.stringify(canonical(value)))
-  .replace(/%([0-9A-F]{2})/g, (_, byte: string) => String.fromCharCode(parseInt(byte, 16))), character => character.charCodeAt(0))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+const digest = async (value: Json) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(canonical(value)))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 const retain = (operations: Operation[]) => {
   let bytes = 0;
   return operations.slice(-16).reverse().filter((item, index) => (bytes += JSON.stringify(item).length) <= 32768 || !index).reverse();

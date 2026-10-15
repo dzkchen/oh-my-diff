@@ -182,7 +182,7 @@ class UpstreamSurfaceTests(unittest.TestCase):
 
     def test_invalid_and_removed_entries_are_reported(self):
         table = self.table(**{"slash_command:model": {"route": "missing"}, "slash_command:pwd": {"route": "r", "exclude": "x"},
-                              "slash_command:gone": {"route": "r"}})
+                              "slash_command:gone": {"route": "r"}, "slash_command:omd-added": {"route": "r", "omd": True}})
         report = surfaces.check(self.root, table)
         self.assertEqual(sorted(report["invalid"]), ["slash_command:model", "slash_command:pwd"])
         self.assertEqual(report["removed_upstream"], ["slash_command:gone"])
@@ -223,6 +223,11 @@ class RouteTableTests(unittest.TestCase):
             self.assertIn(route or reason, table["routes"] if route else table["exclusions"], name)
             if route == "app.request" and "class" in entry:
                 self.assertTrue(set(entry["contexts"]) <= {"user", "event"}, name)
+
+    def test_embedded_route_table_matches_the_mapping(self):
+        embedded = json.loads((ROOT / "runtime/omd/src/app_routes.json").read_text())
+        self.assertEqual(surfaces.host_table(surfaces.load_table(surfaces.TABLE)), embedded,
+                         "runtime/omd/src/app_routes.json is stale; regenerate it with upstream_surfaces.py host-table")
 
 
 if __name__ == "__main__":

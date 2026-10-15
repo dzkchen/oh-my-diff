@@ -1,17 +1,11 @@
 // Inline views reject control characters, so line endings, tabs and terminal escapes are normalized first.
 export const clean = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\t/g, '    ').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
-const utf8 = (char: string) => { const code = char.codePointAt(0) ?? 0; return code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4; };
+const utf8 = new TextEncoder();
 export const clamp = (text: string, limit: number) => {
-  let out = '';
-  let bytes = 0;
-  for (const char of text) {
-    bytes += utf8(char);
-    if (bytes > limit) return { text: out, cut: true };
-    out += char;
-  }
-  return { text: out, cut: false };
+  const { read } = utf8.encodeInto(text, new Uint8Array(limit));
+  return { text: text.slice(0, read), cut: read < text.length };
 };
-export const size = (text: string) => { let total = 0; for (const char of text) total += utf8(char); return total; };
+export const size = (text: string) => utf8.encode(text).length;
 const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u;
 // One terminal cell group: a flag, an emoji ZWJ sequence, or a character with its marks, variation selector and skin tone.
 const GLYPH = /\p{RI}{2}|(?:\p{ExtPict}[\p{EMod}\uFE0F]*\u200D)*[^][\p{M}\p{Cf}\p{EMod}]*/gsu;

@@ -51,8 +51,6 @@ pub struct ModView {
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<ModLayout>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,8 +96,6 @@ pub struct ModViewPatch {
     pub placeholder: Option<String>,
     #[serde(default)]
     pub layout: Option<ModLayout>,
-    #[serde(default)]
-    pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default)]
@@ -239,7 +235,7 @@ impl ModLayout {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ModBackdropOffset {
+pub struct ModOffset {
     pub x: i16,
     pub y: i16,
 }
@@ -260,123 +256,12 @@ pub struct ModSurfacePaint {
 }
 
 fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
+    let unit = |value: Option<f32>| {
+        value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    };
     styles.iter().all(|(name, paint)| {
-        matches!(name.as_str(), "composer" | "backdrop" | "approval")
-            && paint
-                .opacity
-                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+        matches!(name.as_str(), "composer" | "approval") && unit(paint.opacity)
     })
-}
-
-fn valid_backdrop_transform(
-    position: &Option<String>,
-    scale: Option<f32>,
-    opacity: Option<f32>,
-    offset: &Option<ModBackdropOffset>,
-) -> bool {
-    position
-        .as_deref()
-        .is_none_or(|value| matches!(value, "center" | "fill" | "fit" | "tile"))
-        && scale.is_none_or(|value| value.is_finite() && (0.1..=4.0).contains(&value))
-        && opacity.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-        && offset.as_ref().is_none_or(|value| {
-            (-4096..=4096).contains(&value.x) && (-4096..=4096).contains(&value.y)
-        })
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModAsciiBackdrop {
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dim: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<ModColor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModImageBackdrop {
-    pub resource: crate::resource_data::ResourceRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dim: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<ModColor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub overlay: Option<ModSurfacePaint>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModAsciiFallback {
-    pub ascii: ModAsciiBackdrop,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(untagged)]
-pub enum ModBackdrop {
-    Ascii {
-        ascii: ModAsciiBackdrop,
-    },
-    Image {
-        image: ModImageBackdrop,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fallback: Option<ModAsciiFallback>,
-    },
-}
-
-impl ModBackdrop {
-    pub fn valid(&self) -> bool {
-        let dim = |dim: &Option<f32>| dim.is_none_or(|dim| (0.0..=1.0).contains(&dim));
-        let ascii = |ascii: &ModAsciiBackdrop| {
-            !ascii.text.is_empty()
-                && ascii.text.len() <= 8192
-                && multiline(&ascii.text, 8192)
-                && dim(&ascii.dim)
-                && valid_backdrop_transform(
-                    &ascii.position,
-                    ascii.scale,
-                    ascii.opacity,
-                    &ascii.offset,
-                )
-        };
-        match self {
-            Self::Ascii { ascii: backdrop } => ascii(backdrop),
-            Self::Image { image, fallback } => {
-                dim(&image.dim)
-                    && image.overlay.as_ref().is_none_or(|paint| {
-                        paint
-                            .opacity
-                            .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-                    })
-                    && valid_backdrop_transform(
-                        &image.position,
-                        image.scale,
-                        image.opacity,
-                        &image.offset,
-                    )
-                    && fallback
-                        .as_ref()
-                        .is_none_or(|fallback| ascii(&fallback.ascii))
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -443,7 +328,7 @@ pub enum ModOverlayClip {
 pub struct ModOverlay {
     pub anchor: ModAnchor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
+    pub offset: Option<ModOffset>,
     pub width: u16,
     pub height: u16,
     #[serde(default)]
@@ -1784,7 +1669,15 @@ fn valid_site(name: &str) -> bool {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
             })
     };
-    ["sidebar", "header", "above_composer", "dialog", "welcome"].contains(&name)
+    [
+        "sidebar",
+        "header",
+        "above_composer",
+        "below_composer",
+        "dialog",
+        "welcome",
+    ]
+    .contains(&name)
         || name
             .split_once('/')
             .is_some_and(|(owner, site)| part(owner, 24) && part(site, 32))
@@ -2008,13 +1901,6 @@ impl ModViewPatch {
                 patch.layout.as_ref().is_some_and(|layout| !layout.valid()),
             ),
             (
-                "backdrop",
-                patch
-                    .backdrop
-                    .as_ref()
-                    .is_some_and(|backdrop| !backdrop.valid()),
-            ),
-            (
                 "surface_styles",
                 !valid_surface_styles(&patch.surface_styles),
             ),
@@ -2091,9 +1977,6 @@ impl ModViewPatch {
         }
         if self.layout.is_some() && claim("layout".into()) {
             candidate.layout = self.layout;
-        }
-        if self.backdrop.is_some() && claim("backdrop".into()) {
-            candidate.backdrop = self.backdrop;
         }
         if self.placeholder.is_some() && claim("placeholder".into()) {
             candidate.placeholder = self.placeholder;
@@ -2237,12 +2120,6 @@ impl ModView {
             (
                 "layout",
                 view.layout.as_ref().is_some_and(|layout| !layout.valid()),
-            ),
-            (
-                "backdrop",
-                view.backdrop
-                    .as_ref()
-                    .is_some_and(|backdrop| !backdrop.valid()),
             ),
             (
                 "surface_styles",

@@ -105,6 +105,34 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 
 pub type Reply = SyncSender<Result<Value, String>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlitErrorKind { Retryable, Revoked, Fatal }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlitError {
+    pub kind: BlitErrorKind,
+    pub message: String,
+}
+
+impl BlitError {
+    pub fn new(kind: BlitErrorKind, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into() }
+    }
+    pub fn retryable(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Retryable, message) }
+    pub fn fatal(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Fatal, message) }
+}
+
+impl From<String> for BlitError {
+    fn from(message: String) -> Self { Self::fatal(message) }
+}
+impl From<&str> for BlitError {
+    fn from(message: &str) -> Self { Self::fatal(message) }
+}
+impl std::fmt::Display for BlitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.message.fmt(f) }
+}
+impl std::error::Error for BlitError {}
+
 #[derive(Clone)]
 pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
 
@@ -116,6 +144,7 @@ impl std::fmt::Debug for Validity {
 
 #[derive(Clone, Debug, Default)]
 pub struct CallLifetime {
+    blit_error: Arc<std::sync::OnceLock<BlitErrorKind>>,
     pub admission: Option<Value>,
     pub pixels: Arc<std::sync::OnceLock<Arc<crate::process_raster::PixelFrame>>>,
     upstream_cancelled: Option<Arc<AtomicBool>>,
@@ -241,15 +270,22 @@ pub struct SurfaceCall {
 }
 
 impl SurfaceCall {
+    pub fn reply_blit(&self, result: Result<Value, BlitError>) {
+        if let Err(error) = &result {
+            let _ = self.lifetime.blit_error.set(error.kind);
+        }
+        let _ = self.reply.send(result.map_err(|error| error.message));
+    }
+
     pub fn snapshot_pixels(
         &self,
         source: &crate::process_raster::PixelSource,
         next: std::time::Instant,
-    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
+    ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError> {
         if !(self.validity.0)() {
-            return Err("callback_cancelled_or_expired".into());
+            return Err(BlitError::retryable("callback_cancelled_or_expired"));
         }
-        self.lifetime.begin_execution()?;
+        self.lifetime.begin_execution().map_err(BlitError::retryable)?;
         let component = self.arguments["key"]
             .as_str()
             .ok_or("terminal_blit_invalid")?;
@@ -267,7 +303,7 @@ impl SurfaceCall {
                 admission["source"].as_str().unwrap_or_default(),
                 admission["generation"]
                     .as_u64()
-                    .ok_or("client_surface_admission_changed")?,
+                    .ok_or_else(|| BlitError::retryable("client_surface_admission_changed"))?,
                 None,
                 snapshot,
             )?
@@ -530,7 +566,7 @@ pub fn submit(
         thread,
         confirm,
         Arc::new(|| true),
-    )
+    ).map_err(|error| error.message)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -543,21 +579,21 @@ fn submit_bound(
     thread: Option<&str>,
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Result<PendingReply, String> {
+) -> Result<PendingReply, BlitError> {
     if !SURFACE_OPERATIONS.contains(&operation) {
-        return Err(format!("unsupported_host_operation: {operation}"));
+        return Err(BlitError::fatal(format!("unsupported_host_operation: {operation}")));
     }
     if context != InvocationContext::User && USER_ONLY_OPERATIONS.contains(&operation) {
-        return Err(format!("host_operation_user_only: {operation}"));
+        return Err(BlitError::fatal(format!("host_operation_user_only: {operation}")));
     }
     if remote && needs_terminal(operation, &arguments) {
-        return Err(needs_terminal_error(operation));
+        return Err(BlitError::fatal(needs_terminal_error(operation)));
     }
     let surface = hub()
         .surface
         .as_ref()
         .map(|(_, surface)| surface.clone())
-        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
+        .ok_or_else(|| BlitError::retryable("client_surface_unavailable: no interactive client is attached to this host"))?;
     let (reply, receiver) = sync_channel(1);
     let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
     let lifetime = CallLifetime {
@@ -587,7 +623,7 @@ fn submit_bound(
         confirm,
         reply,
         lifetime: lifetime.clone(),
-    })?;
+    }).map_err(BlitError::retryable)?;
     Ok(PendingReply { receiver, lifetime })
 }
 
@@ -596,6 +632,14 @@ pub fn wait(
     active: &dyn Fn() -> bool,
     deadline: Option<Instant>,
 ) -> Result<Value, String> {
+    wait_classified(receiver, active, deadline).map_err(|error| error.message)
+}
+
+fn wait_classified(
+    receiver: PendingReply,
+    active: &dyn Fn() -> bool,
+    deadline: Option<Instant>,
+) -> Result<Value, BlitError> {
     if let Some(deadline) = deadline {
         *receiver
             .lifetime
@@ -608,21 +652,22 @@ pub fn wait(
             && !active()
             && receiver.lifetime.cancel_queued()
         {
-            return Err("callback_cancelled".into());
+            return Err(BlitError::retryable("callback_cancelled"));
         }
         if deadline.is_some_and(|deadline| Instant::now() >= deadline)
             && receiver.lifetime.cancel_queued()
         {
-            return Err(format!(
+            return Err(BlitError::retryable(format!(
                 "callback_execution_budget: the client did not answer within {} ms",
                 crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
-            ));
+            )));
         }
         match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
-            Ok(result) => return result,
+            Ok(result) => return result.map_err(|message| BlitError::new(
+                receiver.lifetime.blit_error.get().copied().unwrap_or(BlitErrorKind::Fatal), message)),
             Err(RecvTimeoutError::Timeout) => (),
             Err(RecvTimeoutError::Disconnected) => {
-                return Err("client_surface_closed".into());
+                return Err(BlitError::retryable("client_surface_closed"));
             }
         }
     }
@@ -858,8 +903,23 @@ pub fn call(
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
+    call_classified(caller, operation, arguments, context, remote, thread, confirm, active)
+        .map_err(|error| error.message)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn call_classified(
+    caller: &str,
+    operation: &str,
+    arguments: Value,
+    context: InvocationContext,
+    remote: bool,
+    thread: Option<&str>,
+    confirm: Option<String>,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<Value, BlitError> {
     if !active() {
-        return Err("callback_cancelled".into());
+        return Err(BlitError::retryable("callback_cancelled"));
     }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
@@ -876,7 +936,7 @@ pub fn call(
         active.clone(),
     )?;
     let pixels = pending.lifetime.pixels.clone();
-    let answer = wait(pending, active.as_ref(), deadline)?;
+    let answer = wait_classified(pending, active.as_ref(), deadline)?;
     if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
             caller: caller.to_owned(),
@@ -1178,11 +1238,11 @@ pub const IMAGE_PIXELS: u32 = 4096;
 pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let _stage = crate::frame_metrics::stage("decode");
     if bytes.len() > 8 * 1024 * 1024 {
-        return Err("backdrop_image_too_large".into());
+        return Err("image_too_large".into());
     }
-    let format = image::guess_format(bytes).map_err(|_| "backdrop_format_unsupported")?;
+    let format = image::guess_format(bytes).map_err(|_| "image_format_unsupported")?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err("backdrop_format_unsupported".into());
+        return Err("image_format_unsupported".into());
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
@@ -1192,7 +1252,7 @@ pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     reader.limits(limits);
     reader
         .decode()
-        .map_err(|_| "backdrop_image_invalid_or_too_large".into())
+        .map_err(|_| "image_invalid_or_too_large".into())
 }
 
 /// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
@@ -1259,8 +1319,8 @@ impl Blit {
         mut self,
         snapshot: impl FnOnce(
             &crate::process_raster::PixelSource,
-        ) -> Result<Arc<crate::process_raster::PixelFrame>, String>,
-    ) -> Result<Self, String> {
+        ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError>,
+    ) -> Result<Self, BlitError> {
         if let BlitContent::Source(source) = &self.content {
             let pixels = snapshot(source)?;
             self.bytes = pixels.source.byte_len()?;
@@ -1293,21 +1353,13 @@ impl Blit {
     }
 }
 
-pub fn blit_retryable(error: &str) -> bool {
-    matches!(
-        error,
-        "terminal_blit_unknown" | "terminal_blit_not_owned" | "terminal_blit_limit"
-    ) || error.starts_with("callback_")
-        || error.starts_with("client_surface_")
-}
-
 /// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 pub fn blit_request(
     caller: &str,
     owner: Option<&str>,
     size: Option<(u16, u16)>,
     arguments: &Value,
-) -> Result<Blit, String> {
+) -> Result<Blit, BlitError> {
     let bytes = arguments.to_string().len();
     if bytes > BLIT_QUEUE_BYTES {
         return Err("terminal_blit_too_large".into());
@@ -1322,12 +1374,12 @@ pub fn blit_request(
     };
     match owner {
         Some(owner) if owner == caller => {}
-        Some(_) => return Err("terminal_blit_not_owned".into()),
-        None => return Err("terminal_blit_unknown".into()),
+        Some(_) => return Err(BlitError::retryable("terminal_blit_not_owned")),
+        None => return Err(BlitError::retryable("terminal_blit_unknown")),
     }
     let content = match (rect, image) {
         (Some((rect, cells)), _) => {
-            let (width, height) = size.ok_or("terminal_blit_unknown")?;
+            let (width, height) = size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
             if rect.width == 0
                 || rect.height == 0
                 || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)

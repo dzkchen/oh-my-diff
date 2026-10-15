@@ -775,3 +775,40 @@ fn image_frames_become_full_raster_half_block_cells_for_cell_clients() {
     assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
     assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
 }
+
+#[test]
+fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
+    let image = image::RgbaImage::new(IMAGE_PIXELS + 1, 1);
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    assert!(decode_image(&bytes).is_err());
+    assert!(decode_image(b"GIF89a").is_err());
+    assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
+}
+
+#[test]
+fn raster_reply_classification_is_independent_of_wording() {
+    for (kind, message) in [
+        (BlitErrorKind::Retryable, "please try again"),
+        (BlitErrorKind::Revoked, "permission removed"),
+        (BlitErrorKind::Fatal, "callback_unknown_error"),
+    ] {
+        let (reply, receiver) = sync_channel(1);
+        let lifetime = CallLifetime::default();
+        let call = SurfaceCall {
+            validity: Validity(Arc::new(|| true)),
+            caller: "m".into(), operation: "terminal.blit".into(), arguments: Value::Null,
+            context: InvocationContext::Event, remote: false, thread: None, authority: None,
+            confirm: None, reply, lifetime: lifetime.clone(),
+        };
+        call.reply_blit(Err(BlitError::new(kind, message)));
+        let error = wait_classified(PendingReply { receiver, lifetime }, &|| true, None).unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.message, message);
+    }
+}

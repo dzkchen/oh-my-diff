@@ -39,6 +39,10 @@
       "ask_claude": {
         "type": "boolean",
         "default": false
+      },
+      "extra_usage": {
+        "type": "boolean",
+        "default": true
       }
     },
     "additionalProperties": false

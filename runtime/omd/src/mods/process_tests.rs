@@ -7,6 +7,14 @@ use std::process::Stdio;
 use std::time::Duration;
 
 #[test]
+fn reused_pool_fits_the_host_with_the_most_terminal_handlers() {
+    let sizes = |entries: &[(u64, usize)]| super::reused_size(&entries.iter().copied().collect());
+    assert_eq!(sizes(&[(1, 5), (2, 0)]), 5);
+    assert_eq!(sizes(&[]), 2);
+    assert_eq!(sizes(&[(1, 20)]), 8);
+}
+
+#[test]
 fn reused_process_resets_callback_globals_and_reloads_source() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
@@ -394,11 +402,11 @@ fn reused_callback_runners_never_evict_render_runners() {
         WARM.lock()
             .unwrap()
             .iter()
-            .filter(|runner| !runner.serve)
+            .filter(|runner| runner.key.starts_with("kind-command-"))
             .count()
-            <= 2
+            <= super::reused_pool()
     );
-    for key in ["kind-render", "kind-command-2", "kind-command-3"] {
+    for key in ["kind-render", "kind-command-0", "kind-command-1", "kind-command-2", "kind-command-3"] {
         super::invalidate_warm(key);
     }
 }

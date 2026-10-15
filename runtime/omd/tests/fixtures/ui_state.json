@@ -1,0 +1,229 @@
+[
+  {"name":"unicode-object-key-at-limit","prefix":"{\"界\":\"","unit":"a","repeat":65526,"suffix":"\"}","valid":true},
+  {"name":"unicode-object-key-over-limit","prefix":"{\"界\":\"","unit":"a","repeat":65527,"suffix":"\"}","valid":false},
+  {"name":"lone-surrogate-key","prefix":"{\"\\ud800\":","unit":"0","repeat":1,"suffix":"}","valid":false},
+  {
+    "name": "ascii-65535",
+    "prefix": "\"",
+    "unit": "a",
+    "repeat": 65533,
+    "suffix": "\"",
+    "valid": true
+  },
+  {
+    "name": "ascii-65536",
+    "prefix": "\"",
+    "unit": "a",
+    "repeat": 65534,
+    "suffix": "\"",
+    "valid": true
+  },
+  {
+    "name": "ascii-65537",
+    "prefix": "\"",
+    "unit": "a",
+    "repeat": 65535,
+    "suffix": "\"",
+    "valid": false
+  },
+  {
+    "name": "two-65535",
+    "prefix": "\"",
+    "unit": "é",
+    "repeat": 32766,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "two-65536",
+    "prefix": "\"",
+    "unit": "é",
+    "repeat": 32767,
+    "suffix": "\"",
+    "valid": true
+  },
+  {
+    "name": "two-65537",
+    "prefix": "\"",
+    "unit": "é",
+    "repeat": 32767,
+    "suffix": "a\"",
+    "valid": false
+  },
+  {
+    "name": "three-65535",
+    "prefix": "\"",
+    "unit": "界",
+    "repeat": 21844,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "three-65536",
+    "prefix": "\"",
+    "unit": "界",
+    "repeat": 21844,
+    "suffix": "aa\"",
+    "valid": true
+  },
+  {
+    "name": "three-65537",
+    "prefix": "\"",
+    "unit": "界",
+    "repeat": 21845,
+    "suffix": "\"",
+    "valid": false
+  },
+  {
+    "name": "four-65535",
+    "prefix": "\"",
+    "unit": "😀",
+    "repeat": 16383,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "four-65536",
+    "prefix": "\"",
+    "unit": "😀",
+    "repeat": 16383,
+    "suffix": "aa\"",
+    "valid": true
+  },
+  {
+    "name": "four-65537",
+    "prefix": "\"",
+    "unit": "😀",
+    "repeat": 16383,
+    "suffix": "aaa\"",
+    "valid": false
+  },
+  {
+    "name": "quote-65535",
+    "prefix": "\"",
+    "unit": "\\\"",
+    "repeat": 32766,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "quote-65536",
+    "prefix": "\"",
+    "unit": "\\\"",
+    "repeat": 32767,
+    "suffix": "\"",
+    "valid": true
+  },
+  {
+    "name": "quote-65537",
+    "prefix": "\"",
+    "unit": "\\\"",
+    "repeat": 32767,
+    "suffix": "a\"",
+    "valid": false
+  },
+  {
+    "name": "slash-65535",
+    "prefix": "\"",
+    "unit": "\\\\",
+    "repeat": 32766,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "slash-65536",
+    "prefix": "\"",
+    "unit": "\\\\",
+    "repeat": 32767,
+    "suffix": "\"",
+    "valid": true
+  },
+  {
+    "name": "slash-65537",
+    "prefix": "\"",
+    "unit": "\\\\",
+    "repeat": 32767,
+    "suffix": "a\"",
+    "valid": false
+  },
+  {
+    "name": "control-65535",
+    "prefix": "\"",
+    "unit": "\\u0001",
+    "repeat": 10922,
+    "suffix": "a\"",
+    "valid": true
+  },
+  {
+    "name": "control-65536",
+    "prefix": "\"",
+    "unit": "\\u0001",
+    "repeat": 10922,
+    "suffix": "aa\"",
+    "valid": true
+  },
+  {
+    "name": "control-65537",
+    "prefix": "\"",
+    "unit": "\\u0001",
+    "repeat": 10922,
+    "suffix": "aaa\"",
+    "valid": false
+  },
+  {
+    "name": "1e-7-65536",
+    "prefix": "[1e-7,\"",
+    "unit": "a",
+    "repeat": 65527,
+    "suffix": "\"]",
+    "valid": true
+  },
+  {
+    "name": "1e-7-65537",
+    "prefix": "[1e-7,\"",
+    "unit": "a",
+    "repeat": 65528,
+    "suffix": "\"]",
+    "valid": false
+  },
+  {
+    "name": "100000000000000000000-65536",
+    "prefix": "[100000000000000000000,\"",
+    "unit": "a",
+    "repeat": 65510,
+    "suffix": "\"]",
+    "valid": true
+  },
+  {
+    "name": "100000000000000000000-65537",
+    "prefix": "[100000000000000000000,\"",
+    "unit": "a",
+    "repeat": 65511,
+    "suffix": "\"]",
+    "valid": false
+  },
+  {
+    "name": "0-65536",
+    "prefix": "[0,\"",
+    "unit": "a",
+    "repeat": 65530,
+    "suffix": "\"]",
+    "valid": true
+  },
+  {
+    "name": "0-65537",
+    "prefix": "[0,\"",
+    "unit": "a",
+    "repeat": 65531,
+    "suffix": "\"]",
+    "valid": false
+  },
+  {
+    "name": "lone-surrogate",
+    "prefix": "\"",
+    "unit": "\\ud800",
+    "repeat": 1,
+    "suffix": "\"",
+    "valid": false
+  }
+]

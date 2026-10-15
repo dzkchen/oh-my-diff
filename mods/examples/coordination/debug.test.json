@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "coordination",
+      "event": "tool",
+      "name": "compare",
+      "payload": null,
+      "expect_error": "prompt required"
+    }
+  ]
+}

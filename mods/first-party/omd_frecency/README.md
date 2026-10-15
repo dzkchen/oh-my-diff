@@ -1,6 +1,6 @@
 # omd_frecency
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod that
 ranks `@` file mentions by fuzzy match, per-project frecency and Git status. The agent's search tools are unchanged.
 
 **Matching.** Smart case: a query with an uppercase letter matches case
@@ -19,21 +19,26 @@ it (`@src/a.ts:12`, `"docs/my notes.md"`, at most 16) in mod state, because the
 host gives that hook no host operations. When the turn starts, queued paths
 that Git tracks or would track count as a use. Ignored and missing files are
 not learned. Recency counts submitted uses, not wall
-time. The 512 strongest entries are kept in repository-scoped mod storage. A
-renamed or deleted file is dropped from the results and from storage the first
-time it would be shown.
+time. Up to 512 strongest entries are kept in repository-scoped mod storage,
+trimmed to a serialized UTF-8 value below 32,000 bytes (including JSON escaping).
+Every history entry a ranking would show is checked first, in at most four
+64-path batches that fit the callback's receipt budget beside the history read
+and rewrite and at most 16,000 bytes of `git status`; a renamed or deleted file
+is skipped, the next entry takes its place, and the gone entries are dropped
+from storage in one write. Entries beyond the checked batches wait for a later
+ranking rather than appear unchecked; a failed check shows its entries
+unverified and forgets none.
 
 **Owner.** The mod owns the exclusive `completion` replacement for `@`
 mentions. The host sends each mod command's argument completion to that
 command's own mod, so command completion stays with the command's mod.
-Disabling the mod restores Codex's ranking. The `omd.frecency` service
-exports the same ranking to other mods.
+Disabling the mod restores Codex's ranking.
 
 Each ranking runs `git status` (3 s limit) and reads the store; a missing Git
 repository only removes the Git boost.
 
 Capabilities: `composer` (`@` ranking), `input` and `lifecycle` (learning), `store`, `exec`
-(`git status`, `git ls-files`), `fs.read` (existence checks) and `services`.
+(`git status`, `git ls-files`) and `fs.read` (existence checks).
 
 Ported from [`@ff-labs/pi-fff`](https://github.com/dmtrKovalenko/fff/tree/main/packages/pi-fff)
 0.11.0 (Dmitriy Kovalenko, MIT; see `THIRD_PARTY_NOTICES.md`): frecency,

@@ -9,7 +9,7 @@
     "evidence.read": [
       {
         "result": {
-          "reference": "evidence:1",
+          "reference": { "reference": "evidence:1", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
           "text": "{\"turn_id\": \"turn-1\", \"thread_id\": \"fixture-thread\", \"workspace_sha256\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"records\": [{\"item\": 1, \"role\": \"user\", \"text\": \"Make uploads reliable\"}, {\"item\": 2, \"role\": \"assistant\", \"text\": \"I raised the upload retry limit to unlimited, so failed uploads now retry forever. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. The rest of the change keeps the existing API. \"}]}",
           "cursor": null,
           "bytes": 1
@@ -102,7 +102,8 @@
       "type": "terminal_interact",
       "mod": "omd_advisor",
       "component": "advisor_observation_list",
-      "value": "1"
+      "value": "1",
+      "expect": { "action": { "command": "omd_advisor:observations", "args": "1" }, "result": null }
     },
     {
       "type": "terminal_mount",
@@ -111,11 +112,13 @@
     {
       "type": "terminal_interact",
       "mod": "omd_advisor",
-      "component": "advisor_observation_dismiss"
+      "component": "advisor_observation_dismiss",
+      "expect": { "action": { "command": "omd_advisor:observations", "args": "dismiss 1" }, "result": { "display": "Dismissed note 1" } }
     },
     {
       "type": "terminal_mount",
-      "mod": "omd_advisor"
+      "mod": "omd_advisor",
+      "expect": { "status": ["Advisor on demand"] }
     }
   ]
 }

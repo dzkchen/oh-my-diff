@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "burn_meter",
+  "version": "0.1.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Session spend as a burning fuse above the prompt, with plan-limit bars, burrito comparisons, a per-turn chart, lifetime total and threshold toasts",
+  "license": "MIT",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/ports/burn_meter" },
+  "capabilities": ["terminal", "model", "lifecycle", "store", "commands", "account"],
+  "compatibility": {
+    "required_features": ["store_v1", "store_thread_v1", "state_scopes_v1", "lifecycle_events_v1", "model_turn_interception_v1", "terminal_components_v1", "component_modules_v1", "ui_controls_v1", "terminal_box_model_v1", "terminal_rich_line_v1", "app_v1"]
+  }
+}

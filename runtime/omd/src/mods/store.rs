@@ -180,6 +180,17 @@ pub(super) fn package_with_assets(
     Ok((package, source, hash, assets))
 }
 
+/// A package's assets as the runner receives them.
+pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
+    assets
+        .into_iter()
+        .map(|(name, text)| {
+            let sha256 = digest(text.as_bytes());
+            (name, serde_json::json!({"text": text, "sha256": sha256}))
+        })
+        .collect()
+}
+
 /// Reuses the last verified manifest and digest while every hashed file keeps its identity.
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
     match reused_package(path) {
@@ -206,14 +217,7 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
         return None;
     }
     let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-    verified
-        .0
-        .iter()
-        .all(|(file, expected)| {
-            std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-        })
-        .then(|| (verified.1.clone(), verified.2.clone()))
+    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
 fn inspect_package(
@@ -634,6 +638,41 @@ impl ModStore {
 
     pub fn selection_status(&self) -> Result<Value> {
         self.selection_status_in(None)
+    }
+
+    /// Stamps of the store files a package listing reads; `None` under administrator policy or the broker.
+    pub fn listing_stamp(&self) -> Option<Value> {
+        if crate::broker::deployed() || std::fs::symlink_metadata(&self.policy.0).is_ok() {
+            return None;
+        }
+        let stamps = [
+            self.root.join("mods.json"),
+            self.root.join("packages.lock.json"),
+            self.root.join("package-transaction.json"),
+            self.root.join("managed.json"),
+        ]
+        .iter()
+        .map(|path| super::configuration_stamp(path))
+        .collect::<Vec<_>>();
+        Some(json!([self.root, stamps]))
+    }
+
+    /// File stamps of verified packages; `None` if any package is unverified.
+    pub fn package_stamps<'a>(
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Option<Vec<(PathBuf, FileStamp)>> {
+        let verified = VERIFIED_PACKAGES.lock().ok()?;
+        paths
+            .into_iter()
+            .map(|path| verified.get(path).map(|package| package.0.clone()))
+            .collect::<Option<Vec<_>>>()
+            .map(|files| files.concat())
+    }
+
+    pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
+        stamps
+            .iter()
+            .all(|(file, expected)| super::configuration_stamp(file) == Some(*expected))
     }
 
     pub fn verify_selections(&self) -> Result<()> {

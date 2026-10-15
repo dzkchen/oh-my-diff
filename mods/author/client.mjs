@@ -1,59 +1,7 @@
+import { encodeFrame, frameReader } from './frames.mjs';
+
 const SUBPROTOCOL = 'codex-app-server';
 const ACCEPT_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-
-export function encodeFrame(opcode, payload, masked) {
-  const length = payload.length;
-  const extended = length < 126 ? Buffer.alloc(0) : Buffer.alloc(length < 65536 ? 2 : 8);
-  if (length >= 65536) extended.writeBigUInt64BE(BigInt(length));
-  else if (length >= 126) extended.writeUInt16BE(length);
-  const head = Buffer.from([0x80 | opcode, (masked ? 0x80 : 0) | (length < 126 ? length : length < 65536 ? 126 : 127)]);
-  if (!masked) return Buffer.concat([head, extended, payload]);
-  const key = Buffer.from(crypto.getRandomValues(new Uint8Array(4)));
-  const body = Buffer.from(payload);
-  for (let i = 0; i < body.length; i++) body[i] ^= key[i & 3];
-  return Buffer.concat([head, extended, key, body]);
-}
-
-export function frameReader(onMessage) {
-  let buffer = Buffer.alloc(0);
-  let fragments = [];
-  let opcode = 0;
-  return chunk => {
-    buffer = Buffer.concat([buffer, chunk]);
-    while (buffer.length >= 2) {
-      let length = buffer[1] & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (buffer.length < 4) return;
-        length = buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (length === 127) {
-        if (buffer.length < 10) return;
-        length = Number(buffer.readBigUInt64BE(2));
-        offset = 10;
-      }
-      const masked = buffer[1] & 0x80;
-      if (buffer.length < offset + (masked ? 4 : 0) + length) return;
-      const key = masked ? buffer.subarray(offset, offset + 4) : null;
-      if (masked) offset += 4;
-      const payload = Buffer.from(buffer.subarray(offset, offset + length));
-      if (key) for (let i = 0; i < payload.length; i++) payload[i] ^= key[i & 3];
-      const fin = buffer[0] & 0x80;
-      const frameOpcode = buffer[0] & 0x0f;
-      buffer = buffer.subarray(offset + length);
-      if (frameOpcode >= 8) {
-        onMessage(frameOpcode, payload);
-        continue;
-      }
-      if (frameOpcode) opcode = frameOpcode;
-      fragments.push(payload);
-      if (fin) {
-        onMessage(opcode, Buffer.concat(fragments));
-        fragments = [];
-      }
-    }
-  };
-}
 
 function webSocket(url, token, onText, onClose) {
   return new Promise((resolve, reject) => {
@@ -135,6 +83,7 @@ function transport({ url, token, command }, onText, onClose) {
   throw new Error(`client_url_unsupported: ${url}`);
 }
 
+/** @type {typeof import('../client.d.ts').unsupported} */
 export function unsupported(component, renderer, drawable) {
   const formats = renderer.formats ?? [];
   const reason = !drawable.includes(component.type) ? 'this renderer does not draw it'
@@ -144,7 +93,7 @@ export function unsupported(component, renderer, drawable) {
   if (!reason) return null;
   const fallback = component.alt ?? component.text ?? component.label ?? component.type;
   return Object.assign(new Error(`unsupported_element: ${component.type} '${component.id}': ${reason}; drawing its fallback "${fallback}"`),
-    { code: 'unsupported_element', component: component.id, fallback });
+    { code: /** @type {const} */ ('unsupported_element'), component: component.id, fallback });
 }
 
 function rpcError(error) {
@@ -269,7 +218,7 @@ class Session {
         this.generation++;
         this.link?.close();
         this.dropped();
-        if (Number.isInteger(error?.code)) this.closed = true;
+        if (error instanceof Error && 'code' in error && Number.isInteger(error.code)) this.closed = true;
       }
     }
     this.connecting = false;
@@ -351,6 +300,7 @@ class Session {
   }
 }
 
+/** @type {typeof import('../client.d.ts').connect} */
 export async function connect(options) {
   const session = new Session(options);
   session.connecting = true;

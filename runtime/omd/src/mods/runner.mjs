@@ -55,10 +55,11 @@ const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
 request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
+let clockRead = false;
 if (Number.isSafeInteger(now)) {
   globalThis.Date = class extends Date {
-    constructor(...args) { super(...(args.length ? args : [now])); }
-    static now() { return now; }
+    constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
+    static now() { clockRead = true; return now; }
   };
 }
 const handlers = new Map();
@@ -79,6 +80,7 @@ const updates = [];
 let state = structuredCloneFallback(request.state);
 let uiState = structuredCloneFallback(request.ui_state ?? null);
 let uiRead = false;
+let uiWritten = false;
 const initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
@@ -101,10 +103,12 @@ function serve(line) {
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
+  clockRead = false;
   if (request.event === 'component') {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
     uiRead = false;
+    uiWritten = false;
   } else state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
@@ -114,8 +118,20 @@ function serve(line) {
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
+const utf8 = globalThis.__utf8;
 delete globalThis.__exchange;
 delete globalThis.__clock;
+delete globalThis.__utf8;
+// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
+globalThis.TextEncoder = class TextEncoder {
+  get encoding() { return 'utf-8'; }
+  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
+  encodeInto(source, destination) {
+    if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
+    const { read, written } = utf8.encodeInto(String(source), destination);
+    return { read, written };
+  }
+};
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -657,8 +673,17 @@ const api = Object.freeze({
       requireCapability('terminal');
       if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
       const encoded = JSON.stringify(value);
-      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
-      uiState = JSON.parse(encoded); uiRead = true;
+      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
+      // JSON.stringify writes a lone surrogate, in a key or a value, as a \\udXXX escape.
+      if (/(?<!\\\\)(?:\\\\\\\\)*\\\\ud[89a-f]/i.test(encoded)) throw new Error('ui_state_invalid_json');
+      let bytes = /[^\\x00-\\x7f]/.test(encoded) ? 0 : encoded.length;
+      if (!bytes) for (const character of encoded) {
+        const code = character.codePointAt(0);
+        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+        if (bytes > 65536) break;
+      }
+      if (bytes > 65536) throw new Error('ui_state_limit');
+      uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
     },
   }),
   atom(key, fallback = null) { return cell(key, fallback); },
@@ -769,13 +794,14 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve, base, component: step };
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 let live = null;
+const utf8 = new TextEncoder();
 function prepare() {
   const globals = Object.create(null);
   globals.__exchange = frame => {
@@ -788,6 +814,7 @@ function prepare() {
     }
   };
   globals.__clock = () => performance.now();
+  globals.__utf8 = utf8;
   const context = createContext(globals, {
     codeGeneration: { strings: false, wasm: false },
   });

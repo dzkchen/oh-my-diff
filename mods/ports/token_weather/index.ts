@@ -1,0 +1,57 @@
+import type { Json, ModAPI, TerminalSpan } from '@oh-my-diff/mod-api';
+
+type Reading = { tokens: number; window: number };
+type State = { readings: Reading[]; pending: Reading | null };
+
+const HISTORY = 12;
+const BARS = '▁▂▃▄▅▆▇█';
+const FORECAST = [
+  { upTo: 25, icon: '☀', word: 'Clear', color: 3 },
+  { upTo: 50, icon: '☁', word: 'Cloudy', color: 6 },
+  { upTo: 75, icon: '☂', word: 'Showers', color: 4 },
+  { upTo: 90, icon: '☇', word: 'Storm', color: 5 },
+  { upTo: Infinity, icon: '↯', word: 'Compact soon', color: 1 },
+] as const;
+
+const short = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+    : n >= 1_000 ? `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}k` : String(n);
+
+export default function activate(api: ModAPI) {
+  const saved = (): State => ({ readings: [], pending: null, ...(api.state.get() as Partial<State> | null) });
+  const save = (state: State) => api.state.set(state as unknown as Json);
+
+  api.on('app_notification', ({ method, params }) => {
+    if (method !== 'thread/tokenUsage/updated') return;
+    const usage = (params as { tokenUsage?: { last?: { inputTokens?: unknown }; modelContextWindow?: unknown } } | null)?.tokenUsage;
+    const tokens = Number(usage?.last?.inputTokens), window = Number(usage?.modelContextWindow);
+    if (tokens >= 0 && window > 0) save({ ...saved(), pending: { tokens, window } });
+  });
+
+  api.on('turn_end', () => {
+    const { readings, pending } = saved();
+    if (pending) save({ readings: [...readings, pending].slice(-HISTORY), pending: null });
+  });
+
+  api.on('terminal', input => {
+    const { readings } = saved();
+    const now = readings[readings.length - 1];
+    if (!now) return null;
+    const percent = Math.round((now.tokens / now.window) * 100);
+    const forecast = FORECAST.find(band => percent < band.upTo)!;
+    const spans: TerminalSpan[] = [
+      { text: `${forecast.icon}  ${forecast.word}`, bold: true, fg: forecast.color },
+      { text: `  ${percent}% of context` },
+      { text: `  ${short(now.tokens)} / ${short(now.window)}`, tone: 'muted' },
+    ];
+    if ((input.client?.columns ?? 80) >= 60) {
+      const top = Math.max(...readings.map(r => r.tokens), 1);
+      const delta = readings.length > 1 ? now.tokens - readings[readings.length - 2]!.tokens : 0;
+      spans.push({ text: '   last turns ', tone: 'muted' });
+      spans.push({ text: readings.map(r => BARS[Math.min(BARS.length - 1, Math.floor((r.tokens / top) * (BARS.length - 1)))]).join(''), fg: forecast.color });
+      if (readings.length > 1) spans.push({ text: delta > 0 ? `  ▲ +${short(delta)} last turn` : delta < 0 ? `  ▼ ${short(-delta)} last turn` : '  steady', tone: 'muted' });
+    }
+    return { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'box', id: 'token_weather_band', label: 'Context forecast', style: { padding: [0, 1] }, children: [
+      { type: 'line', id: 'token_weather_line', label: 'Context forecast', spans }] }] } } };
+  });
+}

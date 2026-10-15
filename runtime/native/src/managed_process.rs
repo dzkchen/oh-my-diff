@@ -200,7 +200,7 @@ pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
 
 /// Draws one `terminal.blit` for the process's owner while `active` holds.
 pub(super) type BlitSink =
-    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, String> + Send + Sync>;
+    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, codex_omd::client_surface::BlitError> + Send + Sync>;
 
 const BLIT_RETRY: Duration = Duration::from_millis(100);
 const BLIT_ATTEMPTS: u32 = 50;
@@ -374,13 +374,13 @@ fn blit_worker(
                 )),
                 Ok(_) => None,
                 Err(_) if !active() => return,
-                Err(error) if error == "process_raster_revoked" => {
+                Err(error) if error.kind == codex_omd::client_surface::BlitErrorKind::Revoked => {
                     stop();
                     return;
                 }
                 Err(error)
                     if image.get("pixels").is_some()
-                        && !codex_omd::client_surface::blit_retryable(&error) =>
+                        && error.kind == codex_omd::client_surface::BlitErrorKind::Fatal =>
                 {
                     stop();
                     return;
@@ -643,10 +643,13 @@ impl ManagedProcesses {
     }
 
     pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
-        let records = self.records.lock().ok()?;
-        let (_, process) = records
-            .iter()
-            .find(|((id, _, name), _)| id == owner && name == session)?;
+        let process = {
+            let records = self.records.lock().ok()?;
+            let (_, process) = records
+                .iter()
+                .find(|((id, _, name), _)| id == owner && name == session)?;
+            process.clone()
+        };
         let process = process.lock().ok()?;
         Some(!process.exited().ok()?)
     }
@@ -1655,6 +1658,37 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
     }
 
     #[test]
+    fn liveness_releases_registry_before_waiting_for_process() {
+        let fixture = Arc::new(Fixture::new());
+        fixture.start("locked", "read line", json!({})).unwrap();
+        let key = ("fixture".to_owned(), 1, "locked".to_owned());
+        let session = fixture.processes.session(&key).unwrap();
+        let held = session.lock().unwrap();
+        let count = Arc::strong_count(&session);
+        let reader = fixture.clone();
+        let reader = std::thread::spawn(move || reader.processes.running("fixture", "locked"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&session) == count
+            && fixture.processes.records.try_lock().is_ok()
+            && Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        let remover = fixture.clone();
+        let removing = session.clone();
+        let (sent, received) = mpsc::channel();
+        let remover = std::thread::spawn(move || {
+            remover.processes.remove(&key, &removing);
+            sent.send(()).unwrap();
+        });
+        let removed = received.recv_timeout(Duration::from_secs(2));
+        drop(held);
+        remover.join().unwrap();
+        assert_eq!(reader.join().unwrap(), Some(true));
+        assert!(removed.is_ok(), "removal blocked behind liveness while the process was locked");
+    }
+
+    #[test]
     fn raw_streams_deliver_both_streams_whole_characters_and_output_after_exit() {
         let fixture = Fixture::new();
         let script = "printf 'out\\n'; printf 'err\\n' >&2; read line; printf 'got:%s\\n' \"$line\"; printf '\\303'; sleep 0.2; printf '\\251'; sleep 0.2; printf '\\377'";
@@ -2127,6 +2161,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "terminal_blit_unknown",
             "terminal_blit_not_owned",
             "terminal_blit_limit",
+            "unrelated explanatory wording",
         ] {
             let (sender, receiver) = mpsc::channel();
             let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2142,7 +2177,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 "raw-retry".into(),
                 Arc::new(move |_, _| {
                     if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures {
-                        Err(error.into())
+                        Err(codex_omd::client_surface::BlitError::retryable(error))
                     } else {
                         sender.send(()).unwrap();
                         Ok(Value::Null)
@@ -2186,7 +2221,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             let (sender, receiver) = mpsc::channel();
             let frames = blit_worker(
                 "revoked".into(),
-                Arc::new(|_, _| Err("process_raster_revoked".into())),
+                Arc::new(|_, _| Err(codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "authority removed"))),
                 Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 move || {
                     sender.send(()).unwrap();

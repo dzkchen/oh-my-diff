@@ -68,6 +68,18 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         (Some("sample_mod"), Some(false), Some(true))
     );
     let generation = listed["generation"].as_u64().unwrap();
+    assert_eq!(list_fields(&store, None, Value::Null).unwrap(), listed);
+    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]})).unwrap();
+    assert_eq!(
+        (narrow["packages"].clone(), narrow["generation"].as_u64()),
+        (
+            json!([{"id": "sample_mod", "enabled": false}]),
+            Some(generation)
+        )
+    );
+    for invalid in [json!({}), json!({"fields": "id"}), json!({"fields": [], "page": 1})] {
+        assert!(list_fields(&store, None, invalid).is_err());
+    }
 
     let enable = preview(
         &store,
@@ -261,5 +273,42 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     assert_eq!(
         list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
         "reload"
+    );
+}
+
+#[test]
+fn install_and_trust_previews_show_codex_config() {
+    let (_temp, store, root) = setup();
+    let configure = |path: &PathBuf| {
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+        manifest["codex_config"] = json!({"tools.update_plan.enabled": true});
+        manifest["compatibility"] = json!({"required_features": ["codex_config_v1"]});
+        std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    };
+    let installed = fixture_package(&root, "planner", &["commands"], json!([]));
+    configure(&installed);
+    let install = preview(
+        &store,
+        json!({"action": "install", "source": {"kind": "local", "path": installed}}),
+    )
+    .unwrap();
+    assert_eq!(
+        install.public["changes"]["packages"][0]["authority"]["to"]["codex_config"],
+        json!({"tools.update_plan.enabled": true})
+    );
+    let selected = fixture_package(&root, "author_mod", &["commands"], json!([]));
+    let sha256 = ModStore::inspect_package(&selected).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(selected.clone(), &sha256, vec!["commands".into()], "user")
+        .unwrap();
+    configure(&selected);
+    let trust = preview(&store, json!({"action": "trust", "id": "author_mod"})).unwrap();
+    assert_eq!(
+        trust.public["changes"]["codex_config"],
+        json!({"tools.update_plan.enabled": true})
     );
 }

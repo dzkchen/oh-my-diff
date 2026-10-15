@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "omd_plan_panel",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "Pins the session's update_plan steps above the composer with status glyphs, a done/total header and a collapse key",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_plan_panel"},
+  "capabilities": ["terminal", "commands", "store", "threads"],
+  "subscriptions": {"app": ["turn/plan/updated", "turn/started"]},
+  "compatibility": {"required_features": ["app_v1", "store_v1", "terminal_render_sites_v1", "codex_config_v1"]},
+  "codex_config": {"tools.update_plan.enabled": true},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "rows": {"type": "number", "default": 8}
+    },
+    "additionalProperties": false
+  }
+}

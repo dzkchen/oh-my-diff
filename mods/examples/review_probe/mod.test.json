@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "example_review_probe",
+      "event": "turn_end",
+      "name": "",
+      "payload": {
+        "turn_id": "fixture",
+        "outcome": "aborted"
+      },
+      "expect": null
+    }
+  ]
+}

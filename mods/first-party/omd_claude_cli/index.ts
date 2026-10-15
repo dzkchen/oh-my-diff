@@ -10,15 +10,6 @@ function plain(value: unknown): value is Row {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function utf8Length(value: string): number {
-  let length = 0;
-  for (const character of value) {
-    const code = character.codePointAt(0)!;
-    length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return length;
-}
-
 function image(url: unknown): Row {
   const match = typeof url === 'string' ? /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+=*)$/.exec(url) : null;
   if (!match) throw new Error('unsupported_image_input');
@@ -175,7 +166,8 @@ export function translateRequest(request: Row, model: string | undefined): Row {
 }
 
 export function responseEvents(assistant: Row, admission: Row, model: string,
-                               reverse: Record<string, Tool>, streamed = false, listCostUsd?: number): Row[] {
+                               reverse: Record<string, Tool>, streamed = false, listCostUsd?: number,
+                               billing = 'subscription'): Row[] {
   const usage = assistant.usage;
   if (!plain(usage) || !Number.isInteger(usage.input_tokens) || !Number.isInteger(usage.output_tokens)) {
     throw new Error('native_usage_missing');
@@ -224,7 +216,7 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
              cache_write_tokens: cacheWrite }, output_tokens: usage.output_tokens,
              output_tokens_details: { reasoning_tokens: usage.output_tokens_details?.reasoning_tokens ?? 0 },
              total_tokens: inputTokens + usage.output_tokens, omd_native_usage: usage,
-             omd_native_admission: admission, omd_subscription_charge: 'unknown',
+             omd_native_admission: admission, ...billing === 'api' ? {} : { omd_subscription_charge: 'unknown' },
              ...ttl ? { omd_cache_ttl_seconds: ttl } : {},
              ...Number.isFinite(listCostUsd) ? { omd_reported_cost: { usd: listCostUsd, basis: 'client_list_estimate' } } : {} } } });
   return events;
@@ -249,7 +241,7 @@ export default function activate(api: ModAPI): void {
   api.on('turn_start', () => {
     if (api.state.get() === true) ensure();
   });
-  api.command('claude_route', () => ({ display: 'Claude CLI route: launch with `omd-package claude [--model family]` after `omd-package claude --setup`; subscription windows appear in /status limits.' }));
+  api.command('claude_route', () => ({ display: 'Claude CLI route: launch with `omd-package claude [--model family]` after `omd-package claude --setup [--billing api]`. /status shows the Claude 5h and weekly limits with their resets and the billing source.' }));
   if (api.settings.ask_claude !== true) return;
   api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
     parameters: { type: 'object', properties: {
@@ -259,7 +251,7 @@ export default function activate(api: ModAPI): void {
     required: ['prompt'], additionalProperties: false } }, (input): Json => {
     const value = input as Row;
     if (!plain(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return { status: 'invalid', reason: 'prompt_required' };
-    if (utf8Length(value.prompt) > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
+    if (new TextEncoder().encode(value.prompt).length > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
     if (!ensure()) return { status: 'unavailable', reason: 'claude_route_not_configured' };
     const write = value.mode === 'write';
     const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,

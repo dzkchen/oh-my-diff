@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Check the public mod API contract against the host source and its executable evidence."""
+"""Check the public mod API source inventory; optionally require release execution receipts."""
+import argparse
 import json
-from functools import cache
 import re
 import sys
 from pathlib import Path
+
+from scripts import execution_evidence, install_support
+from scripts.execution_evidence import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
@@ -13,10 +16,6 @@ RUNNER = ROOT / "runtime/omd/src/mods/runner.mjs"
 COVERAGE = ROOT / "mods/COVERAGE.md"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
-RUST_TESTS = ROOT / "runtime/omd/tests"
-PATCH = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
-RUNNER_TESTS = ROOT / "mods/runner.test.mjs"
-PYTHON_TESTS = ROOT / "tests"
 GROUPS = {
     "coordination": "Coordination decisions",
     "context_recovery": "Context and recovery decisions",
@@ -56,22 +55,11 @@ def host_sets():
     }
 
 
-@cache
-def resolve(reference):
-    kind, _, name = reference.partition(":")
-    if kind == "rust":
-        return any(f"fn {name}(" in path.read_text() for path in RUST_TESTS.glob("*.rs"))
-    if kind == "patch":
-        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", PATCH.read_text(), re.M) is not None
-    if kind == "node":
-        if ":" in name:
-            file, name = name.split(":", 1)
-            path = (ROOT / file).resolve()
-            return path.is_relative_to(ROOT / "tests") and path.suffix == ".mjs" and path.is_file() and f"test('{name}'" in path.read_text()
-        return f"test('{name}'" in RUNNER_TESTS.read_text()
-    if kind == "python":
-        return any(f"def {name}(" in path.read_text() for path in PYTHON_TESTS.glob("test_*.py"))
-    return False
+def release_evidence(contract):
+    decisions = {entry["id"]: entry for entry in contract["decisions"]}
+    return {reference for entry in contract.get("launch", {}).values()
+            if entry.get("status") == "frozen"
+            for reference in entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))}
 
 
 def declaration(source, name):
@@ -217,7 +205,7 @@ def render(contract):
     out = [
         "# Public API coverage and composition contract",
         "",
-        f"<!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->",
+        f"<!-- Generated from conformance/contract.json by python3 -m scripts.mod_conformance --write. -->",
         "",
         f"Mod API `{contract['api']}`. Every decision a mod can reach through the published",
         "API is listed below with the support it has, when it takes effect, who owns the",
@@ -292,36 +280,43 @@ def render(contract):
         "",
         "`rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·",
         "`node:` `mods/runner.test.mjs` · `python:` `tests/`.",
-        "Each reference is resolved by `scripts/mod_conformance.py`.",
+        "Each reference is resolved by `scripts/mod_conformance.py` as a source inventory only.",
+        "A matching name does not prove test discovery, execution, or assertion quality.",
+        "Release qualification requires `--release --executed-evidence RECEIPT` for every",
+        "frozen surface's evidence at the clean validated revision. See `integration/EVIDENCE.md`.",
         "",
         table(
             [(entry["id"], " · ".join(f"`{reference}`" for reference in entry["evidence"]))
              for entry in contract["decisions"] + contract["composition"]],
-            ["Decision or rule", "Executable evidence"],
+            ["Decision or rule", "Source evidence inventory"],
         ),
         "",
     ]
     return "\n".join(out)
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true")
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    args = parser.parse_args(argv)
     contract = json.loads(CONTRACT.read_text())
     version, sets = host_sets()
     problems = check(contract, version, sets)
-    rendered = render(contract)
-    if "--write" in sys.argv[1:]:
-        COVERAGE.write_text(rendered)
-        print(f"wrote {COVERAGE.relative_to(ROOT)}")
-    elif COVERAGE.read_text() != rendered:
-        problems.append("mods/COVERAGE.md is stale; rerun scripts/mod_conformance.py --write")
+    if args.release or args.executed_evidence:
+        problems += execution_evidence.verify(release_evidence(contract), args.executed_evidence)
     if problems:
         raise SystemExit("\n".join(problems))
+    install_support.check_or_write(COVERAGE, render(contract), args.write,
+                                   "mods/COVERAGE.md is stale; rerun python3 -m scripts.mod_conformance --write")
     print(
         f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
         f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points, intercept surfaces and host operations documented with resolved evidence"
+        f"replacement points, intercept surfaces and host operations documented with resolved source inventory; "
+        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

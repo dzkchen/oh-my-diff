@@ -23,7 +23,10 @@ fn snapshot() -> Snapshot {
 #[test]
 fn worktree_contains_snapshot_without_touching_original_inputs() {
     let temp = tempfile::tempdir().unwrap();
-    let input = snapshot();
+    let mut input = snapshot();
+    input.files.insert(".gitignore".into(), File {
+        bytes: b"source.txt\n".to_vec(), executable: false,
+    });
     let workspace = create_worktree(&input, &temp.path().join("isolated"), 4096).unwrap();
     assert!(workspace.join(".git").is_file());
     let paths = tracked_paths(&workspace, &BTreeSet::new()).unwrap();

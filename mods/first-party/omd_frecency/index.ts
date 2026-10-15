@@ -5,6 +5,14 @@ type Files = { tick: number; files: Record<string, [number, number]> };
 const LIMIT = 50;
 const KEPT = 512;
 const HALF_LIFE = 64;
+const STAT_BATCH = 64;
+const STAT_BATCHES = 4;
+// A ranking's history read and rewrite, Git status and stats share one callback's 128 KiB receipt budget, less call envelopes.
+const BUDGET = 122_880;
+const STORED = 32_000;
+const STATUS_BYTES = 16_000;
+
+const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 function common(query: string, path: string): number {
   let row = new Array<number>(path.length + 1).fill(0);
@@ -46,52 +54,56 @@ export default function activate(api: ModAPI) {
     return entry ? Math.min(30, 10 * Math.log2(1 + entry[0])) * 0.5 ** ((files.tick - entry[1]) / HALF_LIFE) : 0;
   };
 
-  const git = () => {
+  const git = (): [Map<string, number>, number] => {
     const boosts = new Map<string, number>();
-    const run = api.host.tryCall('exec.run', { program: 'git', argv: ['-c', 'core.quotePath=false', 'status', '--short', '--untracked-files=all'], timeout_ms: 3000 });
-    if (!run.ok || run.value.exit_code !== 0) return boosts;
-    for (const line of run.value.stdout.split('\n')) {
+    const run = api.host.tryCall('exec.run', { program: 'git', argv: ['-c', 'core.quotePath=false', 'status', '--short', '--untracked-files=all'], timeout_ms: 3000, max_output_bytes: STATUS_BYTES });
+    const spent = run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
+    if (!run.ok || run.value.exit_code !== 0) return [boosts, spent];
+    const lines = run.value.stdout.split('\n');
+    if (run.value.stdout_truncated) lines.pop();
+    for (const line of lines) {
       const raw = line.slice(3).split(' -> ').pop() ?? '';
       const path = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(.)/g, '$1') : raw;
       if (path && !line.slice(0, 2).includes('D') && !path.startsWith('../')) boosts.set(path, line.startsWith('??') ? 10 : 20);
     }
-    return boosts;
+    return [boosts, spent];
   };
 
-  const rank = (query: string, upstream: string[], limit: number) => {
+  const rank = (query: string, upstream: string[]) => {
     const { files, revision } = load();
-    const boosts = git();
+    const [boosts, status] = git();
+    let room = BUDGET - 2 * serializedBytes(files) - status;
     const known = new Set([...upstream, ...boosts.keys()]);
     const order = new Map(upstream.map((path, index) => [path, index]));
-    let scored = [...new Set([...known, ...Object.keys(files.files)])]
+    const scored = [...new Set([...known, ...Object.keys(files.files)])]
       .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
       .map(item => ({ path: item.path, score: item.score + weight(files, item.path) + (boosts.get(item.path) ?? 0) }))
-      .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity));
-    const unknown = scored.slice(0, limit).map(item => item.path).filter(path => !known.has(path));
-    if (unknown.length) {
-      const stat = api.host.tryCall('workspace.stat', { paths: unknown });
-      const missing = new Set(stat.ok ? unknown.filter(path => stat.value.files[path]?.kind !== 'file') : []);
-      if (missing.size) {
-        scored = scored.filter(item => !missing.has(item.path));
-        missing.forEach(path => delete files.files[path]);
-        save(files, revision);
-      }
+      .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity))
+      .map(item => item.path);
+    const ranked: string[] = [];
+    const missing: string[] = [];
+    let checks = 0;
+    for (let at = 0; ranked.length < LIMIT && at < scored.length;) {
+      const page = scored.slice(at, at + Math.min(STAT_BATCH, LIMIT - ranked.length));
+      at += page.length;
+      const unknown = page.filter(path => !known.has(path));
+      const cost = 2 * serializedBytes(unknown) + 64 * unknown.length;
+      const stat = unknown.length && checks < STAT_BATCHES && cost <= room ? (checks++, room -= cost, api.host.tryCall('workspace.stat', { paths: unknown })) : null;
+      const present = new Set(!stat ? [] : stat.ok ? unknown.filter(path => stat.value.files[path]?.kind === 'file') : unknown);
+      if (stat && stat.ok) missing.push(...unknown.filter(path => !present.has(path)));
+      ranked.push(...page.filter(path => known.has(path) || present.has(path)));
     }
-    return scored.slice(0, limit).map(item => item.path);
+    if (missing.length) {
+      missing.forEach(path => delete files.files[path]);
+      save(files, revision);
+    }
+    return ranked;
   };
 
   api.replace('completion', event => event.kind === 'mention'
-    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path), LIMIT).map(path => ({ path })) }
+    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path)).map(path => ({ path })) }
     : null);
-
-  api.provide({ name: 'omd.frecency', version: '1.0.0', methods: { rank: { input: 'object', output: 'object' } } }, {
-    rank: input => {
-      const request = input as { query?: unknown; paths?: unknown };
-      const paths = Array.isArray(request.paths) ? request.paths.filter((path): path is string => typeof path === 'string').slice(0, 1000) : [];
-      return { paths: rank(String(request.query ?? ''), paths, Math.max(paths.length, LIMIT)) };
-    },
-  });
 
   api.intercept('input', (event, next) => {
     const tokens = mentioned(event.text);
@@ -116,8 +128,13 @@ export default function activate(api: ModAPI) {
     const { files, revision } = load();
     files.tick++;
     for (const path of found) files.files[path] = [(files.files[path]?.[0] ?? 0) + 1, files.tick];
-    let bytes = 0;
-    const kept = Object.keys(files.files).sort((a, b) => weight(files, b) - weight(files, a)).slice(0, KEPT).filter(path => (bytes += path.length + 32) < 60_000);
+    let bytes = serializedBytes({ tick: files.tick, files: {} });
+    const kept: string[] = [];
+    for (const path of Object.keys(files.files).sort((a, b) => weight(files, b) - weight(files, a)).slice(0, KEPT)) {
+      bytes += serializedBytes({ [path]: files.files[path] }) - 2 + (kept.length ? 1 : 0);
+      if (bytes >= STORED) break;
+      kept.push(path);
+    }
     files.files = Object.fromEntries(kept.map(path => [path, files.files[path]]));
     save(files, revision);
   });

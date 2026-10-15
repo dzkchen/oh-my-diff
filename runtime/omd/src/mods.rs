@@ -1,4 +1,5 @@
 mod author;
+mod operation_validation;
 mod bridge;
 mod chain;
 mod persisted;
@@ -18,6 +19,7 @@ pub use persisted::persist_chunks;
 pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::client_component_unmount;
 pub use render::component_detach;
 pub use render::component_events;
 pub use render::component_shared;
@@ -29,9 +31,6 @@ pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
-pub use view::ModAsciiBackdrop;
-pub use view::ModBackdrop;
-pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
@@ -44,13 +43,13 @@ pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
-pub use view::ModImageBackdrop;
 pub use view::ModKeyAction;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
 pub use view::ModLayoutTabs;
 pub use view::ModListRow;
+pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -375,7 +374,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_feedback_v1",
     "terminal_media_v1",
     "terminal_surface_paint_v1",
-    "terminal_backdrop_transform_v1",
+    "codex_config_v1",
     "terminal_image_sample_v1",
     "terminal_import_lifetime_v1",
     "secrets_v1",
@@ -639,6 +638,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("middleware") {
         exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
     }
+    if granted("request_policy") {
+        exposure.push("request_policy: every model request must pass this mod's final-request check; whenever the mod is not loaded, faults or fails to serve, OMD refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused.");
+    }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
@@ -646,6 +648,16 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
         exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
     }
     exposure
+}
+
+/// The bounded install-profile label reported for an `OMD_INSTALL_PROFILE` value.
+pub fn install_profile(value: &str) -> &'static str {
+    match value {
+        "full" => "full",
+        "platform_only" => "platform_only",
+        "private" => "private",
+        _ => "unknown",
+    }
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -1046,15 +1058,19 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let capability = ModHostCall {
+            let required = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
-            .capability()?;
+            .capabilities()?;
+            if operation == "model.fork"
+                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
+                return Err(failure(format!("undeclared_operation_use: {operation}")));
+            }
             let mut used = package
                 .capabilities
                 .iter()
-                .filter(|declared| *declared == capability)
+                .filter(|declared| required.contains(&declared.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
             let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
@@ -1307,7 +1323,12 @@ pub struct ModPackage {
     pub hook_budget_ms: u64,
     #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
     pub subscriptions: ModSubscriptions,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codex_config: BTreeMap<String, Value>,
 }
+
+pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1650,6 +1671,20 @@ impl ModPackage {
             text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
         }) {
             return Err(failure("invalid_description: 1-160 printable characters"));
+        }
+        if !self.codex_config.is_empty()
+            && (!self
+                .compatibility
+                .required_features
+                .iter()
+                .any(|feature| feature == "codex_config_v1")
+                || self.codex_config.iter().any(|(key, value)| {
+                    !CODEX_CONFIG_KEYS.contains(&key.as_str()) || *value != Value::Bool(true)
+                }))
+        {
+            return Err(failure(
+                "invalid_codex_config: keys from the host allowlist set to true, with codex_config_v1 required",
+            ));
         }
         if let Some(adapter) = self.adapter.as_deref()
             && (adapter == self.id
@@ -2431,9 +2466,13 @@ struct Reply {
     registrations: Registrations,
     state: Value,
     #[serde(default)]
-    ui_state: Value,
+    ui_state: Option<String>,
     #[serde(default)]
     ui_read: bool,
+    #[serde(default)]
+    ui_written: bool,
+    #[serde(default)]
+    clock_read: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2464,6 +2503,7 @@ struct Loaded {
     ui: Option<(String, Arc<Mutex<UiState>>)>,
     ui_state: Value,
     ui_revision: u64,
+    ui_clears: u64,
     command_view: Option<AcceptedCommandView>,
     registrations: Registrations,
     source_use: ModSourceUse,
@@ -2478,6 +2518,7 @@ struct Loaded {
 struct UiState {
     value: Value,
     revision: u64,
+    clears: u64,
 }
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
@@ -2500,6 +2541,7 @@ fn reset_ui_states(root: &Path, revision: u64) {
             {
                 state.value = Value::Null;
                 state.revision = state.revision.wrapping_add(1);
+                state.clears = state.clears.wrapping_add(1);
             }
         }
     }
@@ -2558,23 +2600,23 @@ mod reload_tests {
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
-            assert!(!host.reload().unwrap());
+            assert!(!host.refresh_authority().unwrap());
         }
         assert_eq!(store::READS.get(), reads);
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         assert!(store::READS.get() > reads);
         let path = root.join("mods.json");
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"invalid").unwrap();
-        assert!(host.reload().is_err());
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh_authority().is_err());
         std::fs::write(&path, original).unwrap();
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         let moved = root.join("moved.json");
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
     }
 }
 type Authority = (
@@ -2591,6 +2633,7 @@ impl Loaded {
         {
             state.value = Value::Null;
             state.revision = state.revision.wrapping_add(1);
+            state.clears = state.clears.wrapping_add(1);
         }
     }
 
@@ -2652,7 +2695,8 @@ pub struct ModHost {
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
-    renders: BTreeMap<String, (String, Value, Instant)>,
+    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    clock_reads: BTreeSet<String>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -2660,11 +2704,19 @@ pub struct ModHost {
     brokered: Option<(Instant, String, Authority)>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    codex_config: Arc<Mutex<BTreeSet<String>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
     project: Option<PathBuf>,
+    pool: u64,
+}
+
+impl Drop for ModHost {
+    fn drop(&mut self) {
+        process::size_reused_pool(self.pool, None);
+    }
 }
 
 enum Access<'a> {
@@ -2716,10 +2768,11 @@ type NextFn<'n> = dyn FnMut(
     + 'n;
 
 struct Invocation {
+    authority_current: bool,
     location: store::StateLocation,
+    thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
-    previous_state: Value,
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
@@ -3127,6 +3180,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            clock_reads: BTreeSet::new(),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -3134,11 +3188,16 @@ impl ModHost {
             brokered: None,
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
+            codex_config: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
             unserved: Vec::new(),
             project: None,
+            pool: {
+                static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -3209,6 +3268,11 @@ impl ModHost {
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
+        self.refresh_authority()
+    }
+
+    /// Refresh package authority without resetting UI state when configuration is unchanged.
+    pub fn refresh_authority(&mut self) -> Result<bool> {
         self.reload_guarded(&|| true)
     }
 
@@ -3244,6 +3308,20 @@ impl ModHost {
         self.configuration_sha256.clear();
     }
 
+    fn current(&self, stamp: Option<FileStamp>) -> bool {
+        stamp.is_some()
+            && stamp == self.configuration_stamp
+            && self
+                .brokered
+                .as_ref()
+                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+    }
+
+    /// Whether a refresh would re-read the configuration and authority instead of keeping them.
+    pub fn refresh_due(&self) -> bool {
+        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
+    }
+
     fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
         if !active() {
             return Err(failure("callback_cancelled"));
@@ -3252,13 +3330,7 @@ impl ModHost {
         let config_profile = Profile::new("configuration_read_hash");
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
-        if stamp.is_some()
-            && stamp == self.configuration_stamp
-            && self
-                .brokered
-                .as_ref()
-                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
-        {
+        if self.current(stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
@@ -3362,7 +3434,6 @@ impl ModHost {
             let keep = selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
-                    && m.sha256 == loaded.selection.sha256
                     && m.scope == loaded.selection.scope
                     && loaded
                         .package
@@ -3427,13 +3498,7 @@ impl ModHost {
                         package.id
                     )));
                 }
-                Ok(files
-                    .into_iter()
-                    .map(|(name, text)| {
-                        let sha256 = digest(text.as_bytes());
-                        (name, json!({"text": text, "sha256": sha256}))
-                    })
-                    .collect())
+                Ok(store::asset_map(files))
             })();
             let assets = match assets {
                 Ok(assets) => assets,
@@ -3467,6 +3532,7 @@ impl ModHost {
                 ui: None,
                 ui_state: Value::Null,
                 ui_revision: 0,
+                ui_clears: 0,
                 command_view: None,
                 registrations: Registrations::default(),
                 source_use: ModSourceUse::default(),
@@ -3632,6 +3698,11 @@ impl ModHost {
         self.environment.clone()
     }
 
+    /// Codex config keys the active packages turn on, readable while another caller holds the runtime.
+    pub fn codex_config(&self) -> Arc<Mutex<BTreeSet<String>>> {
+        self.codex_config.clone()
+    }
+
     fn retain_environment(&self) {
         self.environment.retain(
             &self
@@ -3643,6 +3714,15 @@ impl ModHost {
     }
 
     fn publish_surfaces(&self) {
+        process::size_reused_pool(
+            self.pool,
+            Some(
+                self.loaded
+                    .keys()
+                    .filter(|id| self.registered(id, "terminal"))
+                    .count(),
+            ),
+        );
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -3661,6 +3741,12 @@ impl ModHost {
             .collect();
         if let Ok(mut published) = self.intercepted_surfaces.lock() {
             *published = intercepted;
+        }
+        if let Ok(mut published) = self.codex_config.lock() {
+            *published = self
+                .active()
+                .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
+                .collect();
         }
     }
 
@@ -4445,6 +4531,59 @@ impl ModHost {
         )
     }
 
+    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
+        let managed = self.store.managed()?;
+        let brokered = store::brokered_grants(&self.store.root)?;
+        let deployment = if managed.is_some() {
+            self.store.managed_deployment()?
+        } else {
+            policy::ManagedDeployment::default()
+        };
+        let mut selections = match &managed {
+            Some(managed) => managed.selections(
+                &deployment,
+                &self.store.managed_user(),
+                self.project.as_deref(),
+            ).0,
+            None => Vec::new(),
+        };
+        let mut administered = selections.len();
+        let path = self.store.root.join("mods.json");
+        let bytes = store::read(&path, 65_536);
+        let hash = format!("{}:{}:{}:{}:{}",
+            digest(bytes.as_deref().unwrap_or_default()),
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
+            deployment.generation,
+            self.project.as_deref().unwrap_or(Path::new("")).display());
+        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
+            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
+            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
+            _ => return Err(failure("callback_authority_changed")),
+        }
+        // An unchanged authority inventory cannot introduce a different precedence winner.
+        if hash == self.configuration_sha256 {
+            administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
+            selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        let selected = Self::select(
+            &selections, administered, false,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+        )?;
+        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
+            return Err(failure("callback_authority_changed"));
+        };
+        if selection.path != loaded.selection.path
+            || selection.scope != loaded.selection.scope
+            || store::grant(&json!(selection)) != store::grant(&json!(loaded.selection))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
+        Ok(())
+    }
+
     fn begin(
         &mut self,
         id: &str,
@@ -4468,6 +4607,7 @@ impl ModHost {
                 "mod_failed: {error}; explicitly reload to recover"
             )));
         }
+        self.check_callback_authority(&loaded)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         loaded.state = self
             .store
@@ -4494,9 +4634,12 @@ impl ModHost {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
             loaded.ui_state = state.value.clone();
             loaded.ui_revision = state.revision;
+            loaded.ui_clears = state.clears;
         }
         Ok(Invocation {
+            authority_current: loaded.selection.authority_current(),
             location,
+            thread: thread.map(str::to_owned),
             dynamic: self
                 .dynamic_tools
                 .get(id)
@@ -4504,7 +4647,6 @@ impl ModHost {
                 .flatten()
                 .map(|tool| tool.name.clone())
                 .collect(),
-            previous_state: loaded.state.clone(),
             loaded,
             node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
@@ -4516,10 +4658,12 @@ impl ModHost {
         &mut self,
         loaded: &Loaded,
         location: &store::StateLocation,
+        thread: Option<&str>,
         event: &str,
         reply: Reply,
         active: &dyn Fn() -> bool,
     ) -> Result<(Value, Value)> {
+        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -4532,13 +4676,20 @@ impl ModHost {
             .map(|(_, state)| state.lock())
             .transpose()
             .map_err(|_| failure("ui_state_unavailable"))?;
+        let current = self.loaded.get(&loaded.package.id);
+        let rebind = loaded
+            .ui
+            .as_ref()
+            .zip(current)
+            .is_some_and(|((key, _), current)| {
+                current.ui.is_none() && key == &self.ui_key(current, thread)
+            });
         if reply.ui_read {
-            if self
-                .loaded
-                .get(&loaded.package.id)
-                .and_then(|current| current.ui.as_ref())
-                .zip(loaded.ui.as_ref())
-                .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
+            if !rebind
+                && current
+                    .and_then(|current| current.ui.as_ref())
+                    .zip(loaded.ui.as_ref())
+                    .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
             {
                 return Err(failure("callback_cancelled"));
             }
@@ -4550,19 +4701,16 @@ impl ModHost {
             {
                 return Err(failure("ui_state_capability_denied"));
             }
-            if ui
-                .as_ref()
-                .is_none_or(|state| state.revision != loaded.ui_revision)
-            {
+            if ui.as_ref().is_none_or(|state| {
+                state.revision.wrapping_sub(loaded.ui_revision)
+                    != state.clears.wrapping_sub(loaded.ui_clears)
+            }) {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
-        if reply.ui_state != loaded.ui_state {
+        if ui_state != loaded.ui_state {
             if !reply.ui_read || !matches!(event, "command" | "component_event") {
                 return Err(failure("ui_state_write_unavailable"));
-            }
-            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-                return Err(failure("ui_state_limit"));
             }
         }
         let mut parsed_command = None;
@@ -4631,11 +4779,17 @@ impl ModHost {
                 &reply.state,
             )?;
         }
-        if reply.ui_state != loaded.ui_state
-            && let Some(state) = ui.as_mut()
+        if let Some(state) = ui.as_mut()
+            && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
         {
-            state.value = reply.ui_state;
+            state.value = ui_state;
             state.revision = state.revision.wrapping_add(1);
+        }
+        if rebind
+            && reply.ui_read
+            && let Some(current) = self.loaded.get_mut(&loaded.package.id)
+        {
+            current.ui = loaded.ui.clone();
         }
         if event == "command"
             && let Some(patch) = reply.value.get("terminal")
@@ -4643,7 +4797,11 @@ impl ModHost {
             let stamp = Self::terminal_stamp(
                 loaded,
                 &reply.state,
-                ui.as_ref().map(|state| state.revision),
+                loaded
+                    .ui
+                    .as_ref()
+                    .map(|(scope, _)| scope.as_str())
+                    .zip(ui.as_ref().map(|state| &state.value)),
             );
             if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
                 current.command_view = Some(AcceptedCommandView {
@@ -4651,6 +4809,13 @@ impl ModHost {
                     stamp,
                     parsed: parsed_command,
                 });
+            }
+        }
+        if event == "terminal" {
+            if reply.clock_read {
+                self.clock_reads.insert(loaded.package.id.clone());
+            } else {
+                self.clock_reads.remove(&loaded.package.id);
             }
         }
         Ok((reply.value, reply.state))
@@ -4667,19 +4832,36 @@ impl ModHost {
         reply: Result<Reply>,
         active: &dyn Fn() -> bool,
     ) -> Result<Value> {
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
+        // A reload that keeps this package binding (such as the callback's own
+        // `packages.apply`) must not discard a result whose host calls already ran.
+        let thread = invocation.thread.as_deref();
+        if generation != self.generation
+            && self.loaded.get(id).is_none_or(|current| {
+                self.ui_key(current, thread) != self.ui_key(&invocation.loaded, thread)
+            })
+        {
+            return Err(failure("stale_mod_generation: retry on the next turn"));
+        }
+        self.check_callback_authority(&invocation.loaded)?;
+        if invocation.authority_current && !invocation.loaded.selection.authority_current()
+            && invocation.loaded.package.capabilities.iter().any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
         let result = reply.and_then(|reply| {
             self.accept(
                 &invocation.loaded,
                 &invocation.location,
+                invocation.thread.as_deref(),
                 event,
                 reply,
                 active,
             )
         });
-        if generation != self.generation {
-            return result.map(|(value, _)| value);
-        }
-        let (started, previous_state) = (invocation.started, invocation.previous_state);
+        let (started, previous_state) = (invocation.started, invocation.loaded.state);
         let current = self
             .loaded
             .get_mut(id)
@@ -4968,25 +5150,29 @@ impl ModHost {
     }
 
     fn ui_key(&self, loaded: &Loaded, thread: Option<&str>) -> String {
+        let mut selection = json!(loaded.selection);
+        if let Some(selection) = selection.as_object_mut() {
+            selection.remove("settings");
+        }
         format!(
             "{}:{}",
             self.store.root.display(),
             digest(
-                json!([self.project, thread, loaded.selection, loaded.adapter])
+                json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
             )
         )
     }
 
-    fn terminal_stamp(loaded: &Loaded, state: &Value, revision: Option<u64>) -> String {
+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
         digest(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
                 state,
-                loaded.ui.as_ref().map(|(scope, _)| scope),
-                revision
+                ui.map(|(scope, _)| scope),
+                ui.map(|(_, value)| value)
             ])
             .to_string()
             .as_bytes(),
@@ -4995,23 +5181,25 @@ impl ModHost {
 
     fn terminal_state_key(&self, id: &str, thread: Option<&str>) -> Option<String> {
         let loaded = self.loaded.get(id)?;
-        if loaded
-            .ui
-            .as_ref()
-            .is_none_or(|(scope, _)| scope != &self.ui_key(loaded, thread))
-        {
-            return None;
-        }
+        let scope = self.ui_key(loaded, thread);
+        let ui = match &loaded.ui {
+            Some((current, state)) if current == &scope => Some(state.clone()),
+            _ => UI_STATES
+                .lock()
+                .ok()?
+                .get(&scope)
+                .and_then(std::sync::Weak::upgrade),
+        };
+        let ui = match ui {
+            Some(state) => state.lock().ok()?.value.clone(),
+            None => Value::Null,
+        };
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let state = self
             .store
             .scoped_state(&location, loaded.package.state_version)
             .ok()?;
-        let revision = match &loaded.ui {
-            Some((_, state)) => Some(state.lock().ok()?.revision),
-            None => None,
-        };
-        Some(Self::terminal_stamp(loaded, &state, revision))
+        Some(Self::terminal_stamp(loaded, &state, Some((&scope, &ui))))
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -5024,10 +5212,10 @@ impl ModHost {
                 let key = self
                     .terminal_state_key(&id, thread.as_deref())
                     .map(|stamp| format!("{stamp}:{payload_hash}"));
-                // Renders may read the clock, so a cached one lives for a second.
-                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
+                // A handler that read the clock is rerun once its result is a second old.
+                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                     && key == cached
-                    && at.elapsed() < Duration::from_secs(1)
+                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
                 {
                     return (id, Ok(value.clone()));
                 }
@@ -5041,8 +5229,8 @@ impl ModHost {
                 );
                 match (&result, key) {
                     (Ok(value), Some(key)) => {
-                        self.renders
-                            .insert(id.clone(), (key, value.clone(), Instant::now()));
+                        let clock = self.clock_reads.contains(&id).then(Instant::now);
+                        self.renders.insert(id.clone(), (key, value.clone(), clock));
                     }
                     _ => {
                         self.renders.remove(&id);
@@ -5095,10 +5283,11 @@ impl ModHost {
             Some((id, parsed))
         };
         self.renders.remove(id);
+        // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
             let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
             self.renders
-                .insert(id.to_owned(), (key, patch, Instant::now()));
+                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
         let results = self
             .active()
@@ -5191,6 +5380,10 @@ impl ModHost {
 
     pub fn turn_boundary(&mut self) {
         self.turn_boundary_guarded(&|| true);
+    }
+
+    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
+        self.reload_guarded(active)
     }
 
     pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
@@ -5533,11 +5726,7 @@ impl ModHost {
         install_profile: Option<&str>,
         mode: &str,
     ) -> Value {
-        let install_profile = match install_profile {
-            Some(profile @ ("full" | "platform_only" | "private")) => profile,
-            Some(_) => "unknown",
-            None => "unreported",
-        };
+        let install_profile = install_profile.map_or("unreported", self::install_profile);
         json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
             "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
                 "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
@@ -5737,10 +5926,12 @@ impl ModHost {
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,
-                    "autonomy": m.package.autonomy, "withheld": m.withheld,
+                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
-                    "exposure": authority_exposure(&m.package.capabilities)});
+                    "exposure": authority_exposure(&m.selection.capabilities)});
                 status }).collect::<Vec<_>>()});
+        status["request_policy_unavailable"] =
+            json!(self.send_policy().and_then(|policy| policy.unavailable));
         status["access"] = json!(self.access);
         status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
         status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
@@ -5748,6 +5939,36 @@ impl ModHost {
             "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
                 .collect::<Vec<_>>()})));
         status
+    }
+}
+
+fn validate_ui_state(encoded: &str) -> Result<Value> {
+    if encoded.len() > 65_536 {
+        return Err(failure("ui_state_limit"));
+    }
+    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
+}
+
+#[cfg(test)]
+#[test]
+fn ui_state_serialized_boundaries() {
+    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let encoded = format!(
+            "{}{}{}",
+            case["prefix"].as_str().unwrap(),
+            case["unit"]
+                .as_str()
+                .unwrap()
+                .repeat(case["repeat"].as_u64().unwrap() as usize),
+            case["suffix"].as_str().unwrap()
+        );
+        assert_eq!(
+            validate_ui_state(&encoded).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
     }
 }
 
