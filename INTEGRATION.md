@@ -39,7 +39,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods, omd_update | omd_logo, omd_mods, omd_update | none |
-| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_continue, omd_frecency, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_statusline, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_statusline, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
+| OMD+ | `full` | omd_advisor, omd_claude_cli, omd_continue, omd_frecency, omd_idle_compact, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_preview, omd_privacy, omd_profiles, omd_statusline, omd_tool_lines, omd_update, omd_usage, omd_workflow | omd_idle_compact, omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_plan_panel, omd_plan_removal, omd_statusline, omd_tool_lines, omd_update | omd-anchored-edit, omd-artifact-reading, omd-code-execution |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
@@ -47,6 +47,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_claude_cli` | 0.2.0-preview.3 | `mods/first-party/omd_claude_cli` |
 | `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
 | `omd_frecency` | 0.1.0-preview.2 | `mods/first-party/omd_frecency` |
+| `omd_idle_compact` | 0.1.0-preview.1 | `mods/first-party/omd_idle_compact` |
 | `omd_inspector` | 0.2.0-preview.1 | `mods/first-party/omd_inspector` |
 | `omd_logo` | 0.2.0-preview.1 | `mods/first-party/omd_logo` |
 | `omd_lsp_sync` | 0.5.0-preview.1 | `mods/first-party/omd_lsp_sync` |
@@ -76,6 +77,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_plan_removal` | mod | default-active | OMD+ | `mods/first-party/omd_plan_removal` |
 | `omd_plan_panel` | mod | default-active | OMD+ | `mods/first-party/omd_plan_panel` |
 | `omd_statusline` | mod | default-active | OMD+ | `mods/first-party/omd_statusline` |
+| `omd_idle_compact` | mod | default-active | OMD+ | `mods/first-party/omd_idle_compact` |
 | `omd_continue` | mod | opt-in | OMD+ | `mods/first-party/omd_continue` |
 | `omd_tool_lines` | mod | default-active | OMD+ | `mods/first-party/omd_tool_lines` |
 | `omd_preview` | mod | opt-in | OMD+ | `mods/first-party/omd_preview` |

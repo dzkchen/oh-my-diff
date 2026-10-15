@@ -93,6 +93,28 @@
       "source": "mods/first-party/omd_frecency",
       "version": "0.1.0-preview.2"
     },
+    "omd_idle_compact": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "store",
+        "events",
+        "lifecycle",
+        "model",
+        "threads",
+        "approvals",
+        "terminal",
+        "inventory"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "7050d9f4560e5db719563b5134827b8ab68ee027ffd2a425da960ee1296420b0",
+        "mod.json": "c13bfc4c445f476bd78b3904c0be5e8180850aa4009e33509bb6218dd3394a93"
+      },
+      "id": "omd_idle_compact",
+      "package_sha256": "9e010d5c3d45793b362e1c42bcbd4e294b5a068f25ea230a46197d52a68bad7e",
+      "source": "mods/first-party/omd_idle_compact",
+      "version": "0.1.0-preview.1"
+    },
     "omd_inspector": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
