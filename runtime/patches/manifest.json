@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying the runtime patch.",
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "83ff0c497fbc52a7f6ca7f942a4b70cb3e190894420996325b095b294d9df513"
+    "sha256": "c570385420f4c7f9e48018afd563e98d9ecc13df48ed497f9b97295c923a74f8"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1857,7 +1857,7 @@
     },
     "codex-rs/tui/src/bottom_pane/list_selection_view/mod_list.rs": {
       "before": null,
-      "after": "9577c2ce812ef2748efa77571c00d56d6e2626bbcde93ac9859d98951ba9340d"
+      "after": "96e4d99f7067f79545d2e24c2df719354e8b92637baec27ceb9be03f6c5726f4"
     },
     "codex-rs/tui/src/bottom_pane/mod.rs": {
       "before": "31d34f075b652b8b229e5988c9b601d46b9e102f05ac71c0cbfa8eaa96d2fb2d",
@@ -2285,7 +2285,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/helpers.rs": {
       "before": "b109a35427a4f68f4083ad1f702aabc041ce238b21afdcf571c4cf3cbf61d6a2",
-      "after": "417da8e6a918bf44b8b143a7cad5e6016dde7974f98c424c5af282b41af0d291"
+      "after": "e17c5f1518213c6e80908fc2ae31a7102026aa2fd9f471881e1b1f9bcca1b872"
     },
     "codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs": {
       "before": "4fa5a502d4152ee358e22650c40f6ed66be8eb18636daa4f982e279cbe37b84e",
@@ -2349,7 +2349,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/status_and_layout.rs": {
       "before": "f12485afd7a3cc1541c620daedda5445a96606ca1226228b1e1e60d7e5d991f5",
-      "after": "f745d1ed836b310fbaee8c20c56b6b4f01bf83b29b3579fb39e14699edfe175a"
+      "after": "774a74d764a6486c423f5b7b046dd1118a74de3d329b0ce56bb7e2bf1462ac73"
     },
     "codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs": {
       "before": "b908e25b1b009915cc2a99a784c87c2eddc95268f036a1d6abdbd7e34ecc1dcc",
@@ -2457,7 +2457,7 @@
     },
     "codex-rs/tui/src/history_cell/mod.rs": {
       "before": "993dab6d838f137a71a9867f9a8b97b3c57a73982b7d37ae99bdb06a3243b8c1",
-      "after": "c227ab7b24b23d0b3362342e59bbdcbbae89f487f1a9e6bb0d851bf0008ee3a7"
+      "after": "125b3aec44fbd8bf648c8988500ec16250467bc7994c34940e399cc4ecac6967"
     },
     "codex-rs/tui/src/history_cell/notices.rs": {
       "before": "a12d39acf60b0dc397da8c160696b7904ef91a8b5bafe3184bb3fc4b0a16b254",
@@ -2597,7 +2597,7 @@
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
-      "after": "386015b74354448f5d0f01ec3d968c616e02b63f44beb471ab1b2ebf25a046a2"
+      "after": "1df232992fdcda9d54ae19efe22c14109f824af1a0dda79e69bec8c98598fd3d"
     },
     "codex-rs/tui/src/mod_surface.rs": {
       "before": null,
@@ -2617,7 +2617,7 @@
     },
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
-      "after": "c0ec5b13490a05e1314d33fc5a73fa735f2caf8e2bd493b8c41c7af134d0030a"
+      "after": "0e9ac41ce4a42e74322a5d397330b17318dacefc15328efeab844eda36bbd5c1"
     },
     "codex-rs/tui/src/multi_agents.rs": {
       "before": "8118da2304a7c74585f90ebc94895ae3eb9d8a5364df6db350b8e0a234017714",
@@ -2677,11 +2677,11 @@
     },
     "codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_narrow.snap": {
       "before": null,
-      "after": "52a6e8657481d4a786a01e723b50b4fd3dc5710eb81c9dd3b0d5e67d201a70c0"
+      "after": "0b7167165628565de6dbfd47c8ca4806a85745300e6f5c3e3c4a4046bd7b0cf6"
     },
     "codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_header_logo_wide.snap": {
       "before": null,
-      "after": "eaabf02ff6aa9dbcabab5bb8ef3fa2ac6cd97105d4e169bbddd6d4279a40233c"
+      "after": "792085226f4283223a6dcddfbe80dc2c4d4de678d72e56d9a4b8f9e9ae522c0f"
     },
     "codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap": {
       "before": null,
@@ -2737,7 +2737,7 @@
     },
     "codex-rs/tui/src/status/rate_limits.rs": {
       "before": "04ec98cb8a32c51ba935b80305b1c14431fc31c36e76c42660a51a1be1a1668b",
-      "after": "c660c552e4b4912134065213ab7b7d4aa871be71ccbb12448ec0f1c88b6ed5ae"
+      "after": "9372f0d4076e709bdedeaa17c9ad3ef4cd826d13020a3a6ddefd3063c6d76090"
     },
     "codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_omd_profile_narrow.snap": {
       "before": null,
