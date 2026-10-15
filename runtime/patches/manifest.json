@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "c1f03aeb8c59a2238050e811d01e27921528bed361e3a29aeaaa986c31dda24e"
+    "sha256": "0894cae9c9a01581a8c57f179054eefc7a5ac623aec35bab0fef687e42a98074"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1219,7 +1219,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "6f53fcf56701e8fdfbd56d869efc858f5842ab52b216d090721d88a3713c532a"
+      "after": "1c2a640305427bef085043463953df4096944efa112134cc134688f422222f20"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1247,7 +1247,7 @@
     },
     "codex-rs/omd/src/mods/package_manager.rs": {
       "before": null,
-      "after": "39bf602f617bd2664778189917c9430a0c9744471339728c65efef43dee04e7e"
+      "after": "3d9c8945f6c46217221a5098160dbc77f133e7d90f2b580441b4c978ae2fb69b"
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
@@ -1279,7 +1279,7 @@
     },
     "codex-rs/omd/src/mods/runner.mjs": {
       "before": null,
-      "after": "98eb1d02b28715fef831fb96e94baa3fb7b3d2eb518aa94a578b36c48ab1b08c"
+      "after": "df313d3257ec83686487d68b8188d31e6a4525a46b7b17f583035965fc411864"
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
@@ -1391,11 +1391,11 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "9e3cc34f5ba36e107d239968919de08239423cceeb280d51ecf1f052e9d0703d"
+      "after": "fa8da1ef139d96b811daefa7541a45cab6c35683a27ac6595d8b130e5cab9f20"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
-      "after": "f8208777c3c27d9cfd766a95123e7a57de95f6b37450149c4e6c3cbe65cfdf6e"
+      "after": "13065312ba67a8baf7a642c46bc8717887f67fe4830886570e84eb9383c363c8"
     },
     "codex-rs/omd/tests/review_bridge.rs": {
       "before": null,
@@ -2143,7 +2143,7 @@
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
-      "after": "31c203313bfe86f65daee52dd14f6044ce18ce09d011085d3ecf6da390bd4d5f"
+      "after": "134cc74a83a6ea770cd74f4942814eb90e8bdb5725a82ada07497f341b2875f0"
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
@@ -2159,7 +2159,7 @@
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
-      "after": "0d8134eaee622df67589cf4cadfe5db27769cabb3088dbe62297c707ab6c52cd"
+      "after": "efc9cd7b06aaf6e2d6668d7ae4540aed5d1bc1e53269c2d3030a0f7d2f9915a6"
     },
     "codex-rs/tui/src/mod_ui/footer.rs": {
       "before": null,
@@ -2167,7 +2167,7 @@
     },
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
-      "after": "bbaf461a5a8576612e17661d682e4d3c6a0c31601ecd9d5a3b11e28eb5be730c"
+      "after": "5032a9238d80d442f1e5934cb571c4e25a8f7125e0ff4b596dea898b1a22836a"
     },
     "codex-rs/tui/src/multi_agents.rs": {
       "before": "8118da2304a7c74585f90ebc94895ae3eb9d8a5364df6db350b8e0a234017714",
@@ -2183,7 +2183,7 @@
     },
     "codex-rs/tui/src/omd.rs": {
       "before": null,
-      "after": "7911b1e5c9ba8443e44563906e973d20f4fe63a150884e83d0f224f44d3d8b82"
+      "after": "a8e71bef1dfbdd9bbf011bbebe077947a483ca0ded45fd7ebab6f3f6397c9368"
     },
     "codex-rs/tui/src/pager_overlay/transcript.rs": {
       "before": "1da6164a63acad68767f86f2e73f7e5fa1441b138fb8f6b19e5fa7c471be203f",

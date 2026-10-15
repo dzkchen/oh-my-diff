@@ -582,38 +582,6 @@ impl ModStore {
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
-                // Thread and checkout state migrates at its next callback, so it needs a handler.
-                // An adapter-wrapped package cannot be inspected outside the host.
-                if previous
-                    .is_some_and(|locked| locked.state_version != resolved.package.state_version)
-                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
-                    && resolved.package.adapter.is_none()
-                {
-                    let (package, source, _, assets) =
-                        store::package_with_assets(&resolved.locked.path)?;
-                    let selection = ModSelection {
-                        path: resolved.locked.path.clone(),
-                        sha256: resolved.locked.integrity.clone(),
-                        enabled: false,
-                        capabilities: package.capabilities.clone(),
-                        settings: resolved.locked.settings.clone(),
-                        scope: request.scope.clone(),
-                        secret_environment: Vec::new(),
-                        expires_at: None,
-                        tier: None,
-                    };
-                    let loaded =
-                        packages::detached(package, source, assets, selection, Value::Null);
-                    packages::migration_registrations(&config.node, &loaded).map_err(|error| {
-                        if error.to_string() != "explicit_migration_handler_required" {
-                            return error;
-                        }
-                        failure(format!(
-                            "migration_handler_required: {} changes its {} state_version without a migrate handler",
-                            resolved.package.id, resolved.package.state_scope
-                        ))
-                    })?;
-                }
                 let state_migration_required = previous.is_some_and(|locked| {
                     locked.state_version != resolved.package.state_version
                         && self
@@ -677,12 +645,14 @@ impl ModStore {
         confirmation: &str,
     ) -> Result<ModPackageLock> {
         let online = !request.offline;
+        let scope = request.scope.clone();
         let plan = self.package_plan_locked(request, false, None)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
+        require_migration_handlers(&lock, &plan, &scope, &config.node)?;
         let mut selection_ids = config
             .mods
             .iter()
@@ -2761,6 +2731,56 @@ fn selected_settings(
             || locked.settings.clone(),
             |selection| selection.settings.clone(),
         )
+}
+
+/// Thread and checkout state migrates at its next callback, so an update that changes its
+/// `state_version` needs a `migrate` handler. The new source runs only once the preview is
+/// confirmed; an adapter-wrapped package cannot be inspected outside the host.
+fn require_migration_handlers(
+    existing: &ModPackageLock,
+    plan: &ModPackagePlan,
+    scope: &str,
+    node: &Path,
+) -> Result<()> {
+    for locked in &plan.packages {
+        if !existing
+            .packages
+            .get(&locked.id)
+            .is_some_and(|previous| previous.state_version != locked.state_version)
+        {
+            continue;
+        }
+        let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
+        if !matches!(package.state_scope.as_str(), "thread" | "checkout")
+            || package.adapter.is_some()
+            || !package.capabilities.iter().any(|c| c == "store")
+        {
+            continue;
+        }
+        let state_scope = package.state_scope.clone();
+        let selection = ModSelection {
+            path: locked.path.clone(),
+            sha256: locked.integrity.clone(),
+            enabled: false,
+            capabilities: package.capabilities.clone(),
+            settings: locked.settings.clone(),
+            scope: scope.to_owned(),
+            secret_environment: Vec::new(),
+            expires_at: None,
+            tier: None,
+        };
+        let loaded = packages::detached(package, source, assets, selection, Value::Null);
+        packages::migration_registrations(node, &loaded).map_err(|error| {
+            if error.to_string() != "explicit_migration_handler_required" {
+                return error;
+            }
+            failure(format!(
+                "migration_handler_required: {} changes its {state_scope} state_version without a migrate handler",
+                locked.id
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

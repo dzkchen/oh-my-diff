@@ -411,11 +411,21 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
+    runtime
+        .invoke("fixture", generation, "command", "count", Value::Null)
+        .unwrap();
     std::fs::write(
         path.join("index.ts"),
         "export default () => { throw new Error('broken') }",
     )
     .unwrap();
+    assert!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("untrusted_source")
+    );
     trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
     assert_eq!(runtime.generation(), generation);

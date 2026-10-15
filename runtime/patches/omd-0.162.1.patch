@@ -99593,10 +99593,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..573dffa0f
+index 000000000..0522f68cf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6014 @@
+@@ -0,0 +1,6048 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -101914,17 +101914,24 @@ index 000000000..573dffa0f
 +
 +impl ModConfiguration {
 +    pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-+        let mut config: Self = serde_json::from_slice(bytes)
-+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
-+        if !config.node.is_file() {
-+            config.node = node_on_path().ok_or_else(|| {
++        Self::from_bytes(bytes, path)?.resolve_node()
++    }
++
++    fn from_bytes(bytes: &[u8], path: &Path) -> Result<Self> {
++        serde_json::from_slice(bytes)
++            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
++    }
++
++    fn resolve_node(mut self) -> Result<Self> {
++        if !self.node.is_file() {
++            self.node = node_on_path().ok_or_else(|| {
 +                failure(format!(
 +                    "node_unavailable: {} is missing and no node is on PATH",
-+                    config.node.display()
++                    self.node.display()
 +                ))
 +            })?;
 +        }
-+        Ok(config)
++        Ok(self)
 +    }
 +}
 +
@@ -102301,6 +102308,7 @@ index 000000000..573dffa0f
 +    access: Vec<Value>,
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
 +    brokered: Option<(Instant, String, Authority)>,
++    callback_configuration: Mutex<Option<(FileStamp, String, ModConfiguration)>>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -102795,6 +102803,7 @@ index 000000000..573dffa0f
 +            access: Vec::new(),
 +            admissions: BTreeMap::new(),
 +            brokered: None,
++            callback_configuration: Mutex::default(),
 +            required_surfaces: Arc::default(),
 +            intercepted_surfaces: Arc::default(),
 +            codex_config: Arc::default(),
@@ -103074,6 +103083,7 @@ index 000000000..573dffa0f
 +            brokered.as_ref().map(|(_, grants)| grants),
 +            self.managed.as_ref().map(|managed| &managed.policy),
 +            &mut rejected,
++            store::package,
 +        )?;
 +        drop(selection_profile);
 +        let adapters = Self::adapters(&selected);
@@ -103476,6 +103486,7 @@ index 000000000..573dffa0f
 +        grants: Option<&BTreeSet<String>>,
 +        managed: Option<&ManagedPolicy>,
 +        rejected: &mut Vec<ModRejection>,
++        inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
 +    ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
 +        let rank = |scope: &str| match scope {
 +            MANAGED_SCOPE => 2,
@@ -103503,7 +103514,7 @@ index 000000000..573dffa0f
 +                        selection.path.display()
 +                    )));
 +                }
-+                let (package, source, hash) = store::package(&selection.path)?;
++                let (package, source, hash) = inspect(&selection.path)?;
 +                if hash != selection.sha256 {
 +                    return Err(failure(if administered {
 +                        format!(
@@ -104167,15 +104178,14 @@ index 000000000..573dffa0f
 +            None => Vec::new(),
 +        };
 +        let mut administered = selections.len();
-+        let path = self.store.root.join("mods.json");
-+        let bytes = store::read(&path, 65_536);
++        let (configuration_sha256, configuration) = self.callback_configuration();
 +        let hash = format!("{}:{}:{}:{}:{}",
-+            digest(bytes.as_deref().unwrap_or_default()),
++            configuration_sha256,
 +            brokered.as_ref().map_or(0, |(generation, _)| *generation),
 +            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
 +            deployment.generation,
 +            self.project.as_deref().unwrap_or(Path::new("")).display());
-+        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
++        match configuration {
 +            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
 +            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
 +            _ => return Err(failure("callback_authority_changed")),
@@ -104190,6 +104200,7 @@ index 000000000..573dffa0f
 +            brokered.as_ref().map(|(_, grants)| grants),
 +            managed.as_ref().map(|managed| &managed.policy),
 +            &mut Vec::new(),
++            |path| store::verified_package(path).map(|(package, hash)| (package, String::new(), hash)),
 +        )?;
 +        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
 +            return Err(failure("callback_authority_changed"));
@@ -104201,6 +104212,29 @@ index 000000000..573dffa0f
 +            return Err(failure("callback_authority_changed"));
 +        }
 +        Ok(())
++    }
++
++    /// The digest and parse of `mods.json` for callback checks, re-read only when its stamp changes.
++    fn callback_configuration(&self) -> (String, Result<ModConfiguration>) {
++        let path = self.store.root.join("mods.json");
++        let stamp = configuration_stamp(&path);
++        let mut cached = self
++            .callback_configuration
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
++            && stamp == *cached_stamp
++        {
++            return (sha256.clone(), configuration.clone().resolve_node());
++        }
++        let bytes = store::read(&path, 65_536);
++        let sha256 = digest(bytes.as_deref().unwrap_or_default());
++        let configuration = bytes.and_then(|bytes| ModConfiguration::from_bytes(&bytes, &path));
++        *cached = match (stamp, &configuration) {
++            (Some(stamp), Ok(configuration)) => Some((stamp, sha256.clone(), configuration.clone())),
++            _ => None,
++        };
++        (sha256, configuration.and_then(ModConfiguration::resolve_node))
 +    }
 +
 +    fn begin(
@@ -109528,10 +109562,10 @@ index 000000000..383bf405b
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..ad841afbf
+index 000000000..a920735be
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2880 @@
+@@ -0,0 +1,2900 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -110116,38 +110150,6 @@ index 000000000..ad841afbf
 +                    .unwrap_or_default();
 +                validate_settings(&resolved.package, &settings)?;
 +                resolved.locked.settings = settings;
-+                // Thread and checkout state migrates at its next callback, so it needs a handler.
-+                // An adapter-wrapped package cannot be inspected outside the host.
-+                if previous
-+                    .is_some_and(|locked| locked.state_version != resolved.package.state_version)
-+                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
-+                    && resolved.package.adapter.is_none()
-+                {
-+                    let (package, source, _, assets) =
-+                        store::package_with_assets(&resolved.locked.path)?;
-+                    let selection = ModSelection {
-+                        path: resolved.locked.path.clone(),
-+                        sha256: resolved.locked.integrity.clone(),
-+                        enabled: false,
-+                        capabilities: package.capabilities.clone(),
-+                        settings: resolved.locked.settings.clone(),
-+                        scope: request.scope.clone(),
-+                        secret_environment: Vec::new(),
-+                        expires_at: None,
-+                        tier: None,
-+                    };
-+                    let loaded =
-+                        packages::detached(package, source, assets, selection, Value::Null);
-+                    packages::migration_registrations(&config.node, &loaded).map_err(|error| {
-+                        if error.to_string() != "explicit_migration_handler_required" {
-+                            return error;
-+                        }
-+                        failure(format!(
-+                            "migration_handler_required: {} changes its {} state_version without a migrate handler",
-+                            resolved.package.id, resolved.package.state_scope
-+                        ))
-+                    })?;
-+                }
 +                let state_migration_required = previous.is_some_and(|locked| {
 +                    locked.state_version != resolved.package.state_version
 +                        && self
@@ -110211,12 +110213,14 @@ index 000000000..ad841afbf
 +        confirmation: &str,
 +    ) -> Result<ModPackageLock> {
 +        let online = !request.offline;
++        let scope = request.scope.clone();
 +        let plan = self.package_plan_locked(request, false, None)?;
 +        if plan.confirmation != confirmation {
 +            return Err(failure("package_plan_changed: preview again"));
 +        }
 +        let mut lock = self.read_package_lock()?;
 +        let mut config = self.configuration()?;
++        require_migration_handlers(&lock, &plan, &scope, &config.node)?;
 +        let mut selection_ids = config
 +            .mods
 +            .iter()
@@ -112295,6 +112299,56 @@ index 000000000..ad841afbf
 +            || locked.settings.clone(),
 +            |selection| selection.settings.clone(),
 +        )
++}
++
++/// Thread and checkout state migrates at its next callback, so an update that changes its
++/// `state_version` needs a `migrate` handler. The new source runs only once the preview is
++/// confirmed; an adapter-wrapped package cannot be inspected outside the host.
++fn require_migration_handlers(
++    existing: &ModPackageLock,
++    plan: &ModPackagePlan,
++    scope: &str,
++    node: &Path,
++) -> Result<()> {
++    for locked in &plan.packages {
++        if !existing
++            .packages
++            .get(&locked.id)
++            .is_some_and(|previous| previous.state_version != locked.state_version)
++        {
++            continue;
++        }
++        let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
++        if !matches!(package.state_scope.as_str(), "thread" | "checkout")
++            || package.adapter.is_some()
++            || !package.capabilities.iter().any(|c| c == "store")
++        {
++            continue;
++        }
++        let state_scope = package.state_scope.clone();
++        let selection = ModSelection {
++            path: locked.path.clone(),
++            sha256: locked.integrity.clone(),
++            enabled: false,
++            capabilities: package.capabilities.clone(),
++            settings: locked.settings.clone(),
++            scope: scope.to_owned(),
++            secret_environment: Vec::new(),
++            expires_at: None,
++            tier: None,
++        };
++        let loaded = packages::detached(package, source, assets, selection, Value::Null);
++        packages::migration_registrations(node, &loaded).map_err(|error| {
++            if error.to_string() != "explicit_migration_handler_required" {
++                return error;
++            }
++            failure(format!(
++                "migration_handler_required: {} changes its {state_scope} state_version without a migrate handler",
++                locked.id
++            ))
++        })?;
++    }
++    Ok(())
 +}
 +
 +#[cfg(test)]
@@ -115226,10 +115280,10 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..679bb4d1a
+index 000000000..c5ff65310
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,964 @@
+@@ -0,0 +1,979 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
@@ -115354,13 +115408,28 @@ index 000000000..679bb4d1a
 +delete globalThis.__exchange;
 +delete globalThis.__clock;
 +delete globalThis.__utf8;
-+// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
++// Host limits are UTF-8 bytes; the outer encoder only ever sees a primitive string, so its errors and
++// results never reach mod code, and bytes are copied into the destination in this realm.
++const encoded = text => {
++  try { return new Uint8Array(utf8.encode(text)); } catch { throw new RangeError('TextEncoder input is too large'); }
++};
 +globalThis.TextEncoder = class TextEncoder {
 +  get encoding() { return 'utf-8'; }
-+  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
++  encode(input = '') { return encoded(String(input)); }
 +  encodeInto(source, destination) {
 +    if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
-+    const { read, written } = utf8.encodeInto(String(source), destination);
++    const text = String(source);
++    const bytes = encoded(text);
++    let read = 0;
++    let written = 0;
++    for (const char of text) {
++      const code = char.codePointAt(0);
++      const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
++      if (written + size > destination.length) break;
++      for (let index = 0; index < size; index++) destination[written + index] = bytes[written + index];
++      written += size;
++      read += char.length;
++    }
 +    return { read, written };
 +  }
 +};
@@ -131754,10 +131823,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..f0f2ce896
+index 000000000..65013b3f9
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,6032 @@
+@@ -0,0 +1,6042 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -132171,11 +132240,21 @@ index 000000000..f0f2ce896
 +    let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
 +    let mut runtime = host(&temp);
 +    let generation = runtime.generation();
++    runtime
++        .invoke("fixture", generation, "command", "count", Value::Null)
++        .unwrap();
 +    std::fs::write(
 +        path.join("index.ts"),
 +        "export default () => { throw new Error('broken') }",
 +    )
 +    .unwrap();
++    assert!(
++        runtime
++            .invoke("fixture", generation, "command", "count", Value::Null)
++            .unwrap_err()
++            .to_string()
++            .contains("untrusted_source")
++    );
 +    trust(&store, &path, &["commands", "store"]);
 +    assert!(runtime.reload().is_err());
 +    assert_eq!(runtime.generation(), generation);
@@ -137792,10 +137871,10 @@ index 000000000..f0f2ce896
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..bea73fce5
+index 000000000..36afc72da
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,2270 @@
+@@ -0,0 +1,2290 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -140052,9 +140131,11 @@ index 000000000..bea73fce5
 +        serde_json::to_vec_pretty(&manifest).unwrap(),
 +    )
 +    .unwrap();
++    // The preview never runs the updated source; the handler check runs once it is confirmed.
++    let plan = store.package_plan(install.clone()).unwrap();
 +    assert!(
 +        store
-+            .package_plan(install.clone())
++            .package_apply(install.clone(), &plan.confirmation)
 +            .unwrap_err()
 +            .to_string()
 +            .contains("migration_handler_required: fixture changes its thread state_version")
@@ -140064,7 +140145,25 @@ index 000000000..bea73fce5
 +        "export default api => api.on('migrate', () => api.state.set(null))\n",
 +    )
 +    .unwrap();
-+    assert_eq!(store.package_plan(install).unwrap().action, "update");
++    let plan = store.package_plan(install.clone()).unwrap();
++    assert_eq!(plan.action, "update");
++    store.package_apply(install, &plan.confirmation).unwrap();
++
++    // Without `store` a thread-scoped package has no state to migrate.
++    let stateless = mod_package(&root, "stateless", "1.0.0", &["commands"], json!([]));
++    let manifest_path = stateless.join("mod.json");
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
++    let install = request(&stateless, &["commands"]);
++    let plan = store.package_plan(install.clone()).unwrap();
++    store.package_apply(install.clone(), &plan.confirmation).unwrap();
++    manifest["version"] = json!("1.1.0");
++    manifest["state_version"] = json!(2);
++    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
++    let plan = store.package_plan(install.clone()).unwrap();
++    store.package_apply(install, &plan.confirmation).unwrap();
 +}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644
@@ -156499,7 +156598,7 @@ index 000000000..7ca758b14
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..dd9191141
+index 000000000..488bb7a3f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,1602 @@
@@ -157205,7 +157304,7 @@ index 000000000..dd9191141
 +    if !active() {
 +        return None;
 +    }
-+    let mut snapshot = ModViewSnapshot::read(&paths.evidence.join("mod-view.json")).ok()?;
++    let mut snapshot = crate::omd::view_snapshot(&paths.evidence.join("mod-view.json"))?;
 +    snapshot.rendered_ms = ModViewSnapshot::clock();
 +    if command.is_none() {
 +        reload_active(runtime, active);
@@ -161261,10 +161360,10 @@ index 000000000..d514561ff
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..9b9dcb17e
+index 000000000..e838d714e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4615 @@
+@@ -0,0 +1,4620 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -162318,14 +162417,19 @@ index 000000000..9b9dcb17e
 +}
 +
 +pub(crate) fn preserve_preview(preview: &ModViewSnapshot, incoming: &ModViewSnapshot) -> bool {
++    let bootstrap = incoming.input.is_null()
++        && incoming.diagnostics.is_empty()
++        && !incoming
++            .view
++            .panels
++            .iter()
++            .any(|panel| panel.title == "Mod errors");
 +    if preview.input["event"] == "startup" {
-+        return incoming.input.is_null()
-+            && incoming.diagnostics.is_empty()
-+            && !incoming
-+                .view
-+                .panels
-+                .iter()
-+                .any(|panel| panel.title == "Mod errors");
++        return bootstrap;
++    }
++    // A host view that has never rendered (a fresh session's first write) has nothing to draw yet.
++    if bootstrap && incoming.revision == 0 && incoming.rendered_ms == 0 {
++        return true;
 +    }
 +    // Only a failure of a mod that drew the preview replaces it; other failures wait for the next render.
 +    let recovering = incoming
@@ -166195,10 +166299,10 @@ index 000000000..b127214e8
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..e0694e717
+index 000000000..4d5341f4d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2416 @@
+@@ -0,0 +1,2435 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -166647,6 +166751,25 @@ index 000000000..e0694e717
 +    assert!(!preserve_preview(&preview, &later));
 +    later.view.sites.clear();
 +    assert!(!preserve_preview(&preview, &later));
++}
++
++#[test]
++fn a_never_rendered_host_view_keeps_the_drawn_preview() {
++    let mut preview = snapshot(serde_json::json!({}));
++    preview.input = serde_json::json!({"event":"reload"});
++    preview.epoch = 7;
++    preview.revision = 3;
++    preview.rendered_ms = 1_000;
++    let mut fresh = ModViewSnapshot {
++        epoch: 8,
++        ..ModViewSnapshot::default()
++    };
++    assert!(preserve_preview(&preview, &fresh));
++    fresh.revision = 1;
++    assert!(!preserve_preview(&preview, &fresh));
++    fresh.revision = 0;
++    fresh.diagnostics = vec!["mod failed".into()];
++    assert!(!preserve_preview(&preview, &fresh));
 +}
 +
 +#[test]
@@ -168768,10 +168891,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..43be18a83
+index 000000000..9c4bda799
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,771 @@
+@@ -0,0 +1,792 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -168830,6 +168953,27 @@ index 000000000..43be18a83
 +    (true, snapshot)
 +}
 +
++/// The parsed `mod-view.json` at `path`, re-read only when its stamp changes.
++pub(crate) fn view_snapshot(path: &Path) -> Option<codex_omd::ModViewSnapshot> {
++    type Cached = (PathBuf, FileStamp, codex_omd::ModViewSnapshot);
++    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
++    let stamp = file_stamp(path);
++    let mut cache = CACHE
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let (Some(stamp), Some((cached_path, cached, snapshot))) = (stamp, cache.as_ref())
++        && cached_path == path
++        && *cached == stamp
++    {
++        return Some(snapshot.clone());
++    }
++    let snapshot = codex_omd::ModViewSnapshot::read(path).ok();
++    *cache = stamp
++        .zip(snapshot.clone())
++        .map(|(stamp, snapshot)| (path.to_owned(), stamp, snapshot));
++    snapshot
++}
++
 +/// Modification time, length and (on Unix) inode, so a same-tick rename-over still reads as a change.
 +type FileStamp = (std::time::SystemTime, u64, u64);
 +
@@ -168843,7 +168987,7 @@ index 000000000..43be18a83
 +}
 +
 +fn read_mod_snapshot(view: &Path, status: &Path) -> codex_omd::ModViewSnapshot {
-+    let mut snapshot = codex_omd::ModViewSnapshot::read(view).unwrap_or_default();
++    let mut snapshot = view_snapshot(view).unwrap_or_default();
 +    if let Some(status) = bounded_read(status, 262_144)
 +        .ok()
 +        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())

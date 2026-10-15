@@ -122,13 +122,28 @@ const utf8 = globalThis.__utf8;
 delete globalThis.__exchange;
 delete globalThis.__clock;
 delete globalThis.__utf8;
-// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
+// Host limits are UTF-8 bytes; the outer encoder only ever sees a primitive string, so its errors and
+// results never reach mod code, and bytes are copied into the destination in this realm.
+const encoded = text => {
+  try { return new Uint8Array(utf8.encode(text)); } catch { throw new RangeError('TextEncoder input is too large'); }
+};
 globalThis.TextEncoder = class TextEncoder {
   get encoding() { return 'utf-8'; }
-  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
+  encode(input = '') { return encoded(String(input)); }
   encodeInto(source, destination) {
     if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
-    const { read, written } = utf8.encodeInto(String(source), destination);
+    const text = String(source);
+    const bytes = encoded(text);
+    let read = 0;
+    let written = 0;
+    for (const char of text) {
+      const code = char.codePointAt(0);
+      const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+      if (written + size > destination.length) break;
+      for (let index = 0; index < size; index++) destination[written + index] = bytes[written + index];
+      written += size;
+      read += char.length;
+    }
     return { read, written };
   }
 };

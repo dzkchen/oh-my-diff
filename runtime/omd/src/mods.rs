@@ -2315,17 +2315,24 @@ pub struct ModConfiguration {
 
 impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-        let mut config: Self = serde_json::from_slice(bytes)
-            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
-        if !config.node.is_file() {
-            config.node = node_on_path().ok_or_else(|| {
+        Self::from_bytes(bytes, path)?.resolve_node()
+    }
+
+    fn from_bytes(bytes: &[u8], path: &Path) -> Result<Self> {
+        serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
+    }
+
+    fn resolve_node(mut self) -> Result<Self> {
+        if !self.node.is_file() {
+            self.node = node_on_path().ok_or_else(|| {
                 failure(format!(
                     "node_unavailable: {} is missing and no node is on PATH",
-                    config.node.display()
+                    self.node.display()
                 ))
             })?;
         }
-        Ok(config)
+        Ok(self)
     }
 }
 
@@ -2702,6 +2709,7 @@ pub struct ModHost {
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
+    callback_configuration: Mutex<Option<(FileStamp, String, ModConfiguration)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3196,6 +3204,7 @@ impl ModHost {
             access: Vec::new(),
             admissions: BTreeMap::new(),
             brokered: None,
+            callback_configuration: Mutex::default(),
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
             codex_config: Arc::default(),
@@ -3475,6 +3484,7 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             self.managed.as_ref().map(|managed| &managed.policy),
             &mut rejected,
+            store::package,
         )?;
         drop(selection_profile);
         let adapters = Self::adapters(&selected);
@@ -3877,6 +3887,7 @@ impl ModHost {
         grants: Option<&BTreeSet<String>>,
         managed: Option<&ManagedPolicy>,
         rejected: &mut Vec<ModRejection>,
+        inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
         let rank = |scope: &str| match scope {
             MANAGED_SCOPE => 2,
@@ -3904,7 +3915,7 @@ impl ModHost {
                         selection.path.display()
                     )));
                 }
-                let (package, source, hash) = store::package(&selection.path)?;
+                let (package, source, hash) = inspect(&selection.path)?;
                 if hash != selection.sha256 {
                     return Err(failure(if administered {
                         format!(
@@ -4568,15 +4579,14 @@ impl ModHost {
             None => Vec::new(),
         };
         let mut administered = selections.len();
-        let path = self.store.root.join("mods.json");
-        let bytes = store::read(&path, 65_536);
+        let (configuration_sha256, configuration) = self.callback_configuration();
         let hash = format!("{}:{}:{}:{}:{}",
-            digest(bytes.as_deref().unwrap_or_default()),
+            configuration_sha256,
             brokered.as_ref().map_or(0, |(generation, _)| *generation),
             managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
             deployment.generation,
             self.project.as_deref().unwrap_or(Path::new("")).display());
-        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
+        match configuration {
             Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
             _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
             _ => return Err(failure("callback_authority_changed")),
@@ -4591,6 +4601,7 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             managed.as_ref().map(|managed| &managed.policy),
             &mut Vec::new(),
+            |path| store::verified_package(path).map(|(package, hash)| (package, String::new(), hash)),
         )?;
         let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
             return Err(failure("callback_authority_changed"));
@@ -4602,6 +4613,29 @@ impl ModHost {
             return Err(failure("callback_authority_changed"));
         }
         Ok(())
+    }
+
+    /// The digest and parse of `mods.json` for callback checks, re-read only when its stamp changes.
+    fn callback_configuration(&self) -> (String, Result<ModConfiguration>) {
+        let path = self.store.root.join("mods.json");
+        let stamp = configuration_stamp(&path);
+        let mut cached = self
+            .callback_configuration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
+            && stamp == *cached_stamp
+        {
+            return (sha256.clone(), configuration.clone().resolve_node());
+        }
+        let bytes = store::read(&path, 65_536);
+        let sha256 = digest(bytes.as_deref().unwrap_or_default());
+        let configuration = bytes.and_then(|bytes| ModConfiguration::from_bytes(&bytes, &path));
+        *cached = match (stamp, &configuration) {
+            (Some(stamp), Ok(configuration)) => Some((stamp, sha256.clone(), configuration.clone())),
+            _ => None,
+        };
+        (sha256, configuration.and_then(ModConfiguration::resolve_node))
     }
 
     fn begin(
