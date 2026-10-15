@@ -30,6 +30,24 @@
       "source": "mods/first-party/omd_advisor",
       "version": "0.4.0-preview.1"
     },
+    "omd_auto_continue": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "store",
+        "events",
+        "approvals",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "233d7b223708eeaf667b894e0884adeba6a2229c5857de9279e99807310b0ef0",
+        "mod.json": "0c34850a6cc08872b6de5ddef9f74524f07ab7b095e63d1a8e8d517077445600"
+      },
+      "id": "omd_auto_continue",
+      "package_sha256": "7666ef21270bcbfe65dbab7bc1f0d729e7b438346d9e3bf849391bd0a8d2d201",
+      "source": "mods/first-party/omd_auto_continue",
+      "version": "0.1.0-preview.1"
+    },
     "omd_claude_cli": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

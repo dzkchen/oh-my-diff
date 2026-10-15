@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "omd_auto_continue",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Declines an approval or answers a question nobody responded to within two minutes, so a turn keeps going while you are away",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_auto_continue"},
+  "capabilities": ["store", "events", "approvals", "terminal"],
+  "subscriptions": {
+    "channels": ["omd_auto_continue/*"],
+    "app": ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request"]
+  },
+  "compatibility": {"required_features": ["app_respond_v1", "app_v1", "events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "timeout_seconds": {"type": "number", "default": 120}
+    },
+    "additionalProperties": false
+  }
+}

@@ -77,6 +77,7 @@
         "terminal_lists_v1",
         "adapters_v1",
         "app_v1",
+        "app_respond_v1",
         "approval_v1",
         "unrestricted_process_v1",
         "delegated_approval_v1",
@@ -895,6 +896,7 @@
       "label": "OMD+",
       "first_party_installed": [
         "omd_advisor",
+        "omd_auto_continue",
         "omd_claude_cli",
         "omd_continue",
         "omd_frecency",
@@ -917,6 +919,7 @@
         "omd_workflow"
       ],
       "first_party_default_active": [
+        "omd_auto_continue",
         "omd_idle_compact",
         "omd_inspector",
         "omd_logo",
@@ -939,6 +942,10 @@
     "omd_advisor": {
       "version": "0.4.0-preview.1",
       "source": "mods/first-party/omd_advisor"
+    },
+    "omd_auto_continue": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_auto_continue"
     },
     "omd_claude_cli": {
       "version": "0.2.0-preview.3",
@@ -1092,6 +1099,15 @@
       "id": "omd_statusline",
       "kind": "mod",
       "path": "mods/first-party/omd_statusline",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_auto_continue",
+      "kind": "mod",
+      "path": "mods/first-party/omd_auto_continue",
       "tier": "default-active",
       "profiles": [
         "full"

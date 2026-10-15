@@ -401,6 +401,8 @@ export interface HostOperations {
   'sidecars.status': { arguments: { id: string }; result: Json };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
+  /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
+  'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };

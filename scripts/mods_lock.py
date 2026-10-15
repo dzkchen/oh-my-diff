@@ -9,8 +9,8 @@ from scripts import install_support as support
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/mods.lock.json"
 NODE = "24.18.0"
-PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_continue", "omd_frecency", "omd_idle_compact", "omd_inspector",
-            "omd_logo", "omd_lsp_sync", "omd_lsp_view", "omd_model_picker", "omd_mods", "omd_plan_panel",
+PACKAGES = ("omd_advisor", "omd_auto_continue", "omd_claude_cli", "omd_continue", "omd_frecency", "omd_idle_compact",
+            "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_lsp_view", "omd_model_picker", "omd_mods", "omd_plan_panel",
             "omd_plan_removal", "omd_preview", "omd_privacy", "omd_profiles", "omd_statusline", "omd_tool_lines",
             "omd_update", "omd_usage", "omd_workflow")
 
