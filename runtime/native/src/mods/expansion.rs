@@ -604,7 +604,7 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
     let mut accounts = lead
         .host
         .accounts
-        .0
+        .by_thread
         .lock()
         .map_err(|_| "account lock poisoned")?;
     let account = accounts

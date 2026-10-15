@@ -1097,7 +1097,7 @@ fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
     lead.host.refresh_session(&lead.session).unwrap();
     assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
     assert_eq!(
-        lead.host.accounts.0.lock().unwrap()[&lead.thread.to_string()]
+        lead.host.accounts.by_thread.lock().unwrap()[&lead.thread.to_string()]
             .lead_routes
             .iter()
             .map(|route| route.model.as_str())

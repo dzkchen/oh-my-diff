@@ -1,18 +1,27 @@
 use std::fs::{self, File};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub struct Lease {
     _file: File,
 }
 
-pub fn directory() -> PathBuf {
-    let uid = rustix::process::geteuid().as_raw();
+fn temporary() -> PathBuf {
     PathBuf::from("/tmp")
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join(format!("codex-workspace-leases-{uid}"))
+}
+
+fn name() -> String {
+    format!(
+        "codex-workspace-leases-{}",
+        rustix::process::geteuid().as_raw()
+    )
+}
+
+pub fn directory() -> PathBuf {
+    temporary().join(name())
 }
 
 fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
@@ -39,12 +48,11 @@ fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
 fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
     let (_, key) = identity(path, exclusive)?;
     let uid = rustix::process::geteuid().as_raw();
-    let directory = directory();
-    match fs::DirBuilder::new().mode(0o700).create(&directory) {
-        Ok(()) => (),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-        Err(error) => return Err(error),
-    }
+    let directory = crate::workspace::private_path(
+        &temporary(),
+        &[&name()],
+        "workspace_ownership_unavailable",
+    )?;
     let directory_file = File::from(rustix::fs::open(
         &directory,
         rustix::fs::OFlags::RDONLY
