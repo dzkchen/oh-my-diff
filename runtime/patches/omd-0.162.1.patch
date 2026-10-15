@@ -101777,10 +101777,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..8aaae1cfb
+index 000000000..504e2d9e3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5977 @@
+@@ -0,0 +1,6006 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -104559,6 +104559,8 @@ index 000000000..8aaae1cfb
 +    node: PathBuf,
 +    virtual_time_ms: Option<u64>,
 +    started: Instant,
++    /// Older thread or checkout state to migrate before the callback, outside the runtime lock.
++    migrate: bool,
 +}
 +
 +fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
@@ -104686,8 +104688,16 @@ index 000000000..8aaae1cfb
 +    let mut replay: Vec<Value> = Vec::new();
 +    loop {
 +        let replaying = !replay.is_empty();
-+        let invocation =
++        let mut invocation =
 +            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
++        if invocation.migrate {
++            invocation.loaded.state = packages::migrate_state(
++                &invocation.node,
++                &invocation.loaded,
++                &invocation.location,
++                active,
++            )?;
++        }
 +        let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
 +        bridge::run(
 +            &invocation.node,
@@ -105326,9 +105336,19 @@ index 000000000..8aaae1cfb
 +                    &loaded.selection.scope,
 +                    bound_thread().as_deref(),
 +                );
-+                loaded.state = self
++                loaded.state = match self
 +                    .store
-+                    .scoped_state(&location, loaded.package.state_version)?;
++                    .scoped_state(&location, loaded.package.state_version)
++                {
++                    // Older thread or checkout state migrates at the mod's first callback there.
++                    Err(error)
++                        if matches!(location, store::StateLocation::Directory(..))
++                            && error.to_string().starts_with("state_migration_required") =>
++                    {
++                        Value::Null
++                    }
++                    state => state?,
++                };
 +                let inspection_profile = Profile::new("inspection_callback");
 +                let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
 +                drop(inspection_profile);
@@ -106384,9 +106404,17 @@ index 000000000..8aaae1cfb
 +        }
 +        self.check_callback_authority(&loaded)?;
 +        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
-+        loaded.state = self
++        let mut migrate = false;
++        loaded.state = match self
 +            .store
-+            .scoped_state(&location, loaded.package.state_version)?;
++            .scoped_state(&location, loaded.package.state_version)
++        {
++            Err(error) if packages::migratable(&loaded, &location, &error) => {
++                migrate = true;
++                Value::Null
++            }
++            state => state?,
++        };
 +        let key = self.ui_key(&loaded, thread);
 +        if loaded
 +            .ui
@@ -106426,6 +106454,7 @@ index 000000000..8aaae1cfb
 +            node: self.node.clone(),
 +            virtual_time_ms: self.virtual_time_ms,
 +            started: Instant::now(),
++            migrate,
 +        })
 +    }
 +
@@ -111672,10 +111701,10 @@ index 000000000..383bf405b
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..e5a9b69c2
+index 000000000..ad841afbf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2848 @@
+@@ -0,0 +1,2880 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -112260,6 +112289,38 @@ index 000000000..e5a9b69c2
 +                    .unwrap_or_default();
 +                validate_settings(&resolved.package, &settings)?;
 +                resolved.locked.settings = settings;
++                // Thread and checkout state migrates at its next callback, so it needs a handler.
++                // An adapter-wrapped package cannot be inspected outside the host.
++                if previous
++                    .is_some_and(|locked| locked.state_version != resolved.package.state_version)
++                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
++                    && resolved.package.adapter.is_none()
++                {
++                    let (package, source, _, assets) =
++                        store::package_with_assets(&resolved.locked.path)?;
++                    let selection = ModSelection {
++                        path: resolved.locked.path.clone(),
++                        sha256: resolved.locked.integrity.clone(),
++                        enabled: false,
++                        capabilities: package.capabilities.clone(),
++                        settings: resolved.locked.settings.clone(),
++                        scope: request.scope.clone(),
++                        secret_environment: Vec::new(),
++                        expires_at: None,
++                        tier: None,
++                    };
++                    let loaded =
++                        packages::detached(package, source, assets, selection, Value::Null);
++                    packages::migration_registrations(&config.node, &loaded).map_err(|error| {
++                        if error.to_string() != "explicit_migration_handler_required" {
++                            return error;
++                        }
++                        failure(format!(
++                            "migration_handler_required: {} changes its {} state_version without a migrate handler",
++                            resolved.package.id, resolved.package.state_scope
++                        ))
++                    })?;
++                }
 +                let state_migration_required = previous.is_some_and(|locked| {
 +                    locked.state_version != resolved.package.state_version
 +                        && self
@@ -114526,10 +114587,10 @@ index 000000000..e5a9b69c2
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..43dfcce76
+index 000000000..692ce93bc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,320 @@
 +use super::*;
 +
 +impl ModStore {
@@ -114657,60 +114718,20 @@ index 000000000..43dfcce76
 +            return Err(failure("migration_requires_different_state_version"));
 +        }
 +        let to = package.state_version;
-+        let mut loaded = Loaded {
++        let mut loaded = detached(
 +            package,
-+            source: source.into(),
-+            assets: Arc::new(store::asset_map(assets)),
-+            request_metadata: Arc::new(OnceLock::new()),
-+            selection: selection.clone(),
-+            adapter: None,
-+            state: previous["value"].clone(),
-+            ui: None,
-+            ui_state: Value::Null,
-+            ui_revision: 0,
-+            ui_clears: 0,
-+            command_view: None,
-+            registrations: Registrations::default(),
-+            source_use: ModSourceUse::default(),
-+            unused_grants: Vec::new(),
-+            unused_environment: Vec::new(),
-+            withheld: Vec::new(),
-+            error: None,
-+            telemetry: ModTelemetry::default(),
-+        };
-+        let inspected = ModHost::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
-+        ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
-+        if inspected.state != loaded.state
-+            || !inspected
-+                .registrations
-+                .events
-+                .iter()
-+                .any(|e| e == "migrate")
-+        {
-+            return Err(failure("explicit_migration_handler_required"));
-+        }
-+        loaded.registrations = inspected.registrations.clone();
-+        let reply = ModHost::run(
-+            &config.node,
-+            &loaded,
-+            "migrate",
-+            "",
-+            json!({"from":from,"to":to}),
-+            &|| true,
-+        )?;
-+        if reply.registrations != inspected.registrations {
-+            return Err(failure("migration_changed_registration"));
-+        }
-+        let state_name = ModStore::state_name(&loaded.package.id, &selection.scope);
-+        let backup = format!(
-+            "{}-backup-{}",
-+            state_name,
-+            digest(&serde_json::to_vec(&previous)?)
++            source,
++            assets,
++            selection.clone(),
++            previous["value"].clone(),
 +        );
++        loaded.registrations = migration_registrations(&config.node, &loaded)?;
++        let state = run_migration(&config.node, &loaded, from, &|| true)?;
++        let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
 +        self.write(&backup, &previous)?;
 +        self.write(
 +            &name,
-+            &json!({"schema":MOD_STATE_STORAGE_SCHEMA_VERSION,"version":to,"value":reply.state}),
++            &json!({"schema":MOD_STATE_STORAGE_SCHEMA_VERSION,"version":to,"value":state}),
 +        )?;
 +        Ok(
 +            json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup),
@@ -114784,6 +114805,111 @@ index 000000000..43dfcce76
 +            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
 +        )
 +    }
++}
++
++/// Whether a state read failed on thread or checkout state stored at another version that
++/// the mod can migrate. Store-scope state migrates only through `ModStore::migrate`.
++pub(super) fn migratable(
++    loaded: &Loaded,
++    location: &store::StateLocation,
++    error: &io::Error,
++) -> bool {
++    matches!(location, store::StateLocation::Directory(..))
++        && error.to_string().starts_with("state_migration_required")
++        && loaded.package.capabilities.iter().any(|c| c == "store")
++        && loaded.registrations.events.iter().any(|e| e == "migrate")
++}
++
++/// Runs the mod's `migrate` handler on its older thread or checkout state and stores the result.
++pub(super) fn migrate_state(
++    node: &Path,
++    loaded: &Loaded,
++    location: &store::StateLocation,
++    active: &dyn Fn() -> bool,
++) -> Result<Value> {
++    let store::StateLocation::Directory(directory, name) = location else {
++        return Err(failure(
++            "state_migration_required: previous state preserved",
++        ));
++    };
++    store::migrate_directory_state(
++        directory,
++        name,
++        loaded.package.state_version,
++        |from, value| {
++            let mut previous = loaded.clone();
++            previous.state = value;
++            previous.registrations = migration_registrations(node, &previous)?;
++            run_migration(node, &previous, from, active)
++        },
++    )
++}
++
++/// A package loaded outside the host, for inspection and migration only.
++pub(super) fn detached(
++    package: ModPackage,
++    source: String,
++    assets: BTreeMap<String, String>,
++    selection: ModSelection,
++    state: Value,
++) -> Loaded {
++    Loaded {
++        package,
++        source: source.into(),
++        assets: Arc::new(store::asset_map(assets)),
++        request_metadata: Arc::new(OnceLock::new()),
++        selection,
++        adapter: None,
++        state,
++        ui: None,
++        ui_state: Value::Null,
++        ui_revision: 0,
++        ui_clears: 0,
++        command_view: None,
++        registrations: Registrations::default(),
++        source_use: ModSourceUse::default(),
++        unused_grants: Vec::new(),
++        unused_environment: Vec::new(),
++        withheld: Vec::new(),
++        error: None,
++        telemetry: ModTelemetry::default(),
++    }
++}
++
++pub(super) fn migration_registrations(node: &Path, loaded: &Loaded) -> Result<Registrations> {
++    let inspected = ModHost::run(node, loaded, "inspect", "", Value::Null, &|| true)?;
++    ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
++    if inspected.state != loaded.state
++        || !inspected
++            .registrations
++            .events
++            .iter()
++            .any(|e| e == "migrate")
++    {
++        return Err(failure("explicit_migration_handler_required"));
++    }
++    Ok(inspected.registrations)
++}
++
++fn run_migration(
++    node: &Path,
++    loaded: &Loaded,
++    from: u64,
++    active: &dyn Fn() -> bool,
++) -> Result<Value> {
++    let to = loaded.package.state_version;
++    let reply = ModHost::run(
++        node,
++        loaded,
++        "migrate",
++        "",
++        json!({"from":from,"to":to}),
++        active,
++    )?;
++    if reply.registrations != loaded.registrations {
++        return Err(failure("migration_changed_registration"));
++    }
++    Ok(reply.state)
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
@@ -118243,10 +118369,10 @@ index 000000000..679bb4d1a
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..f3186e68f
+index 000000000..c65297cf6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1340 @@
+@@ -0,0 +1,1386 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -118608,12 +118734,58 @@ index 000000000..f3186e68f
 +    if &directory_state(directory, name, version)? != previous {
 +        return Err(failure("state_conflict: reload before retry"));
 +    }
++    replace_directory_file(directory, name, &stored_state(version, value)?)
++}
++
++fn stored_state(version: u32, value: &Value) -> Result<Vec<u8>> {
 +    let bytes = serde_json::to_vec(
 +        &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
 +    )?;
 +    if bytes.len() > STATE_LIMIT {
 +        return Err(failure("state_limit"));
 +    }
++    Ok(bytes)
++}
++
++/// Rewrites thread or checkout state stored at another version through `migrate`, keeping the
++/// previous file beside it. The handler runs unlocked; a concurrent change wins and is re-read.
++pub(super) fn migrate_directory_state(
++    directory: &Path,
++    name: &str,
++    version: u32,
++    migrate: impl FnOnce(u64, Value) -> Result<Value>,
++) -> Result<Value> {
++    let path = directory.join(name);
++    let bytes = read(&path, STATE_LIMIT as u64)?;
++    let previous: Value = serde_json::from_slice(&bytes)?;
++    let from = match previous["version"].as_u64() {
++        Some(from)
++            if previous["schema"] == super::MOD_STATE_STORAGE_SCHEMA_VERSION
++                && from != u64::from(version) =>
++        {
++            from
++        }
++        _ => return state_value(&bytes, version),
++    };
++    let value = migrate(from, previous["value"].clone())?;
++    let migrated = stored_state(version, &value)?;
++    if directory.canonicalize()? != directory {
++        return Err(failure("state_directory_invalid"));
++    }
++    let _lock = lock(&directory.join(".lock"))?;
++    if read(&path, STATE_LIMIT as u64)? != bytes {
++        return directory_state(directory, name, version);
++    }
++    replace_directory_file(
++        directory,
++        &format!("{name}-backup-{}", digest(&bytes)),
++        &bytes,
++    )?;
++    replace_directory_file(directory, name, &migrated)?;
++    Ok(value)
++}
++
++fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<()> {
 +    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
 +    let _ = std::fs::remove_file(&temporary);
 +    let mut file = OpenOptions::new()
@@ -118622,7 +118794,7 @@ index 000000000..f3186e68f
 +        .mode(0o600)
 +        .open(&temporary)?;
 +    let result = (|| {
-+        file.write_all(&bytes)?;
++        file.write_all(bytes)?;
 +        file.sync_all()?;
 +        std::fs::rename(&temporary, directory.join(name))?;
 +        File::open(directory)?.sync_all()
@@ -133781,10 +133953,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..0918dbda5
+index 000000000..f0f2ce896
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,5974 @@
+@@ -0,0 +1,6032 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -134687,6 +134859,64 @@ index 000000000..0918dbda5
 +            .to_string()
 +            .contains("migration_requires_different_state_version")
 +    );
++}
++
++#[test]
++fn thread_state_from_an_older_state_version_migrates_at_its_next_callback() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let path = package(&root, "fixture", COUNTER, &["commands", "store"]);
++    let manifest_path = path.join("mod.json");
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    trust(&store, &path, &["commands", "store"]);
++    let mut runtime = host(&temp);
++    let count = |runtime: &mut ModHost| {
++        let generation = runtime.generation();
++        runtime.invoke(
++            "fixture",
++            generation,
++            "command",
++            "count",
++            json!({"thread_id":"t1"}),
++        )
++    };
++    assert_eq!(count(&mut runtime).unwrap(), json!(1));
++    manifest["state_version"] = json!(2);
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    std::fs::write(
++        path.join("index.ts"),
++        "export default api => { api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to})); api.command('count', () => api.state.get()); }",
++    )
++    .unwrap();
++    trust(&store, &path, &["commands", "store"]);
++    let _thread = codex_omd::StateThread::enter(Some("t1".into()));
++    runtime.reload().unwrap();
++    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
++    assert_eq!(
++        count(&mut runtime).unwrap(),
++        json!({"count":1,"from":1,"to":2})
++    );
++    let directory = root.join("store/data/threads/t1/.state");
++    let stored: Value =
++        serde_json::from_slice(&std::fs::read(directory.join("state-fixture.json")).unwrap())
++            .unwrap();
++    assert_eq!(stored["version"], 2);
++    let backups: Vec<Value> = std::fs::read_dir(&directory)
++        .unwrap()
++        .filter_map(Result::ok)
++        .filter(|entry| {
++            entry
++                .file_name()
++                .to_string_lossy()
++                .starts_with("state-fixture.json-backup-")
++        })
++        .map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap())
++        .collect();
++    assert_eq!(backups, vec![json!({"schema":1,"version":1,"value":1})]);
 +}
 +
 +#[test]
@@ -139761,10 +139991,10 @@ index 000000000..0918dbda5
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 000000000..92495ac84
+index 000000000..bea73fce5
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,2228 @@
+@@ -0,0 +1,2270 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -141992,6 +142222,48 @@ index 000000000..92495ac84
 +        .len();
 +    assert!(size > 65_536 && size <= 524_288);
 +    assert_eq!(store.package_lock().unwrap().packages.len(), 80);
++}
++
++#[test]
++fn thread_state_version_updates_require_a_migrate_handler() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands", "store"], json!([]));
++    let store = store_with_node(&temp);
++    let manifest_path = package.join("mod.json");
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["state_scope"] = json!("thread");
++    std::fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).unwrap(),
++    )
++    .unwrap();
++    let install = request(&package, &["commands", "store"]);
++    let plan = store.package_plan(install.clone()).unwrap();
++    store
++        .package_apply(install.clone(), &plan.confirmation)
++        .unwrap();
++    manifest["version"] = json!("1.1.0");
++    manifest["state_version"] = json!(2);
++    std::fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).unwrap(),
++    )
++    .unwrap();
++    assert!(
++        store
++            .package_plan(install.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("migration_handler_required: fixture changes its thread state_version")
++    );
++    std::fs::write(
++        package.join("main.ts"),
++        "export default api => api.on('migrate', () => api.state.set(null))\n",
++    )
++    .unwrap();
++    assert_eq!(store.package_plan(install).unwrap().action, "update");
 +}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644

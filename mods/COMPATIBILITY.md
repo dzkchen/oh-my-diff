@@ -71,9 +71,11 @@ service versions.
 
 Package code and settings are never rewritten by host compatibility checks.
 State is package-owned and separately versioned. A changed `state_version`
-keeps the mod inactive until its disabled, trusted package runs an explicit
-`migrate` handler. Migration writes a content-addressed backup before the atomic
-state replacement. `omd-mod rollback STORE PACKAGE BACKUP` is also disabled-only,
+keeps a `"store"`-scoped mod inactive until its disabled, trusted package runs an
+explicit `migrate` handler. Thread and checkout state migrates through the same
+handler before the mod's next callback there, and an update that changes their
+`state_version` needs one. Migration writes a content-addressed backup before
+the atomic state replacement. `omd-mod rollback STORE PACKAGE BACKUP` is also disabled-only,
 checks package scope and trust, saves the current state as a forward-recovery
 copy, and atomically restores the selected backup. The package source must then
 be rolled back or upgraded to a release that understands the restored state.

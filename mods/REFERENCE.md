@@ -505,8 +505,15 @@ never run with the home directory or filesystem root as the session directory:
 the host stays off with a notice in `/omd`. `omd-mod command
 STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A callback result,
-including its state, stays within 256 KiB. Package update, migration and rollback commands act on
-`"store"` state only. Migration handlers can import declared package assets by relative path.
+including its state, stays within 256 KiB. The `omd-mod migrate` and `rollback` commands act on
+`"store"` state only. Thread and checkout state stored at another `state_version`
+migrates before the mod's next callback in that thread or checkout: the host runs
+the mod's `migrate` handler (it needs `store`) on it and keeps the previous file
+beside it as `<file>-backup-<sha256>`; until then registration and render reads
+see `null`. A package update that changes the `state_version` of a thread- or
+checkout-scoped mod is refused (`migration_handler_required`) unless the new
+version registers `migrate`; an adapter-wrapped package is not checked.
+Migration handlers can import declared package assets by relative path.
 
 ### Reactive state (`reactive_state_v1`)
 

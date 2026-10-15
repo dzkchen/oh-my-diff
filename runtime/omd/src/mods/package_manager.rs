@@ -582,6 +582,38 @@ impl ModStore {
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
+                // Thread and checkout state migrates at its next callback, so it needs a handler.
+                // An adapter-wrapped package cannot be inspected outside the host.
+                if previous
+                    .is_some_and(|locked| locked.state_version != resolved.package.state_version)
+                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
+                    && resolved.package.adapter.is_none()
+                {
+                    let (package, source, _, assets) =
+                        store::package_with_assets(&resolved.locked.path)?;
+                    let selection = ModSelection {
+                        path: resolved.locked.path.clone(),
+                        sha256: resolved.locked.integrity.clone(),
+                        enabled: false,
+                        capabilities: package.capabilities.clone(),
+                        settings: resolved.locked.settings.clone(),
+                        scope: request.scope.clone(),
+                        secret_environment: Vec::new(),
+                        expires_at: None,
+                        tier: None,
+                    };
+                    let loaded =
+                        packages::detached(package, source, assets, selection, Value::Null);
+                    packages::migration_registrations(&config.node, &loaded).map_err(|error| {
+                        if error.to_string() != "explicit_migration_handler_required" {
+                            return error;
+                        }
+                        failure(format!(
+                            "migration_handler_required: {} changes its {} state_version without a migrate handler",
+                            resolved.package.id, resolved.package.state_scope
+                        ))
+                    })?;
+                }
                 let state_migration_required = previous.is_some_and(|locked| {
                     locked.state_version != resolved.package.state_version
                         && self

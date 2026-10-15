@@ -2776,6 +2776,8 @@ struct Invocation {
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
+    /// Older thread or checkout state to migrate before the callback, outside the runtime lock.
+    migrate: bool,
 }
 
 fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
@@ -2903,8 +2905,16 @@ fn invoke(
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
-        let invocation =
+        let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        if invocation.migrate {
+            invocation.loaded.state = packages::migrate_state(
+                &invocation.node,
+                &invocation.loaded,
+                &invocation.location,
+                active,
+            )?;
+        }
         let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
         bridge::run(
             &invocation.node,
@@ -3543,9 +3553,19 @@ impl ModHost {
                     &loaded.selection.scope,
                     bound_thread().as_deref(),
                 );
-                loaded.state = self
+                loaded.state = match self
                     .store
-                    .scoped_state(&location, loaded.package.state_version)?;
+                    .scoped_state(&location, loaded.package.state_version)
+                {
+                    // Older thread or checkout state migrates at the mod's first callback there.
+                    Err(error)
+                        if matches!(location, store::StateLocation::Directory(..))
+                            && error.to_string().starts_with("state_migration_required") =>
+                    {
+                        Value::Null
+                    }
+                    state => state?,
+                };
                 let inspection_profile = Profile::new("inspection_callback");
                 let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
                 drop(inspection_profile);
@@ -4601,9 +4621,17 @@ impl ModHost {
         }
         self.check_callback_authority(&loaded)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
-        loaded.state = self
+        let mut migrate = false;
+        loaded.state = match self
             .store
-            .scoped_state(&location, loaded.package.state_version)?;
+            .scoped_state(&location, loaded.package.state_version)
+        {
+            Err(error) if packages::migratable(&loaded, &location, &error) => {
+                migrate = true;
+                Value::Null
+            }
+            state => state?,
+        };
         let key = self.ui_key(&loaded, thread);
         if loaded
             .ui
@@ -4643,6 +4671,7 @@ impl ModHost {
             node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
             started: Instant::now(),
+            migrate,
         })
     }
 

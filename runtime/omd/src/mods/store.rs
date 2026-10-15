@@ -359,12 +359,58 @@ fn write_directory_state(
     if &directory_state(directory, name, version)? != previous {
         return Err(failure("state_conflict: reload before retry"));
     }
+    replace_directory_file(directory, name, &stored_state(version, value)?)
+}
+
+fn stored_state(version: u32, value: &Value) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(
         &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
     )?;
     if bytes.len() > STATE_LIMIT {
         return Err(failure("state_limit"));
     }
+    Ok(bytes)
+}
+
+/// Rewrites thread or checkout state stored at another version through `migrate`, keeping the
+/// previous file beside it. The handler runs unlocked; a concurrent change wins and is re-read.
+pub(super) fn migrate_directory_state(
+    directory: &Path,
+    name: &str,
+    version: u32,
+    migrate: impl FnOnce(u64, Value) -> Result<Value>,
+) -> Result<Value> {
+    let path = directory.join(name);
+    let bytes = read(&path, STATE_LIMIT as u64)?;
+    let previous: Value = serde_json::from_slice(&bytes)?;
+    let from = match previous["version"].as_u64() {
+        Some(from)
+            if previous["schema"] == super::MOD_STATE_STORAGE_SCHEMA_VERSION
+                && from != u64::from(version) =>
+        {
+            from
+        }
+        _ => return state_value(&bytes, version),
+    };
+    let value = migrate(from, previous["value"].clone())?;
+    let migrated = stored_state(version, &value)?;
+    if directory.canonicalize()? != directory {
+        return Err(failure("state_directory_invalid"));
+    }
+    let _lock = lock(&directory.join(".lock"))?;
+    if read(&path, STATE_LIMIT as u64)? != bytes {
+        return directory_state(directory, name, version);
+    }
+    replace_directory_file(
+        directory,
+        &format!("{name}-backup-{}", digest(&bytes)),
+        &bytes,
+    )?;
+    replace_directory_file(directory, name, &migrated)?;
+    Ok(value)
+}
+
+fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
     let mut file = OpenOptions::new()
@@ -373,7 +419,7 @@ fn write_directory_state(
         .mode(0o600)
         .open(&temporary)?;
     let result = (|| {
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         std::fs::rename(&temporary, directory.join(name))?;
         File::open(directory)?.sync_all()
