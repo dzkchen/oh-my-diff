@@ -40,23 +40,64 @@ pub(super) struct Child {
     pub(super) task: Arc<Task>,
     pub(super) owner: String,
     pub(super) active: bool,
+    pub(super) runtime: tokio::runtime::Handle,
 }
 
 impl Drop for Child {
     fn drop(&mut self) {
-        if !self.active {
-            return;
+        if self.active {
+            stop_dropped(
+                &self.runtime,
+                self.thread.clone(),
+                self.task.clone(),
+                self.owner.clone(),
+                false,
+                None,
+                (),
+            );
         }
-        let thread = self.thread.clone();
-        let task = self.task.clone();
-        let owner = self.owner.clone();
-        tokio::spawn(async move {
-            let _ = thread.submit(Op::Interrupt).await;
-            let _ = thread.submit(Op::CleanBackgroundTerminals).await;
-            let _ = tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await;
-            let _ = task.finish_worker(&owner);
-        });
     }
+}
+
+pub(super) async fn shutdown(
+    thread: &codex_core::CodexThread,
+) -> Result<codex_protocol::error::Result<()>, tokio::time::error::Elapsed> {
+    let _ = thread.submit(Op::CleanBackgroundTerminals).await;
+    tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await
+}
+
+/// Interrupts and shuts down a worker's thread, then stops the worker and, with `discard`, drops its unconsumed result.
+pub(super) async fn stop_worker(
+    thread: &codex_core::CodexThread,
+    task: &Task,
+    worker: &str,
+    discard: bool,
+) {
+    let _ = thread.submit(Op::Interrupt).await;
+    let _ = shutdown(thread).await;
+    let _ = task.finish_worker(worker);
+    if discard {
+        let _ = task.discard_worker_result(worker);
+    }
+}
+
+/// `stop_worker` for `Drop`, on the runtime that owns the thread: awaits `job` first and drops `keep` last.
+pub(super) fn stop_dropped(
+    runtime: &tokio::runtime::Handle,
+    thread: Arc<codex_core::CodexThread>,
+    task: Arc<Task>,
+    worker: String,
+    discard: bool,
+    job: Option<tokio::task::JoinHandle<()>>,
+    keep: impl Send + 'static,
+) {
+    runtime.spawn(async move {
+        if let Some(job) = job {
+            let _ = job.await;
+        }
+        stop_worker(&thread, &task, &worker, discard).await;
+        drop(keep);
+    });
 }
 
 pub(super) fn intersect(

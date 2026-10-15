@@ -3197,6 +3197,22 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         return;
     };
     let extension = mods(&fixture.core);
+    fixture
+        .core
+        .persist_runtime
+        .lock()
+        .unwrap()
+        .refresh_guarded(&|| true)
+        .unwrap();
+    assert!(!extension.rewrites_persisted_text());
+    let held = fixture.core.persist_runtime.lock().unwrap();
+    assert!(extension.rewrites_persisted_text());
+    drop(held);
+    let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
+    install(&store, &fixture._dir.path().join("packages"), &Package {
+        id: "late", capabilities: &["commands"], manifest: Value::Null,
+        source: "export default api => api.command('noop', () => null)",
+    });
     assert!(extension.rewrites_persisted_text());
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
@@ -3215,6 +3231,7 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         panic!("poison the persist runtime");
     })
     .join();
+    assert!(extension.rewrites_persisted_text());
     assert_eq!(extension.rewrite_persisted_text(input()).await, None);
     fixture
         .core
@@ -3292,6 +3309,7 @@ async fn persistence_admits_new_requirements_without_main_lane_refresh() {
     }];
     let input = || codex_extension_api::PersistedTextInput { thread_id: "t", entries: &entries };
     assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, ["masked"]);
+    assert!(extension.rewrites_persisted_text());
     assert!(fixture.core.runtime.lock().unwrap().intercepts("history_persist").is_none());
     std::fs::write(fixture.core.host.root.join("mods.json"), "{").unwrap();
     assert_eq!(extension.rewrite_persisted_text(input()).await.unwrap().texts, [codex_omd::PERSIST_WITHHELD]);
@@ -3443,6 +3461,7 @@ async fn http_read_drop_releases_the_handle_and_stream_slot() {
                     Err(error) => panic!("{error}"),
                 }
             };
+            socket.set_nonblocking(false).unwrap();
             socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
             let mut request = [0; 4096];
             socket.read(&mut request).unwrap();
@@ -3491,6 +3510,7 @@ async fn concurrent_http_opens_share_the_last_stream_slot() {
                     Err(error) => panic!("{error}"),
                 }
             };
+            socket.set_nonblocking(false).unwrap();
             socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
             let mut request = [0; 4096];
             socket.read(&mut request).unwrap();
