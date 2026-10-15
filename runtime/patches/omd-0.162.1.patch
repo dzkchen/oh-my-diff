@@ -41168,10 +41168,10 @@ index 000000000..aef1c863b
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 000000000..a184bcda3
+index 000000000..883738460
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,931 @@
+@@ -0,0 +1,932 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -41234,6 +41234,7 @@ index 000000000..a184bcda3
 +/// Operations the headless host answers itself or never delegates.
 +const NOT_DELEGATED: &[&str] = &[
 +    "app.request",
++    "app.respond",
 +    "prompts.consent",
 +    "terminal.notify",
 +    "terminal.notice",
@@ -42459,7 +42460,7 @@ index 000000000..1463ec371
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..a1c985cb7
+index 000000000..e946f406b
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
 @@ -0,0 +1,362 @@
@@ -42776,7 +42777,7 @@ index 000000000..a1c985cb7
 +                return Ok(());
 +            }
 +            _ if client_surface::USER_ONLY_OPERATIONS.contains(&operation)
-+                || operation == "prompts.consent" =>
++                || matches!(operation, "prompts.consent" | "app.respond") =>
 +            {
 +                return Err(client_surface::needs_terminal_error(operation));
 +            }
@@ -85168,10 +85169,10 @@ index 000000000..ad0c3ef84
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 000000000..0b25b668f
+index 000000000..d8a1ea703
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,574 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -85330,6 +85331,83 @@ index 000000000..0b25b668f
 +
 +pub fn server_request_routed(method: &str) -> bool {
 +    TABLE.server_requests.contains(method)
++}
++
++/// Checks a mod's answer to a pending server request: approvals and elicitations may only be
++/// declined or cancelled (approving stays with the `approve` grant), permissions only granted
++/// nothing, and `requestUserInput` only answered with bounded text.
++pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
++    let refused = |reason: &str| Err(format!("app_response_refused: {reason}"));
++    let object = result
++        .as_object()
++        .ok_or_else(|| "app_response_refused: result must be an object".to_owned())?;
++    let only = |keys: &[&str]| object.keys().all(|key| keys.contains(&key.as_str()));
++    match method {
++        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
++            if only(&["decision"])
++                && matches!(
++                    object.get("decision").and_then(Value::as_str),
++                    Some("decline" | "cancel")
++                )
++            {
++                Ok(())
++            } else {
++                refused("approvals accept only {decision: 'decline' | 'cancel'}")
++            }
++        }
++        "item/permissions/requestApproval" => {
++            if only(&["permissions"])
++                && object
++                    .get("permissions")
++                    .and_then(Value::as_object)
++                    .is_some_and(|value| value.is_empty())
++            {
++                Ok(())
++            } else {
++                refused("permission requests accept only {permissions: {}}")
++            }
++        }
++        "mcpServer/elicitation/request" => {
++            let empty = |key: &str| object.get(key).is_none_or(Value::is_null);
++            if only(&["action", "content", "_meta"])
++                && matches!(
++                    object.get("action").and_then(Value::as_str),
++                    Some("decline" | "cancel")
++                )
++                && empty("content")
++                && empty("_meta")
++            {
++                Ok(())
++            } else {
++                refused("elicitations accept only {action: 'decline' | 'cancel'}")
++            }
++        }
++        "item/tool/requestUserInput" => {
++            let answers = object.get("answers").and_then(Value::as_object);
++            let valid = only(&["answers"])
++                && answers.is_some_and(|answers| {
++                    answers.len() <= 16
++                        && answers.values().all(|answer| {
++                            answer.as_object().is_some_and(|answer| {
++                                answer.len() == 1
++                                    && answer.get("answers").and_then(Value::as_array).is_some_and(
++                                        |items| {
++                                            items.len() <= 16 && items.iter().all(Value::is_string)
++                                        },
++                                    )
++                            })
++                        })
++                });
++            if !valid {
++                refused("requestUserInput accepts only {answers: {id: {answers: string[]}}}")
++            } else if result.to_string().len() > 16_384 {
++                refused("answers exceed 16384 bytes")
++            } else {
++                Ok(())
++            }
++        }
++        _ => refused("method is not answerable"),
++    }
 +}
 +
 +pub fn notification_patterns_match(pattern: &str) -> bool {
@@ -85671,10 +85749,10 @@ index 000000000..0b25b668f
 +mod tests;
 diff --git a/codex-rs/omd/src/app_routes_tests.rs b/codex-rs/omd/src/app_routes_tests.rs
 new file mode 100644
-index 000000000..2551e2cd7
+index 000000000..d533588ef
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes_tests.rs
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,503 @@
 +use super::*;
 +
 +struct Fixture {
@@ -86101,6 +86179,82 @@ index 000000000..2551e2cd7
 +    assert_eq!(roots[0], repository);
 +    assert!(roots.contains(&base.join("linked")));
 +    assert_eq!(session_roots(&base), vec![base.clone()]);
++}
++
++#[test]
++fn mod_responses_never_grant_authority() {
++    let allowed = [
++        (
++            "item/commandExecution/requestApproval",
++            json!({"decision": "decline"}),
++        ),
++        (
++            "item/fileChange/requestApproval",
++            json!({"decision": "cancel"}),
++        ),
++        (
++            "item/permissions/requestApproval",
++            json!({"permissions": {}}),
++        ),
++        (
++            "mcpServer/elicitation/request",
++            json!({"action": "decline", "content": null}),
++        ),
++        (
++            "item/tool/requestUserInput",
++            json!({"answers": {"q1": {"answers": ["No reply; use your judgment."]}}}),
++        ),
++    ];
++    for (method, result) in allowed {
++        assert_eq!(response_allowed(method, &result), Ok(()), "{method}");
++    }
++    let refused = [
++        (
++            "item/commandExecution/requestApproval",
++            json!({"decision": "accept"}),
++        ),
++        (
++            "item/commandExecution/requestApproval",
++            json!({"decision": "acceptForSession"}),
++        ),
++        (
++            "item/commandExecution/requestApproval",
++            json!({"decision": "decline", "extra": 1}),
++        ),
++        (
++            "item/fileChange/requestApproval",
++            json!({"decision": "accept"}),
++        ),
++        (
++            "item/permissions/requestApproval",
++            json!({"permissions": {"network": {"enabled": true}}}),
++        ),
++        (
++            "item/permissions/requestApproval",
++            json!({"permissions": {}, "scope": "session"}),
++        ),
++        (
++            "mcpServer/elicitation/request",
++            json!({"action": "accept", "content": {}}),
++        ),
++        (
++            "item/tool/requestUserInput",
++            json!({"answers": {"q1": {"answers": [1]}}}),
++        ),
++        (
++            "item/tool/requestUserInput",
++            json!({"answers": {"q1": {"answers": ["x".repeat(20_000)]}}}),
++        ),
++        ("thread/start", json!({})),
++    ];
++    for (method, result) in refused {
++        assert!(
++            response_allowed(method, &result)
++                .unwrap_err()
++                .starts_with("app_response_refused"),
++            "{method} {result}"
++        );
++    }
 +}
 diff --git a/codex-rs/omd/src/bin/omd-broker.rs b/codex-rs/omd/src/bin/omd-broker.rs
 new file mode 100644
@@ -88188,10 +88342,10 @@ index 000000000..a8f5a2022
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..ea6bb778b
+index 000000000..2ad1198d4
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,954 @@
+@@ -0,0 +1,949 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -88203,7 +88357,6 @@ index 000000000..ea6bb778b
 +use std::io::BufReader;
 +use std::io::Read;
 +use std::io::Write;
-+use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::MetadataExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::os::unix::net::UnixListener;
@@ -88513,14 +88666,6 @@ index 000000000..ea6bb778b
 +    state: Mutex<()>,
 +}
 +
-+fn private_directory(path: &Path) -> io::Result<PathBuf> {
-+    fs::DirBuilder::new()
-+        .recursive(true)
-+        .mode(0o700)
-+        .create(path)?;
-+    Ok(path.to_path_buf())
-+}
-+
 +fn write_private(path: &Path, value: &Value) -> io::Result<()> {
 +    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
 +    let mut file = fs::OpenOptions::new()
@@ -88658,7 +88803,11 @@ index 000000000..ea6bb778b
 +        if !Path::new(store).is_absolute() {
 +            return Err(failure("authority_request_invalid"));
 +        }
-+        private_directory(&self.root.join("stores").join(sha256(store.as_bytes())))
++        crate::workspace::private_path(
++            &self.root,
++            &["stores", &sha256(store.as_bytes())],
++            "authority_directory_invalid",
++        )
 +    }
 +
 +    fn profiles(&self, arguments: &Value) -> io::Result<crate::credentials::CredentialProfiles> {
@@ -88849,7 +88998,7 @@ index 000000000..ea6bb778b
 +            }
 +            "anchor.get" | "anchor.append" | "anchor.seed" => {
 +                let stream = text(&arguments, "stream")?;
-+                let path = private_directory(&self.root.join("anchors"))?
++                let path = crate::workspace::private_path(&self.root, &["anchors"], "authority_directory_invalid")?
 +                    .join(format!("{}.json", sha256(stream.as_bytes())));
 +                let mut anchor = read_json(
 +                    &path,
@@ -89148,10 +89297,10 @@ index 000000000..ea6bb778b
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..7d7b7d901
+index 000000000..8c44b3548
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,424 @@
+@@ -0,0 +1,436 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -89576,6 +89725,18 @@ index 000000000..7d7b7d901
 +    assert!(pinned.is_ok(), "{pinned:?}");
 +    assert_eq!(other.unwrap_err().to_string(), "authority_peer_unverified");
 +}
++
++#[test]
++fn symlinked_broker_directories_are_refused() {
++    let (temp, socket, store) = serve(Arc::new(TestGate::default()));
++    let root = temp.path().canonicalize().unwrap().join("broker");
++    std::os::unix::fs::symlink(&store, root.join("stores")).unwrap();
++    let mut client = Client::at(&socket).unwrap();
++    assert_eq!(
++        error(client.call("grants.get", json!({"store": store}))),
++        "authority_directory_invalid"
++    );
++}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
 index 000000000..644ba9d74
@@ -89880,10 +90041,10 @@ index 000000000..783beb0b1
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..fab048083
+index 000000000..44c2ae650
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1422 @@
+@@ -0,0 +1,1423 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -89934,6 +90095,7 @@ index 000000000..fab048083
 +
 +pub const SURFACE_OPERATIONS: &[&str] = &[
 +    "app.request",
++    "app.respond",
 +    "credentials.request",
 +    "terminal.notify",
 +    "terminal.show_thread",
@@ -91308,10 +91470,10 @@ index 000000000..fab048083
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..06d1ab758
+index 000000000..a87b6e27e
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,820 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -91754,6 +91916,9 @@ index 000000000..06d1ab758
 +    let _serial = hub_test();
 +    let seen = Arc::new(Mutex::new(Vec::new()));
 +    let log = seen.clone();
++    // Parallel raster tests redraw the global hub too; count only this test's redraw.
++    let redrawing = Arc::new(AtomicBool::new(false));
++    let armed = redrawing.clone();
 +    let observer = register_observer(Arc::new(move |observed| {
 +        let entry = match observed {
 +            Observed::Roster => json!(
@@ -91763,6 +91928,7 @@ index 000000000..06d1ab758
 +                    .map(|entry| entry["name"].clone())
 +                    .collect::<Vec<_>>()
 +            ),
++            Observed::Redraw if !armed.load(Ordering::SeqCst) => return,
 +            Observed::Redraw => json!("redraw"),
 +            Observed::Mirrored { .. } => return,
 +        };
@@ -91800,7 +91966,9 @@ index 000000000..06d1ab758
 +        roster().iter().any(|entry| entry["id"] == "roster-client"
 +            && entry["operations"] == json!(["terminal.notify"]))
 +    );
++    redrawing.store(true, Ordering::SeqCst);
 +    redraw();
++    redrawing.store(false, Ordering::SeqCst);
 +    drop(second);
 +    drop(observer);
 +    drop(attach(entry("unobserved")));
@@ -99508,10 +99676,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..573dffa0f
+index 000000000..c98ee6678
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6014 @@
+@@ -0,0 +1,6016 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -99871,6 +100039,7 @@ index 000000000..573dffa0f
 +    "terminal_lists_v1",
 +    "adapters_v1",
 +    "app_v1",
++    "app_respond_v1",
 +    "approval_v1",
 +    "unrestricted_process_v1",
 +    "delegated_approval_v1",
@@ -99984,6 +100153,7 @@ index 000000000..573dffa0f
 +    "sidecars.status",
 +    "sidecars.stop",
 +    "app.request",
++    "app.respond",
 +    "app.routes",
 +    "workspace.watch",
 +    "workspace.unwatch",
@@ -106580,10 +106750,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..2df092f2f
+index 000000000..1cb23fc3b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,440 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -106631,6 +106801,7 @@ index 000000000..2df092f2f
 +                .and_then(crate::app_routes::route)
 +                .map(|route| route.class.as_str())
 +                .ok_or_else(|| failure("app_method_unrouted")),
++            "app.respond" => Ok("approvals"),
 +            "app.routes" | "session.info" | "tools.list" => Ok("inventory"),
 +            "time.sleep" => Ok("events"),
 +            "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
@@ -108967,10 +109138,10 @@ index 000000000..3d364042c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 000000000..f00650973
+index 000000000..75a4b4a0c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,212 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -109036,6 +109207,7 @@ index 000000000..f00650973
 +    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/44"}]}},
++    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
 +    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/59"}},
 +    "workspace.unwatch": {"arguments":{"$ref":"#/$defs/59"},"result":{"$ref":"#/$defs/57"}},
@@ -145452,10 +145624,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..6fa492af2
+index 000000000..847a27e72
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2148 @@
+@@ -0,0 +1,2176 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -146655,6 +146827,28 @@ index 000000000..6fa492af2
 +                    Err(error) => Err(format!("app_params_invalid: {error}")),
 +                }
 +            }
++            "app.respond" => {
++                let result = call.arguments["result"].clone();
++                let request = crate::mod_surface::pending_server_request(
++                    &call.caller,
++                    &call.arguments["request_id"],
++                )
++                .and_then(|method| codex_omd::app_routes::response_allowed(&method, &result))
++                .and_then(|()| {
++                    serde_json::from_value::<codex_app_server_protocol::RequestId>(
++                        call.arguments["request_id"].clone(),
++                    )
++                    .map_err(|error| format!("app_request_id_invalid: {error}"))
++                });
++                match request {
++                    Ok(request_id) => app_server
++                        .resolve_server_request(request_id, result)
++                        .await
++                        .map(|()| json!({"resolved": true}))
++                        .map_err(|error| error.to_string()),
++                    Err(error) => Err(error),
++                }
++            }
 +            "terminal.notify" => Ok(self.mod_notify(tui, &call.arguments)),
 +            "terminal.show_thread" => match call.arguments["thread_id"]
 +                .as_str()
@@ -147320,7 +147514,10 @@ index 000000000..6fa492af2
 +        let image = root.join("image.png");
 +        let mut bytes = Vec::new();
 +        image::RgbaImage::new(3, 2)
-+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
++            .write_to(
++                &mut std::io::Cursor::new(&mut bytes),
++                image::ImageFormat::Png,
++            )
 +            .unwrap();
 +        std::fs::write(&image, &bytes).unwrap();
 +        let mut draft =
@@ -147329,7 +147526,10 @@ index 000000000..6fa492af2
 +        let reference = draft["attachments"][0]["resource"].clone();
 +        assert!(draft["attachments"][0].get("path").is_none());
 +        assert_eq!(
-+            (&draft["attachments"][0]["width"], &draft["attachments"][0]["height"]),
++            (
++                &draft["attachments"][0]["width"],
++                &draft["attachments"][0]["height"]
++            ),
 +            (&json!(3), &json!(2))
 +        );
 +        std::fs::remove_file(&image).unwrap();
@@ -159549,10 +159749,10 @@ index 000000000..bea0a86a5
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..0cf44ccd0
+index 000000000..d4dcda300
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1055 @@
+@@ -0,0 +1,1082 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -159705,9 +159905,13 @@ index 000000000..0cf44ccd0
 +    validate_call_classified(call).map_err(|error| error.message)
 +}
 +
-+pub(crate) fn validate_call_classified(call: &SurfaceCall) -> Result<(), codex_omd::client_surface::BlitError> {
++pub(crate) fn validate_call_classified(
++    call: &SurfaceCall,
++) -> Result<(), codex_omd::client_surface::BlitError> {
 +    if !call.lifetime.active() {
-+        return Err(codex_omd::client_surface::BlitError::retryable("callback_cancelled_or_expired"));
++        return Err(codex_omd::client_surface::BlitError::retryable(
++            "callback_cancelled_or_expired",
++        ));
 +    }
 +    if !(call.validity.0)() {
 +        return Err("client_context_changed".into());
@@ -159716,14 +159920,18 @@ index 000000000..0cf44ccd0
 +    if let Some(admitted) = &call.lifetime.admission
 +        && admitted["source"] != binding["source"]
 +    {
-+        return Err(codex_omd::client_surface::BlitError::retryable("client_surface_admission_changed"));
++        return Err(codex_omd::client_surface::BlitError::retryable(
++            "client_surface_admission_changed",
++        ));
 +    }
 +    if call.lifetime.binding.as_ref() != Some(&binding)
 +        || (call.caller != codex_omd::broker::HOST_CALLER
 +            && (binding["source"].is_null()
 +                || call.thread.is_some() && call.thread != current_thread()))
 +    {
-+        return Err(codex_omd::client_surface::BlitError::retryable("client_surface_context_changed"));
++        return Err(codex_omd::client_surface::BlitError::retryable(
++            "client_surface_context_changed",
++        ));
 +    }
 +    Ok(())
 +}
@@ -159845,6 +160053,26 @@ index 000000000..0cf44ccd0
 +        json!({"request_id": request_id, "phase": "requested", "params": params, "resolution": null}),
 +        true,
 +    );
++}
++
++/// The method of a server request that is still pending and that `caller` subscribes to.
++pub(crate) fn pending_server_request(caller: &str, request_id: &Value) -> Result<String, String> {
++    with(|state| {
++        refresh_subscribers(state);
++        let method = state
++            .requested
++            .get(&request_id.to_string())
++            .cloned()
++            .ok_or_else(|| "app_request_not_pending".to_owned())?;
++        state
++            .subscribers
++            .iter()
++            .any(|(id, patterns)| {
++                id == caller && codex_omd::app_routes::subscribed(patterns, &method)
++            })
++            .then_some(method)
++            .ok_or_else(|| "app_request_not_subscribed".to_owned())
++    })
 +}
 +
 +pub(crate) fn server_request_resolved(request_id: Value) {
@@ -160455,8 +160683,7 @@ index 000000000..0cf44ccd0
 +        });
 +        let thread = scope.thread.map(str::to_owned).or_else(current_thread);
 +        let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
-+        let runtime =
-+            crate::mod_runtime::shared_host().map_err(std::io::Error::other)?;
++        let runtime = crate::mod_runtime::shared_host().map_err(std::io::Error::other)?;
 +        let generation = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner)

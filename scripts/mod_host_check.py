@@ -16,7 +16,7 @@ TUI_OPERATIONS = {
     "exec.run", "exec.output_page", "workspace.read", "workspace.list", "workspace.stat",
     "workspace.check_access", "workspace.transaction", "workspace.backup", "workspace.restore",
     "store.get", "store.put", "store.delete", "store.list", "store.export", "store.reset",
-    "app.request", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
+    "app.request", "app.respond", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
     "commands.describe", "commands.invoke", "config.describe", "config.set", "environment.read", "environment.set",
     "sessions.ports", "terminal.import_file", "terminal.image_sample", "composer.read", "composer.write",
     "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.panes",

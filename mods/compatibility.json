@@ -70,6 +70,7 @@
       "terminal_lists_v1",
       "adapters_v1",
       "app_v1",
+      "app_respond_v1",
       "approval_v1",
       "unrestricted_process_v1",
       "delegated_approval_v1",
