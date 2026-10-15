@@ -9,14 +9,16 @@ and `OMD_CONTROLLED_MANIFEST` fail closed. The single artifact is
 `runtime/native/src/request_observer.rs` mirrors the patched
 `codex-rs/codex-api/src/request_observer.rs`.
 
-The host is feature-agnostic. Workflow, analysis, knowledge, guidance, Pi
-resources, Git and terminal presentation are TypeScript mods in
+The host is feature-agnostic. Workflow, Claude, LSP, privacy, previews,
+profiles, the status line and terminal presentation are TypeScript mods in
 [`mods/first-party`](../mods/first-party) over the public API in
 [`mods/REFERENCE.md`](../mods/REFERENCE.md). With zero first-party mods the host
 runs as modded Codex with no feature behavior. `mise run native:ownership`
 fails when a native operation, event, capability, host configuration field,
 production string literal or runner name names a feature, or when native code
-mentions a first-party package ID.
+mentions a first-party package ID. Feature names are the words of the
+first-party package IDs, minus generic host words such as `tool`, `model` and
+`preview`, plus `claude`, `anthropic`, `lsp` and `git`.
 
 The same check enforces direct crate dependency direction across normal,
 build, development and target-specific dependencies, including package aliases:
