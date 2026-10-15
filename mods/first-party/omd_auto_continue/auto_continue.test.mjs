@@ -53,8 +53,13 @@ test('answered, already-resolved and disabled requests are left alone', () => {
   const raced = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('app_request_not_pending') : {} });
   assert.deepEqual(raced.calls.map(([operation]) => operation), ['app.respond', 'events.cancel']);
   assert.deepEqual(raced.state.pending, {});
-  assert.deepEqual(run('app_server_request', request('item/fileChange/requestApproval', 2), null, { settings: { timeout_seconds: 0 } }).calls, []);
-  const viewing = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('client_surface_context_changed') : {} });
+  const off = { settings: { timeout_seconds: 0 } };
+  assert.deepEqual(run('app_server_request', request('item/fileChange/requestApproval', 2), null, off).calls, []);
+  for (const [event, payload] of [['timer', { key: 'deadline' }], ['channel', hop({ request_id: 2, phase: 'requested', kind: 'approval', questions: [] })]]) {
+    const disabled = run(event, payload, state, { ...off, now: NOW + 120_000 });
+    assert.deepEqual([disabled.calls, disabled.state.pending], [[['events.cancel', { key: 'deadline' }]], {}], `${event} answers nothing once the timer is off`);
+  }
+  const viewing = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('client_context_changed') : {} });
   assert.equal(viewing.state.pending['1'].deadline, NOW + 130_000, 'another thread in view retries instead of dropping the request');
   assert.deepEqual(viewing.calls.at(-1), ['events.schedule', { key: 'deadline', delay_ms: 10_000 }]);
   const late = run('timer', { key: 'deadline' }, state, { now: NOW + 3_600_000 });

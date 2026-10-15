@@ -229,7 +229,7 @@
         "rust:omd/tests/managed.rs::managed_sync_refuses_tampered_unavailable_or_scripted_content_and_keeps_the_generation",
         "rust:omd/tests/managed.rs::managed_policy_refuses_user_installs_outside_allowed_sources_and_versions"
       ],
-      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `scripts/profile_acceptance.py --managed-policy`. No vendor remote disable and no hosted fleet service.",
+      "limitations": "Policy comes from the broker or a root-owned file on the machine; per-user isolation and policy files are exercised with fixture stores and a fixture owner, and a deployed broker or root-owned policy only by the maintainer-run `python3 -m scripts.profile_acceptance --managed-policy`. No vendor remote disable and no hosted fleet service.",
       "removal": "An administrator clears or rolls back the policy (`omd-mod policy clear|rollback`, `omd-package policy remove|rollback`); users recover their own mods with `/omd` or `omd-mod reset STORE mods.json` while managed packages keep running."
     },
     {
@@ -583,9 +583,9 @@
       "boundaries": [
         "duplicate_keybindings"
       ],
-      "result": "The first mod in composition order owns each key and later claims are reported as conflicts; bindings may target another mod's command, and a patch that claims a reserved native key is rejected by the host before the terminal sees it.",
+      "result": "The first mod in composition order owns each key and later claims are reported as conflicts; a binding runs only its own mod's commands (one naming another mod's command is dropped), and a patch that claims a reserved native key is rejected by the host before the terminal sees it.",
       "evidence": [
-        "rust:omd/tests/integration.rs::terminal_patches_bind_keys_that_may_target_another_mods_command",
+        "rust:omd/tests/integration.rs::composed_key_bindings_run_only_their_owners_commands",
         "rust:omd/tests/mods.rs::terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
         "patch:native_escape_and_cancel_keys_cannot_be_intercepted"
       ]

@@ -496,16 +496,15 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
     drop(second);
     drop(observer);
     drop(attach(entry("unobserved")));
+    // Raster tests in this binary publish redraws concurrently; only the roster order and this test's redraw are fixed.
+    let seen = seen.lock().unwrap().clone();
+    let redraw = json!("redraw");
+    let rosters: Vec<_> = seen.iter().filter(|entry| **entry != redraw).collect();
     assert_eq!(
-        *seen.lock().unwrap(),
-        vec![
-            json!(["first"]),
-            json!(["second"]),
-            json!(["second"]),
-            json!("redraw"),
-            json!([])
-        ]
+        rosters,
+        [&json!(["first"]), &json!(["second"]), &json!(["second"]), &json!([])]
     );
+    assert_eq!(seen[seen.len() - 2], redraw, "{seen:?}");
 }
 
 #[test]
@@ -577,11 +576,30 @@ fn config_reads_redact_secret_values() {
     let mut config = json!({
         "model": "m",
         "mcp_servers": {"plain": {"command": "plain"}, "web": {"url": "https://user:s8@web.example:8443/mcp?token=s9&mode=full#s10"}, "local": {"url": "http://127.0.0.1:3920/mcp"}, "docs": {"command": "docs", "env": {"TOKEN": "s1"}, "http_headers": {"Authorization": "s2"}, "bearer_token": "s3", "oauth": {"client_id": "id", "client_secret": "s4"}}},
-        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}}
+        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}},
+        "otel": {"exporter": {"otlp-http": {"endpoint": "https://otel.example", "headers": {"x-api": "s12"}}}},
+        "shell_environment_policy": {"inherit": "core", "set": {"DEPLOY": "s13"}},
+        "profiles": {"w": {"mcp_servers": {"x": {"command": "x", "args": ["--auth", "s14"], "env": {"K": "s15"}}}}},
+        "notify": ["notify", "--header=Authorization: Bearer s16"],
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "curl -H 'X-Api-Key: s17' x"}]}]},
+        "tools": {"web": {"auth_token": "s18"}},
+        "developer_instructions": "Be brief.\npassword: s19\nRun tests.",
+        "cli_auth_credentials_store": "keyring",
+        "model_auto_compact_token_limit_scope": "thread",
+        "model_auto_compact_token_limit": 7
     });
     redact_config(&mut config);
     let text = config.to_string();
-    assert!((1..=11).all(|index| !text.contains(&format!("s{index}"))));
+    assert!((1..=19).all(|index| !text.contains(&format!("s{index}"))), "{text}");
+    assert_eq!(
+        config["developer_instructions"],
+        "Be brief.\n<redacted>\nRun tests."
+    );
+    assert_eq!(config["cli_auth_credentials_store"], "keyring");
+    assert_eq!(config["model_auto_compact_token_limit_scope"], "thread");
+    assert_eq!(config["model_auto_compact_token_limit"], 7);
+    assert_eq!(config["shell_environment_policy"]["inherit"], "core");
+    assert_eq!(config["notify"][0], "notify");
     assert_eq!(config["mcp_servers"]["docs"]["env"]["TOKEN"], "<redacted>");
     assert_eq!(config["mcp_servers"]["docs"]["oauth"]["client_id"], "id");
     assert_eq!(
@@ -597,6 +615,21 @@ fn config_reads_redact_secret_values() {
         "http://127.0.0.1:3920/<redacted>"
     );
     assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
+}
+
+#[test]
+fn hook_lists_redact_secret_commands() {
+    let mut hooks = json!({"data": [{"cwd": "/r", "warnings": [], "errors": [], "hooks": [
+        {"key": "user:stop:0", "eventName": "stop", "handlerType": "command", "async": false,
+            "command": "curl -H 'Authorization: Bearer s1' https://hooks.example"},
+        {"key": "user:stop:1", "eventName": "stop", "handlerType": "command", "async": false,
+            "command": "./notify.sh"}
+    ]}]});
+    redact_result("hooks/list", &mut hooks);
+    let hooks = &hooks["data"][0]["hooks"];
+    assert_eq!(hooks[0]["command"], "<redacted>");
+    assert_eq!(hooks[0]["key"], "user:stop:0");
+    assert_eq!(hooks[1]["command"], "./notify.sh");
 }
 
 #[test]

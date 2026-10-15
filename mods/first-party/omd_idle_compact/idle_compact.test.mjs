@@ -8,7 +8,7 @@ const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url),
 const NOW = 1_800_000_000_000;
 const MINUTE = 60_000;
 
-function run(event, payload, state, { settings = {}, now = NOW } = {}) {
+function run(event, payload, state, { settings = {}, now = NOW, answer = () => ({}) } = {}) {
   const calls = [];
   const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
@@ -16,7 +16,9 @@ function run(event, payload, state, { settings = {}, now = NOW } = {}) {
     if (call.operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.162.1', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 1 };
     if (call.operation === 'events.schedule') return call.arguments;
     if (call.operation === 'events.cancel') return { cancelled: true };
-    return {};
+    const value = answer(call);
+    if (value instanceof Error) throw value;
+    return value;
   });
   assert.equal(output.error, undefined, output.error);
   return { state: output.state, calls: calls.filter(call => call.operation !== 'session.info').map(({ operation, arguments: args }) => [operation, args]) };
@@ -43,6 +45,8 @@ test('a large main response arms the timer at 90% of the model, provider-reporte
   for (const patch of [{ provider: 'ollama' }, { usage: { input_tokens: 20_000, output_tokens: 100 } }]) {
     assert.deepEqual(run('model_response', response(patch), null).calls, [['events.cancel', { key: 'idle' }]]);
   }
+  assert.deepEqual(run('model_response', response({ provider: 'ollama' }), null, { settings: { cache_ttl_minutes: 10 } }).calls, [['events.cancel', { key: 'idle' }]],
+    'a configured TTL does not compact a local provider');
   for (const patch of [{ scope: { thread_id: 'child', agent_id: 'a1', kind: 'subagent' } }, { status: 'failed' }]) assert.deepEqual(run('model_response', response(patch), null).calls, []);
 });
 
@@ -53,9 +57,14 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(fire(armed).calls, [compact]);
   assert.equal(fire(armed).state.requested, 'idle');
   assert.deepEqual(fire(armed, NOW + 31 * MINUTE).calls, [], 'an expired cache is not compacted');
+  const elsewhere = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error('client_context_changed') : {} });
+  assert.deepEqual(elsewhere.calls, [compact, ['events.schedule', { key: 'idle', delay_ms: 15_000 }]], 'another thread in view retries');
+  assert.equal(elsewhere.state.requested, null);
 
   const running = run('turn_start', { turn_id: 't2' }, armed).state;
   assert.deepEqual(fire(running).calls, []);
+  const foreign = run('app_server_request', { method: 'item/commandExecution/requestApproval', request_id: 9, phase: 'requested', params: { threadId: 'child' }, resolution: null }, running).state;
+  assert.deepEqual(fire(foreign).calls, [], "another thread's approval does not make this running turn look idle");
   const asked = run('app_server_request', { method: 'item/tool/requestUserInput', request_id: 7, phase: 'requested', params: {}, resolution: null }, running).state;
   assert.deepEqual(fire(asked).calls, [compact]);
   assert.equal(fire(asked).state.requested, 'question');

@@ -443,12 +443,14 @@ pub fn action(
     let core = core()?;
     let snapshot = snapshot(&core)?;
     current(&snapshot, epoch, revision)?;
-    owner(&snapshot, component)?;
+    let owner = owner(&snapshot, component)?.to_owned();
     let ModKeyAction::Command { command, args } =
         resolve_action(&snapshot.view, component, row, value.as_ref())?
     else {
         return Err(format!("action_unavailable: {component}"));
     };
+    let command = codex_omd::owned_command(&owner, &command)
+        .ok_or_else(|| format!("action_unavailable: {component}"))?;
     let lead = session(&core)?;
     let commands = core
         .runtime

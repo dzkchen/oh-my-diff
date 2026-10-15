@@ -45,8 +45,15 @@ export default function activate(api: ModAPI) {
     }
   });
 
+  // Request ids restart with the app-server, and a fork inherits its parent's state: neither may answer a stale id.
+  const reset = () => {
+    api.state.set({ pending: {} });
+    api.host.tryCall('events.cancel', { key: 'deadline' });
+  };
+
   api.on('channel', event => {
     if (event.channel !== `omd_auto_continue/${CHANNEL}`) return;
+    if (!limit) return reset();
     const data = event.data as { request_id: Json; phase: string; kind: Kind; questions: string[] };
     const state = load(), key = JSON.stringify(data.request_id);
     if (data.phase === 'requested') state.pending[key] = { request_id: data.request_id, kind: data.kind, questions: data.questions, deadline: Date.now() + limit };
@@ -56,6 +63,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.on('timer', () => {
+    if (!limit) return reset();
     const state = load(), now = Date.now();
     for (const [key, item] of Object.entries(state.pending)) {
       if (item.deadline > now) continue;
@@ -73,11 +81,6 @@ export default function activate(api: ModAPI) {
     arm(state);
   });
 
-  // Request ids restart with the app-server, and a fork inherits its parent's state: neither may answer a stale id.
-  const reset = () => {
-    api.state.set({ pending: {} });
-    api.host.tryCall('events.cancel', { key: 'deadline' });
-  };
   api.on('start', reset);
   api.on('resume', event => { if (event.restarted) reset(); });
 }

@@ -96,6 +96,7 @@ fn spawn(node: &Path) -> Result<Child> {
             "--enable-source-maps",
             "--no-warnings",
             "--experimental-vm-modules",
+            "--disallow-code-generation-from-strings",
             "--input-type=module",
             "--eval",
             RUNNER,
