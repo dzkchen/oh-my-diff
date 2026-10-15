@@ -144,17 +144,12 @@ fn sha(value: &str) -> bool {
 
 impl ResourceStore<'_> {
     fn blob_directory(&self) -> io::Result<PathBuf> {
-        private_directory(self.directory()?.join("blobs"))
+        crate::workspace::private_path(&self.directory()?, &["blobs"], "blob_directory_invalid")
     }
 
     pub(crate) fn rotating_directory(&self) -> io::Result<PathBuf> {
-        private_directory(self.directory()?.join("rotating"))
+        crate::workspace::private_path(&self.directory()?, &["rotating"], "blob_directory_invalid")
     }
-}
-
-fn private_directory(path: PathBuf) -> io::Result<PathBuf> {
-    crate::resource_data::private_dir(&path, "blob_directory_invalid")?;
-    Ok(path)
 }
 
 fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {

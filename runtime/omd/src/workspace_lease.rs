@@ -7,12 +7,21 @@ pub struct Lease {
     _file: File,
 }
 
-pub fn directory() -> PathBuf {
-    let uid = rustix::process::geteuid().as_raw();
+fn temporary() -> PathBuf {
     PathBuf::from("/tmp")
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join(format!("codex-workspace-leases-{uid}"))
+}
+
+fn name() -> String {
+    format!(
+        "codex-workspace-leases-{}",
+        rustix::process::geteuid().as_raw()
+    )
+}
+
+pub fn directory() -> PathBuf {
+    temporary().join(name())
 }
 
 fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
@@ -39,8 +48,11 @@ fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
 fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
     let (_, key) = identity(path, exclusive)?;
     let uid = rustix::process::geteuid().as_raw();
-    let directory = directory();
-    crate::resource_data::private_dir(&directory, "workspace_ownership_unavailable")?;
+    let directory = crate::workspace::private_path(
+        &temporary(),
+        &[&name()],
+        "workspace_ownership_unavailable",
+    )?;
     let directory_file = File::from(rustix::fs::open(
         &directory,
         rustix::fs::OFlags::RDONLY

@@ -144,8 +144,8 @@ impl CredentialProfiles {
         if store.canonicalize()? != store {
             return Err(failure("credential_root_invalid"));
         }
-        let root = store.join("credentials");
-        crate::resource_data::private_dir(&root, "credential_root_invalid")?;
+        let root =
+            crate::workspace::private_path(store, &["credentials"], "credential_root_invalid")?;
         Ok(Self { root, broker: None })
     }
 
@@ -261,9 +261,7 @@ impl CredentialProfiles {
 
     fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
         index.profile(id)?;
-        let home = self.root.join(id);
-        crate::resource_data::private_dir(&home, "credential_home_invalid")?;
-        Ok(home)
+        crate::workspace::private_path(&self.root, &[id], "credential_home_invalid")
     }
 
     /// A `provider` profile is bound to an `https` origin; the other kinds have a fixed destination.

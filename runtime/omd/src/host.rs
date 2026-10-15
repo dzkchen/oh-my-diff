@@ -609,20 +609,20 @@ impl Host<'_> {
         {
             return Err("exec_output_binding_invalid".into());
         }
-        let mut path = self.data_root.to_owned();
-        for part in [
-            "exec-output",
-            &repository_key(self.repository()),
-            caller.id,
-            thread,
-            caller.source_sha256,
-        ] {
-            path.push(part);
-            crate::resource_data::private_dir(&path, "exec_output_directory_invalid")
-                .map_err(|error| error.to_string())?;
-            if path.canonicalize().map_err(|error| error.to_string())? != path {
-                return Err("exec_output_directory_invalid".into());
-            }
+        let path = crate::workspace::private_path(
+            self.data_root,
+            &[
+                "exec-output",
+                &repository_key(self.repository()),
+                caller.id,
+                thread,
+                caller.source_sha256,
+            ],
+            "exec_output_directory_invalid",
+        )
+        .map_err(|error| error.to_string())?;
+        if path.canonicalize().map_err(|error| error.to_string())? != path {
+            return Err("exec_output_directory_invalid".into());
         }
         Ok(path)
     }
@@ -1557,13 +1557,12 @@ impl Host<'_> {
         {
             return Err("backup_root_invalid".into());
         }
-        let mut path = self.data_root.to_path_buf();
-        for component in ["backups", &repository_key(self.repository()), caller.id] {
-            path.push(component);
-            crate::resource_data::private_dir(&path, "backup_directory_invalid")
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(path)
+        crate::workspace::private_path(
+            self.data_root,
+            &["backups", &repository_key(self.repository()), caller.id],
+            "backup_directory_invalid",
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn save_backup(

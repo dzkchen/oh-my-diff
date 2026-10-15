@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "fed1530d8168e0964ec799fa13cd55f805c8f6b06a99ddecd44f8cdfdeb80b5d"
+    "sha256": "9107af2fbb158b55d020e27714e4cad4edaead853fbfc283c0d6c740e2116658"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1107,7 +1107,7 @@
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
-      "after": "9ed20c55f1bce2e2332bed81bb3f0f2d723b1b9012e0b44f36487dba8bc7156b"
+      "after": "1eedd02110eb347efeda15b704cb69b8953ca2397672ba607d9c427964449a3e"
     },
     "codex-rs/omd/src/blob_store_tests.rs": {
       "before": null,
@@ -1115,7 +1115,7 @@
     },
     "codex-rs/omd/src/broker.rs": {
       "before": null,
-      "after": "f3ebfc4425fd10390ef19a73f77735270d42e6a2958bd97f483beb08e545158c"
+      "after": "3979649690d9d9ac8c961e96978576de0b276b22e39653060ad113f8bb6db37d"
     },
     "codex-rs/omd/src/broker_tests.rs": {
       "before": null,
@@ -1155,7 +1155,7 @@
     },
     "codex-rs/omd/src/credentials.rs": {
       "before": null,
-      "after": "e7ec967768be0cd53bbc09992d195cc1127ecfd992c669b9c3cdb4f4ef8371ee"
+      "after": "664a6f03abd434dc9b92acc9908b1ad36769fc8825fc4c70175e5627f95f2517"
     },
     "codex-rs/omd/src/credentials_tests.rs": {
       "before": null,
@@ -1163,7 +1163,7 @@
     },
     "codex-rs/omd/src/data_store.rs": {
       "before": null,
-      "after": "676a4bd839e37f73eedf1c94e5c419aa1b7cd244deb17f50869b455913096aa4"
+      "after": "cd3d9027d2b82c217e4d296aab3d798c69d090351b2700687b3e2b474a4b8007"
     },
     "codex-rs/omd/src/drafts.rs": {
       "before": null,
@@ -1191,7 +1191,7 @@
     },
     "codex-rs/omd/src/host.rs": {
       "before": null,
-      "after": "ba9165f361752a2b122b16e4b976742ef0a73ddc079313acec432465b9d0c45a"
+      "after": "2fc23c3770d375f96d3393e27be73ca891bfad6c2f2c3a2073f844117b44f114"
     },
     "codex-rs/omd/src/host/environment.rs": {
       "before": null,
@@ -1323,7 +1323,7 @@
     },
     "codex-rs/omd/src/resource_data.rs": {
       "before": null,
-      "after": "06eac1347c4a0893babaf24576a97129643f314f766f2517ee5570fb15cbdef1"
+      "after": "8e235e51cd7604d942457ec9a247ffc74779d8d2d6d3adb9963ae86ad53e84d5"
     },
     "codex-rs/omd/src/scoped_data.rs": {
       "before": null,
@@ -1335,7 +1335,7 @@
     },
     "codex-rs/omd/src/sessions.rs": {
       "before": null,
-      "after": "0be5982780bba4bfc653918e81ee66f0bfc416086fc4602634e3f9c8bab6b5cc"
+      "after": "21b5dc01fb33d9f318c3f61cd6b47b076c02e9ebfb12830734a27889121615c7"
     },
     "codex-rs/omd/src/tool_schema.rs": {
       "before": null,
@@ -1359,11 +1359,11 @@
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
-      "after": "be7fc444405d282d511535508c27d1a1829664b9f8cbad78512d214f9330673a"
+      "after": "e45113ab8386611dfbfd0850f9a3cc546ec0d88ede953c1821bbdfaaba15e3fc"
     },
     "codex-rs/omd/src/workspace_lease.rs": {
       "before": null,
-      "after": "270c89e41ad39ad36d26afdac26763fda5239506dfd576770e71800493bc7635"
+      "after": "c6e488c47f9ee41ce68866f23aa6fda041e8ea3518398efbefe52576b6fadcd4"
     },
     "codex-rs/omd/tests/admission.rs": {
       "before": null,

@@ -247,12 +247,7 @@ impl DataStore<'_> {
         {
             return Err(failure("store_root_invalid"));
         }
-        let mut path = self.root.to_path_buf();
-        for component in components {
-            path.push(component);
-            crate::resource_data::private_dir(&path, "store_directory_invalid")?;
-        }
-        Ok(path)
+        crate::workspace::private_path(self.root, &components, "store_directory_invalid")
     }
 
     fn with_document<T>(
