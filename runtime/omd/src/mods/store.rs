@@ -180,7 +180,6 @@ pub(super) fn package_with_assets(
     Ok((package, source, hash, assets))
 }
 
-/// A package's assets as the runner receives them.
 pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
     assets
         .into_iter()
@@ -191,7 +190,6 @@ pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Va
         .collect()
 }
 
-/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
     match reused_package(path) {
         Some(verified) => Ok(verified),
@@ -372,8 +370,7 @@ fn stored_state(version: u32, value: &Value) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Rewrites thread or checkout state stored at another version through `migrate`, keeping the
-/// previous file beside it. The handler runs unlocked; a concurrent change wins and is re-read.
+/// Rewrites thread or checkout state stored at another version through `migrate`, keeping the previous file beside it; the handler runs unlocked and a concurrent change wins and is re-read.
 pub(super) fn migrate_directory_state(
     directory: &Path,
     name: &str,
@@ -444,8 +441,7 @@ impl ModStore {
         Ok(store)
     }
 
-    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
-    /// `packages.lock.json` leaves its packages as plain trusted selections.
+    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.
     pub fn reset(&self, name: &str) -> Result<PathBuf> {
         if !matches!(
             name,
@@ -485,7 +481,6 @@ impl ModStore {
         })
     }
 
-    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated stores.
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) {
         self.policy = (file, owner);
         self.user = Some(user.to_owned());
@@ -703,7 +698,6 @@ impl ModStore {
         Some(json!([self.root, stamps]))
     }
 
-    /// File stamps of verified packages; `None` if any package is unverified.
     pub fn package_stamps<'a>(
         paths: impl IntoIterator<Item = &'a Path>,
     ) -> Option<Vec<(PathBuf, FileStamp)>> {
@@ -728,7 +722,6 @@ impl ModStore {
         Ok(())
     }
 
-    /// Selections after administrator policy; `project` scopes project-targeted managed packages.
     pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
@@ -1142,7 +1135,6 @@ impl ModStore {
         Ok(json!({"imported": approved.len(), "skipped": skipped}))
     }
 
-    /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
     pub fn revoke(&self, target: &str) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
@@ -1240,7 +1232,6 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    /// Refuses enabling a mod whose required service no other enabled mod provides.
     pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package

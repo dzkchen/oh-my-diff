@@ -619,7 +619,6 @@ pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     safe_path(root, name)
 }
 
-/// `root` joined with `components`, each created as a 0700 directory or accepted when it exists, refusing a symlink or non-directory with `invalid`.
 pub(crate) fn private_path(
     root: &Path,
     components: &[&str],
@@ -656,8 +655,7 @@ fn open_directory(path: &Path) -> io::Result<fs::File> {
     Ok(directory)
 }
 
-/// Renames onto an absent target; where the filesystem has no exclusive rename, the caller's absence
-/// check stands in for it.
+/// Renames onto an absent target; where the filesystem has no exclusive rename, the caller's absence check stands in.
 pub(crate) fn rename_exclusive<D: std::os::fd::AsFd + Copy, P: rustix::path::Arg + Copy>(
     old_dir: D,
     old: P,

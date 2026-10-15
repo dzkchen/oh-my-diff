@@ -29,7 +29,6 @@ const META_FIELDS: [&str; 11] = [
 /// Rollout heads by path, valid while the file keeps its stamp; `None` marks a file that is not a session.
 static PARSED: Mutex<BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>> =
     Mutex::new(BTreeMap::new());
-/// The most recently read sessions' projections, newest first.
 static PROJECTIONS: Mutex<Vec<Arc<Projection>>> = Mutex::new(Vec::new());
 const PROJECTIONS_KEPT: usize = 4;
 #[cfg(test)]
@@ -224,7 +223,6 @@ impl SessionIndex<'_> {
         Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
     }
 
-    /// The database's current segment and the segments its `history_base` chain continues.
     fn lineage(&self, current: &Path, paths: &[PathBuf]) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         let mut next = segment(current);
@@ -250,7 +248,6 @@ impl SessionIndex<'_> {
         names
     }
 
-    /// The rollout's complete lines; a trailing partial record is dropped and reported.
     fn read(&self, path: &Path) -> io::Result<(Vec<u8>, bool)> {
         let name = self.name(path)?;
         #[cfg(test)]
@@ -394,7 +391,6 @@ impl SessionIndex<'_> {
         }))
     }
 
-    /// The session's projected records, reusing a recent projection while the rollout keeps its stamp.
     fn projection(
         &self,
         path: &Path,

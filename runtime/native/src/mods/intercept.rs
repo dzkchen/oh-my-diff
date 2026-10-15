@@ -92,7 +92,6 @@ pub(super) async fn chain(
     result
 }
 
-/// The mod whose result settled last, i.e. the outermost link that answered or transformed it.
 pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
     chain
         .trace
@@ -104,7 +103,6 @@ pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
         .to_owned()
 }
 
-/// Lets model-request interceptors call host operations from the transport thread.
 pub(super) fn install_notifier(core: &Arc<Core>) {
     let notified = Arc::downgrade(core);
     core.host.accounts.install_mod_notifier(Arc::new(
@@ -209,8 +207,7 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
                     }
                 })
             };
-            // Callers include small-stack callback threads; the operation's future is built and
-            // polled on a thread with a Tokio worker's stack.
+            // Callers include small-stack callback threads; the future is built and polled on a thread with a Tokio worker's stack.
             let wait = || {
                 std::thread::scope(|scope| {
                     let (tx, rx) = std::sync::mpsc::channel();

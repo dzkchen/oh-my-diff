@@ -3030,7 +3030,6 @@ async fn surface_authority_polling_preserves_ui_and_in_flight_callbacks() {
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap();
         assert_eq!(call.operation, "composer.read");
-        // Exercise client-side validity checks and allow the queued wait loop to poll too.
         for _ in 0..3 {
             assert!((call.validity.0)());
             std::thread::sleep(std::time::Duration::from_millis(25));

@@ -181,7 +181,6 @@ impl std::ops::Index<&str> for Request<'_> {
     }
 }
 
-/// The request fields fixed for a loaded package, and their digest: the package's runner identity.
 fn metadata(loaded: &Loaded) -> (Value, String) {
     let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
         "api": MOD_API_VERSION,
@@ -347,7 +346,6 @@ pub(super) fn run(
     Ok(reply)
 }
 
-/// Keeps the newest history items the runner request has room for, in order and with their indices.
 fn fit_history(request: &mut Request) -> Result<()> {
     if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
         return Ok(());

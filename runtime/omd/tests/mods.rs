@@ -191,7 +191,6 @@ fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
                     },
                 )
             });
-            // The slow callback has read its state once it makes its host call.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -5787,8 +5786,7 @@ fn clipboard_delivery_wait_is_not_callback_execution() {
             || true,
             |call| {
                 assert_eq!(call.operation, "terminal.copy");
-                // Each external delivery is within its 5s surface deadline; their sum exceeds
-                // the callback execution budget and each exceeds the per-hook budget.
+                // Each external delivery is within its 5s surface deadline; their sum exceeds the callback execution budget and each exceeds the per-hook budget.
                 std::thread::sleep(std::time::Duration::from_millis(2_600));
                 copies += 1;
                 Ok(json!({"status": "confirmed"}))

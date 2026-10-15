@@ -191,7 +191,6 @@ struct Mods {
     elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
 }
 
-/// A tool chain waiting at its native executor for the call's result.
 struct PendingTool {
     thread: String,
     result: std::sync::mpsc::Sender<Result<Value, String>>,
@@ -200,7 +199,6 @@ struct PendingTool {
 }
 
 impl Mods {
-    /// Hands a tool's result to its waiting chain and returns the settled chain.
     async fn resume(
         &self,
         call_id: &str,
@@ -221,7 +219,6 @@ impl Mods {
         )
     }
 
-    /// Cancels chains whose call never reported a result before its turn ended, and any stream retry core declined.
     fn release_pending(&self, thread: Option<String>) {
         let Some(thread) = thread else {
             return;
@@ -582,7 +579,6 @@ fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
-/// Re-reads `host.json`, mod generations and the session contract the way a turn start does.
 fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
     let _ = host.refresh_session(session);
     if let Ok(mut runtime) = runtime.lock() {
@@ -1105,7 +1101,6 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
     }
 }
 
-/// Attachments and placeholder elements of a submitted prompt, with their source identity.
 fn submission_context(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
     let (mut attachments, mut elements) = (Vec::new(), Vec::new());
     for item in items {
@@ -1154,7 +1149,6 @@ fn settings_view(config: &Config) -> Value {
         "effort": config.model_reasoning_effort, "provider": config.model_provider_id})
 }
 
-/// The `thread_settings` payload, or `None` when nothing a mod observes changed.
 fn settings_change(previous: &Value, next: &Value) -> Option<Value> {
     let roots = |value: &Value| {
         value["roots"]

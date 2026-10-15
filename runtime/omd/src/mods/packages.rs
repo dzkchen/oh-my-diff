@@ -214,8 +214,7 @@ impl ModStore {
     }
 }
 
-/// Whether a state read failed on thread or checkout state stored at another version that
-/// the mod can migrate. Store-scope state migrates only through `ModStore::migrate`.
+/// Whether a state read failed on thread or checkout state stored at another version that the mod can migrate; store-scope state migrates only through `ModStore::migrate`.
 pub(super) fn migratable(
     loaded: &Loaded,
     location: &store::StateLocation,
@@ -227,7 +226,6 @@ pub(super) fn migratable(
         && loaded.registrations.events.iter().any(|e| e == "migrate")
 }
 
-/// Runs the mod's `migrate` handler on its older thread or checkout state and stores the result.
 pub(super) fn migrate_state(
     node: &Path,
     loaded: &Loaded,
@@ -252,7 +250,6 @@ pub(super) fn migrate_state(
     )
 }
 
-/// A package loaded outside the host, for inspection and migration only.
 pub(super) fn detached(
     package: ModPackage,
     source: String,

@@ -90,7 +90,6 @@ fn text(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
 }
 
-/// `scheme://host[:port]` of `url`, lowercased and without a default port.
 pub fn url_origin(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
@@ -467,8 +466,7 @@ impl CredentialProfiles {
         fs::read_to_string(path)
     }
 
-    /// Refuses unless `origin` is the profile's enrolled destination and, when a mod
-    /// (`owner`) asks for a `secret` profile, that mod owns it.
+    /// Refuses unless `origin` is the profile's enrolled destination and, for a `secret` profile asked by a mod (`owner`), that mod owns it.
     pub fn secret(
         &self,
         id: &str,

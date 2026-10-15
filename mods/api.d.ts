@@ -630,7 +630,6 @@ export interface ModAPI {
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;
-  /** One member of a map-valued atom. */
   member<T extends Json>(key: string, id: string, fallback: T): Atom<Widen<T>>;
   /** A memoised selector recomputed when an atom it read changes. */
   derive<T extends Json>(compute: () => T): Derived<T>;

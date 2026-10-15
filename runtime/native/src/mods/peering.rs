@@ -7,7 +7,6 @@ use std::time::Duration;
 const POLL: Duration = Duration::from_secs(1);
 const DEFAULT_TTL_MS: u64 = 60_000;
 
-/// Peer registrations by lead thread; a session registers only while a mod holds a peers grant.
 #[derive(Default)]
 pub(super) struct Registry {
     sessions: Mutex<BTreeMap<String, Arc<Peers>>>,
@@ -111,7 +110,6 @@ pub(super) async fn current_endpoints(core: &Core) -> Vec<Endpoint> {
     .unwrap_or_default()
 }
 
-/// Delivers inbox messages and receipts for one lead thread until its session ends.
 pub(super) fn start(core: &Arc<Core>, thread: ThreadId) {
     let core = core.clone();
     tokio::spawn(async move {

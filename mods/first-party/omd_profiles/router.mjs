@@ -172,7 +172,6 @@ export function anthropicRequest(body, profile, cache = null) {
 
 const CUT = new Map([['length', 'max_output_tokens'], ['max_tokens', 'max_output_tokens'], ['content_filter', 'content_filter'], ['refusal', 'content_filter']]);
 
-// Emits the Responses stream events Codex consumes from either provider's deltas.
 export class Emitter {
   constructor(send, reverse, id) {
     Object.assign(this, { send, reverse, id, stop: null, text: null, reasoning: null, calls: new Map(), usage: null, model: null, thinking: [], sealed: null, done: false });
@@ -353,7 +352,6 @@ export async function forward(body, profile, inbound, response, signal, owner = 
 
 const identity = item => item.id ?? item.encrypted_content;
 
-// Which profile's account produced each Responses reasoning item it streamed, oldest forgotten first.
 function remember(owner, id, name) {
   if (id === undefined) return;
   owner.delete(id);
@@ -382,7 +380,6 @@ export function prepare(body, profile, last, foreign = new Map()) {
   return dropped?.size ? { ...body, input: body.input.filter(item => item?.type !== 'reasoning' || !dropped.has(identity(item))) } : body;
 }
 
-// Inline images count as a fixed estimate instead of their base64 length.
 export const estimate = input => Math.ceil(JSON.stringify(input ?? [], (key, value) => typeof value === 'string' && value.startsWith('data:image/') ? 'x'.repeat(6_000) : value).length / 4);
 
 async function claim(server, port, token, ready) {

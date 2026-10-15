@@ -12,7 +12,6 @@ pub(super) struct Inventory {
 }
 
 impl Inventory {
-    /// Records a started agent keyed by its thread and returns the record.
     pub(super) fn start(&self, thread: &str, fields: Value) -> Value {
         let mut record = json!({"agent_id": null, "thread_id": thread,
             "parent": {"thread_id": null, "agent_id": null}, "origin": "native", "owner": null,

@@ -36,7 +36,6 @@ impl ContextualUserFragment for MentionedFile {
     }
 }
 
-/// Workspace-relative `@path` and `@"quoted path"` mentions in the submitted text that name existing files, in order.
 pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Vec<String> {
     let mut names = Vec::new();
     for item in input {
@@ -83,7 +82,6 @@ pub(super) fn mentioned(input: &[UserInput], repository: &std::path::Path) -> Ve
 }
 
 impl Mods {
-    /// The path `mention` interceptors settle on; `None` when one denied the read or the chain failed.
     async fn mention(
         &self,
         lead: &Arc<Lead>,

@@ -106,7 +106,6 @@ const COMPACTION_PREVIEW_BYTES: usize = 512;
 const COMPACTION_VIEW_ITEMS: usize = 1024;
 const COMPACTION_VIEW_TEXT: usize = 131_072;
 
-/// Newest items first get text previews until the budget is spent; older ones keep their shape.
 pub fn compaction_view(items: &[Value]) -> Value {
     let start = items.len().saturating_sub(COMPACTION_VIEW_ITEMS);
     let mut budget = COMPACTION_VIEW_TEXT;
@@ -138,7 +137,6 @@ pub struct CompactionEdit {
     insert: Vec<Insert>,
 }
 
-/// Builds a replacement history from kept items and inserted user or developer text.
 pub fn compact(items: &[Value], edit: CompactionEdit) -> Result<Vec<Value>, String> {
     let invalid = |reason: &str| Err(format!("compaction_history_invalid: {reason}"));
     let bytes = edit.insert.iter().map(|i| i.text.len()).sum::<usize>();

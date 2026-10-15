@@ -158,9 +158,7 @@ pub fn server_request_routed(method: &str) -> bool {
     TABLE.server_requests.contains(method)
 }
 
-/// Checks a mod's answer to a pending server request: approvals and elicitations may only be
-/// declined or cancelled (approving stays with the `approve` grant), permissions only granted
-/// nothing, and `requestUserInput` only answered with bounded text.
+/// Approvals and elicitations may only be declined or cancelled (approving needs the `approve` grant), permissions only granted nothing, `requestUserInput` only answered with bounded text.
 pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
     let refused = |reason: &str| Err(format!("app_response_refused: {reason}"));
     let object = result

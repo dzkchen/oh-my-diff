@@ -24,7 +24,6 @@ const COMMAND: &str = "export default api => api.command('hello', () => 'hi')";
 const UNREACHABLE: &str =
     "git+https://127.0.0.1:9/unreachable.git#0123456789abcdef0123456789abcdef01234567";
 
-/// An administrator's policy file and package folders shared by isolated per-user stores.
 struct Admin {
     _temp: TempDir,
     root: PathBuf,
@@ -109,7 +108,6 @@ impl Admin {
         store
     }
 
-    /// Writes the policy and deploys it to `user`'s store, as an unattended `package-sync` would.
     fn administer(&self, policy: Value, user: &str) -> Value {
         self.write_policy(policy);
         self.store(user).package_sync(false).unwrap()

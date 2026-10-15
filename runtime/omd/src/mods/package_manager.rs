@@ -38,7 +38,6 @@ pub enum ModPackageSource {
     },
 }
 
-/// The registry and token settings npm and pnpm read from the user's `.npmrc`.
 #[derive(Default)]
 struct NpmConfig {
     registry: Option<String>,
@@ -123,7 +122,6 @@ fn interpolate(value: &str, resolve: impl Fn(&str) -> Option<String>) -> String 
 }
 
 impl ModPackageSource {
-    /// Parses `npm:NAME[@VERSION]`, `git+URL[#REF[:SUBDIRECTORY]]`, an absolute folder, or `ID[@VERSION]` from `index`.
     pub fn parse(reference: &str, index: Option<PathBuf>) -> Result<Self> {
         let reference = reference.trim();
         let versioned = |value: &str| match value.get(1..).and_then(|rest| rest.rfind('@')) {
@@ -171,7 +169,6 @@ impl ModPackageSource {
         })
     }
 
-    /// Replaces the requested version of a package or npm source.
     pub fn with_version(self, requested: &str) -> Result<Self> {
         match self {
             Self::Package { index, id, .. } => Ok(Self::Package {
@@ -408,13 +405,11 @@ impl ModStore {
         }
     }
 
-    /// The curated index the installer places in the store, if any.
     pub fn package_index(&self) -> Option<PathBuf> {
         let path = self.root.join("package-index.json");
         path.is_file().then_some(path)
     }
 
-    /// Lists index packages whose id or description contains `query`, newest unblocked release first.
     pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
         let lock = self.package_lock()?;
         let query = query.trim().to_lowercase();
@@ -582,8 +577,7 @@ impl ModStore {
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
-                // Thread and checkout state migrates at its next callback, so it needs a handler.
-                // An adapter-wrapped package cannot be inspected outside the host.
+                // Thread and checkout state migrates at its next callback, so it needs a handler; an adapter-wrapped package cannot be inspected outside the host.
                 if previous
                     .is_some_and(|locked| locked.state_version != resolved.package.state_version)
                     && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
@@ -1175,7 +1169,6 @@ impl ModStore {
         self.commit_package_transaction(lock, config, &[], "rollback", event, &[])
     }
 
-    /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
     pub(super) fn commit_package_transaction(
         &self,
         lock: ModPackageLock,
@@ -1253,8 +1246,7 @@ impl ModStore {
         std::fs::File::open(&self.root)?.sync_all()
     }
 
-    /// Installs every package administrator policy assigns to this account and records a new
-    /// deployment generation only when all of them verify; otherwise the active generation stays.
+    /// Installs every package administrator policy assigns to this account and records a new deployment generation only when all verify; otherwise the active generation stays.
     pub fn package_sync(&self, offline: bool) -> Result<Value> {
         let managed = self
             .managed()?
@@ -1303,7 +1295,6 @@ impl ModStore {
         self.deploy_generation(current, managed.sha256, deployed)
     }
 
-    /// Makes the previous deployment generation active again; policy still decides what loads.
     pub fn package_sync_rollback(&self) -> Result<Value> {
         let _guard = self.lock()?;
         let current = self.managed_deployment()?;
@@ -1342,8 +1333,6 @@ impl ModStore {
         Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
     }
 
-    /// The pinned content from the cache, else from the source or the first mirror that verifies,
-    /// with its dependencies, which only the resolver finds.
     fn deploy(
         &self,
         entry: &policy::ManagedPackage,
@@ -2440,7 +2429,6 @@ fn npm_integrity(bytes: &[u8]) -> String {
     )
 }
 
-/// Runs `command` with `input` on stdin and returns at most `limit` bytes of its standard output.
 fn bounded_output(
     command: &mut Command,
     input: Option<String>,
@@ -2541,7 +2529,6 @@ fn npm_fetch(url: &str, limit: usize, accept: &str, token: Option<&str>) -> Resu
     )
 }
 
-/// Reads the regular files of an npm tarball, stripping its top-level directory.
 fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     let tar = bounded_output(
         Command::new("/usr/bin/gzip")

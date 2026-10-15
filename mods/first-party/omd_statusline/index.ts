@@ -23,8 +23,7 @@ export default function activate(api: ModAPI) {
     for (const [key, fallback] of Object.entries(EMPTY)) if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) data[key] = { ...fallback, ...object(stored[key]) };
     return data as Data;
   };
-  // A settings change reaches the session's host only at its next turn, so drawing follows the editor's last apply
-  // while this host still runs with settings that apply superseded.
+  // A settings change reaches the session's host only at its next turn, so drawing follows the editor's last apply while this host still runs with settings that apply superseded.
   const effective = (data: Data): Settings => data.pending?.from.includes(JSON.stringify(config)) ? data.pending.to : config;
   const update = (change: (data: Data) => void) => {
     const data = saved();
@@ -361,8 +360,7 @@ export default function activate(api: ModAPI) {
       const values = Object.fromEntries(Object.entries(state.draft).filter(([key, value]) => current[key as keyof Settings] !== value));
       if (!Object.keys(values).length) return show(closed, 'Status line unchanged');
       const superseded = (data.pending?.from ?? []).filter(item => item !== JSON.stringify(config));
-      // The session records the apply through this mod's own channel; writing this mod's settings reloads it,
-      // so no host call, durable state or command view may follow a successful write.
+      // The session records the apply through this mod's own channel; writing this mod's settings reloads it, so no host call, durable state or command view may follow a successful write.
       api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
       const written = api.host.tryCall('settings.write', { values });
       if (!written.ok) {
@@ -408,8 +406,7 @@ export default function activate(api: ModAPI) {
     const data = saved();
     const columns = number(input.client?.columns) ?? 120;
     const rows = number(input.client?.rows);
-    // Drawing writes durable state only when something it caches changed: mod counts or the viewport.
-    // Thread-scoped state can't be written before the session has a thread (the startup event has no ledger).
+    // Drawing writes durable state only when something it caches changed: mod counts or the viewport. Thread-scoped state can't be written before the session has a thread (the startup event has no ledger).
     const viewport = rows !== null ? { columns, rows } : data.viewport;
     const mods = input.identity?.mods ?? data.mods;
     const changed = JSON.stringify([viewport, mods]) !== JSON.stringify([data.viewport, data.mods]);

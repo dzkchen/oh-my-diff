@@ -26,7 +26,6 @@ pub(super) use delivery::release_thread;
 pub(super) use delivery::retain_sources;
 pub(super) use tool_batch::tool_before_payload;
 
-/// Queues an observer event for every registered mod on the delivery task.
 pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
     delivery::push(state, delivery::Pending::Broadcast { event, payload });
 }
@@ -165,7 +164,6 @@ impl State {
         self.leads.lock().ok()?.get(&thread)?.upgrade()
     }
 
-    /// Any live thread's own `Lead`, worker and subagent threads included.
     pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
         let threads = self.threads.lock().ok()?;
         let (handle, owner, depth) = threads.get(&thread)?;
@@ -431,7 +429,6 @@ pub(super) fn bounded_output(mut output: String) -> (String, bool) {
     (output, true)
 }
 
-/// Runs or assesses a tool through the current turn's dispatch under a mod-labelled call id.
 async fn tool_call(
     core: &Core,
     lead: &Lead,
@@ -639,7 +636,6 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
     Some(route)
 }
 
-/// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
 pub(in crate::mods) fn blit_sink(
     core: &Core,
     lead: &Lead,

@@ -4,7 +4,6 @@ use std::os::unix::fs::MetadataExt;
 const CACHE_LIMIT: usize = 512;
 const TREE_BYTES: usize = 65_536;
 
-/// Native components with a render hook and the props a hook may rewrite for the native drawing.
 pub const MOD_RENDER_COMPONENTS: &[(&str, &[&str])] = &[
     ("user_message", &[]),
     ("assistant_message", &[]),
@@ -53,7 +52,6 @@ pub(super) struct Rendered {
 }
 
 impl ModHost {
-    /// Digests the state keys hooks read, or with `files` the identity of their state files.
     fn render_deps(&self, reads: &BTreeMap<String, BTreeSet<String>>, files: bool) -> String {
         let thread = bound_thread();
         let values = reads
@@ -99,8 +97,7 @@ impl ModHost {
     }
 }
 
-/// Runs one frame step of a mod's component module without host authority: its events, due ticks and
-/// view, answering `{tree, post, next_ms}`. An error stops the instance's runner, unmounting it.
+/// Runs one frame step of a component module without host authority, answering `{tree, post, next_ms}`; an error stops the instance's runner, unmounting it.
 pub fn component_shared(
     runtime: &Mutex<ModHost>,
     id: &str,
@@ -159,17 +156,14 @@ pub fn component_unmount(id: &str, component: &str) {
     process::unmount("", id, component);
 }
 
-/// Unmounts one client's instance of a mod's component module.
 pub fn client_component_unmount(client: &str, id: &str, instance: &str) {
     process::unmount(client, id, instance);
 }
 
-/// Unmounts every component module instance a detached client had mounted.
 pub fn component_detach(client: &str) {
     process::detach(client);
 }
 
-/// A component's input event as the key and pointer events a component module receives.
 pub fn component_events(payload: &Value) -> Vec<Value> {
     match payload["kind"].as_str() {
         Some("input") => payload["events"]

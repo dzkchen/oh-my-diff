@@ -224,7 +224,6 @@ pub fn anchor(stream: &Path, sha256: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Anchors state that existed before its stream was ever anchored, for example before broker install.
 pub fn seed(stream: &Path, count: u64, head: &str, last: &str) -> io::Result<()> {
     if deployed() {
         call(

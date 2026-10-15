@@ -51,7 +51,6 @@ pub(super) struct Queue {
 }
 
 impl Queue {
-    /// Drops entries their owner can no longer run and takes the best remaining one.
     pub(super) fn pick(
         &mut self,
         grants: &BTreeMap<String, codex_omd::ModGrants>,
@@ -112,7 +111,6 @@ impl Queue {
     }
 }
 
-/// Per-thread queues of mod prompts that start turns while the user is idle.
 #[derive(Default)]
 pub(super) struct Queues {
     threads: Mutex<BTreeMap<String, Queue>>,
@@ -226,7 +224,6 @@ impl Queues {
         }
     }
 
-    /// Tries to start the best queued prompt once the thread has stayed idle briefly.
     pub(super) fn schedule(&self, core: &Arc<Core>, lead: &Lead) {
         let (core, lead) = (core.clone(), lead.clone());
         tokio::spawn(async move {
@@ -357,7 +354,6 @@ impl Queues {
         .flatten()
     }
 
-    /// A user-typed turn resumes queues an interruption paused.
     pub(super) fn user_turn(&self, thread: &str) {
         let _ = self.with(thread, |queue| queue.paused = false);
     }
@@ -382,7 +378,6 @@ impl Queues {
         }
     }
 
-    /// Adds a priced response of `thread`'s session, sub-agents included, to the spend of the mod whose queued turn is running.
     pub(super) fn charge(&self, thread: &str, response: &Value) {
         let Some(microusd) = response["cost"]["microusd"].as_u64() else {
             return;
@@ -395,7 +390,6 @@ impl Queues {
         }
     }
 
-    /// Records one continuation for `owner` in `turn` if its grant still allows another.
     pub(super) fn continue_turn(&self, thread: &str, turn: &str, owner: &str, limit: u32) -> bool {
         self.with(thread, |queue| {
             let used = queue

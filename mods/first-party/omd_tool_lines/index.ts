@@ -13,7 +13,6 @@ const segments = new Intl.Segmenter();
 const widthOf = (text: string) => [...segments.segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
-// Keeps `cells` display columns, `chars` characters and `limit` UTF-8 bytes, ending in `…` when cut.
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
   const flat = text.replace(/\s+/g, ' ').trim();
