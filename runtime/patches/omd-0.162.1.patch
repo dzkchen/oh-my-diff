@@ -30763,71 +30763,6 @@ index 150583dc2..8c474d86a 100644
              | ServerRequest::ChatgptAuthTokensRefresh { .. } => None,
          }
      }
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__composer_hints__tests__composer_usage_notice.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__composer_hints__tests__composer_usage_notice.snap
-index d598740ad..5705b71bf 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__composer_hints__tests__composer_usage_notice.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__composer_hints__tests__composer_usage_notice.snap
-@@ -11,7 +11,7 @@ Conversation
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   ? for shortcuts                                      ⚠ 1 warning · f2 to view
-
- 80 columns, 12 rows, running=true, queued=false
-@@ -25,7 +25,7 @@ Conversation
-
- › draft stays
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-
- 32 columns, 10 rows, running=true, queued=false
-@@ -37,7 +37,7 @@ Conversation
-
- › draft stays
-
--  GPT-5.6-Sol default · /tmp/pr…
-+  Oh My Diff · upstream-style d…
-   tab to queue message
-
- 18 columns, 10 rows, running=true, queued=false
-@@ -49,7 +49,7 @@ Conversation
-
- › draft stays
-
--  GPT-5.6-Sol def…
-+  Oh My Diff · up…
-   tab to queue mes
-
- 80 columns, 18 rows, running=true, queued=true
-@@ -69,7 +69,7 @@ Conversation row 19
- › draft stays
-   second line
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-
- 80 columns, 11 rows, running=true, queued=true
-@@ -82,7 +82,7 @@ Conversation row 19
- › draft stays
-   second line
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-
- 80 columns, 6 rows, running=true, queued=false
-@@ -90,5 +90,5 @@ Conversation row 19
-
- › draft stays
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
 diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap
 index 4a9461199..6a1ecefd6 100644
 --- a/codex-rs/tui/src/app/snapshots/codex_tui__app__daemon_menu__tests__daemon_cli_confirmation.snap
@@ -30842,14 +30777,13 @@ index 4a9461199..6a1ecefd6 100644
                  This may restart the daemon and interrupt active or queued work.
                  Codex exits to update in this terminal. Relaunch it afterward.
 diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
-index 789d6e4bd..16ef30b42 100644
+index 789d6e4bd..4ce593a34 100644
 --- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
 +++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__empty_state_animation_tests__fresh_thread_header.snap
-@@ -1,10 +1,11 @@
+@@ -1,10 +1,10 @@
  ---
  source: tui/src/app/empty_state_animation_tests.rs
 -expression: "format!(\"enabled:\\n{}\\n---\\ndisabled:\\n{}\", text(after), text(&before))"
-+assertion_line: 359
 +expression: "crate::chatwidget::tests::helpers::normalize_workspace_snapshot(format!(\"enabled:\\n{}\\n---\\ndisabled:\\n{}\",\ntext(after), text(&before)), app.chat_widget.config_ref().cwd.as_path(),)"
  ---
  enabled:
@@ -30859,13 +30793,7 @@ index 789d6e4bd..16ef30b42 100644
       /tmp/project
 
 
-@@ -45,12 +46,12 @@ enabled:
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-   ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+@@ -50,7 +50,7 @@ enabled:
  ---
  disabled:
 
@@ -30874,457 +30802,6 @@ index 789d6e4bd..16ef30b42 100644
       /tmp/project
 
 
-@@ -91,5 +92,5 @@ disabled:
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-   ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_copy_feedback_spacing.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_copy_feedback_spacing.snap
-index 41dac123f..1333c126d 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_copy_feedback_spacing.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_copy_feedback_spacing.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_follow_tests.rs
-+assertion_line: 161
- expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(snapshots.join(\"\\n\\n\"))"
- ---
- 80 columns, 12 rows
-@@ -13,7 +14,7 @@ transcript row 39
-
- › draft stays here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-
- 18 columns, 14 rows
-@@ -29,7 +30,7 @@ transcript row 39
- › draft stays
-   here
-
--  GPT-5.6-Sol def…
-+  Oh My Diff · up…
-   tab to queue mes
-
- 6 columns, 18 rows
-@@ -49,7 +50,7 @@ row 39
-   her
-   e
-
--  GPT…
-+  Oh …
-   tab
-
- 80 columns, 6 rows
-@@ -57,5 +58,5 @@ row 39
-
- › draft stays here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control.snap
-index 37eeb8450..fcac41b44 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_follow_tests.rs
-+assertion_line: 96
- expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(super::tests::buffer_text(buffer))"
- ---
- transcript row 26
-@@ -12,5 +13,5 @@ transcript row 28
-
- › draft stays here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control_short_terminal.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control_short_terminal.snap
-index fada310fd..e17df00d4 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control_short_terminal.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_follow_control_short_terminal.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_follow_tests.rs
-+assertion_line: 86
- expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(super::tests::buffer_text(buffer))"
- ---
- transcript row 26
-@@ -9,5 +10,5 @@ transcript row 26
-
- › draft stays here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_without_composer_hint.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_without_composer_hint.snap
-index 4087c94db..28452b261 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_without_composer_hint.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__follow_tests__running_without_composer_hint.snap
-@@ -12,5 +12,5 @@ transcript row 39
-
- › draft stays here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   tab to queue message
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__input_tests__escape_returns_to_latest.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__input_tests__escape_returns_to_latest.snap
-index 3233b6a85..ff5be2d0f 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__input_tests__escape_returns_to_latest.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__input_tests__escape_returns_to_latest.snap
-@@ -1,6 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_input_tests.rs
--assertion_line: 299
-+assertion_line: 278
- expression: "format!(\"before\\n{before}\\n\\nafter\\n{}\", screen(&tui))"
- ---
- before
-@@ -14,7 +14,7 @@ row 19
-
- › draft preserved
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   New activity · esc latest
-
- after
-@@ -28,4 +28,4 @@ new output
-
- › draft preserved
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_composer_right_click_copy.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_composer_right_click_copy.snap
-index ef78c11d1..b0440fbb5 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_composer_right_click_copy.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_composer_right_click_copy.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_tests.rs
-+assertion_line: 1463
- expression: "format!(\"{}\\n\\n{}\", selection_frames.join(\"\\n\\n\"),\nnormalize_snapshot_paths(buffer_text(crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal))))"
- ---
- cmd-c Err("clipboard unavailable")
-@@ -72,4 +73,4 @@ hello world
-
- › hello world
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_remote_images.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_remote_images.snap
-index 030a70d07..be212fe46 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_remote_images.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_remote_images.snap
-@@ -1,6 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_tests.rs
--assertion_line: 1654
-+assertion_line: 1894
- expression: "normalize_snapshot_paths(frames.join(\"\\n\\n\"))"
- ---
- Draft
-@@ -14,7 +14,7 @@ History stays visible
-
- › Edit this prompt
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Up
-@@ -28,7 +28,7 @@ History stays visible
-
- › Edit this prompt
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Up
-@@ -42,7 +42,7 @@ History stays visible
-
- › Edit this prompt
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Delete
-@@ -56,7 +56,7 @@ History stays visible
-
- › Edit this prompt
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Down
-@@ -70,4 +70,4 @@ History stays visible
-
- › Edit this prompt
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_wheel.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_wheel.snap
-index 76d66c8e1..39c56305a 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_wheel.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__fullscreen_prompt_wheel.snap
-@@ -1,6 +1,6 @@
- ---
- source: tui/src/app/owned_transcript_tests.rs
--assertion_line: 1600
-+assertion_line: 1749
- expression: "normalize_snapshot_paths(frames.join(\"\\n\\n\"))"
- ---
- Following caret
-@@ -26,7 +26,7 @@ History 40
-   Prompt 34 界
-   Prompt 35 界
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Wheel up
-@@ -52,7 +52,7 @@ History 40
-   Prompt 25 界
-   Prompt 26 界                                              ↓
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Edit at caret
-@@ -78,7 +78,7 @@ History 40
-   Prompt 34 界
-   Prompt 35 界
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Paste at caret
-@@ -104,7 +104,7 @@ History 40
-   Edited 34 界
-   Edited 35 界  pasted here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…
-
-
- Short screen
-@@ -116,4 +116,4 @@ History 40
-   Edited 34 界
-   Edited 35 界  pasted here
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · …
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_transcript_composer_gap.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_transcript_composer_gap.snap
-index b2417f42e..fdf61e7ee 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_transcript_composer_gap.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__owned_transcript_composer_gap.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/app/owned_transcript_tests.rs
--assertion_line: 350
- expression: "snapshots.join(\"\\n\\n\")"
- ---
- Latest
-@@ -14,7 +13,7 @@ Transcript row 40
-
- › draft
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-
-
- Reading
-@@ -28,7 +27,7 @@ Transcript row 35
-
- › draft
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   esc latest
-
- Resized multiline composer
-@@ -42,14 +41,14 @@ Transcript row 33
-   second line
-   third line
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · …
-   esc latest
-
- Tiny terminal
-
- › draft
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · …
-   esc latest
-
- Detailed
-@@ -63,4 +62,4 @@ Detailed
-
- › preserved draft
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__prompt_navigation.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__prompt_navigation.snap
-index 2f2f6be0a..d09d2cf8d 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__prompt_navigation.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__prompt_navigation.snap
-@@ -16,5 +16,5 @@ expression: "normalize_snapshot_paths(buffer_text(crate::custom_terminal::test_s
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   Browsing · ↑↓/jk scroll · ←→/hl prompts · ⌃t details · ↵ rewind · esc back
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__recap_tail_spacing.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__recap_tail_spacing.snap
-index 34bbf54b6..fb23d65f6 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__recap_tail_spacing.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__owned_transcript__tests__recap_tail_spacing.snap
-@@ -11,7 +11,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x10, Message after recap
-@@ -23,7 +23,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x10, Live message after recap
-@@ -35,7 +35,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x12, Recap at tail
-@@ -49,7 +49,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x12, Message after recap
-@@ -63,7 +63,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x12, Live message after recap
-@@ -77,7 +77,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 32x12, Recap at tail
-@@ -91,7 +91,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-
- 32x12, Message after recap
-@@ -105,7 +105,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-
- 32x12, Live message after recap
-@@ -119,7 +119,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-
- 80x7, Recap at tail
-@@ -128,7 +128,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x7, Message after recap
-@@ -137,7 +137,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 80x7, Live message after recap
-@@ -146,7 +146,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- 32x6, Recap at tail
-@@ -154,7 +154,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-
- 32x6, Message after recap
-@@ -162,7 +162,7 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-
- 32x6, Live message after recap
-@@ -170,5 +170,5 @@ History 20
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/proje…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
 diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
 index 8aa1bca71..e6a99c7b0 100644
 --- a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
@@ -31341,143 +30818,6 @@ index 8aa1bca71..e6a99c7b0 100644
       <thread cwd>
 
 
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__thread_title__tests__manual_rename_cancels_thread_title.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__thread_title__tests__manual_rename_cancels_thread_title.snap
-index a37e03f7f..f1d212003 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__thread_title__tests__manual_rename_cancels_thread_title.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__thread_title__tests__manual_rename_cancels_thread_title.snap
-@@ -1,8 +1,8 @@
- ---
- source: tui/src/app/thread_title_tests.rs
--assertion_line: 363
-+assertion_line: 383
- expression: normalize_snapshot_paths(popup)
- ---
- › Ask Codex to do anything
-
--  gpt-5.2 default · /tmp/project · Keep this title
-+  Oh My Diff · upstream-style direct · hooks off · gpt-5.2 default · /tmp/project · Keep this title
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__turn_tip_placements.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__turn_tip_placements.snap
-index 71b29376a..f81477fb4 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__turn_tip_placements.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__turn_tip_placements.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/turn_tips_tests.rs
-+assertion_line: 348
- expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(screens.join(\"\\n\\n\"))"
- ---
- working=true, response rows=1, 80x12
-@@ -13,7 +14,7 @@ Response row 0
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=true, response rows=1, 80x6
-@@ -21,7 +22,7 @@ working=true, response rows=1, 80x6
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=1, 80x12
-@@ -35,7 +36,7 @@ working=false, response rows=1, 80x12
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=30, 80x12
-@@ -49,7 +50,7 @@ working=false, response rows=30, 80x12
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=1, 80x9
-@@ -60,7 +61,7 @@ working=false, response rows=1, 80x9
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=1, 80x10
-@@ -72,7 +73,7 @@ working=false, response rows=1, 80x10
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=1, 80x11
-@@ -85,7 +86,7 @@ working=false, response rows=1, 80x11
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-
- working=false, response rows=1, 12x12
-@@ -99,7 +100,7 @@ working=false, response rows=1, 12x12
-
- › Ask Codex
-
--  gpt-test …
-+  Oh My Dif…
-   ? for shor
-
- working=false, response rows=1, 80x4
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__working_tip_mouse_down.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__working_tip_mouse_down.snap
-index a39deb9a8..e48b8ae27 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__working_tip_mouse_down.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__turn_tips__tests__working_tip_mouse_down.snap
-@@ -1,7 +1,7 @@
- ---
- source: tui/src/app/turn_tips_tests.rs
--assertion_line: 422
--expression: screen
-+assertion_line: 441
-+expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(screen)"
- ---
- Response row 0
- Response row 1
-@@ -25,5 +25,5 @@ Response row 9
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-   ? for shortcuts
-diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__warnings_tests__warnings_partial_dismissal.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__warnings_tests__warnings_partial_dismissal.snap
-index 915b91463..74a1d9c86 100644
---- a/codex-rs/tui/src/app/snapshots/codex_tui__app__warnings_tests__warnings_partial_dismissal.snap
-+++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__warnings_tests__warnings_partial_dismissal.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/warnings_tests.rs
-+assertion_line: 126
- expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(screen)"
- ---
- Earlier transcript row 12
-@@ -24,5 +25,5 @@ Earlier transcript row 29
-
- › draft
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   esc latest                                           ⚠ 1 warning · f2 to view
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
 index 69a4ff5f3..41878eaee 100644
 --- a/codex-rs/tui/src/app/startup.rs
@@ -31779,26 +31119,19 @@ index 398a9c1df..164b8cac7 100644
          };
          let child_thread = make_thread(child, "Cached child", ThreadStatus::NotLoaded)?;
 diff --git a/codex-rs/tui/src/app/tests/new_session_tests.rs b/codex-rs/tui/src/app/tests/new_session_tests.rs
-index c816f2dc9..f4c97ccd1 100644
+index c816f2dc9..79a265d6a 100644
 --- a/codex-rs/tui/src/app/tests/new_session_tests.rs
 +++ b/codex-rs/tui/src/app/tests/new_session_tests.rs
-@@ -300,12 +300,13 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
-             ],
+@@ -301,7 +301,8 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
          );
          if explicit == "saved" {
--            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
+             let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
 -                .replace(&server_config.cwd.display().to_string(), "<PROJECT>");
-+            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 200)
 +                .replace(&server_config.cwd.display().to_string(), "<PROJECT>")
 +                .replace("/tmp/project", "<PROJECT>");
              insta::assert_snapshot!(rendered, @r"
              › Ask Codex to do anything
 
--              server-model high · <PROJECT>
-+              Oh My Diff · upstream-style direct · hooks off · server-model high · <PROJECT>
-             ");
-         }
-         server.shutdown().await?;
 diff --git a/codex-rs/tui/src/app/tests/rate_limits.rs b/codex-rs/tui/src/app/tests/rate_limits.rs
 index 460b977b3..08bda4036 100644
 --- a/codex-rs/tui/src/app/tests/rate_limits.rs
@@ -31838,22 +31171,8 @@ index 71a8f2b5b..f97065875 100644
      assert!(
          std::iter::from_fn(|| app_event_rx.try_recv().ok())
              .all(|event| !matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })))
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
-index df0ee6c0a..67af6cc92 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__restored_conversation.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/app/tests/active_reconnect_tests.rs
-+assertion_line: 413
- expression: "render_bottom_popup(&app.chat_widget, 80)"
- ---
- › kept draft
-
--  gpt-test default                                   Plan mode (⇧tab to cycle)
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default  Plan mode
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
-index 335071a07..361620806 100644
+index 335071a07..b37853d5c 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
 +++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__active_reconnect__unavailable_conversation.snap
 @@ -3,8 +3,6 @@ source: tui/src/app/tests/active_reconnect_tests.rs
@@ -31864,95 +31183,7 @@ index 335071a07..361620806 100644
 -  v0.0.0.
  › unavailable draft
 
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_after_fallback.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_after_fallback.snap
-index 210166676..0b2ce080a 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_after_fallback.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_after_fallback.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/tests/backend_banner_fallback_tests.rs
-+assertion_line: 113
- expression: normalize_snapshot_paths(rendered)
- ---
-   Selected model usage exhausted
-@@ -11,4 +12,4 @@ expression: normalize_snapshot_paths(rendered)
-
- › Ask Codex to do anything
-
--  gpt-5.6-terra medium · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-5.6-terra medium…
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_fallback_unavailable.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_fallback_unavailable.snap
-index bb2bcc2ec..aaa039dbb 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_fallback_unavailable.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__backend_banner_fallback_tests__backend_banner_fallback_unavailable.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/app/tests/backend_banner_fallback_tests.rs
-+assertion_line: 245
- expression: normalize_snapshot_paths(rendered)
- ---
- › Ask Codex to do anything
-
--  gpt-5.5 default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-5.5 default · /t…
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__background_task_defaults_tests__command_center_new_draft_handoff.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__background_task_defaults_tests__command_center_new_draft_handoff.snap
-index 790734914..c8d5c3880 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__background_task_defaults_tests__command_center_new_draft_handoff.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__background_task_defaults_tests__command_center_new_draft_handoff.snap
-@@ -1,6 +1,7 @@
- ---
- source: tui/src/app/tests/background_task_defaults_tests.rs
--expression: "snapshots.join(\"\\n\\n\")"
-+assertion_line: 124
-+expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(snapshots.join(\"\\n\\n\"))"
- ---
- owned=false
- startup:
-@@ -14,7 +15,7 @@ attached:
-
- › draft during startup
-
--  GPT-6.1-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6.1-Sol default · /tmp/p…
-
- owned=true
- startup:
-@@ -27,4 +28,4 @@ attached:
-
- › draft during startup
-
--  GPT-6.1-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6.1-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__buffered_replay__misalignment_replayed_input.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__buffered_replay__misalignment_replayed_input.snap
-index be3966d99..f09c8557e 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__buffered_replay__misalignment_replayed_input.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__buffered_replay__misalignment_replayed_input.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/tests/buffered_replay.rs
-+assertion_line: 684
- expression: "normalize_snapshot_paths(render_bottom_popup(&app.chat_widget, 80))"
- ---
- • Queued follow-up inputs
-@@ -8,4 +9,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&app.chat_widget, 80))
-
- › keep draft
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
-index 139c4dd43..0a5b3a46f 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__disconnect__offline_draft.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/tests/disconnect_tests.rs
-+assertion_line: 114
- expression: "format!(\"{}\\n{}\",\nlines_to_single_string(&app.transcript_cells.last().unwrap().display_lines(80)),\nrender_bottom_popup(&app.chat_widget, 80))"
- ---
-
+   gpt-test default · /tmp/project
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
 index a8997b370..17da34853 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__daemon_command_center_vanished_rename.snap
@@ -31970,23 +31201,6 @@ index a8997b370..17da34853 100644
                                                            │
 -  Service v2.0.0 ≠ Codex CLI v0.0.0 · /daemon
 +  ? help  esc back  ↑/↓ move  enter open  n new
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__reconnected_unavailable_conversation.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__reconnected_unavailable_conversation.snap
-index 432d5cf46..2701b1f6d 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__reconnected_unavailable_conversation.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__navigation_reconnect__reconnected_unavailable_conversation.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/app/tests/navigation_reconnect_tests.rs
-+assertion_line: 459
- expression: "format!(\"{content}\\n{}\", render_bottom_popup(&app.chat_widget, 80))"
- ---
- Cached previous conversation
-@@ -8,4 +9,4 @@ Cached previous conversation
- • The rename target disappeared. Unsubmitted title: Keep this task draft!
- › latest draft
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
 index ab3a8c84c..bdfa68230 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
@@ -32020,23 +31234,12 @@ index 2ecde209a..7f7dfee98 100644
 
    To get started, describe a task or try one of these commands:
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
-index 95d7bc67c..d71375ded 100644
+index 95d7bc67c..bb739af8c 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
 +++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
-@@ -5,16 +5,16 @@ expression: "normalize_voice_snapshot_directory(&format!(\"Other task:\\n{other_
- Other task:
- › Ask Codex to do anything
+@@ -14,7 +14,7 @@ Restored owner:
 
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
- Restored owner:
-  voice ● listening                                      ⌃x mute     /voice stop
-    mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁
-
- › Ask Codex to do anything
-
--  gpt-test default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
+   gpt-test default · /tmp/project
 
 -  >_ OpenAI Codex (v0.0.0)
 +  >_ OpenAI Codex (v0.162.1)
@@ -32060,7 +31263,7 @@ index 0dfd7333b..4c0e148e6 100644
 
    To get started, describe a task or try one of these commands:
 diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
-index d45000ee7..b7e7cbe24 100644
+index d45000ee7..0c1909cde 100644
 --- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
 +++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__startup_frame_tests__startup_tip_in_transcript.snap
 @@ -1,10 +1,10 @@
@@ -32076,13 +31279,7 @@ index d45000ee7..b7e7cbe24 100644
       /tmp/project
 
  • Conversation continues here.
-@@ -21,12 +21,12 @@ expression: "normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-   ? for shortcuts
+@@ -26,7 +26,7 @@ expression: "normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.
 
  32 columns
 
@@ -32091,49 +31288,6 @@ index d45000ee7..b7e7cbe24 100644
       /tmp/project
 
  • Conversation continues here.
-@@ -43,5 +43,5 @@ expression: "normalize_snapshot_paths(normalize_agent_center_snapshot(snapshots.
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/pr…
-+  Oh My Diff · upstream-style d…
-   ? for shortcuts
-diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__transcript_composer__transcript_close_restores_inline_draft.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__transcript_composer__transcript_close_restores_inline_draft.snap
-index 3962ea74f..3b542a9c0 100644
---- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__transcript_composer__transcript_close_restores_inline_draft.snap
-+++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__transcript_composer__transcript_close_restores_inline_draft.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/app/tests/transcript_composer.rs
--expression: "buffer_text(crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal))"
-+assertion_line: 349
-+expression: "buffer_text(crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)).replace(&test_path_display(\"/tmp/project\"),\n\"/tmp/project\")"
- ---
-
-
- › EDGE-DRAFT-MUST-SURVIVE
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
-index 6f0fd8bdb..4dd205177 100644
---- a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
-+++ b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
-@@ -553,12 +553,12 @@ async fn fresh_startup_reads_destination_and_cleared_model_uses_catalog() -> Res
-         let (mut app, _, _) = make_test_app_with_channels().await;
-         app.chat_widget.handle_thread_session_quiet(started.session);
-         if !remote {
--            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
-+            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 200)
-                 .replace(&destination.path().display().to_string(), "<PROJECT>");
-             insta::assert_snapshot!(rendered, @r"
-             › Ask Codex to do anything
-
--              GPT-6.1-Sol high · <PROJECT>
-+              Oh My Diff · upstream-style direct · hooks off · GPT-6.1-Sol high · <PROJECT>
-             ");
-         }
-         let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app/tests/startup_frame_tests.rs b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
 index c65cc64ea..b8e1e68b4 100644
 --- a/codex-rs/tui/src/app/tests/startup_frame_tests.rs
@@ -33188,10 +32342,10 @@ index bb14fbe53..f33c7ca92 100644
                      self.sparkle.draft.set(SparkleDraft::Untouched);
                      self.sparkle.command_input.borrow_mut().clear();
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-index 03e761f4f..7cb797548 100644
+index 03e761f4f..91420450e 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/status_surface_tests.rs
-@@ -89,6 +89,23 @@ fn passive_activity_keeps_shortcuts_only_when_the_complete_hint_fits() {
+@@ -89,6 +89,22 @@ fn passive_activity_keeps_shortcuts_only_when_the_complete_hint_fits() {
      );
  }
 
@@ -33203,7 +32357,6 @@ index 03e761f4f..7cb797548 100644
 +    for status in [
 +        "Oh My Diff · 9 mods on · queue 1 · plan 2/5 · gpt-5 high · ~/project",
 +        "Oh My Diff · 0 mods on · gpt-5 high · ~/project",
-+        "Oh My Diff · upstream-style direct · hooks off · gpt-5 high · ~/project",
 +    ] {
 +        composer.set_status_line(Some(Line::from(status)));
 +        let (text, _) = render(&composer, /*width*/ 120, /*footer*/ None);
@@ -34036,7 +33189,7 @@ index 681fc9bca..e6d216689 100644
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 7dbb54bb8..a344fe1e5 100644
+index 7dbb54bb8..c415e1a81 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -308,6 +308,7 @@ mod interaction;
@@ -34107,21 +33260,6 @@ index 7dbb54bb8..a344fe1e5 100644
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
-@@ -2029,7 +2043,13 @@ impl ChatWidget {
-
-     #[cfg(test)]
-     pub(crate) fn status_line_text(&self) -> Option<String> {
--        self.bottom_pane.status_line_text()
-+        let text = self.bottom_pane.status_line_text()?;
-+        let status = crate::omd::compact_status();
-+        match text.strip_prefix(&status) {
-+            Some("") => None,
-+            Some(rest) => rest.strip_prefix(" · ").map(str::to_string),
-+            None => Some(text),
-+        }
-     }
-
-     pub(crate) fn clear_token_usage(&mut self) {
 diff --git a/codex-rs/tui/src/chatwidget/activity_presentation.rs b/codex-rs/tui/src/chatwidget/activity_presentation.rs
 index 573a4770f..d74cce51b 100644
 --- a/codex-rs/tui/src/chatwidget/activity_presentation.rs
@@ -34507,68 +33645,6 @@ index 0e4852767..f5c93abe0 100644
      pub(super) fn stop_rate_limit_poller(&mut self) {}
 
      #[cfg_attr(not(test), allow(dead_code))]
-diff --git a/codex-rs/tui/src/chatwidget/realtime/snapshots/codex_tui__chatwidget__realtime__tests__recording_controls_tests__voice_footer_renders_the_main_conversation_states.snap b/codex-rs/tui/src/chatwidget/realtime/snapshots/codex_tui__chatwidget__realtime__tests__recording_controls_tests__voice_footer_renders_the_main_conversation_states.snap
-index b1b63f41e..defeea366 100644
---- a/codex-rs/tui/src/chatwidget/realtime/snapshots/codex_tui__chatwidget__realtime__tests__recording_controls_tests__voice_footer_renders_the_main_conversation_states.snap
-+++ b/codex-rs/tui/src/chatwidget/realtime/snapshots/codex_tui__chatwidget__realtime__tests__recording_controls_tests__voice_footer_renders_the_main_conversation_states.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/realtime/recording_controls_tests.rs
-+assertion_line: 413
- expression: "states.join(\"\\n\\n\")"
- ---
- connecting:
-@@ -7,7 +8,7 @@ connecting:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
-
- listening:
-  voice ● listening                                      ⌃x mute     /voice stop
-@@ -15,7 +16,7 @@ listening:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
-
- speaking:
-  voice ● speaking                                       ⌃x mute     /voice stop
-@@ -23,7 +24,7 @@ speaking:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
-
- muted:
-  voice ◌ muted                                          ⌃x unmute   /voice stop
-@@ -31,7 +32,7 @@ muted:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
-
- transcript:
-  voice ● speaking                                       ⌃x mute     /voice stop
-@@ -39,7 +40,7 @@ transcript:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
-
- interrupted:
-  voice ● heard                                          ⌃x mute     /voice stop
-@@ -47,4 +48,4 @@ interrupted:
-
- › Ask Codex to do anything
-
--  status line stays visible
-+  Oh My Diff · upstream-style direct · hooks off · status line stays visible
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
 index adfe1cee5..3d84f0691 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
@@ -35132,1349 +34208,8 @@ index 182a696b2..70eddd5f7 100644
              | SlashCommand::Plan
              | SlashCommand::Goal
              | SlashCommand::Side
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap
-index 832d39d9d..ac8831534 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 656
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -17,4 +18,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_timed_out_renders_timed_out_request.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_timed_out_renders_timed_out_request.snap
-index 740c9a6fb..2aaf35bf5 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_timed_out_renders_timed_out_request.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_timed_out_renders_timed_out_request.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 737
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -17,4 +18,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_mcp_startup_failure_renders_warning_history.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_mcp_startup_failure_renders_warning_history.snap
-index 844a0415e..a452fe55c 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_mcp_startup_failure_renders_warning_history.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_mcp_startup_failure_renders_warning_history.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/mcp_startup.rs
-+assertion_line: 600
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -11,4 +12,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__apps_mentions_only_callable_installed.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__apps_mentions_only_callable_installed.snap
-index 2387eade6..a09aa7a08 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__apps_mentions_only_callable_installed.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__apps_mentions_only_callable_installed.snap
-@@ -8,7 +8,7 @@ expression: snapshot
-
- › $
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-
- --- plugin authentication ---
-   Plugins
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
-index e0809c168..0b7b3f050 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_mantle_ultrafast.snap
-@@ -7,11 +7,11 @@ Bundled catalog:
-
- › /ultrafast
-
--  GPT-6-Astra default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
-
- Custom catalog:
- › /express  My custom Bedrock tier.
-
- › /express
-
--  GPT-6-Astra default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
-index 0a2120ba8..e8abd66b1 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_global_ultrafast.snap
-@@ -7,11 +7,11 @@ Bundled catalog:
-
- › /ultrafast
-
--  GPT-6-Astra (Global) default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra (Global) default · /tmp/project
-
- Custom catalog:
- › /express  My custom Bedrock tier.
-
- › /express
-
--  GPT-6-Astra default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
-index f08ee8330..5a366e302 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__bedrock_runtime_us_ultrafast.snap
-@@ -7,11 +7,11 @@ Bundled catalog:
-
- › /ultrafast
-
--  GPT-6-Astra (US cross-region) default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra (US cross-region) default · /tmp/pro…
-
- Custom catalog:
- › /express  My custom Bedrock tier.
-
- › /express
-
--  GPT-6-Astra default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-6-Astra default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
-index 915041d85..20a3eb5a4 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_resume.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/app_server.rs
--assertion_line: 99
- expression: rendered
- ---
- OpenAI Codex (v<VERSION>)
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
-index 65f903508..54d6a0d5d 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_startup.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/app_server.rs
--assertion_line: 99
- expression: rendered
- ---
- OpenAI Codex (v<VERSION>)
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
-index 147a544c9..695479da2 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__catalog_model_session_header_unknown_model.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/app_server.rs
--assertion_line: 99
- expression: rendered
- ---
- OpenAI Codex (v<VERSION>)
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_tall.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_tall.snap
-index 8d0df9a9d..515788c22 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_tall.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__chatwidget_tall.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5846
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -25,4 +26,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compact_queues_user_messages_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compact_queues_user_messages_snapshot.snap
-index a4362beca..d5ab2de2c 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compact_queues_user_messages_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compact_queues_user_messages_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/slash_commands.rs
-+assertion_line: 3629
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -19,4 +20,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running.snap
-index fff40163a..7e188c252 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/compaction_tests.rs
-+assertion_line: 52
- expression: "normalize_compaction_snapshot(render_bottom_popup(&chat, 80))"
- ---
- • Compacting context (<elapsed> • esc to interrupt)
-@@ -8,4 +9,4 @@ expression: "normalize_compaction_snapshot(render_bottom_popup(&chat, 80))"
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running_narrow.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running_narrow.snap
-index 161bd517c..642283f23 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running_narrow.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__compaction_running_narrow.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/compaction_tests.rs
-+assertion_line: 56
- expression: "normalize_compaction_snapshot(render_bottom_popup(&chat, 40))"
- ---
- • Compacting context (<elapsed> • esc to i…
-@@ -8,4 +9,4 @@ expression: "normalize_compaction_snapshot(render_bottom_popup(&chat, 40))"
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · …
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_hook_with_output_flushes_immediately_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_hook_with_output_flushes_immediately_snapshot.snap
-index 2658f7c17..a08c2aaa8 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_hook_with_output_flushes_immediately_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_hook_with_output_flushes_immediately_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5127
- expression: "format!(\"{running_snapshot}\\n\\n{completed_snapshot}\")"
- ---
- running
-@@ -10,7 +11,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- <empty>
-
-@@ -20,7 +21,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- • Blocked by hook
-   └ command blocked by policy
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_same_id_hook_output_survives_restart_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_same_id_hook_output_survives_restart_snapshot.snap
-index 9fe87abc0..6f67b299f 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_same_id_hook_output_survives_restart_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_same_id_hook_output_survives_restart_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5227
- expression: "hook_status_and_history_snapshot(&chat, \"restarted\", &history)"
- ---
- restarted
-@@ -10,7 +11,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- • Hook stopped
-   └ continue with more context
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_turn_clears_visible_running_hook.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_turn_clears_visible_running_hook.snap
-index 749ed94a5..fa2640da9 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_turn_clears_visible_running_hook.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__completed_turn_clears_visible_running_hook.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 3920
- expression: "format!(\"before completion:\\n{before_completion}\\nafter completion:\\n{}\",\nhook_status_frame(&chat, 80))"
- ---
- before completion:
-@@ -9,10 +10,10 @@ before completion:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- after completion:
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__connector_scope_invalidation.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__connector_scope_invalidation.snap
-index 47a411cbf..4ca7637e9 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__connector_scope_invalidation.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__connector_scope_invalidation.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/popups_and_settings.rs
-+assertion_line: 4306
- expression: "format!(\"Before account change:\\n{before}\\n\\nAfter account change:\\n{after}\")"
- ---
- Before account change:
-@@ -16,4 +17,4 @@ Before account change:
- After account change:
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__custom_model_display_name_status_line.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__custom_model_display_name_status_line.snap
-index cd133ee3c..b55e737a3 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__custom_model_display_name_status_line.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__custom_model_display_name_status_line.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/model_display_name_tests.rs
-+assertion_line: 93
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6 Luna · GPT-5.6 Luna high                                              "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6 Luna · GPT-5.6 Luna …"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__declined_tool_suggestion.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__declined_tool_suggestion.snap
-index b3e42a748..44f2ba6a9 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__declined_tool_suggestion.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__declined_tool_suggestion.snap
-@@ -1,8 +1,8 @@
- ---
- source: tui/src/chatwidget/tests/app_server.rs
- assertion_line: 572
--expression: popup
-+expression: normalize_snapshot_paths(popup)
- ---
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__default_footer_generating_thread_title.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__default_footer_generating_thread_title.snap
-index cc63d0d48..dca02db8f 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__default_footer_generating_thread_title.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__default_footer_generating_thread_title.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/chatwidget/tests/terminal_title.rs
--expression: "render_bottom_popup(&chat, 100)"
-+assertion_line: 363
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 100))"
- ---
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project · ⠋
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project · ⠋
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__esc_interrupt_goal_paused_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__esc_interrupt_goal_paused_footer.snap
-index d9aaa4e57..1534fabc2 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__esc_interrupt_goal_paused_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__esc_interrupt_goal_paused_footer.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 2206
- expression: snapshot
- ---
- "                                                                                "
-@@ -8,4 +9,4 @@ expression: snapshot
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                Goal paused (/goal resume)  "
-+"  Oh My Diff · upstream-style direct · hooks off ·… Goal paused (/goal resume)  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_exec_is_hidden_from_history.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_exec_is_hidden_from_history.snap
-index 489c81b4f..2a166fc44 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_exec_is_hidden_from_history.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_exec_is_hidden_from_history.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 377
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -12,4 +13,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_request_permissions_clears_status_without_history.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_request_permissions_clears_status_without_history.snap
-index 9e552010a..9625a2903 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_request_permissions_clears_status_without_history.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_approved_request_permissions_clears_status_without_history.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 463
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -12,4 +13,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_denied_exec_renders_warning_and_denied_request.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_denied_exec_renders_warning_and_denied_request.snap
-index c97ab12d2..526422a3c 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_denied_exec_renders_warning_and_denied_request.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_denied_exec_renders_warning_and_denied_request.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 321
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -21,4 +22,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_goal_continuation_drops_stale_reviews.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_goal_continuation_drops_stale_reviews.snap
-index f422c75d4..c570481cd 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_goal_continuation_drops_stale_reviews.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_goal_continuation_drops_stale_reviews.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 837
- expression: normalize_snapshot_paths(rendered)
- ---
- • Reviewing approval request (0s • esc to interrupt)
-@@ -8,4 +9,4 @@ expression: normalize_snapshot_paths(rendered)
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default …
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_parallel_reviews_render_aggregate_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_parallel_reviews_render_aggregate_status.snap
-index cdadc018e..5a00e2988 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_parallel_reviews_render_aggregate_status.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_parallel_reviews_render_aggregate_status.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 761
- expression: normalize_snapshot_paths(rendered)
- ---
- • Reviewing 2 approval requests (0s • esc to interrupt)
-@@ -9,4 +10,4 @@ expression: normalize_snapshot_paths(rendered)
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default …
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_timed_out_exec_renders_warning_and_timed_out_request.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_timed_out_exec_renders_warning_and_timed_out_request.snap
-index 0210b58f7..539481646 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_timed_out_exec_renders_warning_and_timed_out_request.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_timed_out_exec_renders_warning_and_timed_out_request.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 537
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -21,4 +22,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_write_stdin_review_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_write_stdin_review_status.snap
-index 01b02b2c9..af5ae6e57 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_write_stdin_review_status.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__guardian_write_stdin_review_status.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/guardian.rs
-+assertion_line: 113
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- • Reviewing approval request (0s • esc to interrupt)
-@@ -8,4 +9,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hidden_shell_paste_queued_preview.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hidden_shell_paste_queued_preview.snap
-index 22e76c24c..b08252223 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hidden_shell_paste_queued_preview.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hidden_shell_paste_queued_preview.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/composer_submission.rs
-+assertion_line: 123
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- • Working (0s • esc to interrupt)
-@@ -10,4 +11,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hook_runs_while_exec_active_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hook_runs_while_exec_active_snapshot.snap
-index a54331724..e6e8a6fa2 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hook_runs_while_exec_active_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__hook_runs_while_exec_active_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5455
- expression: "format!(\"exec running:\\n{exec_running}\\nexec and hook running:\\n{exec_and_hook_running}\\nhistory after exec:\\n{history_after_exec}\\nhook running after exec:\\n{hook_running_after_exec}\\nquiet hook completed:\\n{quiet_hook_completed}\")"
- ---
- exec running:
-@@ -14,7 +15,7 @@ exec and hook running:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history after exec:
- • Ran echo done
-   └ done
-@@ -26,7 +27,7 @@ hook running after exec:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- quiet hook completed:
- "                                                                                "
- "• Working (0s • esc to interrupt)                                               "
-@@ -34,4 +35,4 @@ quiet hook completed:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_disconnected.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_disconnected.snap
-index df97658c8..f3381aac9 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_disconnected.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_disconnected.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/composer_submission.rs
-+assertion_line: 2854
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80)).replace('◦', \"•\")"
- ---
- • Reconnect failed — check the endpoint, then relaunch (0s)
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_in_progress.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_in_progress.snap
-index df0165e19..8b23129d5 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_in_progress.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_in_progress.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/composer_submission.rs
-+assertion_line: 2774
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- • Queued follow-up inputs
-@@ -8,4 +9,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
-
- › x
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_restored_input.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_restored_input.snap
-index decc9f517..680b6eb64 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_restored_input.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_preparation_restored_input.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/composer_submission.rs
--expression: "render_bottom_popup(&chat, 80)"
-+assertion_line: 2708
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
-   [Image #1]
-
- › [Image #2] describe $file
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__interrupted_turn_clears_visible_running_hook.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__interrupted_turn_clears_visible_running_hook.snap
-index 9e65facfb..ac9ffc26f 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__interrupted_turn_clears_visible_running_hook.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__interrupted_turn_clears_visible_running_hook.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 3893
- expression: "format!(\"before interrupt:\\n{before_interrupt}\\nafter interrupt:\\n{}\",\nhook_status_frame(&chat, 80))"
- ---
- before interrupt:
-@@ -9,10 +10,10 @@ before interrupt:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- after interrupt:
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__long_running_hook_below_background_activity_row.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__long_running_hook_below_background_activity_row.snap
-index 7c1ff48f5..91d287894 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__long_running_hook_below_background_activity_row.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__long_running_hook_below_background_activity_row.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5275
- expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame(&chat, 80),\nhook_status_frame(&chat, 120),)"
- ---
- 80 columns:
-@@ -10,7 +11,7 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- 120 columns:
- "                                                                                                                        "
- "• Working (0s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close                        "
-@@ -19,4 +20,4 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                                                        "
- "› Ask Codex to do anything                                                                                              "
- "                                                                                                                        "
--"  GPT-5.6-Sol default · /tmp/project                                                                                    "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project                                   "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__manual_thread_name_status_surfaces.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__manual_thread_name_status_surfaces.snap
-index bff7d27f4..1461e0d2c 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__manual_thread_name_status_surfaces.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__manual_thread_name_status_surfaces.snap
-@@ -1,11 +1,12 @@
- ---
- source: tui/src/chatwidget/tests/app_server.rs
--expression: "format!(\"transcript:\\n{transcript}\\nfooter:\\n{footer}\\ntitle: {title}\")"
-+assertion_line: 1870
-+expression: "normalize_snapshot_paths(format!(\"transcript:\\n{transcript}\\nfooter:\\n{footer}\\ntitle: {title}\"))"
- ---
- transcript:
-
- footer:
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project · review-fix
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
- title: review-fix | project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mcp_startup_header_booting.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mcp_startup_header_booting.snap
-index f7988ba63..0143bf03a 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mcp_startup_header_booting.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mcp_startup_header_booting.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/mcp_startup.rs
-+assertion_line: 146
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mixed_running_hooks_share_background_activity_row.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mixed_running_hooks_share_background_activity_row.snap
-index f8f8b45f2..0ff8850ae 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mixed_running_hooks_share_background_activity_row.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__mixed_running_hooks_share_background_activity_row.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5275
- expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame(&chat, 80),\nhook_status_frame(&chat, 120),)"
- ---
- 80 columns:
-@@ -10,7 +11,7 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- 120 columns:
- "                                                                                                                        "
- "• Working (0s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close · Running hooks        "
-@@ -18,4 +19,4 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                                                        "
- "› Ask Codex to do anything                                                                                              "
- "                                                                                                                        "
--"  GPT-5.6-Sol default · /tmp/project                                                                                    "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project                                   "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__model_picker_refreshes_service_tier_controls.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__model_picker_refreshes_service_tier_controls.snap
-index d6477eeac..53c9a12a6 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__model_picker_refreshes_service_tier_controls.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__model_picker_refreshes_service_tier_controls.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/chatwidget/tests/popups_and_settings.rs
--expression: "render_bottom_popup(&chat, 80)"
-+assertion_line: 3516
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- › /fast
-
--  gpt-5.4 default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-5.4 default · /tmp/proje…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__overlapping_hook_live_cell_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__overlapping_hook_live_cell_snapshot.snap
-index 25e7c7a13..71605692e 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__overlapping_hook_live_cell_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__overlapping_hook_live_cell_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5408
- expression: "format!(\"{first_running_snapshot}\\n\\n{second_running_snapshot}\\n\\n{older_completed_snapshot}\\n\\n{all_completed_snapshot}\")"
- ---
- pre running
-@@ -10,7 +11,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- <empty>
-
-@@ -22,7 +23,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- <empty>
-
-@@ -34,7 +35,7 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- <empty>
-
-@@ -46,6 +47,6 @@ activity:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- history:
- <empty>
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__plan_draft_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__plan_draft_footer.snap
-index e44d16044..752104660 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__plan_draft_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__plan_draft_footer.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/chatwidget/tests/plan_mode.rs
--expression: "render_bottom_popup(&chat, 80)"
-+assertion_line: 76
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- › make a plan
-
--  gpt-5 default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · gpt-5 default · /tmp/project
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_delta_restores_recreated_status_indicator.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_delta_restores_recreated_status_indicator.snap
-index 6303a9dd2..1f2405f33 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_delta_restores_recreated_status_indicator.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_delta_restores_recreated_status_indicator.snap
-@@ -1,6 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
--assertion_line: 4833
-+assertion_line: 4899
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
-@@ -9,4 +9,4 @@ expression: normalized_backend_snapshot(terminal.backend())
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_footer.snap
-index 34012bf8b..b2009ac88 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/popups_and_settings.rs
-+assertion_line: 4070
- expression: snapshot
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.5 max                                                                   "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 max                  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_plan_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_plan_footer.snap
-index fb661e522..efe416a8f 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_plan_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__reasoning_shortcut_max_plan_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/popups_and_settings.rs
-+assertion_line: 4068
- expression: snapshot
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.5 max                                        Plan mode (⇧tab to cycle)  "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 max       Plan mode  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__renamed_thread_footer_title.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__renamed_thread_footer_title.snap
-index 536edffea..e4b2cfaaa 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__renamed_thread_footer_title.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__renamed_thread_footer_title.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4152
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  gpt-5.2 high · Roadmap cleanup                                                "
-+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.2 high · Roadmap clean…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__replayed_in_progress_turn.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__replayed_in_progress_turn.snap
-index 4661f024d..7251c5cba 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__replayed_in_progress_turn.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__replayed_in_progress_turn.snap
-@@ -1,10 +1,11 @@
- ---
- source: tui/src/chatwidget/tests/history_replay.rs
--expression: "normalize_completion_timestamps(& (render_bottom_popup(&chat, 80)))"
-+assertion_line: 1640
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- • Working (0s • esc to interrupt)
-
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__review_queues_user_messages_snapshot.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__review_queues_user_messages_snapshot.snap
-index 7f11c14a0..8623e3bfb 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__review_queues_user_messages_snapshot.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__review_queues_user_messages_snapshot.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/review_mode.rs
-+assertion_line: 1504
- expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
- ---
-
-@@ -19,4 +20,4 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__running_hooks_share_background_activity_row.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__running_hooks_share_background_activity_row.snap
-index 57e161155..4ee9845ff 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__running_hooks_share_background_activity_row.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__running_hooks_share_background_activity_row.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5275
- expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame(&chat, 80),\nhook_status_frame(&chat, 120),)"
- ---
- 80 columns:
-@@ -10,7 +11,7 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- 120 columns:
- "                                                                                                                        "
- "• Working (0s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close                        "
-@@ -19,4 +20,4 @@ expression: "format!(\"80 columns:\\n{}\\n120 columns:\\n{}\", hook_status_frame
- "                                                                                                                        "
- "› Ask Codex to do anything                                                                                              "
- "                                                                                                                        "
--"  GPT-5.6-Sol default · /tmp/project                                                                                    "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project                                   "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity.snap
-index ea69dee67..2d28e7a13 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5331
- expression: "format!(\"before reveal:\\n{hidden}\\nrunning:\\n{running}\\ncompleted:\\n{}\",\nhook_status_frame(&chat, 80),)"
- ---
- before reveal:
-@@ -7,7 +8,7 @@ before reveal:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- running:
- "                                                                                "
- "• Saving session summary                                                        "
-@@ -15,10 +16,10 @@ running:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- completed:
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity_without_message.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity_without_message.snap
-index 9a05181d3..e82f2521a 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity_without_message.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__session_end_hook_activity_without_message.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 5331
- expression: "format!(\"before reveal:\\n{hidden}\\nrunning:\\n{running}\\ncompleted:\\n{}\",\nhook_status_frame(&chat, 80),)"
- ---
- before reveal:
-@@ -7,7 +8,7 @@ before reveal:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- running:
- "                                                                                "
- "• Running hook                                                                  "
-@@ -15,10 +16,10 @@ running:
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
- completed:
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_preserves_status_line.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_preserves_status_line.snap
-index 2729a2ce3..36671f3fd 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_preserves_status_line.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_preserves_status_line.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/side.rs
-+assertion_line: 409
- expression: terminal.backend()
- ---
- "                                                                                "
- "                                                                                "
- "› Ask a follow-up question                                                      "
- "                                                                                "
--"  GPT-5.6-Sol       Side from main thread · ctrl+/ to switch · ctrl+c to close  "
-+"  Oh My Diff · ups… Side from main thread · ctrl+/ to switch · ctrl+c to close  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_hidden_side.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_hidden_side.snap
-index 51133a16e..40aeacdd2 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_hidden_side.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__side_context_label_shows_hidden_side.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/side.rs
-+assertion_line: 461
- expression: terminal.backend()
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol                                                  ctrl+/ for side  "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol ctrl+/ for side  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
-index dfa6b7a09..8c8626ff3 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__single_line_final_answer_hides_working_status.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 2165
- expression: normalize_snapshot_paths(terminal.backend().vt100().screen().contents())
- ---
-
-@@ -11,4 +12,4 @@ expression: normalize_snapshot_paths(terminal.backend().vt100().screen().content
-
- › Ask Codex to do anything
-
--  gpt-5 default · /tmp/project
-+  Oh My Diff · upstream-style direct · …
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
-index b5281c321..96d50cee2 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_confirmation_popup.snap
-@@ -5,7 +5,7 @@ expression: popup
-       Archive this session?
- › As  Are you sure? This will archive the current session
-
--  GP
-+  Oh                                                                        p/p…
-     › 1. No, don't archive  Return to the current session
-       2. Yes, archive       Archive this session now
-
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
-index 064231754..817a8c722 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_archive_running_confirmation_popup.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/slash_commands.rs
--assertion_line: 2937
- expression: popup
- ---
- • Wo  Archive this session?
-@@ -8,6 +7,6 @@ expression: popup
-
- › As
-     › 1. No, don't archive  Return to the current session
--  GP  2. Yes, archive       Archive this session now
-+  Oh  2. Yes, archive       Archive this session now                        p/p…
-
-       enter select · esc back
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
-index cd9e610ef..06eefb213 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_command_center.snap
-@@ -5,7 +5,7 @@ expression: popup
-       Delete this session?
- › As  Cannot be undone. Subagent threads will also be deleted.
-
--  GP
-+  Oh                                                                        p/p…
-     › 1. No, keep this session                     Return to the current
-                                                    session
-       2. Yes, delete and return to command center  Permanently delete this
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
-index 85506a0ab..caff1bad3 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_delete_confirmation_popup.snap
-@@ -5,7 +5,7 @@ expression: popup
-       Delete this session?
- › As  Cannot be undone. Subagent threads will also be deleted.
-
--  GP
-+  Oh                                                                        p/p…
-     › 1. No, keep this session  Return to the current session
-       2. Yes, delete and exit   Permanently delete this session now
-
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap
-index 558a9e05b..f2da3b143 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__slash_side_requests_forked_side_question_while_task_running.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/side.rs
-+assertion_line: 349
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
-@@ -8,4 +9,4 @@ expression: normalized_backend_snapshot(terminal.backend())
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default                                         Side starting...  "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-S… Side starting...  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_estimated_thread_cost_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_estimated_thread_cost_footer.snap
-index d0d6e6d87..70667b496 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_estimated_thread_cost_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_estimated_thread_cost_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 3611
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · 5.2 credits · ~$0.21                                    "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · 5.2 cr…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_fast_mode_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_fast_mode_footer.snap
-index 5848dac56..e5e727193 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_fast_mode_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_fast_mode_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 3985
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  gpt-5.2 high                                                                  "
-+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.2 high                 "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_active_token_budget_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_active_token_budget_footer.snap
-index d7fddce12..54975a634 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_active_token_budget_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_active_token_budget_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4269
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.5                                            Pursuing goal (40K / 50K)  "
-+"  Oh My Diff · upstream-style direct · hooks off · … Pursuing goal (40K / 50K)  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_complete_elapsed_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_complete_elapsed_footer.snap
-index 10e1d6409..18ff2b810 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_complete_elapsed_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_goal_complete_elapsed_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4308
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.5                                           Goal achieved (2d 23h 42m)  "
-+"  Oh My Diff · upstream-style direct · hooks off ·… Goal achieved (2d 23h 42m)  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_context_remaining_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_context_remaining_footer.snap
-index 6200fdf10..a5c5f4c64 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_context_remaining_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_context_remaining_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4220
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  gpt-5.4 xhigh fast · Context 100% left · /tmp/project                         "
-+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.4 xhigh fast · Context…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
-index 2ac794d2f..f541cbe83 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4186
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  gpt-5.4 xhigh fast · Context 0% used · /tmp/project                           "
-+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.4 xhigh fast · Context…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_plan_mode_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_plan_mode_footer.snap
-index 2bbd73de7..57c798d4e 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_plan_mode_footer.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_plan_mode_footer.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 4114
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  gpt-5.2 medium                                     Plan mode (⇧tab to cycle)  "
-+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.2 medium    Plan mode  "
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_active.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_active.snap
-index 0bbc05762..9d87d045f 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_active.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_widget_active.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 2794
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
-@@ -8,4 +9,4 @@ expression: normalized_backend_snapshot(terminal.backend())
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_begin_restores_working_status.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_begin_restores_working_status.snap
-index 68835e4e7..fdec12cd8 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_begin_restores_working_status.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_begin_restores_working_status.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/exec_flow.rs
-+assertion_line: 709
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                                                "
-@@ -8,4 +9,4 @@ expression: normalized_backend_snapshot(terminal.backend())
- "                                                                                "
- "› Ask Codex to do anything                                                      "
- "                                                                                "
--"  GPT-5.6-Sol default · /tmp/project                                            "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_wait_status_renders_command_in_single_details_row.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_wait_status_renders_command_in_single_details_row.snap
-index 980874d99..6df092f1d 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_wait_status_renders_command_in_single_details_row.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__unified_exec_wait_status_renders_command_in_single_details_row.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/exec_flow.rs
-+assertion_line: 1243
- expression: normalize_snapshot_paths(rendered)
- ---
- • Waiting for background terminal (0s • esc to …
-@@ -8,4 +9,4 @@ expression: normalize_snapshot_paths(rendered)
-
- › Ask Codex to do anything
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks of…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_live_transcript_and_stream.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_live_transcript_and_stream.snap
-index 8f6b9f294..b55368ddc 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_live_transcript_and_stream.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_live_transcript_and_stream.snap
-@@ -1,6 +1,7 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
--expression: rendered
-+assertion_line: 39
-+expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                            "
- "• Agent answer arriving                                     "
-@@ -14,4 +15,4 @@ expression: rendered
- "                                                            "
- "› Ask Codex to do anything                                  "
- "                                                            "
--"  GPT-5.6-Sol default · /tmp/project                        "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_partial_transcript_hidden.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_partial_transcript_hidden.snap
-index 1fb5d6d6a..40268d02d 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_partial_transcript_hidden.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__voice_partial_transcript_hidden.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/status_and_layout.rs
-+assertion_line: 39
- expression: normalized_backend_snapshot(terminal.backend())
- ---
- "                                                            "
-@@ -10,4 +11,4 @@ expression: normalized_backend_snapshot(terminal.backend())
- "                                                            "
- "› Ask Codex to do anything                                  "
- "                                                            "
--"  GPT-5.6-Sol default · /tmp/project                        "
-+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-…"
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_setup_fresh_clock.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_setup_fresh_clock.snap
-index 87abf3dba..912a42dd0 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_setup_fresh_clock.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_setup_fresh_clock.snap
-@@ -1,6 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/permissions.rs
--assertion_line: 610
-+assertion_line: 709
- expression: "setup.replace(&chat.config.cwd.display().to_string(), \"[CWD]\")"
- ---
- • Setting up sandbox... (0s)
-@@ -9,4 +9,4 @@ expression: "setup.replace(&chat.config.cwd.display().to_string(), \"[CWD]\")"
-
- › Input disabled until setup completes.
-
--  GPT-5.6-Sol default · [CWD]
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_local.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_local.snap
-index d42eb2f2b..a2e2f1a89 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_local.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_local.snap
-@@ -1,9 +1,10 @@
- ---
- source: tui/src/chatwidget/tests/worktree_picker_tests.rs
-+assertion_line: 71
- expression: popup
- ---
- › /worktree  start or continue a conversation in a new worktree
-
- › /work
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_remote.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_remote.snap
-index 91076caee..e6dc0003a 100644
---- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_remote.snap
-+++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__worktrees_command_remote.snap
-@@ -1,8 +1,8 @@
- ---
--source: tui/src/chatwidget/tests/slash_commands.rs
--assertion_line: 3091
-+source: tui/src/chatwidget/tests/worktree_picker_tests.rs
-+assertion_line: 71
- expression: popup
- ---
- › /work
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 46727cfc3..3f6ecab07 100644
+index 46727cfc3..31bc01cc6 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -200,7 +200,9 @@ impl ChatWidget {
@@ -36488,7 +34223,7 @@ index 46727cfc3..3f6ecab07 100644
          self.bottom_pane.set_status_line_enabled(enabled);
          if !enabled {
              self.set_status_line(/*status_line*/ None);
-@@ -215,11 +217,22 @@ impl ChatWidget {
+@@ -215,11 +217,24 @@ impl ChatWidget {
              }
          }
 
@@ -36499,21 +34234,23 @@ index 46727cfc3..3f6ecab07 100644
              self.thread_id,
 -        ));
 +        );
-+        let mut spans = vec![crate::omd::compact_status().bold()];
-+        for segment in mod_segments {
-+            spans.push(" · ".dim());
-+            spans.push(segment.into());
++        let parts = crate::omd::compact_status()
++            .map(|status| vec![status.bold()])
++            .into_iter()
++            .chain(mod_segments.into_iter().map(|segment| vec![segment.into()]))
++            .chain(status_line.map(|line| line.spans));
++        let mut spans = Vec::new();
++        for part in parts {
++            if !spans.is_empty() {
++                spans.push(" · ".dim());
++            }
++            spans.extend(part);
 +        }
-+        if let Some(line) = status_line {
-+            spans.push(" · ".dim());
-+            spans.extend(line.spans);
-+        }
-+        let status_line = Some(Line::from(spans));
-+        self.set_status_line(status_line);
++        self.set_status_line((!spans.is_empty()).then(|| Line::from(spans)));
          let hyperlink_url = selections
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
-@@ -454,6 +467,9 @@ impl ChatWidget {
+@@ -454,6 +469,9 @@ impl ChatWidget {
      ///
      /// Unknown ids are deduplicated in insertion order for warning messages.
      fn status_line_items_with_invalids(&self) -> (Vec<StatusLineItem>, Vec<String>) {
@@ -36747,216 +34484,32 @@ index 4018a2539..d7802d374 100644
  #[tokio::test]
  async fn experimental_mode_plan_is_ignored_on_startup() {
      let codex_home = tempdir().expect("tempdir");
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_dismissible.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_dismissible.snap
-index dd73e1cfe..cabcab72b 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_dismissible.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_dismissible.snap
-@@ -1,7 +1,7 @@
- ---
- source: tui/src/chatwidget/tests/backend_banners_tests.rs
--assertion_line: 66
--expression: rendered
-+assertion_line: 108
-+expression: normalize_snapshot_paths(rendered)
- ---
-   Selected model usage exhausted
-   Ask your owner for credits or switch to another model.
-@@ -11,4 +11,4 @@ expression: rendered
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_only.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_only.snap
-index af451575e..8fa12ee7b 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_only.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_information_only.snap
-@@ -1,7 +1,7 @@
- ---
- source: tui/src/chatwidget/tests/backend_banners_tests.rs
--assertion_line: 62
--expression: rendered
-+assertion_line: 113
-+expression: normalize_snapshot_paths(rendered)
- ---
-   Selected model usage exhausted
-   Ask your owner for credits or switch to another model.
-@@ -9,4 +9,4 @@ expression: rendered
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_notification.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_notification.snap
-index eecda45a8..bd5b97bce 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_notification.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__backend_banners_tests__backend_banner_notification.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/backend_banners_tests.rs
-+assertion_line: 53
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 70))"
- ---
-   Selected model usage exhausted
-@@ -11,4 +12,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 70))"
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
 diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
-index 0644d12b6..0a6e47b3c 100644
+index 0644d12b6..f6fb7e085 100644
 --- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
 +++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_narrow.snap
-@@ -1,8 +1,8 @@
+@@ -1,8 +1,7 @@
  ---
  source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
 -expression: "render_bottom_popup(&chat, 34)"
-+assertion_line: 124
 +expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 34))"
  ---
 -
  › Ask Codex to do anything
 
--  Luna Reserve default · /tmp/pro…
-+  Oh My Diff · upstream-style dir…
+   Luna Reserve default · /tmp/pro…
 diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_wide.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_wide.snap
-index d6537e354..f2895eda8 100644
+index d6537e354..d4e981ed0 100644
 --- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_wide.snap
 +++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__luna_reserve_usage_tests__luna_reserve_usage_wide.snap
-@@ -1,8 +1,8 @@
- ---
+@@ -2,7 +2,6 @@
  source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
-+assertion_line: 123
  expression: rendered
  ---
 -
  › Ask Codex to do anything
 
--  Luna Reserve default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · Luna Reserve default · /tmp/…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_large_draft.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_large_draft.snap
-index d9ffa813a..2b06102ce 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_large_draft.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_large_draft.snap
-@@ -15,4 +15,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
-
-   [Pasted Content 2413 chars]
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_recovered_composer.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_recovered_composer.snap
-index 07eb53c3c..b950270e2 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_recovered_composer.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__question_turn_end_tests__question_turn_end_recovered_composer.snap
-@@ -13,4 +13,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
-
-   Under 250
-
--  GPT-5.6-Sol default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_with_status_and_queue.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_with_status_and_queue.snap
-index 7289f9dc6..29cd05837 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_with_status_and_queue.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__questions_tests__questions_with_status_and_queue.snap
-@@ -1,5 +1,6 @@
- ---
- source: tui/src/chatwidget/tests/questions_tests.rs
-+assertion_line: 614
- expression: "format!(\"OPEN\\n{open}\\n\\nONLY QUESTIONS\\n{completed}\")"
- ---
- OPEN
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_cutoff.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_cutoff.snap
-index 00a639609..1e5b493c1 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_cutoff.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_cutoff.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/security_setup_tests.rs
--assertion_line: 43
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 48))"
- ---
-   Set up security for Daybreak mode
-@@ -17,4 +16,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 48))"
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks of…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_persona_grace.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_persona_grace.snap
-index 849c8a09a..ef7e88f8b 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_persona_grace.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_after_persona_grace.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/security_setup_tests.rs
--assertion_line: 56
- expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 48))"
- ---
-   Set up security for Daybreak mode
-@@ -16,4 +15,4 @@ expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 48))"
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks of…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_banner.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_banner.snap
-index bff2ed119..ca97e9d92 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_banner.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_banner.snap
-@@ -1,6 +1,5 @@
- ---
- source: tui/src/chatwidget/tests/security_setup_tests.rs
--assertion_line: 19
- expression: rendered
- ---
-   Keep using Daybreak mode
-@@ -14,4 +13,4 @@ expression: rendered
-
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_dismissed_after_usage.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_dismissed_after_usage.snap
-index 77b7fbd67..b3eb00f1e 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_dismissed_after_usage.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__security_setup_tests__security_setup_dismissed_after_usage.snap
-@@ -4,4 +4,4 @@ expression: rendered
- ---
- › Ask Codex to do anything
-
--  test-model-a default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · test-model-a defau…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
-index 6505ef3a2..d03fac0e4 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_allowed.snap
-@@ -1,9 +1,9 @@
- ---
- source: tui/src/chatwidget/tests/slash_commands.rs
--expression: "render_bottom_popup(&chat, 80)"
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- › /ultrafast  ultrafast processing
-
- › /ultra
-
--  GPT-5.5 default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 default · /tmp/proje…
-diff --git a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
-index 25210e0ac..903c6306a 100644
---- a/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
-+++ b/codex-rs/tui/src/chatwidget/tests/snapshots/codex_tui__chatwidget__tests__slash_commands__ultrafast_command_denied.snap
-@@ -1,7 +1,7 @@
- ---
- source: tui/src/chatwidget/tests/slash_commands.rs
--expression: "render_bottom_popup(&chat, 80)"
-+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
- ---
- › /ultra
-
--  GPT-5.5 default · /tmp/project
-+  Oh My Diff · upstream-style direct · hooks off · GPT-5.5 default · /tmp/proje…
+   Luna Reserve default · /tmp/project
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 index 307e1f512..d1c553151 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
@@ -39776,21 +37329,6 @@ index d9ba053eb..966489185 100644
              | SlashCommand::Title
              | SlashCommand::Statusline
              | SlashCommand::AutoReview
-diff --git a/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap b/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap
-index cf58c4def..6be9105fd 100644
---- a/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap
-+++ b/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap
-@@ -1,7 +1,8 @@
- ---
- source: tui/src/app_server_session.rs
--expression: "crate::chatwidget::tests::helpers::render_bottom_popup(&chat, 40)"
-+assertion_line: 4040
-+expression: "crate::chatwidget::tests::helpers::normalize_snapshot_paths(crate::chatwidget::tests::helpers::render_bottom_popup(&chat,\n40),)"
- ---
- › Ask Codex to do anything
-
--  GPT-5.5 default · /tmp/pr… Plan mode
-+  Oh My Diff · upstream-sty… Plan mode
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap
 index 6065eb840..1e142885d 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__layout__tests__owned_startup_layout.snap
@@ -170955,10 +168493,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..3e44c0845
+index 000000000..43be18a83
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,770 @@
+@@ -0,0 +1,771 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -171399,11 +168937,9 @@ index 000000000..3e44c0845
 +    std::fs::read(path).map_err(|error| error.to_string())
 +}
 +
-+pub(crate) fn compact_status() -> String {
-+    match effective_mode() {
-+        Ok(mode) if mode.mode == codex_omd::RuntimeMode::UpstreamDirect => {
-+            "Oh My Diff · upstream-style direct · hooks off".to_string()
-+        }
++pub(crate) fn compact_status() -> Option<String> {
++    Some(match effective_mode() {
++        Ok(mode) if mode.mode == codex_omd::RuntimeMode::UpstreamDirect => return None,
 +        Ok(_) => {
 +            let status = mod_status();
 +            match snapshot_with_status(status.as_ref().unwrap_or(&Value::Null), false) {
@@ -171435,7 +168971,7 @@ index 000000000..3e44c0845
 +            }
 +        }
 +        Err(error) => format!("Oh My Diff · invalid mode · {error}"),
-+    }
++    })
 +}
 +
 +#[cfg(test)]
@@ -171611,8 +169147,8 @@ index 000000000..3e44c0845
 +        assert_eq!(snapshot.retained_exposure_upper_bound_microusd, 10);
 +        assert_eq!(snapshot.contract, "reviewed@1 (separately_reviewed)");
 +        assert_eq!(
-+            compact_status(),
-+            "Oh My Diff · 1 mod on · contract reviewed@1 (separately_reviewed)"
++            compact_status().as_deref(),
++            Some("Oh My Diff · 1 mod on · contract reviewed@1 (separately_reviewed)")
 +        );
 +        assert!(terminal_active());
 +        assert_eq!(mod_paths().unwrap().store, Some(store.clone()));
@@ -171621,14 +169157,20 @@ index 000000000..3e44c0845
 +            r#"{"activation_error":"fixture"}"#,
 +        )
 +        .unwrap();
-+        assert_eq!(compact_status(), "Oh My Diff · mods inactive · see /omd");
++        assert_eq!(
++            compact_status().as_deref(),
++            Some("Oh My Diff · mods inactive · see /omd")
++        );
 +        std::fs::remove_file(store.join("mod-status.json")).unwrap();
-+        assert_eq!(compact_status(), "Oh My Diff · mod status unavailable");
++        assert_eq!(
++            compact_status().as_deref(),
++            Some("Oh My Diff · mod status unavailable")
++        );
 +    }
 +
 +    #[test]
 +    #[serial]
-+    fn explicit_direct_mode_is_visible_and_disables_omd_presentation_hooks() {
++    fn explicit_direct_mode_disables_omd_presentation_hooks() {
 +        let _mode = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
 +
@@ -171636,10 +169178,7 @@ index 000000000..3e44c0845
 +        assert!(!ligatures_enabled());
 +        assert!(!mouse_enabled());
 +        assert_eq!(visual_input("=== -> <=").as_ref(), "=== -> <=");
-+        assert_eq!(
-+            compact_status(),
-+            "Oh My Diff · upstream-style direct · hooks off"
-+        );
++        assert_eq!(compact_status(), None);
 +    }
 +
 +    #[test]
@@ -171709,8 +169248,8 @@ index 000000000..3e44c0845
 +        assert!(!terminal_active());
 +        assert!(mod_status().is_some());
 +        assert_eq!(
-+            compact_status(),
-+            "Oh My Diff · mods off in this directory · see /omd"
++            compact_status().as_deref(),
++            Some("Oh My Diff · mods off in this directory · see /omd")
 +        );
 +    }
 +
@@ -171725,7 +169264,7 @@ index 000000000..3e44c0845
 +            assert!(!is_active());
 +            assert!(!terminal_active());
 +            assert!(mod_paths().is_none());
-+            assert!(compact_status().contains("OMD_MODE=omd"));
++            assert!(compact_status().unwrap().contains("OMD_MODE=omd"));
 +        }
 +    }
 +}

@@ -5,10 +5,13 @@ import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import { translateRequest, responseEvents } from './index.ts';
 import { runClaude } from './transport.mjs';
 import { discover } from './setup.mjs';
+
+// Every test drives a real Claude CLI; without OMD_TEST_CLAUDE a glob that picks this file up skips it.
+const test = process.env.OMD_TEST_CLAUDE ? nodeTest : nodeTest.skip;
 
 const pkg = fileURLToPath(new URL('./', import.meta.url));
 const opus = 'claude-opus-5-5';
@@ -168,7 +171,7 @@ test('setup reads the model catalog and served context windows from the installe
     assert.equal(byFamily.opus.efforts.at(-1), 'max');
   });
 
-test('pinned Codex executes a mod-mapped host tool and returns its result',
+(process.env.OMD_TEST_CODEX ? test : nodeTest.skip)('pinned Codex executes a mod-mapped host tool and returns its result',
   { timeout: 30000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'omd-claude-host-'));
     await mkdir(join(root, 'codex-home'));
