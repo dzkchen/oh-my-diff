@@ -898,6 +898,7 @@
         "omd_claude_cli",
         "omd_continue",
         "omd_frecency",
+        "omd_idle_compact",
         "omd_inspector",
         "omd_logo",
         "omd_lsp_sync",
@@ -916,6 +917,7 @@
         "omd_workflow"
       ],
       "first_party_default_active": [
+        "omd_idle_compact",
         "omd_inspector",
         "omd_logo",
         "omd_model_picker",
@@ -949,6 +951,10 @@
     "omd_frecency": {
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_frecency"
+    },
+    "omd_idle_compact": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_idle_compact"
     },
     "omd_inspector": {
       "version": "0.2.0-preview.1",
@@ -1086,6 +1092,15 @@
       "id": "omd_statusline",
       "kind": "mod",
       "path": "mods/first-party/omd_statusline",
+      "tier": "default-active",
+      "profiles": [
+        "full"
+      ]
+    },
+    {
+      "id": "omd_idle_compact",
+      "kind": "mod",
+      "path": "mods/first-party/omd_idle_compact",
       "tier": "default-active",
       "profiles": [
         "full"
