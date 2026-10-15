@@ -198,6 +198,13 @@ pub fn authorize(
         return Err(denied("app_param_refused", field));
     }
     check_thread(route.scope, object.get("threadId"), caller)?;
+    if route.scope.is_some() {
+        for (_, thread) in object.iter().filter(|(field, value)| {
+            field.ends_with("ThreadId") && *field != "threadId" && !value.is_null()
+        }) {
+            check_thread(Some(ThreadScope::Visible), Some(thread), caller)?;
+        }
+    }
     for field in &route.root {
         if let Some(value) = object.get(field.as_str()).filter(|v| !v.is_null()) {
             check_root(value, caller.roots)?;
@@ -290,26 +297,23 @@ fn check_route_fields(
 
 fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Result<Vec<String>> {
     let invalid = || denied("app_params_invalid", spec);
+    let edit = |edit: Option<&serde_json::Map<String, Value>>| {
+        let edit = edit.ok_or_else(invalid)?;
+        let key = edit.get("keyPath").and_then(Value::as_str).ok_or_else(invalid)?;
+        let mut keys = leaf_keys(key.to_owned(), edit.get("value"));
+        keys.push(key.to_owned());
+        Ok::<_, io::Error>(keys)
+    };
     Ok(match spec {
-        "keyPath" => vec![
-            object
-                .get("keyPath")
-                .and_then(Value::as_str)
-                .ok_or_else(invalid)?
-                .to_owned(),
-        ],
+        "keyPath" => edit(Some(object))?,
         "edits[].keyPath" => object
             .get("edits")
             .and_then(Value::as_array)
             .ok_or_else(invalid)?
             .iter()
-            .map(|edit| {
-                edit.get("keyPath")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .ok_or_else(invalid)
-            })
-            .collect::<io::Result<_>>()?,
+            .map(|entry| edit(entry.as_object()))
+            .collect::<io::Result<Vec<_>>>()?
+            .concat(),
         "enablement{}" => object
             .get("enablement")
             .and_then(Value::as_object)
@@ -319,6 +323,16 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
             .collect(),
         _ => return Err(invalid()),
     })
+}
+
+fn leaf_keys(key: String, value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Object(table)) if !table.is_empty() => table
+            .iter()
+            .flat_map(|(name, value)| leaf_keys(format!("{key}.{name}"), Some(value)))
+            .collect(),
+        _ => vec![key],
+    }
 }
 
 pub fn writable_config_keys() -> impl Iterator<Item = &'static str> {
@@ -348,10 +362,15 @@ pub fn check_config_key(key: &str) -> io::Result<()> {
             Err(denied("app_config_key_refused", key))
         };
     }
+    let parent = format!("{key}.");
     if table.authority_config.contains(&first)
         || second
             .as_ref()
             .is_some_and(|second| table.authority_config.contains(second))
+        || table
+            .authority_config
+            .iter()
+            .any(|authority| authority.starts_with(&parent))
     {
         return Err(denied("app_config_key_refused", key));
     }

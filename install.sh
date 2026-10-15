@@ -12,7 +12,7 @@ if [ -z "$OMD_PYTHON" ]; then
   echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
   exit 1
 fi
-exec "$OMD_PYTHON" - "$@" <<'PY'
+exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
 import fcntl
 import hashlib

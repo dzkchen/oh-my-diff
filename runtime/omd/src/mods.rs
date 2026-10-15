@@ -76,6 +76,7 @@ pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
+pub use view::owned_command;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
@@ -3073,6 +3074,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
                     .as_str()
                     .is_none_or(|network| network == "none")
                 && arguments["unix_sockets"].is_null()
+                && arguments["sandbox"].is_null()
         }
         _ => false,
     }

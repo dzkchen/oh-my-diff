@@ -68,7 +68,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = result.stdout.trim().split('\n').map(JSON.parse);
@@ -122,7 +122,7 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
@@ -139,7 +139,7 @@ test('a pinned component runner reads the state and UI state of the step it serv
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
     filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
@@ -172,6 +172,74 @@ test('no ambient process, fetch, or code generation', () => {
   for (const expression of ['process.env', 'fetch("https://example.org")', 'Function("return process")()']) {
     assert.ok(run(`export default () => { ${expression} }`).error);
   }
+});
+test('errors, crypto results and JSON assets stay in the mod realm', () => {
+  const source = `import data from './data.json';
+  const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  const caught = async run => { try { await run(); return 'no error'; } catch (error) { return reach(error); } };
+  export default api => api.command('probe', async () => {
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(8), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signed = await crypto.subtle.sign('HMAC', key, new Uint8Array(1));
+    return [
+      await caught(() => import('x')),
+      await caught(() => new TextEncoder().encodeInto('a', new Proxy(new Uint8Array(4), {}))),
+      await caught(() => crypto.subtle.digest('none', new Uint8Array(1))),
+      ...[crypto, crypto.subtle, crypto.subtle.digest('SHA-256', new Uint8Array(1)), key, key.algorithm, signed, data].map(reach),
+      signed.byteLength,
+    ];
+  })`;
+  const reply = run(source, { filename: '/pkg/index.ts', entrypoint: 'index.ts', capabilities: ['commands'], environment: ['crypto'],
+    assets: { 'data.json': { text: '{"a": 1}', sha256: 'a'.repeat(64) } }, event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, [...Array(10).fill('contained'), 32], reply.error);
+});
+test('patched intrinsics never receive host values from TextEncoder, crypto or registrations', () => {
+  const source = `import './a.ts';
+  const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  export default api => api.command('probe', async () => {
+    const seen = [];
+    const spy = (owner, name) => {
+      const original = owner[name];
+      owner[name] = function (...args) { seen.push(this, ...args); return Reflect.apply(original, this, args); };
+      return () => { owner[name] = original; };
+    };
+    const Bytes = Uint8Array;
+    globalThis.Uint8Array = function (...args) { seen.push(...args); return new Bytes(...args); };
+    globalThis.Uint8Array.prototype = Bytes.prototype;
+    const restore = [[Object.prototype, 'toString'], [Object, 'entries'], [Object, 'fromEntries'], [Object, 'freeze'], [Array, 'from'],
+      [Array.prototype, 'map'], [WeakMap.prototype, 'set'], [WeakMap.prototype, 'get'], [Promise.prototype, 'then'], [globalThis, 'String'],
+      [JSON, 'parse'], [ArrayBuffer, 'isView']].map(([owner, name]) => spy(owner, name));
+    try {
+      new TextEncoder().encode('a');
+      new TextEncoder().encodeInto('a', new Bytes(4));
+      crypto.getRandomValues(new Bytes(4));
+      const subtle = crypto.subtle;
+      const key = await subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
+      await subtle.sign('HMAC', key, new Bytes(1));
+      await subtle.exportKey('jwk', key);
+      await subtle.digest('SHA-256', new Bytes(1));
+    } finally {
+      restore.forEach(undo => undo());
+      globalThis.Uint8Array = Bytes;
+    }
+    return [seen.map(reach).filter(reached => reached !== 'contained'), reach(globalThis.__omd.registrations.modules)];
+  })`;
+  const reply = run(source, { filename: '/pkg/index.ts', entrypoint: 'index.ts', capabilities: ['commands'], environment: ['crypto'],
+    assets: { 'a.ts': { text: 'export {}', sha256: 'a'.repeat(64) } }, event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, [[], 'contained'], reply.error);
+});
+test('host errors from stack overflow cannot compile code', () => {
+  const source = `const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  export default api => api.command('probe', () => {
+    const found = new Set();
+    for (const probe of [() => import('x'), () => new Error('x').stack]) {
+      let attempts = 0;
+      const recurse = () => { try { recurse(); } catch { if (attempts++ < 3000) { try { probe(); } catch (error) { found.add(reach(error)); } } } };
+      recurse();
+    }
+    return [...found];
+  })`;
+  const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, ['contained'], reply.error);
 });
 test('duplicate registrations rejected', () => {
   assert.match(run('export default api => { api.command("a", () => null); api.command("a", () => null) }', { capabilities: ['commands'] }).error, /conflict/);

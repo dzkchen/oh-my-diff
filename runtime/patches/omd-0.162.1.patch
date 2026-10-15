@@ -30843,7 +30843,7 @@ index 8b5901c60..e5bccd44b 100644
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 73bc892cc..5995b7ccb 100644
+index 73bc892cc..1f291bbde 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -124,6 +124,7 @@ use codex_utils_absolute_path::test_support::PathExt;
@@ -30854,7 +30854,39 @@ index 73bc892cc..5995b7ccb 100644
  use crate::chatwidget::tests::helpers::render_bottom_popup;
  use crate::chatwidget::tests::helpers::set_active_cell;
  use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
-@@ -4380,7 +4381,17 @@ async fn active_thread_file_change_approval_recovers_buffered_changes() {
+@@ -4192,6 +4193,31 @@ async fn inactive_thread_exec_approval_preserves_context() {
+     );
+ }
+
++#[tokio::test]
++#[serial_test::serial]
++async fn builtin_actions_never_reach_an_open_prompt() {
++    let mut app = make_test_app().await;
++    assert!(app.builtin_action_key("composer.submit").is_ok());
++    let thread_id = ThreadId::new();
++    let request = exec_approval_request(thread_id, "turn-approval", "call-approval", None);
++    let Some(ThreadInteractiveRequest::Approval(approval)) = app
++        .interactive_request_for_thread_request(thread_id, &request)
++        .await
++        .expect("valid localized paths")
++    else {
++        panic!("expected exec approval request");
++    };
++    app.chat_widget.push_approval_request(approval);
++    for action in ["composer.submit", "global.open_transcript"] {
++        assert!(
++            app.builtin_action_key(action)
++                .unwrap_err()
++                .starts_with("builtins_view_active"),
++            "{action}"
++        );
++    }
++}
++
+ #[tokio::test]
+ async fn inactive_thread_exec_approval_splits_shell_wrapped_command() {
+     let app = make_test_app().await;
+@@ -4380,7 +4406,17 @@ async fn active_thread_file_change_approval_recovers_buffered_changes() {
      let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 100);
      let destination = app.chat_widget.config_ref().cwd.join("visible-target.md");
      assert!(rendered.contains("Description: Apply proposed file edits"));
@@ -30873,7 +30905,7 @@ index 73bc892cc..5995b7ccb 100644
      app_server.shutdown().await.expect("shutdown app server");
  }
 
-@@ -6122,6 +6133,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
+@@ -6122,6 +6158,7 @@ async fn ctrl_l_clears_owned_history_and_preserves_the_draft() -> Result<()> {
 
  async fn make_test_app() -> Box<App> {
      let (mut chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
@@ -30881,7 +30913,7 @@ index 73bc892cc..5995b7ccb 100644
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -6241,6 +6253,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+@@ -6241,6 +6278,7 @@ pub(super) async fn make_test_app_with_channels() -> (
      tokio::sync::mpsc::UnboundedReceiver<Op>,
  ) {
      let (mut chat_widget, app_event_tx, rx, op_rx) = make_chatwidget_manual_with_sender().await;
@@ -30889,7 +30921,7 @@ index 73bc892cc..5995b7ccb 100644
      let test_codex_home = chat_widget.test_codex_home.take();
      let config = chat_widget.config_ref().clone();
      let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
-@@ -8344,6 +8357,156 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
+@@ -8344,6 +8382,156 @@ async fn remembered_current_cwd_stays_at_launch_across_in_app_resumes() -> Resul
      Ok(())
  }
 
@@ -52210,10 +52242,10 @@ index 000000000..0a11dc0ae
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 000000000..91e7ffaa0
+index 000000000..3dc611d54
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,884 @@
+@@ -0,0 +1,886 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -52659,12 +52691,14 @@ index 000000000..91e7ffaa0
 +    let core = core()?;
 +    let snapshot = snapshot(&core)?;
 +    current(&snapshot, epoch, revision)?;
-+    owner(&snapshot, component)?;
++    let owner = owner(&snapshot, component)?.to_owned();
 +    let ModKeyAction::Command { command, args } =
 +        resolve_action(&snapshot.view, component, row, value.as_ref())?
 +    else {
 +        return Err(format!("action_unavailable: {component}"));
 +    };
++    let command = codex_omd::owned_command(&owner, &command)
++        .ok_or_else(|| format!("action_unavailable: {component}"))?;
 +    let lead = session(&core)?;
 +    let commands = core
 +        .runtime
@@ -83299,10 +83333,10 @@ index 000000000..ae1342ed9
 +}
 diff --git a/codex-rs/omd/src/app_routes.json b/codex-rs/omd/src/app_routes.json
 new file mode 100644
-index 000000000..ad0c3ef84
+index 000000000..5cd172919
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.json
-@@ -0,0 +1,1889 @@
+@@ -0,0 +1,1893 @@
 +{
 + "schema": 1,
 + "upstream": {
@@ -83651,6 +83685,7 @@ index 000000000..ad0c3ef84
 +    "user",
 +    "event"
 +   ],
++   "scope": "visible",
 +   "fields": [
 +    "_meta",
 +    "arguments",
@@ -83676,6 +83711,7 @@ index 000000000..ad0c3ef84
 +    "user",
 +    "event"
 +   ],
++   "scope": "root",
 +   "fields": [
 +    "connectorId",
 +    "originCallId",
@@ -84439,6 +84475,7 @@ index 000000000..ad0c3ef84
 +    "user",
 +    "event"
 +   ],
++   "scope": "visible",
 +   "fields": [
 +    "cursor",
 +    "limit",
@@ -84452,6 +84489,7 @@ index 000000000..ad0c3ef84
 +    "user",
 +    "event"
 +   ],
++   "scope": "visible",
 +   "fields": [
 +    "beforeThreadId",
 +    "sectionId",
@@ -85194,10 +85232,10 @@ index 000000000..ad0c3ef84
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 000000000..0b25b668f
+index 000000000..f7610405a
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,516 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -85398,6 +85436,13 @@ index 000000000..0b25b668f
 +        return Err(denied("app_param_refused", field));
 +    }
 +    check_thread(route.scope, object.get("threadId"), caller)?;
++    if route.scope.is_some() {
++        for (_, thread) in object.iter().filter(|(field, value)| {
++            field.ends_with("ThreadId") && *field != "threadId" && !value.is_null()
++        }) {
++            check_thread(Some(ThreadScope::Visible), Some(thread), caller)?;
++        }
++    }
 +    for field in &route.root {
 +        if let Some(value) = object.get(field.as_str()).filter(|v| !v.is_null()) {
 +            check_root(value, caller.roots)?;
@@ -85490,26 +85535,23 @@ index 000000000..0b25b668f
 +
 +fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Result<Vec<String>> {
 +    let invalid = || denied("app_params_invalid", spec);
++    let edit = |edit: Option<&serde_json::Map<String, Value>>| {
++        let edit = edit.ok_or_else(invalid)?;
++        let key = edit.get("keyPath").and_then(Value::as_str).ok_or_else(invalid)?;
++        let mut keys = leaf_keys(key.to_owned(), edit.get("value"));
++        keys.push(key.to_owned());
++        Ok::<_, io::Error>(keys)
++    };
 +    Ok(match spec {
-+        "keyPath" => vec![
-+            object
-+                .get("keyPath")
-+                .and_then(Value::as_str)
-+                .ok_or_else(invalid)?
-+                .to_owned(),
-+        ],
++        "keyPath" => edit(Some(object))?,
 +        "edits[].keyPath" => object
 +            .get("edits")
 +            .and_then(Value::as_array)
 +            .ok_or_else(invalid)?
 +            .iter()
-+            .map(|edit| {
-+                edit.get("keyPath")
-+                    .and_then(Value::as_str)
-+                    .map(str::to_owned)
-+                    .ok_or_else(invalid)
-+            })
-+            .collect::<io::Result<_>>()?,
++            .map(|entry| edit(entry.as_object()))
++            .collect::<io::Result<Vec<_>>>()?
++            .concat(),
 +        "enablement{}" => object
 +            .get("enablement")
 +            .and_then(Value::as_object)
@@ -85519,6 +85561,16 @@ index 000000000..0b25b668f
 +            .collect(),
 +        _ => return Err(invalid()),
 +    })
++}
++
++fn leaf_keys(key: String, value: Option<&Value>) -> Vec<String> {
++    match value {
++        Some(Value::Object(table)) if !table.is_empty() => table
++            .iter()
++            .flat_map(|(name, value)| leaf_keys(format!("{key}.{name}"), Some(value)))
++            .collect(),
++        _ => vec![key],
++    }
 +}
 +
 +pub fn writable_config_keys() -> impl Iterator<Item = &'static str> {
@@ -85548,10 +85600,15 @@ index 000000000..0b25b668f
 +            Err(denied("app_config_key_refused", key))
 +        };
 +    }
++    let parent = format!("{key}.");
 +    if table.authority_config.contains(&first)
 +        || second
 +            .as_ref()
 +            .is_some_and(|second| table.authority_config.contains(second))
++        || table
++            .authority_config
++            .iter()
++            .any(|authority| authority.starts_with(&parent))
 +    {
 +        return Err(denied("app_config_key_refused", key));
 +    }
@@ -85697,10 +85754,10 @@ index 000000000..0b25b668f
 +mod tests;
 diff --git a/codex-rs/omd/src/app_routes_tests.rs b/codex-rs/omd/src/app_routes_tests.rs
 new file mode 100644
-index 000000000..2551e2cd7
+index 000000000..1995b85b3
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes_tests.rs
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,490 @@
 +use super::*;
 +
 +struct Fixture {
@@ -85908,6 +85965,38 @@ index 000000000..2551e2cd7
 +        "app_thread_out_of_scope"
 +    );
 +    assert_eq!(f.code("thread/start", json!({}), User), "ok");
++    let fixture = fixture(&["threads"]);
++    let move_before = |before: &str| {
++        fixture.code(
++            "thread/section/move",
++            json!({"threadId": "current", "sectionId": "s", "beforeThreadId": before}),
++            Event,
++        )
++    };
++    assert_eq!(move_before("other"), "ok");
++    assert_eq!(move_before("stranger"), "app_thread_out_of_scope");
++}
++
++#[test]
++fn every_thread_addressed_route_has_a_scope() {
++    let unscoped: Vec<_> = TABLE
++        .requests
++        .iter()
++        .filter(|(method, route)| {
++            route.fields.iter().any(|field| field.ends_with("ThreadId") || field == "threadId")
++                && route.scope.is_none()
++                && !method.starts_with("app/")
++                && !matches!(
++                    method.as_str(),
++                    "account/usage/read"
++                        | "experimentalFeature/list"
++                        | "mcpServerStatus/list"
++                        | "thread/list"
++                )
++        })
++        .map(|(method, _)| method.as_str())
++        .collect();
++    assert_eq!(unscoped, Vec::<&str>::new());
 +}
 +
 +#[test]
@@ -85999,6 +86088,37 @@ index 000000000..2551e2cd7
 +    assert_eq!(write("tui.unknown_key"), "app_config_key_refused");
 +    assert_eq!(write("not_a_key"), "app_config_key_refused");
 +    assert_eq!(write("tui..theme"), "app_config_key_refused");
++    let table = |key: &str, value: Value| {
++        f.code(
++            "config/value/write",
++            json!({"keyPath": key, "value": value, "mergeStrategy": "upsert"}),
++            User,
++        )
++    };
++    assert_eq!(write("features.goals"), "ok");
++    assert_eq!(table("features", json!({"goals": true})), "app_config_key_refused");
++    assert_eq!(
++        table("agents", json!({"reviewer": {"config_file": "/tmp/role.toml"}})),
++        "app_config_key_refused"
++    );
++    assert_eq!(table("agents", json!({"max_depth": 2})), "ok");
++    assert_eq!(table("tui", json!({"theme": "x"})), "ok");
++    assert_eq!(
++        f.code(
++            "config/batchWrite",
++            json!({"edits": [{"keyPath": "tui", "value": {"theme": "x", "keymap": {"global": {"copy": "c"}}}}]}),
++            User
++        ),
++        "ok"
++    );
++    assert_eq!(
++        f.code(
++            "config/batchWrite",
++            json!({"edits": [{"keyPath": "agents", "value": {"enabled": true, "r": {"config_file": "x"}}}]}),
++            User
++        ),
++        "app_config_key_refused"
++    );
 +    assert_eq!(
 +        f.code(
 +            "config/value/write",
@@ -89919,10 +90039,10 @@ index 000000000..783beb0b1
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..fab048083
+index 000000000..073dbe30e
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1422 @@
+@@ -0,0 +1,1449 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -90663,21 +90783,7 @@ index 000000000..fab048083
 +        confirm,
 +        active,
 +    )?;
-+    if method == "config/read" {
-+        if let Some(config) = value.get_mut("config") {
-+            redact_config(config);
-+        }
-+        for layer in value
-+            .get_mut("layers")
-+            .and_then(Value::as_array_mut)
-+            .into_iter()
-+            .flatten()
-+        {
-+            if let Some(config) = layer.get_mut("config") {
-+                redact_config(config);
-+            }
-+        }
-+    }
++    redact_result(&method, &mut value);
 +    if matches!(method.as_str(), "thread/start" | "thread/fork")
 +        && let Some(created) = value["thread"]["id"].as_str()
 +        && let Ok(mut visible) = VISIBLE.lock()
@@ -90742,48 +90848,89 @@ index 000000000..fab048083
 +    rows
 +}
 +
++fn redact_result(method: &str, value: &mut Value) {
++    match method {
++        "config/read" => {
++            if let Some(config) = value.get_mut("config") {
++                redact_config(config);
++            }
++            for layer in value
++                .get_mut("layers")
++                .and_then(Value::as_array_mut)
++                .into_iter()
++                .flatten()
++            {
++                if let Some(config) = layer.get_mut("config") {
++                    redact_config(config);
++                }
++            }
++        }
++        "hooks/list" => scrub_secrets(value, ""),
++        _ => {}
++    }
++}
++
 +fn redact_config(config: &mut Value) {
-+    for (table, maps, values, url) in [
-+        (
-+            "mcp_servers",
-+            &["env", "http_headers"][..],
-+            &["/bearer_token", "/oauth/client_secret"][..],
-+            "url",
-+        ),
-+        (
-+            "model_providers",
-+            &["http_headers", "query_params"][..],
-+            &["/experimental_bearer_token"][..],
-+            "base_url",
-+        ),
-+    ] {
-+        for entry in config
++    for (table, url) in [("mcp_servers", "url"), ("model_providers", "base_url")] {
++        for value in config
 +            .get_mut(table)
 +            .and_then(Value::as_object_mut)
 +            .into_iter()
 +            .flat_map(|entries| entries.values_mut())
++            .filter_map(|entry| entry.get_mut(url))
 +        {
-+            for map in maps {
-+                for value in entry
-+                    .get_mut(*map)
-+                    .and_then(Value::as_object_mut)
-+                    .into_iter()
-+                    .flat_map(|map| map.values_mut())
-+                {
-+                    *value = Value::from("<redacted>");
-+                }
-+            }
-+            for pointer in values {
-+                if let Some(value) = entry.pointer_mut(pointer).filter(|value| !value.is_null()) {
-+                    *value = Value::from("<redacted>");
-+                }
-+            }
-+            if let Some(value) = entry.get_mut(url)
-+                && let Some(redacted) = value.as_str().map(redact_url)
-+            {
++            if let Some(redacted) = value.as_str().map(redact_url) {
 +                *value = Value::from(redacted);
 +            }
 +        }
++    }
++    if let Some(set) = config.pointer_mut("/shell_environment_policy/set") {
++        redact_all(set);
++    }
++    scrub_secrets(config, "");
++}
++
++/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines.
++fn scrub_secrets(value: &mut Value, name: &str) {
++    match value {
++        Value::Object(map) => {
++            let launches = map.contains_key("command");
++            for (key, value) in map.iter_mut() {
++                if key.ends_with("headers")
++                    || matches!(key.as_str(), "env" | "query_params")
++                    || (launches && key == "args")
++                {
++                    redact_all(value);
++                } else {
++                    scrub_secrets(value, key);
++                }
++            }
++        }
++        Value::Array(items) => items.iter_mut().for_each(|item| scrub_secrets(item, name)),
++        Value::String(text) => {
++            let mut segments = name.rsplit(['_', '-']);
++            let last = segments.next().unwrap_or_default();
++            let named = match segments.next() {
++                Some(previous) if last == "key" => format!("{previous}_key"),
++                _ => last.to_owned(),
++            };
++            let redacted = crate::resource_data::redact(text);
++            if crate::resource_data::contains_secret(&format!("{named}=x")) {
++                *value = Value::from("<redacted>");
++            } else if redacted != *text {
++                *value = Value::from(redacted.replace("[redacted]", "<redacted>"));
++            }
++        }
++        _ => {}
++    }
++}
++
++fn redact_all(value: &mut Value) {
++    match value {
++        Value::Object(map) => map.values_mut().for_each(redact_all),
++        Value::Array(items) => items.iter_mut().for_each(redact_all),
++        Value::Null => {}
++        _ => *value = Value::from("<redacted>"),
 +    }
 +}
 +
@@ -91347,10 +91494,10 @@ index 000000000..fab048083
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..06d1ab758
+index 000000000..b196bb5f7
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,847 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -91843,16 +91990,15 @@ index 000000000..06d1ab758
 +    drop(second);
 +    drop(observer);
 +    drop(attach(entry("unobserved")));
++    // Raster tests in this binary publish redraws concurrently; only the roster order and this test's redraw are fixed.
++    let seen = seen.lock().unwrap().clone();
++    let redraw = json!("redraw");
++    let rosters: Vec<_> = seen.iter().filter(|entry| **entry != redraw).collect();
 +    assert_eq!(
-+        *seen.lock().unwrap(),
-+        vec![
-+            json!(["first"]),
-+            json!(["second"]),
-+            json!(["second"]),
-+            json!("redraw"),
-+            json!([])
-+        ]
++        rosters,
++        [&json!(["first"]), &json!(["second"]), &json!(["second"]), &json!([])]
 +    );
++    assert_eq!(seen[seen.len() - 2], redraw, "{seen:?}");
 +}
 +
 +#[test]
@@ -91924,11 +92070,30 @@ index 000000000..06d1ab758
 +    let mut config = json!({
 +        "model": "m",
 +        "mcp_servers": {"plain": {"command": "plain"}, "web": {"url": "https://user:s8@web.example:8443/mcp?token=s9&mode=full#s10"}, "local": {"url": "http://127.0.0.1:3920/mcp"}, "docs": {"command": "docs", "env": {"TOKEN": "s1"}, "http_headers": {"Authorization": "s2"}, "bearer_token": "s3", "oauth": {"client_id": "id", "client_secret": "s4"}}},
-+        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}}
++        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}},
++        "otel": {"exporter": {"otlp-http": {"endpoint": "https://otel.example", "headers": {"x-api": "s12"}}}},
++        "shell_environment_policy": {"inherit": "core", "set": {"DEPLOY": "s13"}},
++        "profiles": {"w": {"mcp_servers": {"x": {"command": "x", "args": ["--auth", "s14"], "env": {"K": "s15"}}}}},
++        "notify": ["notify", "--header=Authorization: Bearer s16"],
++        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "curl -H 'X-Api-Key: s17' x"}]}]},
++        "tools": {"web": {"auth_token": "s18"}},
++        "developer_instructions": "Be brief.\npassword: s19\nRun tests.",
++        "cli_auth_credentials_store": "keyring",
++        "model_auto_compact_token_limit_scope": "thread",
++        "model_auto_compact_token_limit": 7
 +    });
 +    redact_config(&mut config);
 +    let text = config.to_string();
-+    assert!((1..=11).all(|index| !text.contains(&format!("s{index}"))));
++    assert!((1..=19).all(|index| !text.contains(&format!("s{index}"))), "{text}");
++    assert_eq!(
++        config["developer_instructions"],
++        "Be brief.\n<redacted>\nRun tests."
++    );
++    assert_eq!(config["cli_auth_credentials_store"], "keyring");
++    assert_eq!(config["model_auto_compact_token_limit_scope"], "thread");
++    assert_eq!(config["model_auto_compact_token_limit"], 7);
++    assert_eq!(config["shell_environment_policy"]["inherit"], "core");
++    assert_eq!(config["notify"][0], "notify");
 +    assert_eq!(config["mcp_servers"]["docs"]["env"]["TOKEN"], "<redacted>");
 +    assert_eq!(config["mcp_servers"]["docs"]["oauth"]["client_id"], "id");
 +    assert_eq!(
@@ -91944,6 +92109,21 @@ index 000000000..06d1ab758
 +        "http://127.0.0.1:3920/<redacted>"
 +    );
 +    assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
++}
++
++#[test]
++fn hook_lists_redact_secret_commands() {
++    let mut hooks = json!({"data": [{"cwd": "/r", "warnings": [], "errors": [], "hooks": [
++        {"key": "user:stop:0", "eventName": "stop", "handlerType": "command", "async": false,
++            "command": "curl -H 'Authorization: Bearer s1' https://hooks.example"},
++        {"key": "user:stop:1", "eventName": "stop", "handlerType": "command", "async": false,
++            "command": "./notify.sh"}
++    ]}]});
++    redact_result("hooks/list", &mut hooks);
++    let hooks = &hooks["data"][0]["hooks"];
++    assert_eq!(hooks[0]["command"], "<redacted>");
++    assert_eq!(hooks[0]["key"], "user:stop:0");
++    assert_eq!(hooks[1]["command"], "./notify.sh");
 +}
 +
 +#[test]
@@ -97447,10 +97627,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..eef8fc345
+index 000000000..6397d59c8
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,252 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97684,6 +97864,7 @@ index 000000000..eef8fc345
 +pub use mods::load_managed_from;
 +pub use mods::managed;
 +pub use mods::mod_command_reference;
++pub use mods::owned_command;
 +pub use mods::mod_component_id;
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
@@ -99593,10 +99774,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..573dffa0f
+index 000000000..80e2a1ed5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6014 @@
+@@ -0,0 +1,6016 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -99675,6 +99856,7 @@ index 000000000..573dffa0f
 +pub use view::component_ids_of;
 +pub use view::invalid_render_tree;
 +pub use view::mod_command_reference;
++pub use view::owned_command;
 +pub use view::mod_component_id;
 +pub use view::mod_key_name;
 +pub use view::valid_glyphs;
@@ -102672,6 +102854,7 @@ index 000000000..573dffa0f
 +                    .as_str()
 +                    .is_none_or(|network| network == "none")
 +                && arguments["unix_sockets"].is_null()
++                && arguments["sandbox"].is_null()
 +        }
 +        _ => false,
 +    }
@@ -113453,10 +113636,10 @@ index 000000000..f303e3e7e
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..07f0cecc3
+index 000000000..9e1892b20
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,619 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -113555,6 +113738,7 @@ index 000000000..07f0cecc3
 +            "--enable-source-maps",
 +            "--no-warnings",
 +            "--experimental-vm-modules",
++            "--disallow-code-generation-from-strings",
 +            "--input-type=module",
 +            "--eval",
 +            RUNNER,
@@ -115223,12 +115407,12 @@ index 000000000..accac76f6
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..679bb4d1a
+index 000000000..9045b9273
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,964 @@
+@@ -0,0 +1,1149 @@
 +import { stripTypeScriptTypes } from 'node:module';
-+import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
++import { createContext, runInContext, SourceTextModule, SyntheticModule } from 'node:vm';
 +import { readSync, writeSync } from 'node:fs';
 +
 +const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -115242,11 +115426,13 @@ index 000000000..679bb4d1a
 +const compiled = new Map();
 +let compiledBytes = 0;
 +function moduleFor(source, context, identifier, typescript = true) {
++  // The refusal is built in the mod's realm: a host-realm error would hand mods the host Function.
++  const importModuleDynamically = () => { throw runInContext("new Error('unsupported_import: dynamic import')", context); };
 +  const key = `${typescript}:${source}`;
 +  let cached = compiled.get(key);
 +  if (!cached) {
 +    const code = typescript ? stripTypeScriptTypes(source) : source;
-+    const module = new SourceTextModule(code, { context, identifier });
++    const module = new SourceTextModule(code, { context, identifier, importModuleDynamically });
 +    const data = module.createCachedData();
 +    const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
 +    if (bytes <= 1048576) {
@@ -115260,7 +115446,7 @@ index 000000000..679bb4d1a
 +    }
 +    return module;
 +  }
-+  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data });
++  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data, importModuleDynamically });
 +}
 +let input = Buffer.alloc(0);
 +function readLine() {
@@ -115348,19 +115534,145 @@ index 000000000..679bb4d1a
 +const exchange = globalThis.__exchange;
 +const clock = globalThis.__clock;
 +const utf8 = globalThis.__utf8;
++const hostCrypto = globalThis.__crypto;
 +delete globalThis.__exchange;
 +delete globalThis.__clock;
 +delete globalThis.__utf8;
-+// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
++delete globalThis.__crypto;
++// Host helpers take and return only primitives or this realm's arrays, and their failures are dropped unread,
++// so no host-realm object reaches code that mods can patch; the intrinsics used here are captured before mod code runs.
++const { apply } = Reflect;
++const { freeze, entries, fromEntries } = Object;
++const { isArray } = Array;
++const { stringify, parse } = JSON;
++const [Bytes, Text, RealmError, RealmTypeError, RealmPromise, Keys] = [Uint8Array, String, Error, TypeError, Promise, WeakMap];
++const { fromCharCode } = String;
++const charCodeAt = String.prototype.charCodeAt;
++const startsWith = String.prototype.startsWith;
++const map = Array.prototype.map;
++const [keyGet, keySet, keyHas] = [WeakMap.prototype.get, WeakMap.prototype.set, WeakMap.prototype.has];
++const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
++const { subarray, set: setBytes } = typedArray;
++const getter = (object, name) => Object.getOwnPropertyDescriptor(object, name).get;
++const [viewTag, viewBuffer, viewOffset, viewLength] = apply(map, [Symbol.toStringTag, 'buffer', 'byteOffset', 'byteLength'], [name => getter(typedArray, name)]);
++const [dataBuffer, dataOffset, dataLength] = apply(map, ['buffer', 'byteOffset', 'byteLength'], [name => getter(DataView.prototype, name)]);
++const bufferLength = getter(ArrayBuffer.prototype, 'byteLength');
++const tagOf = value => value !== null && typeof value === 'object' ? apply(viewTag, value, []) : undefined;
++const encodeResult = new Float64Array(2);
 +globalThis.TextEncoder = class TextEncoder {
 +  get encoding() { return 'utf-8'; }
-+  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
++  encode(input = '') {
++    const text = Text(input);
++    let bytes;
++    try {
++      bytes = new Bytes(utf8.length(text));
++      if (!utf8.into(text, bytes, encodeResult)) bytes = null;
++    } catch {}
++    if (!bytes) throw new RealmTypeError('encode failed');
++    return bytes;
++  }
 +  encodeInto(source, destination) {
-+    if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
-+    const { read, written } = utf8.encodeInto(String(source), destination);
-+    return { read, written };
++    const text = Text(source);
++    let encoded = false;
++    if (tagOf(destination) === 'Uint8Array') {
++      try {
++        encoded = utf8.into(text, destination, encodeResult);
++      } catch {}
++    }
++    if (!encoded) throw new RealmTypeError('encodeInto destination must be a Uint8Array');
++    return { read: encodeResult[0], written: encodeResult[1] };
 +  }
 +};
++if (hostCrypto) {
++  const keyIds = new Keys();
++  const latin1 = bytes => {
++    const length = apply(viewLength, bytes, []);
++    let text = '';
++    for (let at = 0; at < length; at += 8192) text += apply(fromCharCode, null, apply(subarray, bytes, [at, at + 8192]));
++    return text;
++  };
++  const fromLatin1 = text => {
++    const bytes = new Bytes(text.length);
++    for (let at = 0; at < text.length; at += 1) bytes[at] = apply(charCodeAt, text, [at]);
++    return bytes;
++  };
++  const viewBytes = value => new Bytes(apply(viewBuffer, value, []), apply(viewOffset, value, []), apply(viewLength, value, []));
++  const bufferBytes = value => {
++    try {
++      return new Bytes(apply(dataBuffer, value, []), apply(dataOffset, value, []), apply(dataLength, value, []));
++    } catch {}
++    try {
++      apply(bufferLength, value, []);
++      return new Bytes(value);
++    } catch {}
++    return null;
++  };
++  const outward = value => {
++    if (value === null || typeof value !== 'object') return value;
++    if (apply(keyHas, keyIds, [value])) return { $key: apply(keyGet, keyIds, [value]) };
++    const bytes = tagOf(value) !== undefined ? viewBytes(value) : bufferBytes(value);
++    if (bytes) return { $bytes: latin1(bytes) };
++    if (isArray(value)) return apply(map, value, [outward]);
++    return fromEntries(apply(map, entries(value), [([name, item]) => [name, outward(item)]]));
++  };
++  const inward = value => {
++    if (value === null || typeof value !== 'object') return value;
++    if (isArray(value)) return apply(map, value, [inward]);
++    if (typeof value.$bytes === 'string') {
++      const bytes = fromLatin1(value.$bytes);
++      return value.view ? bytes : apply(viewBuffer, bytes, []);
++    }
++    if (typeof value.$key === 'number') {
++      const key = freeze({ type: value.type, extractable: value.extractable, algorithm: freeze(inward(value.algorithm)), usages: freeze(value.usages) });
++      apply(keySet, keyIds, [key, value.$key]);
++      return key;
++    }
++    return fromEntries(apply(map, entries(value), [([name, item]) => [name, inward(item)]]));
++  };
++  const failure = ([name, message]) => {
++    const error = new RealmError(message);
++    error.name = name;
++    return error;
++  };
++  const method = name => (...args) => new RealmPromise((resolve, reject) => {
++    const payload = stringify(apply(map, args, [outward]));
++    const settle = text => {
++      const reply = parse(text);
++      if (reply.error) reject(failure(reply.error));
++      else resolve(inward(reply.value));
++    };
++    try {
++      hostCrypto.subtle(name, payload, settle);
++    } catch {
++      reject(new RealmError('crypto_unavailable'));
++    }
++  });
++  globalThis.crypto = freeze({
++    getRandomValues(array) {
++      const tag = tagOf(array);
++      if (tag === undefined || apply(startsWith, tag, ['Float'])) throw failure(['TypeMismatchError', 'The data argument must be an integer-type TypedArray']);
++      const bytes = viewBytes(array);
++      if (apply(viewLength, bytes, []) > 65536) throw failure(['QuotaExceededError', 'The requested length exceeds 65,536 bytes']);
++      let random;
++      try {
++        random = hostCrypto.random(apply(viewLength, bytes, []));
++      } catch {}
++      if (typeof random !== 'string') throw new RealmError('crypto_unavailable');
++      apply(setBytes, bytes, [fromLatin1(random)]);
++      return array;
++    },
++    randomUUID: () => {
++      let uuid;
++      try {
++        uuid = hostCrypto.uuid();
++      } catch {}
++      if (typeof uuid !== 'string') throw new RealmError('crypto_unavailable');
++      return uuid;
++    },
++    subtle: freeze(fromEntries(apply(map, ['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
++      'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey'], [name => [name, method(name)]]))),
++  });
++}
 +function canonical(value) {
 +  if (Array.isArray(value)) return value.map(canonical);
 +  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -116030,7 +116342,63 @@ index 000000000..679bb4d1a
 +`;
 +// Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 +let live = null;
-+const utf8 = new TextEncoder();
++const encoder = new TextEncoder();
++const utf8 = Object.freeze({
++  length: text => Buffer.byteLength(text),
++  into(text, destination, result) {
++    try {
++      const { read, written } = encoder.encodeInto(text, destination);
++      result[0] = read;
++      result[1] = written;
++      return true;
++    } catch {
++      return false;
++    }
++  },
++});
++const subtleMethods = new Set(['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
++  'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey']);
++// Web Crypto runs here; the mod realm exchanges JSON text with bytes as latin1 strings and keys as indexes.
++function cryptoBridge() {
++  const keys = [];
++  const decode = value => {
++    if (Array.isArray(value)) return value.map(decode);
++    if (value === null || typeof value !== 'object') return value;
++    if (typeof value.$bytes === 'string') return Buffer.from(value.$bytes, 'latin1');
++    if (Object.hasOwn(value, '$key')) {
++      if (!Number.isInteger(value.$key) || !keys[value.$key]) throw new TypeError('unknown CryptoKey');
++      return keys[value.$key];
++    }
++    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, decode(item)]));
++  };
++  const encode = value => {
++    if (value instanceof ArrayBuffer) return { $bytes: Buffer.from(value).toString('latin1') };
++    if (ArrayBuffer.isView(value)) return { $bytes: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('latin1'), view: true };
++    if (value instanceof CryptoKey) {
++      keys.push(value);
++      return { $key: keys.length - 1, type: value.type, extractable: value.extractable, algorithm: encode(value.algorithm), usages: [...value.usages] };
++    }
++    if (Array.isArray(value)) return value.map(encode);
++    if (value === null || typeof value !== 'object') return value;
++    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, encode(item)]));
++  };
++  return Object.freeze({
++    random: length => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('latin1'),
++    uuid: () => crypto.randomUUID(),
++    subtle(name, payload, settle) {
++      new Promise(resolve => {
++        if (!subtleMethods.has(name)) throw new TypeError('unsupported operation');
++        resolve(crypto.subtle[name](...decode(JSON.parse(payload))));
++      }).then(value => JSON.stringify({ value: encode(value) }),
++        error => JSON.stringify({ error: [String(error?.name ?? 'Error'), String(error?.message ?? error)] }))
++        .then(text => {
++          try {
++            settle(text);
++          } catch {}
++        });
++    },
++  });
++}
 +function prepare() {
 +  const globals = Object.create(null);
 +  globals.__exchange = frame => {
@@ -116056,10 +116424,11 @@ index 000000000..679bb4d1a
 +spare = null;
 +live = context;
 +context.__request = line;
-+if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
++if (request.environment?.includes('crypto')) context.__crypto = cryptoBridge();
 +try {
 +  await setup.link(() => { throw new Error('unsupported_import'); });
 +  await setup.evaluate({ timeout: request.hook_budget_ms });
++  const parse = runInContext('JSON.parse', context);
 +  const mod = moduleFor(request.source, context, request.filename);
 +  const adapter = request.surface?.adapter;
 +  let adapt = null;
@@ -116093,7 +116462,7 @@ index 000000000..679bb4d1a
 +      if (asset) {
 +        const identifier = base + name;
 +        const module = name.endsWith('.json')
-+          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
++          ? new SyntheticModule(['default'], function () { this.setExport('default', parse(asset.text)); }, { context, identifier })
 +          : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
 +        linked.set(name, module);
 +        return module;
@@ -116101,7 +116470,7 @@ index 000000000..679bb4d1a
 +    }
 +    throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
 +  });
-+  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
++  context.__omd.registrations.modules = parse(JSON.stringify([...linked.keys()].filter(name => name !== entry)));
 +  await mod.evaluate({ timeout: request.hook_budget_ms });
 +  context.__activate = mod.namespace.default;
 +  const dispatch = moduleFor(`
@@ -117585,10 +117954,10 @@ index 000000000..c65297cf6
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..c969f5e70
+index 000000000..45db4acfd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2189 @@
+@@ -0,0 +1,2204 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -118851,6 +119220,15 @@ index 000000000..c969f5e70
 +            || (parts == ["Shift"] || bare && parts.is_empty()) && named)
 +}
 +
++/// A view action runs only its owner's commands: a bare name is the owner's, another mod's is refused.
++pub fn owned_command(owner: &str, command: &str) -> Option<String> {
++    match command.split_once(':') {
++        Some((id, _)) if id != owner => None,
++        Some(_) => Some(command.to_owned()),
++        None => Some(format!("{owner}:{command}")),
++    }
++}
++
 +pub fn mod_command_reference(value: &str) -> bool {
 +    match value.split_once(':') {
 +        Some((id, name)) => identifier(id) && id.len() <= 24 && identifier(name),
@@ -119600,10 +119978,16 @@ index 000000000..c969f5e70
 +            candidate.sites.insert(name, composed);
 +        }
 +        let composed = site_component_ids(&candidate.sites);
-+        for (key, action) in self.keybindings {
++        for (key, mut action) in self.keybindings {
 +            // A focus key into a site this patch lost has nothing to focus.
 +            if matches!(&action, ModKeyAction::Focus { focus } if !composed.contains(focus)) {
 +                continue;
++            }
++            if let ModKeyAction::Command { command, .. } = &mut action {
++                let Some(owned) = owned_command(id, command) else {
++                    continue;
++                };
++                *command = owned;
 +            }
 +            if claim(format!("keybindings.{key}")) {
 +                candidate.keybindings.insert(key, action);
@@ -129992,10 +130376,10 @@ index 000000000..9f64a20d4
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 000000000..8c934a2bc
+index 000000000..f9c810eba
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,515 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::ModHost;
@@ -130159,7 +130543,7 @@ index 000000000..8c934a2bc
 +}
 +
 +#[test]
-+fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
++fn composed_key_bindings_run_only_their_owners_commands() {
 +    let temp = TempDir::new().unwrap();
 +    let (root, store) = workspace(&temp);
 +    let ui = written(
@@ -130211,6 +130595,15 @@ index 000000000..8c934a2bc
 +        .map(|(id, command)| (id, command.name))
 +        .collect();
 +    assert_eq!(commands, [("helper".to_string(), "ping".to_string())]);
++    let composed = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
++    assert!(!composed.view.keybindings.contains_key("F6"));
++    assert_eq!(
++        composed.view.keybindings["F7"],
++        codex_omd::ModKeyAction::Command {
++            command: "ui:ping".into(),
++            args: String::new()
++        }
++    );
 +    assert_eq!(
 +        runtime
 +            .invoke(
@@ -131751,10 +132144,10 @@ index 000000000..43e578a09
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..f0f2ce896
+index 000000000..4bec06b89
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,6032 @@
+@@ -0,0 +1,6054 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131913,8 +132306,17 @@ index 000000000..f0f2ce896
 +
 +#[test]
 +fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
-+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
-+    let (temp, _, _) = fixture(source, &["commands", "store"]);
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : key === 'os' ? api.host.tryCall('exec.run', { program: '/bin/echo', argv: [`${value}`], sandbox: 'none' }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let capabilities = ["commands", "store", "exec", "os"];
++    let path = package(&root, "fixture", source, &capabilities);
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
++    std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
++    trust(&store, &path, &capabilities);
 +    let mut first = host(&temp);
 +    let mut second = host(&temp);
 +    let count = |runtime: &mut ModHost| {
@@ -131939,7 +132341,11 @@ index 000000000..f0f2ce896
 +                    },
 +                )
 +            });
-+            std::thread::sleep(std::time::Duration::from_millis(200));
++            // The slow callback has read its state once it makes its host call.
++            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++            while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
++                std::thread::sleep(std::time::Duration::from_millis(5));
++            }
 +            count(second).unwrap();
 +            slow.join().unwrap()
 +        });
@@ -131961,6 +132367,15 @@ index 000000000..f0f2ce896
 +    );
 +    assert_eq!(calls, 1);
 +    assert_eq!(count(&mut second).unwrap(), json!(207));
++    let (result, calls) = race(&mut first, &mut second, "os");
++    assert!(
++        result
++            .unwrap_err()
++            .to_string()
++            .starts_with("state_conflict")
++    );
++    assert_eq!(calls, 1);
++    assert_eq!(count(&mut second).unwrap(), json!(209));
 +    assert!(first.status()["mods"][0]["error"].is_null());
 +}
 +
@@ -145264,10 +145679,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..6fa492af2
+index 000000000..8b77fe233
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2148 @@
+@@ -0,0 +1,2156 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -146412,6 +146827,22 @@ index 000000000..6fa492af2
 +        });
 +    }
 +
++    /// An invoked key never reaches a dialog, popup, overlay or focused mod component, where it could answer a prompt.
++    pub(super) fn builtin_action_key(
++        &self,
++        action: &str,
++    ) -> Result<crossterm::event::KeyEvent, String> {
++        if self.overlay.is_some()
++            || !self.chat_widget.no_modal_or_popup_active()
++            || crate::mod_ui::captures_keys()
++        {
++            return Err(format!("builtins_view_active: {action}"));
++        }
++        let keys = crate::omd::builtin_keys();
++        crate::keymap_overlay::overlay(&self.local_settings.tui.keymap, &keys)
++            .and_then(|(_, runtime)| crate::keymap_overlay::action_key(&runtime, action))
++    }
++
 +    async fn run_mod_surface_call(
 +        &mut self,
 +        tui: &mut tui::Tui,
@@ -146775,23 +147206,15 @@ index 000000000..6fa492af2
 +                }
 +            }
 +            "builtins.invoke" => match call.arguments["action"].as_str() {
-+                Some(action) => {
-+                    let keys = crate::omd::builtin_keys();
-+                    let key =
-+                        crate::keymap_overlay::overlay(&self.local_settings.tui.keymap, &keys)
-+                            .and_then(|(_, runtime)| {
-+                                crate::keymap_overlay::action_key(&runtime, action)
-+                            });
-+                    match key {
-+                        Ok(key) => {
-+                            let _ = call.reply.send(Ok(json!({"invoked": true})));
-+                            self.handle_key_event(tui, app_server, key).await;
-+                            tui.frame_requester().schedule_frame();
-+                            return;
-+                        }
-+                        Err(error) => Err(error),
++                Some(action) => match self.builtin_action_key(action) {
++                    Ok(key) => {
++                        let _ = call.reply.send(Ok(json!({"invoked": true})));
++                        self.handle_key_event(tui, app_server, key).await;
++                        tui.frame_requester().schedule_frame();
++                        return;
 +                    }
-+                }
++                    Err(error) => Err(error),
++                },
 +                None => Err("builtins_action_required".into()),
 +            },
 +            "credentials.request" => {
@@ -149259,10 +149682,10 @@ index 000000000..537ee5366
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
-index 000000000..11190f5de
+index 000000000..ea2ca2e78
 --- /dev/null
 +++ b/codex-rs/tui/src/keymap_overlay.rs
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,158 @@
 +use crate::keymap::RuntimeKeymap;
 +use crate::keymap::keymap_action_id;
 +use codex_config::types::TuiKeymap;
@@ -149300,7 +149723,10 @@ index 000000000..11190f5de
 +    let (context, name) = action
 +        .split_once('.')
 +        .ok_or_else(|| format!("keymap_action_unknown: {action}"))?;
-+    if refused(action) {
++    if refused(action)
++        || context == "list"
++        || matches!(name, "previous_permission_mode" | "next_permission_mode")
++    {
 +        return Err(format!("keymap_action_refused: {action}"));
 +    }
 +    if keymap_action_id(context, name).is_none() {
@@ -149420,10 +149846,10 @@ index 000000000..11190f5de
 +mod action_tests;
 diff --git a/codex-rs/tui/src/keymap_overlay_action_tests.rs b/codex-rs/tui/src/keymap_overlay_action_tests.rs
 new file mode 100644
-index 000000000..bf8d3805c
+index 000000000..e9b477a57
 --- /dev/null
 +++ b/codex-rs/tui/src/keymap_overlay_action_tests.rs
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,44 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyModifiers;
@@ -149459,6 +149885,14 @@ index 000000000..bf8d3805c
 +    );
 +    let (_, defaults) = overlay(&base, &[]).unwrap();
 +    assert!(action_key(&defaults, "global.open_transcript").is_ok());
++    for refused in ["list.accept", "list.move_down", "chat.next_permission_mode"] {
++        assert!(
++            action_key(&defaults, refused)
++                .unwrap_err()
++                .starts_with("keymap_action_refused"),
++            "{refused}"
++        );
++    }
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
@@ -161258,10 +161692,10 @@ index 000000000..d514561ff
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..9b9dcb17e
+index 000000000..dacce70bc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4615 @@
+@@ -0,0 +1,4652 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -163096,6 +163530,24 @@ index 000000000..9b9dcb17e
 +        .collect()
 +}
 +
++/// A component naming another mod's command gets no target; composition records an owner for every component.
++fn owned_target(mut target: ComponentTarget, owner: Option<&str>) -> Option<ComponentTarget> {
++    let Some(owner) = owner else {
++        return Some(target);
++    };
++    let (ComponentTarget::Button(ModComponentAction::Command(action))
++    | ComponentTarget::Input(action)
++    | ComponentTarget::Select { action, .. }
++    | ComponentTarget::ListRow { action, .. }
++    | ComponentTarget::Multiselect { action, .. }
++    | ComponentTarget::Document(Some(action))) = &mut target
++    else {
++        return Some(target);
++    };
++    action.command = codex_omd::owned_command(owner, &action.command)?;
++    Some(target)
++}
++
 +fn component_action(action: &ModComponentAction) -> ModKeyAction {
 +    match action {
 +        ModComponentAction::Command(action) => ModKeyAction::Command {
@@ -163917,7 +164369,15 @@ index 000000000..9b9dcb17e
 +    {
 +        interaction.order.push(id.clone());
 +    }
-+    if let Some(target) = row.target {
++    let owner = row
++        .id
++        .as_ref()
++        .and_then(|id| interaction.component_owners.get(id))
++        .cloned();
++    if let Some(target) = row
++        .target
++        .and_then(|target| owned_target(target, owner.as_deref()))
++    {
 +        let id = row.id.unwrap_or_default();
 +        let label = row.label.unwrap_or_else(|| id.clone());
 +        interaction.targets.insert(id.clone(), target.clone());
@@ -164915,6 +165375,17 @@ index 000000000..9b9dcb17e
 +    }
 +    interaction.focused = Some(id.to_owned());
 +    true
++}
++
++pub(crate) fn captures_keys() -> bool {
++    let interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    interaction.focused.is_some()
++        || interaction
++            .dialog
++            .as_ref()
++            .is_some_and(|dialog| interaction.dismissed.as_ref() != Some(dialog))
 +}
 +
 +pub(crate) fn input(key: KeyEvent) -> Option<ModInput> {
@@ -166192,10 +166663,10 @@ index 000000000..b127214e8
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..e0694e717
+index 000000000..4c93e5be5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2416 @@
+@@ -0,0 +1,2445 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -167817,6 +168288,35 @@ index 000000000..e0694e717
 +        "clicks past a narrow raster pass through"
 +    );
 +    crate::mod_raster::retain(&BTreeSet::new());
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn component_actions_run_only_their_owners_commands() {
++    let mut snapshot = snapshot(serde_json::json!({"sites":{"dialog":{"components":[{
++        "type":"dialog","id":"panel","label":"Panel","title":"Panel","children":[
++            {"type":"button","id":"own","label":"Own","text":"Own","action":{"command":"run"}},
++            {"type":"button","id":"foreign","label":"Foreign","text":"Foreign","action":{"command":"other:run"}}
++        ]
++    }]}}}));
++    snapshot.component_owners = ["panel", "own", "foreign"]
++        .into_iter()
++        .map(|id| (id.to_owned(), "mine".to_owned()))
++        .collect();
++    sync_interaction(&snapshot.view);
++    let area = Rect::new(0, 0, 80, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let enter = || input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++    assert!(focus("own"));
++    match enter() {
++        Some(ModInput::Interaction(_, ModKeyAction::Command { command, .. })) => {
++            assert_eq!(command, "mine:run");
++        }
++        _ => panic!("own button activation missing"),
++    }
++    focus("foreign");
++    assert!(!matches!(enter(), Some(ModInput::Interaction(..))));
 +    preview(ModViewSnapshot::default());
 +}
 +

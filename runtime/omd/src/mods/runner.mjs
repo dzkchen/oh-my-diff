@@ -1,5 +1,5 @@
 import { stripTypeScriptTypes } from 'node:module';
-import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
+import { createContext, runInContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { readSync, writeSync } from 'node:fs';
 
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -13,11 +13,13 @@ stripTypeScriptTypes('let ready: boolean;');
 const compiled = new Map();
 let compiledBytes = 0;
 function moduleFor(source, context, identifier, typescript = true) {
+  // The refusal is built in the mod's realm: a host-realm error would hand mods the host Function.
+  const importModuleDynamically = () => { throw runInContext("new Error('unsupported_import: dynamic import')", context); };
   const key = `${typescript}:${source}`;
   let cached = compiled.get(key);
   if (!cached) {
     const code = typescript ? stripTypeScriptTypes(source) : source;
-    const module = new SourceTextModule(code, { context, identifier });
+    const module = new SourceTextModule(code, { context, identifier, importModuleDynamically });
     const data = module.createCachedData();
     const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
     if (bytes <= 1048576) {
@@ -31,7 +33,7 @@ function moduleFor(source, context, identifier, typescript = true) {
     }
     return module;
   }
-  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data });
+  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data, importModuleDynamically });
 }
 let input = Buffer.alloc(0);
 function readLine() {
@@ -119,19 +121,145 @@ const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
 const utf8 = globalThis.__utf8;
+const hostCrypto = globalThis.__crypto;
 delete globalThis.__exchange;
 delete globalThis.__clock;
 delete globalThis.__utf8;
-// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
+delete globalThis.__crypto;
+// Host helpers take and return only primitives or this realm's arrays, and their failures are dropped unread,
+// so no host-realm object reaches code that mods can patch; the intrinsics used here are captured before mod code runs.
+const { apply } = Reflect;
+const { freeze, entries, fromEntries } = Object;
+const { isArray } = Array;
+const { stringify, parse } = JSON;
+const [Bytes, Text, RealmError, RealmTypeError, RealmPromise, Keys] = [Uint8Array, String, Error, TypeError, Promise, WeakMap];
+const { fromCharCode } = String;
+const charCodeAt = String.prototype.charCodeAt;
+const startsWith = String.prototype.startsWith;
+const map = Array.prototype.map;
+const [keyGet, keySet, keyHas] = [WeakMap.prototype.get, WeakMap.prototype.set, WeakMap.prototype.has];
+const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
+const { subarray, set: setBytes } = typedArray;
+const getter = (object, name) => Object.getOwnPropertyDescriptor(object, name).get;
+const [viewTag, viewBuffer, viewOffset, viewLength] = apply(map, [Symbol.toStringTag, 'buffer', 'byteOffset', 'byteLength'], [name => getter(typedArray, name)]);
+const [dataBuffer, dataOffset, dataLength] = apply(map, ['buffer', 'byteOffset', 'byteLength'], [name => getter(DataView.prototype, name)]);
+const bufferLength = getter(ArrayBuffer.prototype, 'byteLength');
+const tagOf = value => value !== null && typeof value === 'object' ? apply(viewTag, value, []) : undefined;
+const encodeResult = new Float64Array(2);
 globalThis.TextEncoder = class TextEncoder {
   get encoding() { return 'utf-8'; }
-  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
+  encode(input = '') {
+    const text = Text(input);
+    let bytes;
+    try {
+      bytes = new Bytes(utf8.length(text));
+      if (!utf8.into(text, bytes, encodeResult)) bytes = null;
+    } catch {}
+    if (!bytes) throw new RealmTypeError('encode failed');
+    return bytes;
+  }
   encodeInto(source, destination) {
-    if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
-    const { read, written } = utf8.encodeInto(String(source), destination);
-    return { read, written };
+    const text = Text(source);
+    let encoded = false;
+    if (tagOf(destination) === 'Uint8Array') {
+      try {
+        encoded = utf8.into(text, destination, encodeResult);
+      } catch {}
+    }
+    if (!encoded) throw new RealmTypeError('encodeInto destination must be a Uint8Array');
+    return { read: encodeResult[0], written: encodeResult[1] };
   }
 };
+if (hostCrypto) {
+  const keyIds = new Keys();
+  const latin1 = bytes => {
+    const length = apply(viewLength, bytes, []);
+    let text = '';
+    for (let at = 0; at < length; at += 8192) text += apply(fromCharCode, null, apply(subarray, bytes, [at, at + 8192]));
+    return text;
+  };
+  const fromLatin1 = text => {
+    const bytes = new Bytes(text.length);
+    for (let at = 0; at < text.length; at += 1) bytes[at] = apply(charCodeAt, text, [at]);
+    return bytes;
+  };
+  const viewBytes = value => new Bytes(apply(viewBuffer, value, []), apply(viewOffset, value, []), apply(viewLength, value, []));
+  const bufferBytes = value => {
+    try {
+      return new Bytes(apply(dataBuffer, value, []), apply(dataOffset, value, []), apply(dataLength, value, []));
+    } catch {}
+    try {
+      apply(bufferLength, value, []);
+      return new Bytes(value);
+    } catch {}
+    return null;
+  };
+  const outward = value => {
+    if (value === null || typeof value !== 'object') return value;
+    if (apply(keyHas, keyIds, [value])) return { $key: apply(keyGet, keyIds, [value]) };
+    const bytes = tagOf(value) !== undefined ? viewBytes(value) : bufferBytes(value);
+    if (bytes) return { $bytes: latin1(bytes) };
+    if (isArray(value)) return apply(map, value, [outward]);
+    return fromEntries(apply(map, entries(value), [([name, item]) => [name, outward(item)]]));
+  };
+  const inward = value => {
+    if (value === null || typeof value !== 'object') return value;
+    if (isArray(value)) return apply(map, value, [inward]);
+    if (typeof value.$bytes === 'string') {
+      const bytes = fromLatin1(value.$bytes);
+      return value.view ? bytes : apply(viewBuffer, bytes, []);
+    }
+    if (typeof value.$key === 'number') {
+      const key = freeze({ type: value.type, extractable: value.extractable, algorithm: freeze(inward(value.algorithm)), usages: freeze(value.usages) });
+      apply(keySet, keyIds, [key, value.$key]);
+      return key;
+    }
+    return fromEntries(apply(map, entries(value), [([name, item]) => [name, inward(item)]]));
+  };
+  const failure = ([name, message]) => {
+    const error = new RealmError(message);
+    error.name = name;
+    return error;
+  };
+  const method = name => (...args) => new RealmPromise((resolve, reject) => {
+    const payload = stringify(apply(map, args, [outward]));
+    const settle = text => {
+      const reply = parse(text);
+      if (reply.error) reject(failure(reply.error));
+      else resolve(inward(reply.value));
+    };
+    try {
+      hostCrypto.subtle(name, payload, settle);
+    } catch {
+      reject(new RealmError('crypto_unavailable'));
+    }
+  });
+  globalThis.crypto = freeze({
+    getRandomValues(array) {
+      const tag = tagOf(array);
+      if (tag === undefined || apply(startsWith, tag, ['Float'])) throw failure(['TypeMismatchError', 'The data argument must be an integer-type TypedArray']);
+      const bytes = viewBytes(array);
+      if (apply(viewLength, bytes, []) > 65536) throw failure(['QuotaExceededError', 'The requested length exceeds 65,536 bytes']);
+      let random;
+      try {
+        random = hostCrypto.random(apply(viewLength, bytes, []));
+      } catch {}
+      if (typeof random !== 'string') throw new RealmError('crypto_unavailable');
+      apply(setBytes, bytes, [fromLatin1(random)]);
+      return array;
+    },
+    randomUUID: () => {
+      let uuid;
+      try {
+        uuid = hostCrypto.uuid();
+      } catch {}
+      if (typeof uuid !== 'string') throw new RealmError('crypto_unavailable');
+      return uuid;
+    },
+    subtle: freeze(fromEntries(apply(map, ['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
+      'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey'], [name => [name, method(name)]]))),
+  });
+}
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -801,7 +929,63 @@ globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynami
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 let live = null;
-const utf8 = new TextEncoder();
+const encoder = new TextEncoder();
+const utf8 = Object.freeze({
+  length: text => Buffer.byteLength(text),
+  into(text, destination, result) {
+    try {
+      const { read, written } = encoder.encodeInto(text, destination);
+      result[0] = read;
+      result[1] = written;
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+const subtleMethods = new Set(['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
+  'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey']);
+// Web Crypto runs here; the mod realm exchanges JSON text with bytes as latin1 strings and keys as indexes.
+function cryptoBridge() {
+  const keys = [];
+  const decode = value => {
+    if (Array.isArray(value)) return value.map(decode);
+    if (value === null || typeof value !== 'object') return value;
+    if (typeof value.$bytes === 'string') return Buffer.from(value.$bytes, 'latin1');
+    if (Object.hasOwn(value, '$key')) {
+      if (!Number.isInteger(value.$key) || !keys[value.$key]) throw new TypeError('unknown CryptoKey');
+      return keys[value.$key];
+    }
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, decode(item)]));
+  };
+  const encode = value => {
+    if (value instanceof ArrayBuffer) return { $bytes: Buffer.from(value).toString('latin1') };
+    if (ArrayBuffer.isView(value)) return { $bytes: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('latin1'), view: true };
+    if (value instanceof CryptoKey) {
+      keys.push(value);
+      return { $key: keys.length - 1, type: value.type, extractable: value.extractable, algorithm: encode(value.algorithm), usages: [...value.usages] };
+    }
+    if (Array.isArray(value)) return value.map(encode);
+    if (value === null || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, encode(item)]));
+  };
+  return Object.freeze({
+    random: length => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('latin1'),
+    uuid: () => crypto.randomUUID(),
+    subtle(name, payload, settle) {
+      new Promise(resolve => {
+        if (!subtleMethods.has(name)) throw new TypeError('unsupported operation');
+        resolve(crypto.subtle[name](...decode(JSON.parse(payload))));
+      }).then(value => JSON.stringify({ value: encode(value) }),
+        error => JSON.stringify({ error: [String(error?.name ?? 'Error'), String(error?.message ?? error)] }))
+        .then(text => {
+          try {
+            settle(text);
+          } catch {}
+        });
+    },
+  });
+}
 function prepare() {
   const globals = Object.create(null);
   globals.__exchange = frame => {
@@ -827,10 +1011,11 @@ const { context, setup } = spare;
 spare = null;
 live = context;
 context.__request = line;
-if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
+if (request.environment?.includes('crypto')) context.__crypto = cryptoBridge();
 try {
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
+  const parse = runInContext('JSON.parse', context);
   const mod = moduleFor(request.source, context, request.filename);
   const adapter = request.surface?.adapter;
   let adapt = null;
@@ -864,7 +1049,7 @@ try {
       if (asset) {
         const identifier = base + name;
         const module = name.endsWith('.json')
-          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
+          ? new SyntheticModule(['default'], function () { this.setExport('default', parse(asset.text)); }, { context, identifier })
           : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
         linked.set(name, module);
         return module;
@@ -872,7 +1057,7 @@ try {
     }
     throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
   });
-  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
+  context.__omd.registrations.modules = parse(JSON.stringify([...linked.keys()].filter(name => name !== entry)));
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = moduleFor(`

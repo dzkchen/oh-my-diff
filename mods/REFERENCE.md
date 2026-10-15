@@ -1212,7 +1212,8 @@ environments, dynamic tools, base instructions, service tier) and fields added
 by a later upstream stay closed until reviewed. `model` is allowed only as a
 configured route; `thread/start` and `fuzzyFileSearch` roots must be the session
 root or one of its `git worktree list` entries. Thread-scoped methods reach the
-current thread and threads the mod itself started or forked. Local image and
+current thread and threads the mod itself started or forked, and their other
+thread ids (`beforeThreadId`) must name one of those. Local image and
 audio inputs must be `{resource}` references; raw paths are refused.
 `thread/attachmentOwner/list` searches the whole configured thread store across
 projects. Omitting `archived` includes both archived and non-archived threads.
@@ -1223,15 +1224,20 @@ events into a running turn; `mcpServer/tool/call` asks for a native
 confirmation on every call. A confirmation names the mod, the method and its
 exact parameters; a confirmed request whose parameters exceed 2,000 bytes is
 refused (`app_confirmation_too_large`). Config writes accept only writable
-keys; under the protected `mcp_servers` table only `mcp_servers.<name>.enabled`
+keys, never a table that contains an authority key (`features` as a whole), and
+check every leaf of a table value as its own key; under the protected `mcp_servers` table only `mcp_servers.<name>.enabled`
 is writable, and plugin keys are limited to `plugins.<id>.enabled` and a plugin
 server's `enabled`, `enabled_tools` and `disabled_tools`.
-`config/read` results replace the values of MCP server `env`, `http_headers`,
-`bearer_token` and `oauth.client_secret` and of model provider `http_headers`,
-`query_params` and `experimental_bearer_token` with `<redacted>`, and reduce an
-MCP server `url` or provider `base_url` to scheme, host and port (user
-information becomes `<redacted>@`, anything after the host `/<redacted>`), in
-the effective config and in each layer.
+`config/read` results replace with `<redacted>` every value of a `*headers`,
+`env` or `query_params` table, `shell_environment_policy.set` and the `args` of
+anything with a `command` (MCP servers, also under profiles and plugins), every
+string whose key ends in a secret word (`*_token`, `*secret`, `password`, API
+keys; not `*_credentials_store`) and every line that looks like a credential
+(bearer tokens, key prefixes, private keys, user information in URLs; the other
+lines of multi-line text stay), and reduce an MCP server `url` or provider
+`base_url` to scheme, host and port (user information becomes `<redacted>@`,
+anything after the host `/<redacted>`), in the effective config and in each
+layer. `hooks/list` applies the same line rule to hook `command` strings.
 `command/exec`, `process/*`, `fs/*`, `thread/shellCommand`,
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
@@ -1765,7 +1771,9 @@ path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
-is ignored with a warning. `component_event`, `view` and `focus` report
+is ignored with a warning. Key bindings and component actions run only the
+contributing mod's commands: a bare name is its own `id:name`, and a binding or
+control naming another mod's command is dropped. `component_event`, `view` and `focus` report
 interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
@@ -1989,7 +1997,10 @@ Operations:
   generation changes, or the mod unloads. Queued requests and terminal input
   retain their original binding and cannot address a replacement session. A
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
-- `builtins.invoke {action}` runs a key action from user contexts;
+- `builtins.invoke {action}` runs a key action from user contexts; it is
+  refused (`builtins_view_active`) while a dialog, popup, overlay or focused
+  mod component would take the key, and `list.*` and the permission-mode
+  actions are never invoked (`keymap_action_refused`);
   `api.builtins({keys, commands: {replace}})` overlays key bindings (never
   `approval.*`) and routes a built-in command to a mod command; the slash
   popup lists the built-in with that command's description and arguments.
@@ -2751,7 +2762,13 @@ any it refuses.
   count UTF-8 bytes: `new TextEncoder().encode(text).length` measures a
   string, `text.slice(0, encoder.encodeInto(text, new Uint8Array(limit)).read)`
   cuts it to `limit` bytes without splitting a character, and `encode` feeds
-  `crypto.subtle`. There is no `TextDecoder`, `Buffer` or `structuredClone`.
+  `crypto.subtle`. The `crypto` environment provides `getRandomValues`,
+  `randomUUID` and the `crypto.subtle` methods; their results are copied into
+  the mod's context, a `CryptoKey` is a frozen handle with `type`,
+  `extractable`, `algorithm` and `usages`, and failures are plain `Error`s whose
+  `name` is the Web Crypto error name. There is no `TextDecoder`, `Buffer` or
+  `structuredClone`, and no code is compiled from strings (`eval`,
+  `new Function`), in the mod's context or the runner process.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
   `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
   `JSON.stringify(value)` output, including quotes, keys and escapes. Strings
@@ -3385,7 +3402,8 @@ A package spans several files by importing its declared assets with relative
 specifiers (`import { draw } from './draw.ts'`, `'./lib/util.mjs'`, or a
 `'./table.json'` default export). The runner links them in the callback's
 context, so they share module state for that callback; anything else, including
-value imports of the SDK, fails with `unsupported_import`. Imported code counts
+value imports of the SDK and any dynamic `import()`, fails with
+`unsupported_import`. Imported code counts
 toward the source-use report like the entrypoint; assets that are only read
 (for example scripts passed to `exec.run`) do not. Declare the required features
 `package_text_assets_v1` for assets and `package_imports_v1` for relative

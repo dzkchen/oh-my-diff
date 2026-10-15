@@ -582,9 +582,9 @@
       "boundaries": [
         "duplicate_keybindings"
       ],
-      "result": "The first mod in composition order owns each key and later claims are reported as conflicts; bindings may target another mod's command, and a patch that claims a reserved native key is rejected by the host before the terminal sees it.",
+      "result": "The first mod in composition order owns each key and later claims are reported as conflicts; a binding runs only its own mod's commands (one naming another mod's command is dropped), and a patch that claims a reserved native key is rejected by the host before the terminal sees it.",
       "evidence": [
-        "rust:omd/tests/integration.rs::terminal_patches_bind_keys_that_may_target_another_mods_command",
+        "rust:omd/tests/integration.rs::composed_key_bindings_run_only_their_owners_commands",
         "rust:omd/tests/mods.rs::terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
         "patch:native_escape_and_cancel_keys_cannot_be_intercepted"
       ]
