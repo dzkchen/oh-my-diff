@@ -28828,7 +28828,7 @@ index 45f586651..386c5fdd7 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b..136b4b864 100644
+index 5dfc3ad7b..5d3d9445f 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -233,6 +233,10 @@ mod link_hover;
@@ -29051,7 +29051,7 @@ index 5dfc3ad7b..136b4b864 100644
 +                chat_widget.render(chat_area, frame.buffer);
 +                crate::mod_runtime::startup_profile("frame_widgets", widgets_started);
 +                let mods_started = std::time::Instant::now();
-+                crate::mod_ui::render_inline(area, chat_area, frame.buffer, &mod_snapshot);
++                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
 +                crate::mod_runtime::startup_profile("frame_mods", mods_started);
 +                self.chat_widget.note_rendered_width(chat_area.width);
 +                if let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
@@ -50754,10 +50754,10 @@ index 000000000..b8ca7705d
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..356b43ef9
+index 000000000..a5cd5a811
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2334 @@
+@@ -0,0 +1,2332 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -51255,7 +51255,6 @@ index 000000000..356b43ef9
 +    }
 +
 +    /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
-+    #[allow(clippy::too_many_arguments)]
 +    fn police(
 +        &self,
 +        mods: &Mutex<codex_omd::ModHost>,
@@ -51607,7 +51606,6 @@ index 000000000..356b43ef9
 +}
 +
 +impl Accounts {
-+    #[allow(clippy::too_many_arguments)]
 +    fn intercept_request(
 +        &self,
 +        mods: &Mutex<codex_omd::ModHost>,
@@ -82789,10 +82787,10 @@ index 000000000..d0f24c0a3
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 000000000..63b53b5de
+index 000000000..2908f9615
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,189 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -82884,7 +82882,6 @@ index 000000000..63b53b5de
 +        Ok(resolved)
 +    }
 +
-+    #[allow(clippy::too_many_arguments)]
 +    pub(crate) fn watch(
 +        &self,
 +        owner: &str,
@@ -149348,10 +149345,10 @@ index 000000000..6fa492af2
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 000000000..6d0c92485
+index 000000000..955848c80
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,424 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -149543,7 +149540,6 @@ index 000000000..6d0c92485
 +    }
 +
 +    /// Applies one compare-and-write edit from `owner` and returns the new revision.
-+    #[allow(clippy::too_many_arguments)]
 +    #[cfg(test)]
 +    pub(crate) fn mod_edit(
 +        &mut self,
@@ -150321,10 +150317,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..9c3448e65
+index 000000000..42e57e82f
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,615 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -150411,15 +150407,6 @@ index 000000000..9c3448e65
 +    }
 +
 +    pub(crate) fn on_mod_command_finished(
-+        &mut self,
-+        invocation: String,
-+        result: Result<ModCommandResult, String>,
-+        quiet: bool,
-+    ) -> Option<crate::mod_runtime::ModInvocation> {
-+        self.show_mod_command_result(invocation, result, quiet)
-+    }
-+
-+    fn show_mod_command_result(
 +        &mut self,
 +        invocation: String,
 +        result: Result<ModCommandResult, String>,
@@ -151402,10 +151389,10 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..0a87ec70a
+index 000000000..f5d20f833
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,1009 @@
+@@ -0,0 +1,1002 @@
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -151855,7 +151842,6 @@ index 000000000..0a87ec70a
 +/// Called before each draw; measures cell pixels again only when the grid size changes.
 +pub(crate) fn update(animations: bool, columns: u16, rows: u16, pointer: bool) {
 +    let changed = with(|facts| {
-+        let pixel = PIXEL_MODE.load(Ordering::Relaxed);
 +        let before = *facts;
 +        facts.reduced_motion = !animations;
 +        facts.pointer = pointer;
@@ -151863,16 +151849,11 @@ index 000000000..0a87ec70a
 +            facts.measure();
 +            facts.size = (columns, rows);
 +        }
-+        reports_differ((before, pixel), (*facts, pixel))
++        *facts != before
 +    });
 +    if changed {
 +        rerender();
 +    }
-+}
-+
-+/// Whether what the mod view reports changed.
-+fn reports_differ(before: (Facts, bool), after: (Facts, bool)) -> bool {
-+    after != before
 +}
 +
 +/// A burst of changes, such as a window drag, re-renders once per render in progress.
@@ -151910,8 +151891,7 @@ index 000000000..0a87ec70a
 +/// Returns the previous mode; the pointer fact the mod view reports follows it, so a flip re-renders.
 +fn set_pixel_mode(on: bool) -> bool {
 +    let was = PIXEL_MODE.swap(on, Ordering::Relaxed);
-+    let facts = facts();
-+    if reports_differ((facts, was), (facts, on)) {
++    if was != on {
 +        rerender();
 +    }
 +    was
@@ -152417,10 +152397,10 @@ index 000000000..0a87ec70a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_client_tests.rs b/codex-rs/tui/src/mod_client_tests.rs
 new file mode 100644
-index 000000000..b2c407697
+index 000000000..fa99be1a8
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client_tests.rs
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,645 @@
 +use super::*;
 +use base64::Engine as _;
 +use crossterm::event::KeyModifiers;
@@ -152598,49 +152578,6 @@ index 000000000..b2c407697
 +    assert_eq!(value["pointer"], "none");
 +    assert_eq!(value["cell_px"], json!({"width": 10, "height": 20}));
 +    *FACTS.lock().unwrap() = None;
-+}
-+
-+#[test]
-+fn only_reported_facts_and_pixel_mode_changes_re_render() {
-+    let facts = Facts {
-+        pointer: true,
-+        cell: Some((10, 20)),
-+        ..Facts::default()
-+    };
-+    let resized = Facts {
-+        size: (120, 40),
-+        ..facts
-+    };
-+    assert!(!reports_differ((facts, false), (facts, false)));
-+    assert!(reports_differ((facts, false), (resized, false)));
-+    assert_eq!(
-+        (
-+            resized.value()["columns"].clone(),
-+            resized.value()["rows"].clone()
-+        ),
-+        (json!(120), json!(40))
-+    );
-+    assert!(reports_differ((facts, false), (facts, true)));
-+    assert!(reports_differ(
-+        (facts, false),
-+        (
-+            Facts {
-+                pointer: false,
-+                ..resized
-+            },
-+            false
-+        )
-+    ));
-+    assert!(reports_differ(
-+        (facts, true),
-+        (
-+            Facts {
-+                cell: Some((8, 16)),
-+                ..facts
-+            },
-+            true
-+        )
-+    ));
 +}
 +
 +#[test]
@@ -153111,10 +153048,10 @@ index 000000000..b2c407697
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..83c908196
+index 000000000..44588ee65
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,656 @@
+@@ -0,0 +1,655 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -153214,7 +153151,6 @@ index 000000000..83c908196
 +    }
 +}
 +
-+#[allow(clippy::too_many_arguments)]
 +fn authorized_blob(
 +    reference: &codex_omd::resource_data::ResourceRef,
 +    owners: &[String],
@@ -153773,27 +153709,16 @@ index 000000000..83c908196
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..02e1968da
+index 000000000..279bdea88
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,360 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
 +#[test]
 +#[serial_test::serial]
 +fn cached_resource_rows_require_current_owner_authority() {
-+    struct RestoreColor(Option<std::ffi::OsString>);
-+    impl Drop for RestoreColor {
-+        fn drop(&mut self) {
-+            match self.0.take() {
-+                Some(value) => unsafe { std::env::set_var("NO_COLOR", value) },
-+                None => unsafe { std::env::remove_var("NO_COLOR") },
-+            }
-+        }
-+    }
-+    let _color = RestoreColor(std::env::var_os("NO_COLOR"));
-+    unsafe { std::env::remove_var("NO_COLOR") };
 +    let reference = codex_omd::resource_data::ResourceRef {
 +        reference: "revoked-reference".to_owned(),
 +        sha256: "a".repeat(64),
@@ -154534,49 +154459,14 @@ index 000000000..b6e0959f6
 +}
 diff --git a/codex-rs/tui/src/mod_kitty.rs b/codex-rs/tui/src/mod_kitty.rs
 new file mode 100644
-index 000000000..0445a6b2e
+index 000000000..4d651c195
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_kitty.rs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,35 @@
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
-+use codex_omd::ModColor;
 +
 +const KITTY_CHUNK: usize = 4096;
-+
-+pub(crate) fn rgb(color: ModColor) -> [u8; 3] {
-+    match color {
-+        ModColor::Rgb(r, g, b) => [r, g, b],
-+        ModColor::Indexed(index) if index >= 232 => [8 + (index - 232) * 10; 3],
-+        ModColor::Indexed(index) if index >= 16 => {
-+            let levels = [0, 95, 135, 175, 215, 255];
-+            let n = index - 16;
-+            [
-+                levels[usize::from(n / 36)],
-+                levels[usize::from(n / 6 % 6)],
-+                levels[usize::from(n % 6)],
-+            ]
-+        }
-+        ModColor::Indexed(index) => [
-+            [0, 0, 0],
-+            [128, 0, 0],
-+            [0, 128, 0],
-+            [128, 128, 0],
-+            [0, 0, 128],
-+            [128, 0, 128],
-+            [0, 128, 128],
-+            [192, 192, 192],
-+            [128, 128, 128],
-+            [255, 0, 0],
-+            [0, 255, 0],
-+            [255, 255, 0],
-+            [0, 0, 255],
-+            [255, 0, 255],
-+            [0, 255, 255],
-+            [255, 255, 255],
-+        ][usize::from(index)],
-+    }
-+}
 +
 +pub(crate) fn kitty_transmit(payload: &[u8], header: &str) -> String {
 +    let payload = STANDARD.encode(payload);
@@ -158533,10 +158423,10 @@ index 000000000..7ca758b14
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..1df9edb7e
+index 000000000..dd9191141
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1635 @@
+@@ -0,0 +1,1602 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -158752,9 +158642,9 @@ index 000000000..1df9edb7e
 +        return;
 +    }
 +    let snapshot = (|| {
-+        let paths = crate::omd::mod_paths_for(repository)?;
-+        let runtime = shared_host_active(paths.store?, active).ok()?;
-+        let mut runtime = lock_active(&runtime, active)?;
++        crate::omd::mod_paths_for(repository)?;
++        let runtime = shared_host_active(active).ok()?;
++        let mut runtime = try_lock_until(&runtime, active)?;
 +        if !active() {
 +            return None;
 +        }
@@ -158832,20 +158722,18 @@ index 000000000..1df9edb7e
 +}
 +
 +fn entries() -> Vec<Entry> {
-+    let Some(paths) = crate::omd::mod_paths() else {
++    if crate::omd::mod_paths().is_none() {
 +        return Vec::new();
-+    };
++    }
 +    let mut entries = Vec::new();
 +    // The terminal host reloads a changed mods.json at once, so enabled mods' commands appear before the next turn.
-+    let status = paths
-+        .store
-+        .and_then(|store| {
-+            let runtime = shared_host(store).ok()?;
-+            let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
-+            reload(&mut runtime);
-+            Some(runtime.status())
-+        })
-+        .or_else(crate::omd::mod_status);
++    let status = (|| {
++        let runtime = shared_host().ok()?;
++        let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
++        reload(&mut runtime);
++        Some(runtime.status())
++    })()
++    .or_else(crate::omd::mod_status);
 +    if let Some(status) = status {
 +        for item in status["mods"].as_array().into_iter().flatten() {
 +            let Some(id) = item["id"].as_str() else {
@@ -159283,13 +159171,10 @@ index 000000000..1df9edb7e
 +    let Some(paths) = crate::omd::mod_paths_for(&invocation.context.repository) else {
 +        return;
 +    };
-+    let Some(store) = paths.store.clone() else {
++    let Ok(runtime) = shared_host_active(&active) else {
 +        return;
 +    };
-+    let Ok(runtime) = shared_host_active(store, &active) else {
-+        return;
-+    };
-+    let snapshot = lock_active(&runtime, &active).and_then(|mut runtime| {
++    let snapshot = try_lock_until(&runtime, &active).and_then(|mut runtime| {
 +        preview_with(&mut runtime, &paths, &invocation.context, None, &active)
 +    });
 +    if active()
@@ -159300,33 +159185,32 @@ index 000000000..1df9edb7e
 +    }
 +}
 +
-+pub(crate) fn shared_host(store: std::path::PathBuf) -> Result<Arc<Mutex<ModHost>>, String> {
-+    shared_host_active(store, &|| true)
++pub(crate) fn shared_host() -> Result<Arc<Mutex<ModHost>>, String> {
++    shared_host_active(&|| true)
 +}
 +
-+fn lock_active<'a, T>(
-+    mutex: &'a Mutex<T>,
-+    active: &dyn Fn() -> bool,
-+) -> Option<std::sync::MutexGuard<'a, T>> {
-+    while active() {
++/// Retries a busy lock while `retry` holds.
++fn try_lock_until<T>(
++    mutex: &Mutex<T>,
++    retry: impl Fn() -> bool,
++) -> Option<std::sync::MutexGuard<'_, T>> {
++    loop {
 +        match mutex.try_lock() {
 +            Ok(guard) => return Some(guard),
-+            Err(std::sync::TryLockError::Poisoned(error)) => return Some(error.into_inner()),
-+            Err(std::sync::TryLockError::WouldBlock) => {
-+                std::thread::sleep(Duration::from_millis(1))
++            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
++            Err(std::sync::TryLockError::WouldBlock) if retry() => {
++                std::thread::sleep(Duration::from_millis(1));
 +            }
++            Err(std::sync::TryLockError::WouldBlock) => return None,
 +        }
 +    }
-+    None
 +}
 +
-+fn shared_host_active(
-+    store: std::path::PathBuf,
-+    active: &dyn Fn() -> bool,
-+) -> Result<Arc<Mutex<ModHost>>, String> {
-+    let mut host = lock_active(&HOST, active).ok_or("callback_cancelled")?;
++fn shared_host_active(active: &dyn Fn() -> bool) -> Result<Arc<Mutex<ModHost>>, String> {
++    let mut host = try_lock_until(&HOST, active).ok_or("callback_cancelled")?;
 +    if host.is_none() {
 +        let paths = crate::omd::mod_paths().ok_or("mods are off in this directory")?;
++        let store = paths.store.ok_or("mod store is not configured")?;
 +        let runtime = ModHost::open_in_guarded(store, |_| Ok(()), &paths.repository, active)
 +            .map_err(|e| e.to_string())?;
 +        if !active() {
@@ -159386,7 +159270,7 @@ index 000000000..1df9edb7e
 +
 +fn with_host<T>(run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>) -> Option<T> {
 +    let paths = crate::omd::mod_paths()?;
-+    let runtime = shared_host(paths.store.clone()?).ok()?;
++    let runtime = shared_host().ok()?;
 +    let mut runtime = runtime
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -159405,35 +159289,19 @@ index 000000000..1df9edb7e
 +    wait: std::time::Duration,
 +) -> Option<std::sync::MutexGuard<'_, T>> {
 +    let deadline = std::time::Instant::now() + wait;
-+    loop {
-+        match mutex.try_lock() {
-+            Ok(guard) => return Some(guard),
-+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
-+            Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-+                std::thread::sleep(std::time::Duration::from_millis(2));
-+            }
-+            Err(std::sync::TryLockError::WouldBlock) => return None,
-+        }
-+    }
++    try_lock_until(mutex, || std::time::Instant::now() < deadline)
 +}
 +
 +fn try_with_host<T>(
 +    run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>,
 +) -> Option<T> {
-+    try_with_host_within(LOCK_WAIT, run)
-+}
-+
-+fn try_with_host_within<T>(
-+    wait: std::time::Duration,
-+    run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>,
-+) -> Option<T> {
 +    let paths = crate::omd::mod_paths()?;
-+    let opened = lock_within(&HOST, wait)?.clone();
++    let opened = lock_within(&HOST, LOCK_WAIT)?.clone();
 +    let runtime = match opened {
 +        Some(runtime) => runtime,
-+        None => shared_host(paths.store.clone()?).ok()?,
++        None => shared_host().ok()?,
 +    };
-+    let mut runtime = lock_within(&runtime, wait)?;
++    let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
 +    reload(&mut runtime);
 +    let result = run(&mut runtime, &paths);
 +    record_status(&runtime, &paths);
@@ -159468,7 +159336,7 @@ index 000000000..1df9edb7e
 +        return None;
 +    }
 +    let paths = crate::omd::mod_paths()?;
-+    let runtime = shared_host(paths.store.clone()?).ok()?;
++    let runtime = shared_host().ok()?;
 +    let (generation, grants, before) = {
 +        let mut runtime = runtime
 +            .lock()
@@ -159549,11 +159417,7 @@ index 000000000..1df9edb7e
 +    let Some(paths) = crate::omd::mod_paths() else {
 +        return;
 +    };
-+    let Some(runtime) = paths
-+        .store
-+        .clone()
-+        .and_then(|store| shared_host(store).ok())
-+    else {
++    let Ok(runtime) = shared_host() else {
 +        return;
 +    };
 +    let snapshot = {
@@ -159615,7 +159479,7 @@ index 000000000..1df9edb7e
 +pub(crate) fn describe_config(read: &Value) -> Result<Vec<Value>, String> {
 +    let paths = crate::omd::mod_paths().ok_or("mods are not configured for this session")?;
 +    let rows = codex_omd::client_surface::config_rows(read, &packages(&paths)?);
-+    let runtime = shared_host(paths.store.ok_or("mod store is not configured")?)?;
++    let runtime = shared_host()?;
 +    codex_omd::compose_rows(&runtime, "config_list", "rows", "key", rows)
 +        .map_err(|error| error.to_string())
 +}
@@ -159639,8 +159503,7 @@ index 000000000..1df9edb7e
 +    if !intercepts("composer_edit") {
 +        return Ok(edit);
 +    }
-+    let paths = crate::omd::mod_paths().ok_or("mods are not configured for this session")?;
-+    let runtime = shared_host(paths.store.ok_or("mod store is not configured")?)?;
++    let runtime = shared_host()?;
 +    let thread = crate::mod_surface::current_thread();
 +    let input =
 +        serde_json::json!({"source": source, "caller": caller, "revision": revision, "edit": edit});
@@ -159671,9 +159534,7 @@ index 000000000..1df9edb7e
 +    if !intercepts("history_persist") {
 +        return Some(text);
 +    }
-+    let runtime = crate::omd::mod_paths()
-+        .and_then(|paths| paths.store)
-+        .and_then(|store| shared_host(store).ok())?;
++    let runtime = shared_host().ok()?;
 +    let entry = serde_json::json!({"kind": "prompt_history", "role": "user", "call_id": null, "text": text});
 +    match codex_omd::persist_texts(&runtime, thread, &[entry], || true).ok()? {
 +        None => Some(text),
@@ -159734,10 +159595,7 @@ index 000000000..1df9edb7e
 +        "scroll"
 +    };
 +    let unchanged = serde_json::json!({ key: change["to"] });
-+    let Some(store) = crate::omd::mod_paths().and_then(|paths| paths.store) else {
-+        return Ok(unchanged);
-+    };
-+    let Ok(runtime) = shared_host(store) else {
++    let Some(runtime) = crate::omd::mod_paths().and_then(|_| shared_host().ok()) else {
 +        return Ok(unchanged);
 +    };
 +    let thread = crate::mod_surface::current_thread();
@@ -159779,7 +159637,7 @@ index 000000000..1df9edb7e
 +        return Err(format!("config_stale: {key} changed since it was read"));
 +    }
 +    let paths = crate::omd::mod_paths().ok_or("mods are not configured for this session")?;
-+    let runtime = shared_host(paths.store.clone().ok_or("mod store is not configured")?)?;
++    let runtime = shared_host()?;
 +    let grants = {
 +        let mut runtime = runtime
 +            .lock()
@@ -159916,8 +159774,7 @@ index 000000000..1df9edb7e
 +        return Err("callback_cancelled".to_owned());
 +    }
 +    let ModSlashTarget { id, command } = target;
-+    let store = paths.store.clone().ok_or("mod store is not configured")?;
-+    let runtime = shared_host(store)?;
++    let runtime = shared_host()?;
 +    let (generation, grants) = {
 +        let mut runtime = runtime
 +            .lock()
@@ -160006,8 +159863,8 @@ index 000000000..1df9edb7e
 +    {
 +        return composed.clone();
 +    }
-+    let composed = crate::omd::mod_paths()
-+        .and_then(|paths| shared_host(paths.store?).ok())
++    let composed = shared_host()
++        .ok()
 +        .and_then(|runtime| {
 +            codex_omd::compose_rows(
 +                &runtime,
@@ -160101,7 +159958,7 @@ index 000000000..1df9edb7e
 +    } else {
 +        let paths = crate::omd::mod_paths_for(&invocation.context.repository)
 +            .ok_or("mods are not configured for this session")?;
-+        let runtime = shared_host(paths.store.clone().ok_or("mod store is not configured")?)?;
++        let runtime = shared_host()?;
 +        let grants = {
 +            let mut runtime = runtime
 +                .lock()
@@ -160174,7 +160031,7 @@ index 000000000..1df9edb7e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..badbb80bc
+index 000000000..bea0a86a5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,1251 @@
@@ -160295,7 +160152,7 @@ index 000000000..badbb80bc
 +    .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    let previous = HOST.lock().unwrap().take();
-+    let runtime = shared_host(store_path).unwrap();
++    let runtime = shared_host().unwrap();
 +    let busy = runtime.lock().unwrap();
 +    let active = Arc::new(AtomicBool::new(true));
 +    let worker_active = active.clone();
@@ -160376,7 +160233,7 @@ index 000000000..badbb80bc
 +        .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    store.enable(&package, true).unwrap();
-+    shared_host(store_path.clone())
++    shared_host()
 +        .unwrap()
 +        .lock()
 +        .unwrap()
@@ -160653,7 +160510,7 @@ index 000000000..badbb80bc
 +    let raw = draw_grouped(&mut members, 80).join("\n");
 +    assert!(raw.contains("FIRST_READ") && raw.contains("SECOND_READ") && !raw.contains("• mcp"));
 +    store.enable(&package, false).unwrap();
-+    shared_host(store_path)
++    shared_host()
 +        .unwrap()
 +        .lock()
 +        .unwrap()
@@ -160718,7 +160575,7 @@ index 000000000..badbb80bc
 +        .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    store.enable(&package, true).unwrap();
-+    shared_host(store_path.clone())
++    shared_host()
 +        .unwrap()
 +        .lock()
 +        .unwrap()
@@ -160761,7 +160618,7 @@ index 000000000..badbb80bc
 +    assert!(moved.contains("picked 1"), "{moved}");
 +
 +    store.enable(&package, false).unwrap();
-+    shared_host(store_path)
++    shared_host()
 +        .unwrap()
 +        .lock()
 +        .unwrap()
@@ -160828,7 +160685,7 @@ index 000000000..badbb80bc
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    for enabled in [false, true] {
 +        store.enable(&package, enabled).unwrap();
-+        shared_host(store_path.clone())
++        shared_host()
 +            .unwrap()
 +            .lock()
 +            .unwrap()
@@ -161400,7 +161257,7 @@ index 000000000..badbb80bc
 +        .unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    store.enable(&package, true).unwrap();
-+    let runtime = shared_host(store_path).unwrap();
++    let runtime = shared_host().unwrap();
 +    runtime.lock().unwrap().reload().unwrap();
 +    let press = || {
 +        composer_key(
@@ -161431,7 +161288,7 @@ index 000000000..badbb80bc
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..93af27592
+index 000000000..0cf44ccd0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
 @@ -0,0 +1,1055 @@
@@ -162338,7 +162195,7 @@ index 000000000..93af27592
 +        let thread = scope.thread.map(str::to_owned).or_else(current_thread);
 +        let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
 +        let runtime =
-+            crate::mod_runtime::shared_host(store(paths)?).map_err(std::io::Error::other)?;
++            crate::mod_runtime::shared_host().map_err(std::io::Error::other)?;
 +        let generation = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -162492,7 +162349,7 @@ index 000000000..93af27592
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..b77423b77
+index 000000000..d514561ff
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
 @@ -0,0 +1,830 @@
@@ -162894,7 +162751,7 @@ index 000000000..b77423b77
 +    with(|state| state.thread = Some("thread-1".into()));
 +    let user = InvocationContext::User;
 +    for context in [user, InvocationContext::Event] {
-+        let mut captured = crate::mod_runtime::shared_host(paths.store.clone().unwrap())
++        let mut captured = crate::mod_runtime::shared_host()
 +            .unwrap()
 +            .lock()
 +            .unwrap()
@@ -163006,7 +162863,7 @@ index 000000000..b77423b77
 +        "{from_event}"
 +    );
 +
-+    let packages_grants = crate::mod_runtime::shared_host(paths.store.clone().unwrap())
++    let packages_grants = crate::mod_runtime::shared_host()
 +        .unwrap()
 +        .lock()
 +        .unwrap()
@@ -163328,10 +163185,10 @@ index 000000000..b77423b77
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..bb6d01c9a
+index 000000000..9b9dcb17e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4637 @@
+@@ -0,0 +1,4615 @@
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -164347,7 +164204,7 @@ index 000000000..bb6d01c9a
 +    reason = "The mod theme contract explicitly selects 256-color palette indices"
 +)]
 +pub(crate) fn color(color: ModColor) -> Color {
-+    if std::env::var_os("NO_COLOR").is_some() {
++    if crate::mod_client::facts().no_color {
 +        return Color::Reset;
 +    }
 +    match color {
@@ -165115,7 +164972,7 @@ index 000000000..bb6d01c9a
 +}
 +
 +fn panel_style(view: &ModView) -> Style {
-+    panel_style_with_colors(view, std::env::var_os("NO_COLOR").is_none())
++    panel_style_with_colors(view, !crate::mod_client::facts().no_color)
 +}
 +
 +fn panel_style_with_colors(view: &ModView, colors: bool) -> Style {
@@ -165133,7 +164990,7 @@ index 000000000..bb6d01c9a
 +}
 +
 +pub(crate) fn tone_style(tone: ModTone) -> Style {
-+    tone_style_with_colors(tone, std::env::var_os("NO_COLOR").is_none())
++    tone_style_with_colors(tone, !crate::mod_client::facts().no_color)
 +}
 +
 +fn tone_style_with_colors(tone: ModTone, colors: bool) -> Style {
@@ -166053,15 +165910,6 @@ index 000000000..bb6d01c9a
 +    register_component_targets(stage, rows, 0, &mut interaction);
 +}
 +
-+pub(crate) fn render_inline(
-+    area: Rect,
-+    chat: Rect,
-+    buffer: &mut Buffer,
-+    snapshot: &ModViewSnapshot,
-+) {
-+    render(area, chat, buffer, snapshot);
-+}
-+
 +fn bind_terminals(interaction: &mut Interaction, snapshot: &ModViewSnapshot) {
 +    let thread = snapshot.input["ledger"]["thread_id"].as_str();
 +    interaction.thread = thread.map(str::to_owned);
@@ -166445,11 +166293,11 @@ index 000000000..bb6d01c9a
 +    paint: &codex_omd::ModSurfacePaint,
 +    base: Option<Color>,
 +) {
-+    if area.is_empty() || std::env::var_os("NO_COLOR").is_some() {
++    if area.is_empty() || crate::mod_client::facts().no_color {
 +        return;
 +    }
-+    let a = paint.top.or(paint.bottom).map(crate::mod_kitty::rgb);
-+    let b = paint.bottom.or(paint.top).map(crate::mod_kitty::rgb);
++    let a = paint.top.or(paint.bottom).map(rgb);
++    let b = paint.bottom.or(paint.top).map(rgb);
 +    let alpha = paint.opacity.unwrap_or(1.0);
 +    let fallback = crate::terminal_palette::default_bg()
 +        .map(|(r, g, b)| [r, g, b])
@@ -166478,7 +166326,7 @@ index 000000000..bb6d01c9a
 +            {
 +                let actual_background = match cell.bg {
 +                    Color::Rgb(r, g, b) => [r, g, b],
-+                    Color::Indexed(index) => crate::mod_kitty::rgb(ModColor::Indexed(index)),
++                    Color::Indexed(index) => rgb(ModColor::Indexed(index)),
 +                    _ => fallback,
 +                };
 +                cell.set_fg(color(readable(fg, actual_background)));
@@ -166522,9 +166370,17 @@ index 000000000..bb6d01c9a
 +    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 +}
 +
++fn rgb(color: ModColor) -> [u8; 3] {
++    let (r, g, b) = match color {
++        ModColor::Rgb(r, g, b) => (r, g, b),
++        ModColor::Indexed(index) => crate::terminal_palette::XTERM_COLORS[usize::from(index)],
++    };
++    [r, g, b]
++}
++
 +/// Keeps the requested colour when it reads against the background, else white or black.
 +fn readable(fg: ModColor, background: [u8; 3]) -> ModColor {
-+    if contrast(crate::mod_kitty::rgb(fg), background) >= 4.5 {
++    if contrast(rgb(fg), background) >= 4.5 {
 +        fg
 +    } else if contrast([255; 3], background) >= contrast([0; 3], background) {
 +        ModColor::Rgb(255, 255, 255)
@@ -166541,9 +166397,9 @@ index 000000000..bb6d01c9a
 +    if name != APPROVAL_VIEW_ID {
 +        return;
 +    }
-+    let rgb = |color: Color, default: Option<(u8, u8, u8)>| match color {
++    let cell_rgb = |color: Color, default: Option<(u8, u8, u8)>| match color {
 +        Color::Rgb(r, g, b) => Some([r, g, b]),
-+        Color::Indexed(index) => Some(crate::mod_kitty::rgb(ModColor::Indexed(index))),
++        Color::Indexed(index) => Some(rgb(ModColor::Indexed(index))),
 +        Color::Reset => default.map(|(r, g, b)| [r, g, b]),
 +        _ => None,
 +    };
@@ -166554,7 +166410,10 @@ index 000000000..bb6d01c9a
 +    for y in area.top()..area.bottom() {
 +        for x in area.left()..area.right() {
 +            let cell = &mut buffer[(x, y)];
-+            if let (Some(fg), Some(bg)) = (rgb(cell.fg, default_fg), rgb(cell.bg, default_bg)) {
++            if let (Some(fg), Some(bg)) = (
++                cell_rgb(cell.fg, default_fg),
++                cell_rgb(cell.bg, default_bg),
++            ) {
 +                cell.set_fg(color(readable(ModColor::Rgb(fg[0], fg[1], fg[2]), bg)));
 +            }
 +        }
@@ -167142,40 +167001,12 @@ index 000000000..bb6d01c9a
 +                    .unwrap_or_else(|| focused.clone());
 +                return activate_target(&focused, &label, &target, &mut interaction);
 +            }
-+            (KeyCode::Left | KeyCode::Up, KeyModifiers::NONE) => match target {
-+                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. }
-+                | ComponentTarget::Multiselect { ref options, .. } => {
-+                    let selected = interaction.selected.entry(focused).or_default();
-+                    *selected = selected
-+                        .checked_sub(1)
-+                        .unwrap_or(options.len().saturating_sub(1));
++            (KeyCode::Left | KeyCode::Up | KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => {
++                let forward = matches!(key.code, KeyCode::Right | KeyCode::Down);
++                if step(&mut interaction, focused, &target, forward) {
 +                    return Some(ModInput::Consumed);
 +                }
-+                ComponentTarget::Pane => {
-+                    let scroll = interaction.scroll.entry(focused).or_default();
-+                    *scroll = scroll.saturating_sub(1);
-+                    return Some(ModInput::Consumed);
-+                }
-+                _ => {}
-+            },
-+            (KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => match target {
-+                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. }
-+                | ComponentTarget::Multiselect { ref options, .. } => {
-+                    let selected = interaction.selected.entry(focused).or_default();
-+                    if !options.is_empty() {
-+                        *selected = (*selected + 1) % options.len();
-+                    }
-+                    return Some(ModInput::Consumed);
-+                }
-+                ComponentTarget::Pane => {
-+                    let scroll = interaction.scroll.entry(focused).or_default();
-+                    *scroll = scroll.saturating_add(1);
-+                    return Some(ModInput::Consumed);
-+                }
-+                _ => {}
-+            },
++            }
 +            _ => {}
 +        }
 +    }
@@ -167605,49 +167436,49 @@ index 000000000..bb6d01c9a
 +                }
 +            })
 +        }
-+        MouseEventKind::ScrollUp => {
-+            match hit.target {
-+                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. }
-+                | ComponentTarget::Multiselect { ref options, .. } => {
-+                    let selected = interaction.selected.entry(hit.id).or_default();
-+                    *selected = selected
-+                        .checked_sub(1)
-+                        .unwrap_or(options.len().saturating_sub(1));
-+                }
-+                ComponentTarget::Pane => {
-+                    let scroll = interaction.scroll.entry(hit.id).or_default();
-+                    *scroll = scroll.saturating_sub(1);
-+                }
-+                _ => {}
-+            }
-+            Some(ModPointer::Consumed)
-+        }
-+        MouseEventKind::ScrollDown => {
-+            match hit.target {
-+                ComponentTarget::Select { ref options, .. }
-+                | ComponentTarget::ListRow { ref options, .. }
-+                | ComponentTarget::Multiselect { ref options, .. } => {
-+                    let selected = interaction.selected.entry(hit.id).or_default();
-+                    if !options.is_empty() {
-+                        *selected = (*selected + 1) % options.len();
-+                    }
-+                }
-+                ComponentTarget::Pane => {
-+                    let scroll = interaction.scroll.entry(hit.id).or_default();
-+                    *scroll = scroll.saturating_add(1);
-+                }
-+                _ => {}
-+            }
++        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
++            let forward = event.kind == MouseEventKind::ScrollDown;
++            step(&mut interaction, hit.id, &hit.target, forward);
 +            Some(ModPointer::Consumed)
 +        }
 +        _ => Some(ModPointer::Consumed),
 +    }
 +}
 +
-+#[cfg(test)]
-+#[path = "mod_ui_tests.rs"]
-+mod tests;
++/// Moves a choice one option (wrapping) or a pane one row; `false` for targets that don't step.
++fn step(
++    interaction: &mut Interaction,
++    id: String,
++    target: &ComponentTarget,
++    forward: bool,
++) -> bool {
++    match target {
++        ComponentTarget::Select { options, .. }
++        | ComponentTarget::ListRow { options, .. }
++        | ComponentTarget::Multiselect { options, .. } => {
++            let selected = interaction.selected.entry(id).or_default();
++            if forward {
++                if !options.is_empty() {
++                    *selected = (*selected + 1) % options.len();
++                }
++            } else {
++                *selected = selected
++                    .checked_sub(1)
++                    .unwrap_or(options.len().saturating_sub(1));
++            }
++        }
++        ComponentTarget::Pane => {
++            let scroll = interaction.scroll.entry(id).or_default();
++            *scroll = if forward {
++                scroll.saturating_add(1)
++            } else {
++                scroll.saturating_sub(1)
++            };
++        }
++        _ => return false,
++    }
++    true
++}
 +
 +#[derive(Clone, PartialEq)]
 +struct Observed {
@@ -167969,6 +167800,10 @@ index 000000000..bb6d01c9a
 +    report(&before, &after, &mut interaction, "mod");
 +    Ok(serde_json::json!({"applied": true}))
 +}
++
++#[cfg(test)]
++#[path = "mod_ui_tests.rs"]
++mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
 index 000000000..b127214e8
@@ -168284,7 +168119,7 @@ index 000000000..b127214e8
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..d3a8e71d2
+index 000000000..e0694e717
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,2416 @@
@@ -169031,7 +168866,7 @@ index 000000000..d3a8e71d2
 +    assert_eq!(header_rows(area, &hidden), 0);
 +    assert_eq!(chat_area(area, &hidden, 0), area);
 +    let mut buffer = Buffer::empty(area);
-+    render_inline(area, area, &mut buffer, &hidden);
++    render(area, area, &mut buffer, &hidden);
 +    let text = rows(&buffer, area);
 +    assert!(text.contains("DIALOGTEXT"));
 +    assert!(
@@ -169113,7 +168948,7 @@ index 000000000..d3a8e71d2
 +        let composer = Rect::new(chat.x, chat.bottom() - 3, chat.width, 3);
 +        buffer[(composer.x + 1, composer.y + 1)].set_char('I');
 +        paint_named("composer", composer, &mut buffer, None);
-+        render_inline(area, chat, &mut buffer, &current);
++        render(area, chat, &mut buffer, &current);
 +        assert_eq!(buffer[(composer.x + 1, composer.y + 1)].symbol(), "I");
 +        assert_eq!(buffer[(composer.x, composer.y)].symbol(), "-");
 +        assert_eq!(
@@ -169133,7 +168968,7 @@ index 000000000..d3a8e71d2
 +        preview(dialog);
 +        let current = super::snapshot();
 +        assert!(dialog_visible(&current));
-+        render_inline(area, chat, &mut buffer, &current);
++        render(area, chat, &mut buffer, &current);
 +        assert!(focus("theme_close"));
 +        assert!(
 +            matches!(input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
@@ -169142,7 +168977,7 @@ index 000000000..d3a8e71d2
 +        INTERACTION.lock().unwrap().dismissed = None;
 +        assert!(focus("theme_close"));
 +        reopen_dialogs();
-+        render_inline(area, chat, &mut buffer, &current);
++        render(area, chat, &mut buffer, &current);
 +        assert_eq!(
 +            INTERACTION.lock().unwrap().focused.as_deref(),
 +            Some("theme_close"),
@@ -169158,13 +168993,13 @@ index 000000000..d3a8e71d2
 +        );
 +        reopen_dialogs();
 +        assert!(dialog_visible(&current), "a mod command reopens a dismissed dialog");
-+        render_inline(area, chat, &mut buffer, &current);
++        render(area, chat, &mut buffer, &current);
 +        assert!(focus("theme_close"));
 +        let mut closed = current.clone();
 +        closed.view.sites.remove("dialog");
-+        render_inline(area, chat, &mut buffer, &closed);
++        render(area, chat, &mut buffer, &closed);
 +        reopen_dialogs();
-+        render_inline(area, chat, &mut buffer, &current);
++        render(area, chat, &mut buffer, &current);
 +        assert_eq!(
 +            INTERACTION.lock().unwrap().focused.as_deref(),
 +            Some("theme_apply"),
@@ -169174,7 +169009,7 @@ index 000000000..d3a8e71d2
 +        preview(ModViewSnapshot::default());
 +        let mut native = Buffer::empty(area);
 +        paint_named("composer", composer, &mut native, None);
-+        render_inline(area, area, &mut native, &super::snapshot());
++        render(area, area, &mut native, &super::snapshot());
 +        assert_eq!(rows(&native, area).trim(), "");
 +        assert_eq!(native[(1, 1)].bg, Color::Reset);
 +    });

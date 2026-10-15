@@ -1,24 +1,10 @@
 {
   "repository": "https://github.com/openai/codex.git",
   "tag": "rust-v0.162.1",
-  "tag_object": "7a078f6bb4ce0dc2a81408b334ce52979d92c603",
   "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
   "rust_toolchain": "1.95.0",
-  "rust_components": [
-    "clippy",
-    "rustfmt",
-    "rust-src"
-  ],
   "verified_target": "aarch64-apple-darwin",
   "cargo_lock_sha256": "49fe417bcafe3f69f1f6636e23274f90d37e75e388127a76888c39001a4f8117",
   "normalized_cargo_lock_sha256": "765110795bf3385d734bf1acfcae77660d29a6c678d5b77015d7ffe49f26e69f",
-  "normalized_workspace_packages": 161,
-  "lock_normalization": "161 source-less workspace package versions: 0.0.0 -> 0.162.1; external dependencies unchanged",
-  "runtime_patches": [
-    {
-      "path": "runtime/patches/omd-0.162.1.patch",
-      "sha256": "c570385420f4c7f9e48018afd563e98d9ecc13df48ed497f9b97295c923a74f8"
-    }
-  ],
-  "compatibility_evidence": ".docs/audits/upstream-pin-01621-20261010.md"
+  "normalized_workspace_packages": 161
 }
