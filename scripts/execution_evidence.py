@@ -76,10 +76,10 @@ def source_files(root, reference):
 
 @cache
 def patch_functions(root):
-    lock = json.loads((root / "upstream.lock.json").read_text())
+    manifest = json.loads((root / "runtime/patches/manifest.json").read_text())
     functions = {}
     current = None
-    for line in (root / lock["runtime_patches"][0]["path"]).read_text().splitlines():
+    for line in (root / manifest["patch"]["path"]).read_text().splitlines():
         if line.startswith("+++ b/"):
             current = root / line[6:]
         elif current and line.startswith("+"):

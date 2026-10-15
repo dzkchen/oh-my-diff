@@ -89,7 +89,6 @@ impl WorkspaceWatches {
         Ok(resolved)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn watch(
         &self,
         owner: &str,

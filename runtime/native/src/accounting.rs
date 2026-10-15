@@ -495,7 +495,6 @@ impl Accounts {
     }
 
     /// Runs `model_send` over the exact body about to be sent, page by page, until no policy edits it.
-    #[allow(clippy::too_many_arguments)]
     fn police(
         &self,
         mods: &Mutex<codex_omd::ModHost>,
@@ -847,7 +846,6 @@ fn chain_record(surface: &str, request_id: &str, chain: &codex_omd::ModChain) ->
 }
 
 impl Accounts {
-    #[allow(clippy::too_many_arguments)]
     fn intercept_request(
         &self,
         mods: &Mutex<codex_omd::ModHost>,

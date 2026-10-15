@@ -1,14 +1,12 @@
 use std::fs::{self, File};
 use std::io;
-#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub struct Lease {
-    _file: Option<File>,
+    _file: File,
 }
 
-#[cfg(unix)]
 pub fn directory() -> PathBuf {
     let uid = rustix::process::geteuid().as_raw();
     PathBuf::from("/tmp")
@@ -17,7 +15,6 @@ pub fn directory() -> PathBuf {
         .join(format!("codex-workspace-leases-{uid}"))
 }
 
-#[cfg(unix)]
 fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
     let path = path.canonicalize()?;
     let root = path
@@ -39,7 +36,6 @@ fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
     Ok((root.to_owned(), key))
 }
 
-#[cfg(unix)]
 fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
     let (_, key) = identity(path, exclusive)?;
     let uid = rustix::process::geteuid().as_raw();
@@ -89,24 +85,7 @@ fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
         file.try_lock_shared()
     }
     .map_err(|_| io::Error::other("workspace_in_use"))?;
-    Ok(Lease { _file: Some(file) })
-}
-
-#[cfg(not(unix))]
-pub fn directory() -> PathBuf {
-    std::env::temp_dir().join("codex-workspace-leases")
-}
-
-#[cfg(not(unix))]
-fn acquire(_path: &Path, exclusive: bool) -> io::Result<Lease> {
-    if exclusive {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "workspace_ownership_unavailable",
-        ))
-    } else {
-        Ok(Lease { _file: None })
-    }
+    Ok(Lease { _file: file })
 }
 
 pub fn shared(path: &Path) -> io::Result<Lease> {
@@ -116,7 +95,7 @@ pub fn exclusive(path: &Path) -> io::Result<Lease> {
     acquire(path, true)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

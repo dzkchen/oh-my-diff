@@ -1437,7 +1437,12 @@ impl TurnLifecycleContributor for Mods {
     }
 
     fn rewrites_persisted_text(&self) -> bool {
-        true
+        self.core
+            .persist_runtime
+            .try_lock()
+            .map_or(true, |runtime| {
+                runtime.intercepts("history_persist").is_some() || runtime.refresh_due()
+            })
     }
 
     fn rewrite_persisted_text<'a>(
@@ -2018,6 +2023,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
 }
 
 impl ToolLifecycleContributor for Mods {
+    fn wants_call_facts(&self) -> bool {
+        true
+    }
+
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
             let Some(lead) = input.thread_store.get::<Lead>() else {

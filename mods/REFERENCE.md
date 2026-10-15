@@ -232,9 +232,10 @@ need an `https` enrollment origin.
 `environment.read {names}` (`exec`) returns `{values: {NAME: {set, value}}}`
 for up to 16 names the manifest lists in `exec_environment`; secret-like names
 (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `AWS_*`, ...) report only
-`{set}`. Per-child values go in `exec.run` `env` and `process.start`
-`environment`, also limited to declared names; nothing changes the host
-process environment.
+`{set}`. A value over 4,096 bytes reads as `{set: false, value: null}`; read
+larger values from `exec.run {program: 'env'}` output. Per-child values go in
+`exec.run` `env` and `process.start` `environment`, also limited to declared
+names; nothing changes the host process environment.
 
 `environment.set {name, value}` (`exec`) sets a caller/source/thread-local
 override for subsequent `environment.read`, `exec.run` and `process.start`.
@@ -373,13 +374,12 @@ callback receipts; callers can page it in later callbacks.
 Integration discovery uses these grants, not a separate API. A mod declares the
 non-secret variables an integration sets (for example `HERDR_ENV`,
 `HERDR_PANE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, or `NVIM`) in
-`exec_environment` and reads them with `exec.run {program: 'env'}`, which sees
-only those names plus `PATH`, the private `HOME`/`TMPDIR`, `TERM` and locale.
-Inherited values are untrusted: run a binary named by one only as an absolute
-`program`, which the host canonicalizes, hashes and sandboxes, pin its returned
-`sha256` for later calls, and pass its socket through `unix_sockets`. Missing or
-malformed values leave the integration inert. Discovery itself grants neither
-execution nor socket access.
+`exec_environment` and reads them with `environment.read`, which starts no
+process. Inherited values are untrusted: run a binary named by one only as an
+absolute `program`, which the host canonicalizes, hashes and sandboxes, pin
+its returned `sha256` for later calls, and pass its socket through
+`unix_sockets`. Missing or malformed values leave the integration inert.
+Discovery itself grants neither execution nor socket access.
 
 `api.assets.read(name)` returns a selected package's UTF-8 entrypoint or
 declared text asset with its SHA-256. It reads only the caller's hash-bound

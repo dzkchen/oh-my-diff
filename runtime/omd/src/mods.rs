@@ -3318,6 +3318,20 @@ impl ModHost {
         self.configuration_sha256.clear();
     }
 
+    fn current(&self, stamp: Option<FileStamp>) -> bool {
+        stamp.is_some()
+            && stamp == self.configuration_stamp
+            && self
+                .brokered
+                .as_ref()
+                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+    }
+
+    /// Whether a refresh would re-read the configuration and authority instead of keeping them.
+    pub fn refresh_due(&self) -> bool {
+        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
+    }
+
     fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
         if !active() {
             return Err(failure("callback_cancelled"));
@@ -3326,13 +3340,7 @@ impl ModHost {
         let config_profile = Profile::new("configuration_read_hash");
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
-        if stamp.is_some()
-            && stamp == self.configuration_stamp
-            && self
-                .brokered
-                .as_ref()
-                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
-        {
+        if self.current(stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;

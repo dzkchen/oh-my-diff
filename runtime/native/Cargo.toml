@@ -24,7 +24,7 @@ codex-file-watcher = { workspace = true }
 codex-history = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-network-proxy = { workspace = true }
-codex-omd = { path = "../../omd" }
+codex-omd = { workspace = true }
 codex-protocol = { workspace = true }
 codex-tools = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
