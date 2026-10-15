@@ -263,26 +263,32 @@ impl RequestState {
 }
 
 #[derive(Default)]
-pub struct Accounts(
-    pub Mutex<BTreeMap<String, Account>>,
-    Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
-    AtomicU64,
-    Arc<AtomicUsize>,
-    Mutex<Option<ModDispatcher>>,
-    Mutex<Option<ModNotifier>>,
-    Arc<Mutex<RequestState>>,
-);
+pub struct Accounts {
+    pub(crate) by_thread: Mutex<BTreeMap<String, Account>>,
+    runtime: Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
+    next_request: AtomicU64,
+    holders: Arc<AtomicUsize>,
+    dispatcher: Mutex<Option<ModDispatcher>>,
+    notifier: Mutex<Option<ModNotifier>>,
+    requests: Arc<Mutex<RequestState>>,
+}
 
 impl Accounts {
     #[cfg(test)]
     pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
-        let runtime = self.1.lock().unwrap();
-        let dispatcher = self.4.lock().unwrap();
-        let notifier = self.5.lock().unwrap();
+        let runtime = self.runtime.lock().unwrap();
+        let dispatcher = self.dispatcher.lock().unwrap();
+        let notifier = self.notifier.lock().unwrap();
         (
-            runtime.as_ref().map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
-            dispatcher.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
-            notifier.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
+            runtime
+                .as_ref()
+                .map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
+            dispatcher
+                .as_ref()
+                .map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
+            notifier
+                .as_ref()
+                .map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
         )
     }
 
@@ -295,7 +301,7 @@ impl Accounts {
         owns: impl Fn(&str) -> bool,
     ) -> Result<Value, String> {
         let (thread, request, provider) = self
-            .6
+            .requests
             .lock()
             .map_err(|_| "request state poisoned")?
             .billed
@@ -306,7 +312,7 @@ impl Accounts {
             return Err("ledger_settle_not_route_owner".into());
         }
         let account = self
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?
             .get(&thread)
@@ -316,7 +322,7 @@ impl Accounts {
             .task
             .settle_provider(request, microusd, source)
             .map_err(|error| error.to_string())?;
-        self.6
+        self.requests
             .lock()
             .map_err(|_| "request state poisoned")?
             .billed
@@ -344,36 +350,36 @@ impl Accounts {
         runtime: Arc<Mutex<codex_omd::ModHost>>,
         required: RequiredSurfaces,
     ) {
-        if let Ok(mut installed) = self.1.lock() {
+        if let Ok(mut installed) = self.runtime.lock() {
             *installed = Some((runtime, required));
         }
     }
 
     pub fn install_mod_dispatcher(&self, dispatcher: ModDispatcher) {
-        if let Ok(mut installed) = self.4.lock() {
+        if let Ok(mut installed) = self.dispatcher.lock() {
             *installed = Some(dispatcher);
         }
     }
 
     pub fn install_mod_notifier(&self, notifier: ModNotifier) {
-        if let Ok(mut installed) = self.5.lock() {
+        if let Ok(mut installed) = self.notifier.lock() {
             *installed = Some(notifier);
         }
     }
 
     /// Keeps the `model_response` records of a thread until `take_responses`.
     pub fn collect(&self, thread: &str) {
-        if let Ok(mut state) = self.6.lock() {
+        if let Ok(mut state) = self.requests.lock() {
             state.responses.insert(thread.to_owned(), Vec::new());
         }
     }
 
     pub fn forget_retry(&self, thread: &str) {
-        if let Ok(mut state) = self.6.lock() {
+        if let Ok(mut state) = self.requests.lock() {
             state.retries.remove(thread);
         }
         let account = self
-            .0
+            .by_thread
             .lock()
             .ok()
             .and_then(|accounts| accounts.get(thread).cloned());
@@ -384,14 +390,14 @@ impl Accounts {
 
     /// Drops the per-thread request state a closed thread can no longer use.
     pub fn forget_thread(&self, thread: &str) {
-        if let Ok(mut state) = self.6.lock() {
+        if let Ok(mut state) = self.requests.lock() {
             state.retries.remove(thread);
             state.fingerprints.remove(thread);
         }
     }
 
     pub fn take_responses(&self, thread: &str) -> Vec<Value> {
-        self.6
+        self.requests
             .lock()
             .ok()
             .and_then(|mut state| state.responses.remove(thread))
@@ -399,11 +405,17 @@ impl Accounts {
     }
 
     fn dispatcher(&self) -> Option<ModDispatcher> {
-        self.4.lock().ok().and_then(|dispatcher| dispatcher.clone())
+        self.dispatcher
+            .lock()
+            .ok()
+            .and_then(|dispatcher| dispatcher.clone())
     }
 
     fn notifier(&self) -> Option<ModNotifier> {
-        self.5.lock().ok().and_then(|notifier| notifier.clone())
+        self.notifier
+            .lock()
+            .ok()
+            .and_then(|notifier| notifier.clone())
     }
 
     /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
@@ -470,7 +482,7 @@ impl Accounts {
                 Err(std::sync::TryLockError::WouldBlock)
                     if !required
                         && (owner.is_some_and(|owner| owner.starts_with("mod-"))
-                            && self.3.load(Ordering::Acquire) == 0
+                            && self.holders.load(Ordering::Acquire) == 0
                             || Instant::now() >= deadline) =>
                 {
                     return Ok(None);
@@ -555,7 +567,7 @@ impl Accounts {
             let mut pending = Vec::new();
             {
                 let state = self
-                    .6
+                    .requests
                     .lock()
                     .map_err(|_| denied("request state poisoned"))?;
                 for segment in &segments {
@@ -632,7 +644,7 @@ impl Accounts {
             if let Some(segment) = found.keys().next().filter(|_| round > 0) {
                 return Err(refuse(format!("final_request_unsettled: {segment}")));
             }
-            if let Ok(mut state) = self.6.lock() {
+            if let Ok(mut state) = self.requests.lock() {
                 for (id, segment_key) in keys.into_iter().filter(|(id, _)| !uncached.contains(id)) {
                     state.remember(segment_key, found.get(&id).cloned());
                 }
@@ -677,19 +689,19 @@ impl Accounts {
         });
         format!(
             "req-{process}-{}",
-            self.2.fetch_add(1, Ordering::Relaxed) + 1
+            self.next_request.fetch_add(1, Ordering::Relaxed) + 1
         )
     }
 
     fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
-        self.1
+        self.runtime
             .lock()
             .ok()
             .and_then(|installed| installed.as_ref().map(|(runtime, _)| runtime.clone()))
     }
 
     fn required(&self, surface: &str) -> bool {
-        self.1.lock().ok().is_none_or(|installed| {
+        self.runtime.lock().ok().is_none_or(|installed| {
             installed.as_ref().is_none_or(|(_, required)| {
                 required
                     .lock()
@@ -838,7 +850,7 @@ impl Accounts {
     ) -> Result<Intercepted, TransportError> {
         let Some(required) = Self::intercepting(
             mods,
-            &self.3,
+            &self.holders,
             account,
             "model_request",
             self.required("model_request"),
@@ -876,7 +888,7 @@ impl Accounts {
         let dispatcher = self.dispatcher();
         let active = || account.task.check_active().is_ok();
         let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-        let state = self.6.clone();
+        let state = self.requests.clone();
         let chain = codex_omd::intercept_shared(
             mods,
             "model_request",
@@ -1004,7 +1016,7 @@ impl ResponseObserver for Accounts {
             .map(str::to_owned)
             .unwrap_or_default();
         let Some(mut account) = self
-            .0
+            .by_thread
             .lock()
             .map_err(|_| denied("account lock poisoned"))?
             .get(&thread)
@@ -1047,7 +1059,7 @@ impl ResponseObserver for Accounts {
             && let Some(items) = value["input"].as_array()
             && let Hook::Ran(result) = Self::middleware(
                 mods,
-                &self.3,
+                &self.holders,
                 !account.owner.starts_with("mod-"),
                 "history",
                 |runtime| {
@@ -1090,7 +1102,7 @@ impl ResponseObserver for Accounts {
             .headers
             .insert(REQUEST_HEADER, request_id.parse().map_err(denied)?);
         let (attempt, retry_of) = self
-            .6
+            .requests
             .lock()
             .ok()
             .and_then(|mut state| state.retries.remove(&thread))
@@ -1113,7 +1125,7 @@ impl ResponseObserver for Accounts {
                         format!("mod-{owner}-{request_id}-{next}")
                     },
                 );
-                if let Ok(mut state) = self.6.lock() {
+                if let Ok(mut state) = self.requests.lock() {
                     state.synthetic.insert(request_id.clone(), (owner, events));
                 }
                 request
@@ -1246,7 +1258,7 @@ impl ResponseObserver for Accounts {
             return Ok(None);
         };
         let Some(account) = self
-            .0
+            .by_thread
             .lock()
             .map_err(|_| denied("account lock poisoned"))?
             .get(&thread)
@@ -1269,7 +1281,7 @@ impl ResponseObserver for Accounts {
             .unwrap_or(1);
         if let Some(key) = header(request, SYNTHETIC_HEADER) {
             let owner = self
-                .6
+                .requests
                 .lock()
                 .ok()
                 .and_then(|state| state.synthetic.get(&key).map(|(owner, _)| owner.clone()))
@@ -1563,7 +1575,7 @@ impl ResponseObserver for Accounts {
 
     fn answer(&self, request: &Request) -> Option<Vec<Value>> {
         let key = request.headers.get(SYNTHETIC_HEADER)?.to_str().ok()?;
-        self.6
+        self.requests
             .lock()
             .ok()?
             .synthetic
@@ -1572,7 +1584,7 @@ impl ResponseObserver for Accounts {
     }
 
     fn policed(&self) -> bool {
-        self.1.lock().ok().is_some_and(|installed| {
+        self.runtime.lock().ok().is_some_and(|installed| {
             installed.as_ref().is_some_and(|(_, required)| {
                 required
                     .lock()
@@ -1583,7 +1595,7 @@ impl ResponseObserver for Accounts {
 
     fn requires_observation(&self, thread: Option<&str>) -> bool {
         thread.is_some_and(|thread| {
-            self.0.lock().map_or(true, |accounts| {
+            self.by_thread.lock().map_or(true, |accounts| {
                 accounts
                     .get(thread)
                     .is_some_and(|account| account.rates.is_some())
@@ -1650,10 +1662,10 @@ impl Accounts {
             admission,
             model,
             mods: self.mods(),
-            holders: self.3.clone(),
+            holders: self.holders.clone(),
             dispatcher: self.dispatcher(),
             notifier: self.notifier(),
-            state: self.6.clone(),
+            state: self.requests.clone(),
             required: self.required("response_stream"),
             synthetic,
             settled: false,

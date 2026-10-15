@@ -425,3 +425,79 @@ fn session_roots_include_linked_worktrees() {
     assert!(roots.contains(&base.join("linked")));
     assert_eq!(session_roots(&base), vec![base.clone()]);
 }
+
+#[test]
+fn mod_responses_never_grant_authority() {
+    let allowed = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline"}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "cancel"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "decline", "content": null}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["No reply; use your judgment."]}}}),
+        ),
+    ];
+    for (method, result) in allowed {
+        assert_eq!(response_allowed(method, &result), Ok(()), "{method}");
+    }
+    let refused = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "acceptForSession"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline", "extra": 1}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {"network": {"enabled": true}}}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}, "scope": "session"}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "accept", "content": {}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": [1]}}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["x".repeat(20_000)]}}}),
+        ),
+        ("thread/start", json!({})),
+    ];
+    for (method, result) in refused {
+        assert!(
+            response_allowed(method, &result)
+                .unwrap_err()
+                .starts_with("app_response_refused"),
+            "{method} {result}"
+        );
+    }
+}

@@ -609,7 +609,7 @@ async fn run(
         "session.info" => {
             let account = host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_err(|_| "account lock poisoned")?
                 .get(&lead.thread.to_string())

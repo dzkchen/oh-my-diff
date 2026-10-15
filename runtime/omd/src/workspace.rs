@@ -17,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::io::Write;
 use std::io::{self};
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Component;
@@ -616,6 +617,28 @@ fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
 
 pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     safe_path(root, name)
+}
+
+/// `root` joined with `components`, each created as a 0700 directory or accepted when it exists, refusing a symlink or non-directory with `invalid`.
+pub(crate) fn private_path(
+    root: &Path,
+    components: &[&str],
+    invalid: &'static str,
+) -> io::Result<PathBuf> {
+    let mut path = root.to_path_buf();
+    for component in components {
+        path.push(component);
+        match fs::DirBuilder::new().mode(0o700).create(&path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error),
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(io::Error::other(invalid));
+        }
+    }
+    Ok(path)
 }
 
 pub(crate) fn open_contained(root: &Path, name: &str) -> io::Result<fs::File> {

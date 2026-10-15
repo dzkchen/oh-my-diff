@@ -240,20 +240,7 @@ impl DataStore<'_> {
         {
             return Err(failure("store_root_invalid"));
         }
-        let mut path = self.root.to_path_buf();
-        for component in components {
-            path.push(component);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error),
-            }
-            let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(failure("store_directory_invalid"));
-            }
-        }
-        Ok(path)
+        crate::workspace::private_path(self.root, &components, "store_directory_invalid")
     }
 
     fn with_document<T>(

@@ -157,7 +157,7 @@ impl ToolSpecContributor for Mods {
         let route = self
             .host
             .accounts
-            .0
+            .by_thread
             .lock()
             .ok()?
             .get(&lead.thread.to_string())

@@ -67,7 +67,7 @@ fn setup() -> (
     );
     let accounts = Accounts::default();
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .insert("child".into(), account(&task, root.path(), "worker"));
@@ -334,7 +334,7 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
     let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
     let profile = profiles.create("work key", "api_key", None, None).unwrap();
     let route = |url: &str| {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let account = accounts.get_mut("child").unwrap();
         account.credential = Some(profile.id.clone());
         account.url = url.into();
@@ -399,7 +399,11 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
         remote.credential = Some(profile.id.clone());
         remote.url = target.into();
         lead.lead_routes = vec![remote];
-        accounts.0.lock().unwrap().insert("main".into(), lead);
+        accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .insert("main".into(), lead);
         request
             .headers
             .insert("x-omd-route", "fast".parse().unwrap());
@@ -423,7 +427,11 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     let mut lead = account(&task, root.path(), "lead");
     lead.route = Some("main".into());
     lead.lead_routes = vec![fast_route()];
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     task.authorize_route("fixture", "fixture-model").unwrap();
     task.authorize_route("fixture", "fixture-fast").unwrap();
     request.headers.insert("thread-id", "main".parse().unwrap());
@@ -490,7 +498,11 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     other.provider = "elsewhere".into();
     other.model = "elsewhere-model".into();
     lead.lead_routes = vec![fast_route(), other];
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     for model in ["fixture-model", "fixture-fast"] {
         task.authorize_route("fixture", model).unwrap();
     }
@@ -609,7 +621,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     let refused = accounts.prepare(&mut request, &mut prepared).unwrap_err();
     assert!(format!("{refused:?}").contains("own credential profile"));
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .get_mut("main")
@@ -643,7 +655,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
 fn completion_workers_cap_output_capture_tool_calls_and_collect_their_responses() {
     let (_root, accounts, _task, mut request, body) = setup();
     {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let child = accounts.get_mut("child").unwrap();
         child.capture_tools = true;
         child.max_output_tokens = Some(64);
@@ -709,7 +721,7 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
     let (_root, accounts, _task, mut request, _) = setup();
     let mut mark = |through: Value, prompt: &str| {
         accounts
-            .0
+            .by_thread
             .lock()
             .unwrap()
             .get_mut("child")
@@ -752,8 +764,13 @@ fn mod_worker_requests_skip_only_optional_interceptors_while_the_runtime_is_busy
             "export default api => api.intercept('model_request', {options}(e, next) => next(e))"
         );
         install_middleware(&accounts, root.path(), &source);
-        accounts.0.lock().unwrap().get_mut("child").unwrap().owner =
-            "mod-request_router-child".into();
+        accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .get_mut("child")
+            .unwrap()
+            .owner = "mod-request_router-child".into();
         let runtime = accounts.mods().unwrap();
         let _busy = runtime.lock().unwrap();
         let result = accounts.prepare(&mut request, &mut Some(body));
@@ -770,7 +787,11 @@ fn observe_only_accounts_record_usage_without_admission() {
     let mut lead = account(&task, root.path(), "lead");
     lead.rates = None;
     lead.route = None;
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     request.headers.insert("thread-id", "main".parse().unwrap());
     assert!(!accounts.requires_observation(Some("main")));
     assert!(accounts.requires_observation(Some("child")));
@@ -914,7 +935,7 @@ fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests(
         assert!(accounts.before_send(&mut request, Some(&encoded)).is_err());
     }
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .get_mut("child")
@@ -1050,7 +1071,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     )
     .unwrap();
     {
-        let mut state = accounts.0.lock().unwrap();
+        let mut state = accounts.by_thread.lock().unwrap();
         let account = state.get_mut("child").unwrap();
         account.owner = "subscriber".into();
         account.provider = "openai".into();
@@ -1168,14 +1189,14 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
         "a retry core declined does not number the next turn's request"
     );
     accounts
-        .6
+        .requests
         .lock()
         .unwrap()
         .fingerprints
         .insert("child".into(), vec![("i0".into(), "sha".into())]);
     accounts.forget_thread("child");
     assert!(
-        accounts.6.lock().unwrap().fingerprints.is_empty(),
+        accounts.requests.lock().unwrap().fingerprints.is_empty(),
         "a closed thread keeps no request fingerprints"
     );
 }
@@ -1183,7 +1204,13 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
 #[test]
 fn cancelled_provider_billed_requests_still_await_settlement() {
     let (_root, accounts, task, mut request, body) = setup();
-    accounts.0.lock().unwrap().get_mut("child").unwrap().rates = Some(Rates {
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .rates = Some(Rates {
         reservation_microusd: 0,
         provider_billed: true,
         ..rates()
@@ -1204,7 +1231,7 @@ fn cancelled_provider_billed_requests_still_await_settlement() {
 fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once() {
     let (root, accounts, task, mut request, _body) = setup();
     {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let child = accounts.get_mut("child").unwrap();
         child.rates = Some(Rates {
             reservation_microusd: 0,
@@ -1293,7 +1320,7 @@ fn queued_mod_notices_repeat_on_retries_until_a_response_completes() {
     let (root, accounts, task, _request, _body) = setup();
     let thread = "queued-notices";
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .insert(thread.into(), account(&task, root.path(), "worker"));
@@ -1329,7 +1356,7 @@ fn queued_mod_notices_survive_a_request_the_final_policy_refuses() {
     let (root, accounts, task, _request, _body) = setup();
     let thread = "queued-refused";
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .insert(thread.into(), account(&task, root.path(), "worker"));

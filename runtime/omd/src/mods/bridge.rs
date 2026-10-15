@@ -45,6 +45,7 @@ impl ModHostCall {
                 .and_then(crate::app_routes::route)
                 .map(|route| route.class.as_str())
                 .ok_or_else(|| failure("app_method_unrouted")),
+            "app.respond" => Ok("approvals"),
             "app.routes" | "session.info" | "tools.list" => Ok("inventory"),
             "time.sleep" => Ok("events"),
             "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),

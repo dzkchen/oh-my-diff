@@ -440,6 +440,9 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
     let _serial = hub_test();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let log = seen.clone();
+    // Parallel raster tests redraw the global hub too; count only this test's redraw.
+    let redrawing = Arc::new(AtomicBool::new(false));
+    let armed = redrawing.clone();
     let observer = register_observer(Arc::new(move |observed| {
         let entry = match observed {
             Observed::Roster => json!(
@@ -449,6 +452,7 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
                     .map(|entry| entry["name"].clone())
                     .collect::<Vec<_>>()
             ),
+            Observed::Redraw if !armed.load(Ordering::SeqCst) => return,
             Observed::Redraw => json!("redraw"),
             Observed::Mirrored { .. } => return,
         };
@@ -486,7 +490,9 @@ fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
         roster().iter().any(|entry| entry["id"] == "roster-client"
             && entry["operations"] == json!(["terminal.notify"]))
     );
+    redrawing.store(true, Ordering::SeqCst);
     redraw();
+    redrawing.store(false, Ordering::SeqCst);
     drop(second);
     drop(observer);
     drop(attach(entry("unobserved")));

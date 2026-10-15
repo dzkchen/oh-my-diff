@@ -422,3 +422,15 @@ fn peers_are_verified_by_kernel_cdhash_even_when_their_executable_is_unreadable(
     assert!(pinned.is_ok(), "{pinned:?}");
     assert_eq!(other.unwrap_err().to_string(), "authority_peer_unverified");
 }
+
+#[test]
+fn symlinked_broker_directories_are_refused() {
+    let (temp, socket, store) = serve(Arc::new(TestGate::default()));
+    let root = temp.path().canonicalize().unwrap().join("broker");
+    std::os::unix::fs::symlink(&store, root.join("stores")).unwrap();
+    let mut client = Client::at(&socket).unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": store}))),
+        "authority_directory_invalid"
+    );
+}
