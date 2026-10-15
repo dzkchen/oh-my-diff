@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub struct Lease {
@@ -40,11 +40,7 @@ fn acquire(path: &Path, exclusive: bool) -> io::Result<Lease> {
     let (_, key) = identity(path, exclusive)?;
     let uid = rustix::process::geteuid().as_raw();
     let directory = directory();
-    match fs::DirBuilder::new().mode(0o700).create(&directory) {
-        Ok(()) => (),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-        Err(error) => return Err(error),
-    }
+    crate::resource_data::private_dir(&directory, "workspace_ownership_unavailable")?;
     let directory_file = File::from(rustix::fs::open(
         &directory,
         rustix::fs::OFlags::RDONLY

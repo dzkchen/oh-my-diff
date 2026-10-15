@@ -618,16 +618,9 @@ impl Host<'_> {
             caller.source_sha256,
         ] {
             path.push(part);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error.to_string()),
-            }
-            if path.canonicalize().map_err(|error| error.to_string())? != path
-                || !fs::symlink_metadata(&path)
-                    .map_err(|error| error.to_string())?
-                    .is_dir()
-            {
+            crate::resource_data::private_dir(&path, "exec_output_directory_invalid")
+                .map_err(|error| error.to_string())?;
+            if path.canonicalize().map_err(|error| error.to_string())? != path {
                 return Err("exec_output_directory_invalid".into());
             }
         }
@@ -1567,15 +1560,8 @@ impl Host<'_> {
         let mut path = self.data_root.to_path_buf();
         for component in ["backups", &repository_key(self.repository()), caller.id] {
             path.push(component);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error.to_string()),
-            }
-            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err("backup_directory_invalid".into());
-            }
+            crate::resource_data::private_dir(&path, "backup_directory_invalid")
+                .map_err(|error| error.to_string())?;
         }
         Ok(path)
     }

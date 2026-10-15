@@ -1728,7 +1728,7 @@ impl Agents {
         if request.route == LEAD_ROUTE_ALIAS {
             let name = host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_err(|_| "account lock poisoned")?
                 .get(&lead.thread.to_string())
@@ -2381,7 +2381,7 @@ impl Agents {
             .claim_worker_objective(&id, &execution::hash(request.prompt.as_bytes()))
             .map_err(|e| e.to_string())?;
         host.enroll(thread_id, session, &id, Some(&route), None)?;
-        if let Ok(mut accounts) = host.accounts.0.lock()
+        if let Ok(mut accounts) = host.accounts.by_thread.lock()
             && let Some(account) = accounts.get_mut(&thread_id.to_string())
         {
             account.capture_tools = shape.capture_tools;
@@ -2424,7 +2424,7 @@ impl Agents {
         let spawned = match manager.spawn_isolated_subagent(lead.thread, options).await {
             Ok(spawned) => spawned,
             Err(error) => {
-                if let Ok(mut accounts) = host.accounts.0.lock() {
+                if let Ok(mut accounts) = host.accounts.by_thread.lock() {
                     accounts.remove(&thread_id.to_string());
                 }
                 return Err(error.to_string());
@@ -2519,7 +2519,7 @@ impl Agents {
             .map_err(|_| "native_agent_deadline".to_owned())
             .and_then(|r| r);
             let cleanup = execution::shutdown(&child.thread).await;
-            if let Ok(mut accounts) = accounts.0.lock() {
+            if let Ok(mut accounts) = accounts.by_thread.lock() {
                 accounts.remove(&thread_id.to_string());
             }
             let completed = completed.and_then(|text| {

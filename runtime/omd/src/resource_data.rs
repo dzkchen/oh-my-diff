@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 pub const PAGE_BYTES: usize = 16_384;
@@ -13,6 +13,20 @@ pub const SNAPSHOT_BYTES: usize = 262_144;
 
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Creates `path` as a 0700 directory or accepts an existing one, refusing a symlink or non-directory with `invalid`.
+pub(crate) fn private_dir(path: &Path, invalid: &'static str) -> io::Result<()> {
+    match fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => (),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+        Err(error) => return Err(error),
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::other(invalid));
+    }
+    Ok(())
 }
 
 pub fn token(value: &str) -> bool {
@@ -184,15 +198,8 @@ impl ResourceStore<'_> {
         let mut path = self.root.to_owned();
         for component in ["resources", &self.binding.repository, &self.binding.owner] {
             path.push(component);
-            match fs::DirBuilder::new().create(&path) {
-                Ok(()) => {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error),
-            }
-            if path.canonicalize()? != path || !fs::symlink_metadata(&path)?.is_dir() {
+            private_dir(&path, "resource_directory_invalid")?;
+            if path.canonicalize()? != path {
                 return Err(io::Error::other("resource_directory_invalid"));
             }
         }

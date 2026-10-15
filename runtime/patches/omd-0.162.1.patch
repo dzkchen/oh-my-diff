@@ -20176,7 +20176,7 @@ index fd432462d..18076cd0e 100644
          &self,
      ) -> Box<dyn Iterator<Item = (&ResponseItem, Option<&codex_history::RetainedSource>)> + Send + '_>
 diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
-index 30c4162ff..5dcaffc53 100644
+index 30c4162ff..17afbee28 100644
 --- a/codex-rs/core/src/hook_runtime.rs
 +++ b/codex-rs/core/src/hook_runtime.rs
 @@ -541,11 +541,38 @@ pub(crate) async fn run_turn_interrupt_hooks(
@@ -20228,17 +20228,6 @@ index 30c4162ff..5dcaffc53 100644
      let request = codex_hooks::PostCompactRequest {
          session_id: sess.session_id().into(),
          turn_id: turn_context.sub_id.clone(),
-@@ -847,8 +876,8 @@ impl HookRuntimeOutcome {
- }
-
- pub(crate) async fn record_additional_contexts(
--    sess: &Arc<Session>,
--    turn_context: &Arc<TurnContext>,
-+    sess: &Session,
-+    turn_context: &TurnContext,
-     additional_contexts: Vec<String>,
- ) {
-     let developer_messages = additional_context_messages(additional_contexts);
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
 index a2b44e3f1..51c6342d8 100644
 --- a/codex-rs/core/src/lib.rs
@@ -21834,7 +21823,7 @@ index c45ce098c..c0a78ea37 100644
          }
          Ok(())
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 64e8786a1..0223239c7 100644
+index 64e8786a1..90e3dd1f1 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -1,6 +1,7 @@
@@ -22064,7 +22053,7 @@ index 64e8786a1..0223239c7 100644
              Err(err) => match err.details() {
                  CodexErrorDetails::ContextWindowExceeded => {
                      sess.set_total_tokens_full(&turn_context).await;
-@@ -2462,9 +2612,18 @@ async fn drain_in_flight(
+@@ -2462,9 +2612,22 @@ async fn drain_in_flight(
      step_context: &StepContext,
  ) -> CodexResult<()> {
      let turn_context = &step_context.turn;
@@ -22072,18 +22061,22 @@ index 64e8786a1..0223239c7 100644
      while let Some(res) = in_flight.next().await {
          match res {
              Ok(envelope) => {
-+                if let Ok(item) = serde_json::to_value(&envelope.item)
-+                    && item["type"]
-+                        .as_str()
-+                        .is_some_and(|kind| kind.ends_with("_output"))
-+                    && let Some(call_id) = item["call_id"].as_str()
++                if let ResponseItem::FunctionCallOutput {
++                    call_id: Some(call_id),
++                    ..
++                }
++                | ResponseItem::CustomToolCallOutput { call_id, .. }
++                | ResponseItem::ToolSearchOutput {
++                    call_id: Some(call_id),
++                    ..
++                } = &envelope.item
 +                {
-+                    settled.push(call_id.to_owned());
++                    settled.push(call_id.clone());
 +                }
                  mark_thread_memory_mode_polluted_if_external_context(
                      sess.as_ref(),
                      turn_context.as_ref(),
-@@ -2483,6 +2642,19 @@ async fn drain_in_flight(
+@@ -2483,6 +2646,19 @@ async fn drain_in_flight(
              }
          }
      }
@@ -22103,7 +22096,7 @@ index 64e8786a1..0223239c7 100644
      Ok(())
  }
 
-@@ -2577,6 +2749,7 @@ async fn try_run_sampling_request(
+@@ -2577,6 +2753,7 @@ async fn try_run_sampling_request(
          return Err(CodexErr::TurnAborted);
      }
      let mut in_flight: FuturesOrdered<InFlightFuture<'static>> = FuturesOrdered::new();
@@ -22111,7 +22104,7 @@ index 64e8786a1..0223239c7 100644
      let mut needs_follow_up = false;
      let mut last_agent_message: Option<String> = None;
      let mut active_item: Option<TurnItem> = None;
-@@ -2735,6 +2908,15 @@ async fn try_run_sampling_request(
+@@ -2735,6 +2912,15 @@ async fn try_run_sampling_request(
                      continue;
                  }
 
@@ -22127,7 +22120,7 @@ index 64e8786a1..0223239c7 100644
                  let mut ctx = HandleOutputCtx {
                      sess: sess.clone(),
                      step_context: Arc::clone(&step_context),
-@@ -3144,6 +3326,30 @@ async fn try_run_sampling_request(
+@@ -3144,6 +3330,30 @@ async fn try_run_sampling_request(
      };
      drop(sampling_span);
      drop(sampling_timing_guard);
@@ -24417,7 +24410,7 @@ index 25468f374..af2abec32 100644
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6..3d36917fd 100644
+index e26d83da6..07622fbd0 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -24444,7 +24437,7 @@ index e26d83da6..3d36917fd 100644
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,196 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,195 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -24470,11 +24463,10 @@ index e26d83da6..3d36917fd 100644
 +
 +pub(crate) fn wants_call_facts(session: &Session) -> bool {
 +    let extensions = &session.services.extensions;
-+    !extensions.tool_reaction_contributors().is_empty()
-+        || extensions
-+            .tool_lifecycle_contributors()
-+            .iter()
-+            .any(|contributor| contributor.wants_call_facts())
++    extensions
++        .tool_lifecycle_contributors()
++        .iter()
++        .any(|contributor| contributor.wants_call_facts())
 +}
 +
 +/// Returns an extension's synthetic output when one answers the call instead of running it.
@@ -24641,7 +24633,7 @@ index e26d83da6..3d36917fd 100644
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +303,33 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +302,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -24676,7 +24668,7 @@ index e26d83da6..3d36917fd 100644
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +337,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +336,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -24685,7 +24677,7 @@ index e26d83da6..3d36917fd 100644
      )
      .await;
  }
-@@ -133,10 +357,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +356,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -24699,7 +24691,7 @@ index e26d83da6..3d36917fd 100644
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +371,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +370,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -24708,7 +24700,7 @@ index e26d83da6..3d36917fd 100644
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,9 +385,37 @@ async fn notify_tool_finish_parts(
+@@ -156,6 +384,8 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -24717,36 +24709,7 @@ index e26d83da6..3d36917fd 100644
              })
              .await;
      }
-+    let mut additional_contexts = Vec::new();
-+    for contributor in session.services.extensions.tool_reaction_contributors() {
-+        if additional_contexts.len() == 16 {
-+            break;
-+        }
-+        if let Some(context) = contributor
-+            .on_tool_finish_reaction(ToolFinishInput {
-+                session_store: &session.services.session_extension_data,
-+                thread_store: &session.services.thread_extension_data,
-+                turn_store: turn.extension_data.as_ref(),
-+                turn_id: turn.sub_id.as_str(),
-+                call_id,
-+                tool_name,
-+                source: extension_tool_call_source(source.clone()),
-+                outcome,
-+                call_sha256,
-+                result_sha256,
-+            })
-+            .await
-+            && !context.trim().is_empty()
-+            && context.len() <= 4096
-+        {
-+            additional_contexts.push(context);
-+        }
-+    }
-+    crate::hook_runtime::record_additional_contexts(session, turn, additional_contexts).await;
- }
-
- pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
-@@ -169,6 +426,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +399,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -27100,7 +27063,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 61cdbe4da..42ac5fa13 100644
+index 61cdbe4da..cbe8dc797 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -27319,12 +27282,11 @@ index 61cdbe4da..42ac5fa13 100644
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -367,10 +513,27 @@ pub trait ToolContributor: Send + Sync {
+@@ -367,10 +513,26 @@ pub trait ToolContributor: Send + Sync {
  /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
  /// and hooks for policy that changes tool payloads.
  pub trait ToolLifecycleContributor: Send + Sync {
-+    /// Whether the host records each call's schema in `ToolCallFacts` and the digests in `ToolFinishInput`;
-+    /// any registered `ToolReactionContributor` also turns them on.
++    /// Whether the host records each call's schema in `ToolCallFacts` and the digests in `ToolFinishInput`.
 +    fn wants_call_facts(&self) -> bool {
 +        false
 +    }
@@ -27347,7 +27309,7 @@ index 61cdbe4da..42ac5fa13 100644
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -387,6 +550,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -387,6 +549,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -27359,7 +27321,7 @@ index 61cdbe4da..42ac5fa13 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -405,6 +573,149 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -405,6 +572,135 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -27489,20 +27451,6 @@ index 61cdbe4da..42ac5fa13 100644
 +        _input: ToolOutputInput<'a>,
 +    ) -> ExtensionFuture<'a, Option<String>> {
 +        Box::pin(std::future::ready(None))
-+    }
-+}
-+
-+/// Contributes bounded developer context after a host-observed tool outcome without implying rollback.
-+pub trait ToolReactionContributor: Send + Sync {
-+    fn on_tool_finish_reaction<'a>(
-+        &'a self,
-+        _input: ToolFinishInput<'a>,
-+    ) -> ExtensionFuture<'a, Option<String>> {
-+        Box::pin(async move {
-+            let _self = self;
-+            let _input = _input;
-+            None
-+        })
 +    }
 +}
 +
@@ -27812,7 +27760,7 @@ index 7361c20c5..75dabc2f5 100644
 +    pub thread_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index c8436c8fe..27dd63f5f 100644
+index c8436c8fe..a9aa6ace2 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -7,6 +7,8 @@ mod tool_policy;
@@ -27889,7 +27837,7 @@ index c8436c8fe..27dd63f5f 100644
  pub use contributors::ThreadIdleCause;
  pub use contributors::ThreadIdleInput;
  pub use contributors::ThreadLifecycleContributor;
-@@ -79,16 +110,35 @@ pub use contributors::ThreadResumeInput;
+@@ -79,16 +110,34 @@ pub use contributors::ThreadResumeInput;
  pub use contributors::ThreadStartInput;
  pub use contributors::ThreadStopInput;
  pub use contributors::TokenUsageContributor;
@@ -27911,7 +27859,6 @@ index c8436c8fe..27dd63f5f 100644
  pub use contributors::ToolLifecycleFuture;
 +pub use contributors::ToolOutputContributor;
 +pub use contributors::ToolOutputInput;
-+pub use contributors::ToolReactionContributor;
 +pub use contributors::ToolSpecAdjustment;
 +pub use contributors::ToolSpecContributor;
 +pub use contributors::ToolSpecView;
@@ -27925,7 +27872,7 @@ index c8436c8fe..27dd63f5f 100644
  pub use contributors::TurnErrorInput;
  pub use contributors::TurnInputContext;
  pub use contributors::TurnInputContributor;
-@@ -98,8 +148,11 @@ pub use contributors::TurnLifecycleContributor;
+@@ -98,8 +147,11 @@ pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStartPhase;
  pub use contributors::TurnStopInput;
@@ -27938,7 +27885,7 @@ index c8436c8fe..27dd63f5f 100644
  pub use registry::ExtensionRegistryBuilder;
  pub use registry::empty_extension_registry;
 diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
-index ddb02113e..c48afa79a 100644
+index ddb02113e..64b232f9d 100644
 --- a/codex-rs/ext/extension-api/src/registry.rs
 +++ b/codex-rs/ext/extension-api/src/registry.rs
 @@ -1,5 +1,7 @@
@@ -27949,7 +27896,7 @@ index ddb02113e..c48afa79a 100644
  use crate::ApprovalReviewContributor;
  use crate::ConfigContributor;
  use crate::ContextContributor;
-@@ -10,8 +12,12 @@ use crate::NoopExtensionEventSink;
+@@ -10,8 +12,11 @@ use crate::NoopExtensionEventSink;
  use crate::SkillInvocationContributor;
  use crate::ThreadLifecycleContributor;
  use crate::TokenUsageContributor;
@@ -27957,12 +27904,11 @@ index ddb02113e..c48afa79a 100644
  use crate::ToolContributor;
  use crate::ToolLifecycleContributor;
 +use crate::ToolOutputContributor;
-+use crate::ToolReactionContributor;
 +use crate::ToolSpecContributor;
  use crate::TurnInputContributor;
  use crate::TurnItemContributor;
  use crate::TurnLifecycleContributor;
-@@ -34,12 +40,18 @@ impl<C: Sync> Default for ExtensionRegistryBuilder<C> {
+@@ -34,12 +39,17 @@ impl<C: Sync> Default for ExtensionRegistryBuilder<C> {
                  token_usage_contributors: Vec::new(),
                  skill_invocation_contributors: Vec::new(),
                  approval_review_contributors: Vec::new(),
@@ -27973,7 +27919,6 @@ index ddb02113e..c48afa79a 100644
                  tool_contributors: Vec::new(),
                  tool_lifecycle_contributors: Vec::new(),
                  model_request_contributors: Vec::new(),
-+                tool_reaction_contributors: Vec::new(),
 +                tool_output_contributors: Vec::new(),
 +                tool_spec_contributors: Vec::new(),
 +                agent_role_contributors: Vec::new(),
@@ -27981,7 +27926,7 @@ index ddb02113e..c48afa79a 100644
                  turn_item_contributors: Vec::new(),
              },
          }
-@@ -70,6 +82,10 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+@@ -70,6 +80,10 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
      }
 
      /// Registers one approval-review contributor.
@@ -27992,14 +27937,10 @@ index ddb02113e..c48afa79a 100644
      pub fn approval_review_contributor(&mut self, contributor: Arc<dyn ApprovalReviewContributor>) {
          self.registry.approval_review_contributors.push(contributor);
      }
-@@ -139,6 +155,26 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+@@ -139,6 +153,22 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
          self.registry.tool_lifecycle_contributors.push(contributor);
      }
 
-+    pub fn tool_reaction_contributor(&mut self, contributor: Arc<dyn ToolReactionContributor>) {
-+        self.registry.tool_reaction_contributors.push(contributor);
-+    }
-+
 +    pub fn tool_output_contributor(&mut self, contributor: Arc<dyn ToolOutputContributor>) {
 +        self.registry.tool_output_contributors.push(contributor);
 +    }
@@ -28019,11 +27960,10 @@ index ddb02113e..c48afa79a 100644
      /// Registers one ordered turn-item contributor.
      pub fn turn_item_contributor(&mut self, contributor: Arc<dyn TurnItemContributor>) {
          self.registry.turn_item_contributors.push(contributor);
-@@ -165,8 +201,14 @@ pub struct ExtensionRegistry<C: Sync> {
+@@ -165,8 +195,13 @@ pub struct ExtensionRegistry<C: Sync> {
      tool_contributors: Vec<Arc<dyn ToolContributor>>,
      tool_lifecycle_contributors: Vec<Arc<dyn ToolLifecycleContributor>>,
      model_request_contributors: Vec<Arc<dyn ModelRequestContributor>>,
-+    tool_reaction_contributors: Vec<Arc<dyn ToolReactionContributor>>,
 +    tool_output_contributors: Vec<Arc<dyn ToolOutputContributor>>,
 +    tool_spec_contributors: Vec<Arc<dyn ToolSpecContributor>>,
 +    agent_role_contributors: Vec<Arc<dyn AgentRoleContributor>>,
@@ -28034,11 +27974,10 @@ index ddb02113e..c48afa79a 100644
  }
 
  impl<C: Sync> ExtensionRegistry<C> {
-@@ -187,8 +229,14 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -187,8 +222,13 @@ impl<C: Sync> ExtensionRegistry<C> {
                  tool_contributors: self.tool_contributors.clone(),
                  tool_lifecycle_contributors: self.tool_lifecycle_contributors.clone(),
                  model_request_contributors: self.model_request_contributors.clone(),
-+                tool_reaction_contributors: self.tool_reaction_contributors.clone(),
 +                tool_output_contributors: self.tool_output_contributors.clone(),
 +                tool_spec_contributors: self.tool_spec_contributors.clone(),
 +                agent_role_contributors: self.agent_role_contributors.clone(),
@@ -28049,7 +27988,7 @@ index ddb02113e..c48afa79a 100644
              },
          }
      }
-@@ -243,6 +291,10 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -243,6 +283,10 @@ impl<C: Sync> ExtensionRegistry<C> {
                  .any(|contributor| contributor.requires_host_skill_discovery())
      }
 
@@ -28060,14 +27999,10 @@ index ddb02113e..c48afa79a 100644
      /// Returns the first claimed decision in registration order.
      pub async fn decide_approval(
          &self,
-@@ -286,6 +338,26 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -286,6 +330,22 @@ impl<C: Sync> ExtensionRegistry<C> {
          &self.tool_lifecycle_contributors
      }
 
-+    pub fn tool_reaction_contributors(&self) -> &[Arc<dyn ToolReactionContributor>] {
-+        &self.tool_reaction_contributors
-+    }
-+
 +    pub fn tool_output_contributors(&self) -> &[Arc<dyn ToolOutputContributor>] {
 +        &self.tool_output_contributors
 +    }
@@ -48075,7 +48010,7 @@ index 000000000..9216f27ab
 +}
 diff --git a/codex-rs/core/tests/suite/lifecycle_seams.rs b/codex-rs/core/tests/suite/lifecycle_seams.rs
 new file mode 100644
-index 000000000..e2562f30c
+index 000000000..e2eca6c84
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/lifecycle_seams.rs
 @@ -0,0 +1,120 @@
@@ -48168,7 +48103,7 @@ index 000000000..e2562f30c
 +    let recorder = Arc::new(Recorder::default());
 +    let mut extensions = ExtensionRegistryBuilder::new();
 +    extensions.turn_lifecycle_contributor(recorder.clone());
-+    let codex = test_codex()
++    let test = test_codex()
 +        .with_extensions(Arc::new(extensions.build()))
 +        .with_config(|config| {
 +            config.update_plan_enabled = true;
@@ -48177,8 +48112,8 @@ index 000000000..e2562f30c
 +        })
 +        .build(&server)
 +        .await
-+        .unwrap()
-+        .codex;
++        .unwrap();
++    let codex = &test.codex;
 +    codex
 +        .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
 +            text: "plan".into(),
@@ -48186,7 +48121,7 @@ index 000000000..e2562f30c
 +        }]))
 +        .await
 +        .unwrap();
-+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
++    wait_for_event(codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 +
 +    assert_eq!(
 +        *recorder.batches.lock().unwrap(),
@@ -48514,10 +48449,10 @@ index 000000000..b3c205f50
 +codex-login = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..a5cd5a811
+index 000000000..14b11aeb4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2332 @@
+@@ -0,0 +1,2344 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -48790,26 +48725,32 @@ index 000000000..a5cd5a811
 +}
 +
 +#[derive(Default)]
-+pub struct Accounts(
-+    pub Mutex<BTreeMap<String, Account>>,
-+    Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
-+    AtomicU64,
-+    Arc<AtomicUsize>,
-+    Mutex<Option<ModDispatcher>>,
-+    Mutex<Option<ModNotifier>>,
-+    Arc<Mutex<RequestState>>,
-+);
++pub struct Accounts {
++    pub(crate) by_thread: Mutex<BTreeMap<String, Account>>,
++    runtime: Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
++    next_request: AtomicU64,
++    holders: Arc<AtomicUsize>,
++    dispatcher: Mutex<Option<ModDispatcher>>,
++    notifier: Mutex<Option<ModNotifier>>,
++    requests: Arc<Mutex<RequestState>>,
++}
 +
 +impl Accounts {
 +    #[cfg(test)]
 +    pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
-+        let runtime = self.1.lock().unwrap();
-+        let dispatcher = self.4.lock().unwrap();
-+        let notifier = self.5.lock().unwrap();
++        let runtime = self.runtime.lock().unwrap();
++        let dispatcher = self.dispatcher.lock().unwrap();
++        let notifier = self.notifier.lock().unwrap();
 +        (
-+            runtime.as_ref().map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
-+            dispatcher.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
-+            notifier.as_ref().map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
++            runtime
++                .as_ref()
++                .map_or(0, |(runtime, _)| Arc::as_ptr(runtime) as usize),
++            dispatcher
++                .as_ref()
++                .map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
++            notifier
++                .as_ref()
++                .map_or(0, |value| Arc::as_ptr(value) as *const () as usize),
 +        )
 +    }
 +
@@ -48822,7 +48763,7 @@ index 000000000..a5cd5a811
 +        owns: impl Fn(&str) -> bool,
 +    ) -> Result<Value, String> {
 +        let (thread, request, provider) = self
-+            .6
++            .requests
 +            .lock()
 +            .map_err(|_| "request state poisoned")?
 +            .billed
@@ -48833,7 +48774,7 @@ index 000000000..a5cd5a811
 +            return Err("ledger_settle_not_route_owner".into());
 +        }
 +        let account = self
-+            .0
++            .by_thread
 +            .lock()
 +            .map_err(|_| "account lock poisoned")?
 +            .get(&thread)
@@ -48843,7 +48784,7 @@ index 000000000..a5cd5a811
 +            .task
 +            .settle_provider(request, microusd, source)
 +            .map_err(|error| error.to_string())?;
-+        self.6
++        self.requests
 +            .lock()
 +            .map_err(|_| "request state poisoned")?
 +            .billed
@@ -48871,36 +48812,36 @@ index 000000000..a5cd5a811
 +        runtime: Arc<Mutex<codex_omd::ModHost>>,
 +        required: RequiredSurfaces,
 +    ) {
-+        if let Ok(mut installed) = self.1.lock() {
++        if let Ok(mut installed) = self.runtime.lock() {
 +            *installed = Some((runtime, required));
 +        }
 +    }
 +
 +    pub fn install_mod_dispatcher(&self, dispatcher: ModDispatcher) {
-+        if let Ok(mut installed) = self.4.lock() {
++        if let Ok(mut installed) = self.dispatcher.lock() {
 +            *installed = Some(dispatcher);
 +        }
 +    }
 +
 +    pub fn install_mod_notifier(&self, notifier: ModNotifier) {
-+        if let Ok(mut installed) = self.5.lock() {
++        if let Ok(mut installed) = self.notifier.lock() {
 +            *installed = Some(notifier);
 +        }
 +    }
 +
 +    /// Keeps the `model_response` records of a thread until `take_responses`.
 +    pub fn collect(&self, thread: &str) {
-+        if let Ok(mut state) = self.6.lock() {
++        if let Ok(mut state) = self.requests.lock() {
 +            state.responses.insert(thread.to_owned(), Vec::new());
 +        }
 +    }
 +
 +    pub fn forget_retry(&self, thread: &str) {
-+        if let Ok(mut state) = self.6.lock() {
++        if let Ok(mut state) = self.requests.lock() {
 +            state.retries.remove(thread);
 +        }
 +        let account = self
-+            .0
++            .by_thread
 +            .lock()
 +            .ok()
 +            .and_then(|accounts| accounts.get(thread).cloned());
@@ -48911,14 +48852,14 @@ index 000000000..a5cd5a811
 +
 +    /// Drops the per-thread request state a closed thread can no longer use.
 +    pub fn forget_thread(&self, thread: &str) {
-+        if let Ok(mut state) = self.6.lock() {
++        if let Ok(mut state) = self.requests.lock() {
 +            state.retries.remove(thread);
 +            state.fingerprints.remove(thread);
 +        }
 +    }
 +
 +    pub fn take_responses(&self, thread: &str) -> Vec<Value> {
-+        self.6
++        self.requests
 +            .lock()
 +            .ok()
 +            .and_then(|mut state| state.responses.remove(thread))
@@ -48926,11 +48867,17 @@ index 000000000..a5cd5a811
 +    }
 +
 +    fn dispatcher(&self) -> Option<ModDispatcher> {
-+        self.4.lock().ok().and_then(|dispatcher| dispatcher.clone())
++        self.dispatcher
++            .lock()
++            .ok()
++            .and_then(|dispatcher| dispatcher.clone())
 +    }
 +
 +    fn notifier(&self) -> Option<ModNotifier> {
-+        self.5.lock().ok().and_then(|notifier| notifier.clone())
++        self.notifier
++            .lock()
++            .ok()
++            .and_then(|notifier| notifier.clone())
 +    }
 +
 +    /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
@@ -48997,7 +48944,7 @@ index 000000000..a5cd5a811
 +                Err(std::sync::TryLockError::WouldBlock)
 +                    if !required
 +                        && (owner.is_some_and(|owner| owner.starts_with("mod-"))
-+                            && self.3.load(Ordering::Acquire) == 0
++                            && self.holders.load(Ordering::Acquire) == 0
 +                            || Instant::now() >= deadline) =>
 +                {
 +                    return Ok(None);
@@ -49082,7 +49029,7 @@ index 000000000..a5cd5a811
 +            let mut pending = Vec::new();
 +            {
 +                let state = self
-+                    .6
++                    .requests
 +                    .lock()
 +                    .map_err(|_| denied("request state poisoned"))?;
 +                for segment in &segments {
@@ -49159,7 +49106,7 @@ index 000000000..a5cd5a811
 +            if let Some(segment) = found.keys().next().filter(|_| round > 0) {
 +                return Err(refuse(format!("final_request_unsettled: {segment}")));
 +            }
-+            if let Ok(mut state) = self.6.lock() {
++            if let Ok(mut state) = self.requests.lock() {
 +                for (id, segment_key) in keys.into_iter().filter(|(id, _)| !uncached.contains(id)) {
 +                    state.remember(segment_key, found.get(&id).cloned());
 +                }
@@ -49204,19 +49151,19 @@ index 000000000..a5cd5a811
 +        });
 +        format!(
 +            "req-{process}-{}",
-+            self.2.fetch_add(1, Ordering::Relaxed) + 1
++            self.next_request.fetch_add(1, Ordering::Relaxed) + 1
 +        )
 +    }
 +
 +    fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
-+        self.1
++        self.runtime
 +            .lock()
 +            .ok()
 +            .and_then(|installed| installed.as_ref().map(|(runtime, _)| runtime.clone()))
 +    }
 +
 +    fn required(&self, surface: &str) -> bool {
-+        self.1.lock().ok().is_none_or(|installed| {
++        self.runtime.lock().ok().is_none_or(|installed| {
 +            installed.as_ref().is_none_or(|(_, required)| {
 +                required
 +                    .lock()
@@ -49377,7 +49324,7 @@ index 000000000..a5cd5a811
 +    ) -> Result<Intercepted, TransportError> {
 +        let Some(required) = Self::intercepting(
 +            mods,
-+            &self.3,
++            &self.holders,
 +            account,
 +            "model_request",
 +            self.required("model_request"),
@@ -49415,7 +49362,7 @@ index 000000000..a5cd5a811
 +        let dispatcher = self.dispatcher();
 +        let active = || account.task.check_active().is_ok();
 +        let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
-+        let state = self.6.clone();
++        let state = self.requests.clone();
 +        let chain = codex_omd::intercept_shared(
 +            mods,
 +            "model_request",
@@ -49543,7 +49490,7 @@ index 000000000..a5cd5a811
 +            .map(str::to_owned)
 +            .unwrap_or_default();
 +        let Some(mut account) = self
-+            .0
++            .by_thread
 +            .lock()
 +            .map_err(|_| denied("account lock poisoned"))?
 +            .get(&thread)
@@ -49586,7 +49533,7 @@ index 000000000..a5cd5a811
 +            && let Some(items) = value["input"].as_array()
 +            && let Hook::Ran(result) = Self::middleware(
 +                mods,
-+                &self.3,
++                &self.holders,
 +                !account.owner.starts_with("mod-"),
 +                "history",
 +                |runtime| {
@@ -49629,7 +49576,7 @@ index 000000000..a5cd5a811
 +            .headers
 +            .insert(REQUEST_HEADER, request_id.parse().map_err(denied)?);
 +        let (attempt, retry_of) = self
-+            .6
++            .requests
 +            .lock()
 +            .ok()
 +            .and_then(|mut state| state.retries.remove(&thread))
@@ -49652,7 +49599,7 @@ index 000000000..a5cd5a811
 +                        format!("mod-{owner}-{request_id}-{next}")
 +                    },
 +                );
-+                if let Ok(mut state) = self.6.lock() {
++                if let Ok(mut state) = self.requests.lock() {
 +                    state.synthetic.insert(request_id.clone(), (owner, events));
 +                }
 +                request
@@ -49785,7 +49732,7 @@ index 000000000..a5cd5a811
 +            return Ok(None);
 +        };
 +        let Some(account) = self
-+            .0
++            .by_thread
 +            .lock()
 +            .map_err(|_| denied("account lock poisoned"))?
 +            .get(&thread)
@@ -49808,7 +49755,7 @@ index 000000000..a5cd5a811
 +            .unwrap_or(1);
 +        if let Some(key) = header(request, SYNTHETIC_HEADER) {
 +            let owner = self
-+                .6
++                .requests
 +                .lock()
 +                .ok()
 +                .and_then(|state| state.synthetic.get(&key).map(|(owner, _)| owner.clone()))
@@ -50102,7 +50049,7 @@ index 000000000..a5cd5a811
 +
 +    fn answer(&self, request: &Request) -> Option<Vec<Value>> {
 +        let key = request.headers.get(SYNTHETIC_HEADER)?.to_str().ok()?;
-+        self.6
++        self.requests
 +            .lock()
 +            .ok()?
 +            .synthetic
@@ -50111,7 +50058,7 @@ index 000000000..a5cd5a811
 +    }
 +
 +    fn policed(&self) -> bool {
-+        self.1.lock().ok().is_some_and(|installed| {
++        self.runtime.lock().ok().is_some_and(|installed| {
 +            installed.as_ref().is_some_and(|(_, required)| {
 +                required
 +                    .lock()
@@ -50122,7 +50069,7 @@ index 000000000..a5cd5a811
 +
 +    fn requires_observation(&self, thread: Option<&str>) -> bool {
 +        thread.is_some_and(|thread| {
-+            self.0.lock().map_or(true, |accounts| {
++            self.by_thread.lock().map_or(true, |accounts| {
 +                accounts
 +                    .get(thread)
 +                    .is_some_and(|account| account.rates.is_some())
@@ -50189,10 +50136,10 @@ index 000000000..a5cd5a811
 +            admission,
 +            model,
 +            mods: self.mods(),
-+            holders: self.3.clone(),
++            holders: self.holders.clone(),
 +            dispatcher: self.dispatcher(),
 +            notifier: self.notifier(),
-+            state: self.6.clone(),
++            state: self.requests.clone(),
 +            required: self.required("response_stream"),
 +            synthetic,
 +            settled: false,
@@ -50852,10 +50799,10 @@ index 000000000..a5cd5a811
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..0a11dc0ae
+index 000000000..787f67072
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1352 @@
+@@ -0,0 +1,1379 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -50925,7 +50872,7 @@ index 000000000..0a11dc0ae
 +    );
 +    let accounts = Accounts::default();
 +    accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .unwrap()
 +        .insert("child".into(), account(&task, root.path(), "worker"));
@@ -51192,7 +51139,7 @@ index 000000000..0a11dc0ae
 +    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
 +    let profile = profiles.create("work key", "api_key", None, None).unwrap();
 +    let route = |url: &str| {
-+        let mut accounts = accounts.0.lock().unwrap();
++        let mut accounts = accounts.by_thread.lock().unwrap();
 +        let account = accounts.get_mut("child").unwrap();
 +        account.credential = Some(profile.id.clone());
 +        account.url = url.into();
@@ -51257,7 +51204,11 @@ index 000000000..0a11dc0ae
 +        remote.credential = Some(profile.id.clone());
 +        remote.url = target.into();
 +        lead.lead_routes = vec![remote];
-+        accounts.0.lock().unwrap().insert("main".into(), lead);
++        accounts
++            .by_thread
++            .lock()
++            .unwrap()
++            .insert("main".into(), lead);
 +        request
 +            .headers
 +            .insert("x-omd-route", "fast".parse().unwrap());
@@ -51281,7 +51232,11 @@ index 000000000..0a11dc0ae
 +    let mut lead = account(&task, root.path(), "lead");
 +    lead.route = Some("main".into());
 +    lead.lead_routes = vec![fast_route()];
-+    accounts.0.lock().unwrap().insert("main".into(), lead);
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .insert("main".into(), lead);
 +    task.authorize_route("fixture", "fixture-model").unwrap();
 +    task.authorize_route("fixture", "fixture-fast").unwrap();
 +    request.headers.insert("thread-id", "main".parse().unwrap());
@@ -51348,7 +51303,11 @@ index 000000000..0a11dc0ae
 +    other.provider = "elsewhere".into();
 +    other.model = "elsewhere-model".into();
 +    lead.lead_routes = vec![fast_route(), other];
-+    accounts.0.lock().unwrap().insert("main".into(), lead);
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .insert("main".into(), lead);
 +    for model in ["fixture-model", "fixture-fast"] {
 +        task.authorize_route("fixture", model).unwrap();
 +    }
@@ -51467,7 +51426,7 @@ index 000000000..0a11dc0ae
 +    let refused = accounts.prepare(&mut request, &mut prepared).unwrap_err();
 +    assert!(format!("{refused:?}").contains("own credential profile"));
 +    accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .unwrap()
 +        .get_mut("main")
@@ -51501,7 +51460,7 @@ index 000000000..0a11dc0ae
 +fn completion_workers_cap_output_capture_tool_calls_and_collect_their_responses() {
 +    let (_root, accounts, _task, mut request, body) = setup();
 +    {
-+        let mut accounts = accounts.0.lock().unwrap();
++        let mut accounts = accounts.by_thread.lock().unwrap();
 +        let child = accounts.get_mut("child").unwrap();
 +        child.capture_tools = true;
 +        child.max_output_tokens = Some(64);
@@ -51567,7 +51526,7 @@ index 000000000..0a11dc0ae
 +    let (_root, accounts, _task, mut request, _) = setup();
 +    let mut mark = |through: Value, prompt: &str| {
 +        accounts
-+            .0
++            .by_thread
 +            .lock()
 +            .unwrap()
 +            .get_mut("child")
@@ -51610,8 +51569,13 @@ index 000000000..0a11dc0ae
 +            "export default api => api.intercept('model_request', {options}(e, next) => next(e))"
 +        );
 +        install_middleware(&accounts, root.path(), &source);
-+        accounts.0.lock().unwrap().get_mut("child").unwrap().owner =
-+            "mod-request_router-child".into();
++        accounts
++            .by_thread
++            .lock()
++            .unwrap()
++            .get_mut("child")
++            .unwrap()
++            .owner = "mod-request_router-child".into();
 +        let runtime = accounts.mods().unwrap();
 +        let _busy = runtime.lock().unwrap();
 +        let result = accounts.prepare(&mut request, &mut Some(body));
@@ -51628,7 +51592,11 @@ index 000000000..0a11dc0ae
 +    let mut lead = account(&task, root.path(), "lead");
 +    lead.rates = None;
 +    lead.route = None;
-+    accounts.0.lock().unwrap().insert("main".into(), lead);
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .insert("main".into(), lead);
 +    request.headers.insert("thread-id", "main".parse().unwrap());
 +    assert!(!accounts.requires_observation(Some("main")));
 +    assert!(accounts.requires_observation(Some("child")));
@@ -51772,7 +51740,7 @@ index 000000000..0a11dc0ae
 +        assert!(accounts.before_send(&mut request, Some(&encoded)).is_err());
 +    }
 +    accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .unwrap()
 +        .get_mut("child")
@@ -51908,7 +51876,7 @@ index 000000000..0a11dc0ae
 +    )
 +    .unwrap();
 +    {
-+        let mut state = accounts.0.lock().unwrap();
++        let mut state = accounts.by_thread.lock().unwrap();
 +        let account = state.get_mut("child").unwrap();
 +        account.owner = "subscriber".into();
 +        account.provider = "openai".into();
@@ -52026,14 +51994,14 @@ index 000000000..0a11dc0ae
 +        "a retry core declined does not number the next turn's request"
 +    );
 +    accounts
-+        .6
++        .requests
 +        .lock()
 +        .unwrap()
 +        .fingerprints
 +        .insert("child".into(), vec![("i0".into(), "sha".into())]);
 +    accounts.forget_thread("child");
 +    assert!(
-+        accounts.6.lock().unwrap().fingerprints.is_empty(),
++        accounts.requests.lock().unwrap().fingerprints.is_empty(),
 +        "a closed thread keeps no request fingerprints"
 +    );
 +}
@@ -52041,7 +52009,13 @@ index 000000000..0a11dc0ae
 +#[test]
 +fn cancelled_provider_billed_requests_still_await_settlement() {
 +    let (_root, accounts, task, mut request, body) = setup();
-+    accounts.0.lock().unwrap().get_mut("child").unwrap().rates = Some(Rates {
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .get_mut("child")
++        .unwrap()
++        .rates = Some(Rates {
 +        reservation_microusd: 0,
 +        provider_billed: true,
 +        ..rates()
@@ -52062,7 +52036,7 @@ index 000000000..0a11dc0ae
 +fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once() {
 +    let (root, accounts, task, mut request, _body) = setup();
 +    {
-+        let mut accounts = accounts.0.lock().unwrap();
++        let mut accounts = accounts.by_thread.lock().unwrap();
 +        let child = accounts.get_mut("child").unwrap();
 +        child.rates = Some(Rates {
 +            reservation_microusd: 0,
@@ -52151,7 +52125,7 @@ index 000000000..0a11dc0ae
 +    let (root, accounts, task, _request, _body) = setup();
 +    let thread = "queued-notices";
 +    accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .unwrap()
 +        .insert(thread.into(), account(&task, root.path(), "worker"));
@@ -52187,7 +52161,7 @@ index 000000000..0a11dc0ae
 +    let (root, accounts, task, _request, _body) = setup();
 +    let thread = "queued-refused";
 +    accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .unwrap()
 +        .insert(thread.into(), account(&task, root.path(), "worker"));
@@ -56412,7 +56386,7 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..c4354f220
+index 000000000..eb6f90fce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,723 @@
@@ -56747,7 +56721,7 @@ index 000000000..c4354f220
 +            .map_err(|error| format!("host_limits_not_applied: {error}"));
 +        let mut accounts = self
 +            .accounts
-+            .0
++            .by_thread
 +            .lock()
 +            .map_err(|_| "account lock poisoned")?;
 +        for account in accounts
@@ -56954,7 +56928,7 @@ index 000000000..c4354f220
 +        };
 +        let mut accounts = self
 +            .accounts
-+            .0
++            .by_thread
 +            .lock()
 +            .map_err(|_| "account lock poisoned")?;
 +        if accounts.insert(thread.to_string(), account).is_some() {
@@ -59605,7 +59579,7 @@ index 000000000..310f9cf88
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..cdaab0282
+index 000000000..4209a844f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2457 @@
@@ -61400,7 +61374,7 @@ index 000000000..cdaab0282
 +            if self
 +                .host
 +                .accounts
-+                .0
++                .by_thread
 +                .lock()
 +                .map_or(true, |accounts| accounts.contains_key(&thread.to_string()))
 +            {
@@ -61601,7 +61575,7 @@ index 000000000..cdaab0282
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
-+            if let Ok(mut accounts) = self.host.accounts.0.lock() {
++            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
 +                accounts.remove(&lead.thread.to_string());
 +            }
 +            self.host.accounts.forget_thread(&lead.thread.to_string());
@@ -62885,7 +62859,7 @@ index 000000000..304f44c7d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..c34da73f5
+index 000000000..dcfdb64c9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2612 @@
@@ -64619,7 +64593,7 @@ index 000000000..c34da73f5
 +        if request.route == LEAD_ROUTE_ALIAS {
 +            let name = host
 +                .accounts
-+                .0
++                .by_thread
 +                .lock()
 +                .map_err(|_| "account lock poisoned")?
 +                .get(&lead.thread.to_string())
@@ -65272,7 +65246,7 @@ index 000000000..c34da73f5
 +            .claim_worker_objective(&id, &execution::hash(request.prompt.as_bytes()))
 +            .map_err(|e| e.to_string())?;
 +        host.enroll(thread_id, session, &id, Some(&route), None)?;
-+        if let Ok(mut accounts) = host.accounts.0.lock()
++        if let Ok(mut accounts) = host.accounts.by_thread.lock()
 +            && let Some(account) = accounts.get_mut(&thread_id.to_string())
 +        {
 +            account.capture_tools = shape.capture_tools;
@@ -65315,7 +65289,7 @@ index 000000000..c34da73f5
 +        let spawned = match manager.spawn_isolated_subagent(lead.thread, options).await {
 +            Ok(spawned) => spawned,
 +            Err(error) => {
-+                if let Ok(mut accounts) = host.accounts.0.lock() {
++                if let Ok(mut accounts) = host.accounts.by_thread.lock() {
 +                    accounts.remove(&thread_id.to_string());
 +                }
 +                return Err(error.to_string());
@@ -65410,7 +65384,7 @@ index 000000000..c34da73f5
 +            .map_err(|_| "native_agent_deadline".to_owned())
 +            .and_then(|r| r);
 +            let cleanup = execution::shutdown(&child.thread).await;
-+            if let Ok(mut accounts) = accounts.0.lock() {
++            if let Ok(mut accounts) = accounts.by_thread.lock() {
 +                accounts.remove(&thread_id.to_string());
 +            }
 +            let completed = completed.and_then(|text| {
@@ -66534,7 +66508,7 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..7142b8ff5
+index 000000000..60ce32ec3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,835 @@
@@ -67144,7 +67118,7 @@ index 000000000..7142b8ff5
 +    let mut accounts = lead
 +        .host
 +        .accounts
-+        .0
++        .by_thread
 +        .lock()
 +        .map_err(|_| "account lock poisoned")?;
 +    let account = accounts
@@ -69190,7 +69164,7 @@ index 000000000..b0a2320cb
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 new file mode 100644
-index 000000000..b6c43290b
+index 000000000..e459f2778
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 @@ -0,0 +1,207 @@
@@ -69353,7 +69327,7 @@ index 000000000..b6c43290b
 +        let route = self
 +            .host
 +            .accounts
-+            .0
++            .by_thread
 +            .lock()
 +            .ok()?
 +            .get(&lead.thread.to_string())
@@ -69403,7 +69377,7 @@ index 000000000..b6c43290b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..c335b71fc
+index 000000000..78e876af2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 @@ -0,0 +1,5634 @@
@@ -70506,7 +70480,7 @@ index 000000000..c335b71fc
 +    lead.host.refresh_session(&lead.session).unwrap();
 +    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
 +    assert_eq!(
-+        lead.host.accounts.0.lock().unwrap()[&lead.thread.to_string()]
++        lead.host.accounts.by_thread.lock().unwrap()[&lead.thread.to_string()]
 +            .lead_routes
 +            .iter()
 +            .map(|route| route.model.as_str())
@@ -75973,7 +75947,7 @@ index 000000000..597f22682
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..700fb036e
+index 000000000..c5ee49f03
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,761 @@
@@ -76595,7 +76569,7 @@ index 000000000..700fb036e
 +        "session.info" => {
 +            let account = host
 +                .accounts
-+                .0
++                .by_thread
 +                .lock()
 +                .map_err(|_| "account lock poisoned")?
 +                .get(&lead.thread.to_string())
@@ -77047,7 +77021,7 @@ index 000000000..a00c97730
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 000000000..24a4f05ee
+index 000000000..6555b04c9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
 @@ -0,0 +1,430 @@
@@ -77131,7 +77105,7 @@ index 000000000..24a4f05ee
 +                let provider = lead
 +                    .host
 +                    .accounts
-+                    .0
++                    .by_thread
 +                    .lock()
 +                    .map_err(|_| "account lock poisoned")?
 +                    .get(&lead.thread.to_string())
@@ -87559,17 +87533,17 @@ index 000000000..7a5c3d779
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
-index 000000000..1f64203f3
+index 000000000..1dd22ba8a
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store.rs
-@@ -0,0 +1,387 @@
+@@ -0,0 +1,379 @@
 +use crate::resource_data::{ResourceStore, hash};
 +use base64::Engine;
 +use base64::engine::general_purpose::STANDARD;
 +use serde_json::{Value, json};
 +use std::fs;
 +use std::io::{self, Read, Write};
-+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
++use std::os::unix::fs::OpenOptionsExt;
 +use std::path::PathBuf;
 +
 +pub const BLOB_BYTES: usize = 16 * 1024 * 1024;
@@ -87718,15 +87692,7 @@ index 000000000..1f64203f3
 +}
 +
 +fn private_directory(path: PathBuf) -> io::Result<PathBuf> {
-+    match fs::DirBuilder::new().mode(0o700).create(&path) {
-+        Ok(()) => (),
-+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+        Err(error) => return Err(error),
-+    }
-+    let metadata = fs::symlink_metadata(&path)?;
-+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-+        return Err(io::Error::other("blob_directory_invalid"));
-+    }
++    crate::resource_data::private_dir(&path, "blob_directory_invalid")?;
 +    Ok(path)
 +}
 +
@@ -88227,7 +88193,7 @@ index 000000000..a8f5a2022
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..ea6bb778b
+index 000000000..c0bb952f9
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,954 @@
@@ -88242,7 +88208,6 @@ index 000000000..ea6bb778b
 +use std::io::BufReader;
 +use std::io::Read;
 +use std::io::Write;
-+use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::MetadataExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::os::unix::net::UnixListener;
@@ -88552,12 +88517,13 @@ index 000000000..ea6bb778b
 +    state: Mutex<()>,
 +}
 +
-+fn private_directory(path: &Path) -> io::Result<PathBuf> {
-+    fs::DirBuilder::new()
-+        .recursive(true)
-+        .mode(0o700)
-+        .create(path)?;
-+    Ok(path.to_path_buf())
++fn private_directory(root: &Path, components: &[&str]) -> io::Result<PathBuf> {
++    let mut path = root.to_path_buf();
++    for component in components {
++        path.push(component);
++        crate::resource_data::private_dir(&path, "authority_directory_invalid")?;
++    }
++    Ok(path)
 +}
 +
 +fn write_private(path: &Path, value: &Value) -> io::Result<()> {
@@ -88697,7 +88663,7 @@ index 000000000..ea6bb778b
 +        if !Path::new(store).is_absolute() {
 +            return Err(failure("authority_request_invalid"));
 +        }
-+        private_directory(&self.root.join("stores").join(sha256(store.as_bytes())))
++        private_directory(&self.root, &["stores", &sha256(store.as_bytes())])
 +    }
 +
 +    fn profiles(&self, arguments: &Value) -> io::Result<crate::credentials::CredentialProfiles> {
@@ -88888,7 +88854,7 @@ index 000000000..ea6bb778b
 +            }
 +            "anchor.get" | "anchor.append" | "anchor.seed" => {
 +                let stream = text(&arguments, "stream")?;
-+                let path = private_directory(&self.root.join("anchors"))?
++                let path = private_directory(&self.root, &["anchors"])?
 +                    .join(format!("{}.json", sha256(stream.as_bytes())));
 +                let mut anchor = read_json(
 +                    &path,
@@ -93313,14 +93279,14 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..0bcadd832
+index 000000000..6b085ff9c
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,562 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
-+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
++use std::os::unix::fs::OpenOptionsExt;
 +use std::path::{Path, PathBuf};
 +
 +pub const PROFILE_LIMIT: usize = 32;
@@ -93464,15 +93430,7 @@ index 000000000..0bcadd832
 +            return Err(failure("credential_root_invalid"));
 +        }
 +        let root = store.join("credentials");
-+        match fs::DirBuilder::new().mode(0o700).create(&root) {
-+            Ok(()) => (),
-+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+            Err(error) => return Err(error),
-+        }
-+        let metadata = fs::symlink_metadata(&root)?;
-+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-+            return Err(failure("credential_root_invalid"));
-+        }
++        crate::resource_data::private_dir(&root, "credential_root_invalid")?;
 +        Ok(Self { root, broker: None })
 +    }
 +
@@ -93589,15 +93547,7 @@ index 000000000..0bcadd832
 +    fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
 +        index.profile(id)?;
 +        let home = self.root.join(id);
-+        match fs::DirBuilder::new().mode(0o700).create(&home) {
-+            Ok(()) => (),
-+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+            Err(error) => return Err(error),
-+        }
-+        let metadata = fs::symlink_metadata(&home)?;
-+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-+            return Err(failure("credential_home_invalid"));
-+        }
++        crate::resource_data::private_dir(&home, "credential_home_invalid")?;
 +        Ok(home)
 +    }
 +
@@ -94177,10 +94127,10 @@ index 000000000..441c77d85
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..80a063bed
+index 000000000..b9168a5ac
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,441 @@
+@@ -0,0 +1,433 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -94433,15 +94383,7 @@ index 000000000..80a063bed
 +        let mut path = self.root.to_path_buf();
 +        for component in components {
 +            path.push(component);
-+            match fs::DirBuilder::new().mode(0o700).create(&path) {
-+                Ok(()) => (),
-+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+                Err(error) => return Err(error),
-+            }
-+            let metadata = fs::symlink_metadata(&path)?;
-+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-+                return Err(failure("store_directory_invalid"));
-+            }
++            crate::resource_data::private_dir(&path, "store_directory_invalid")?;
 +        }
 +        Ok(path)
 +    }
@@ -95566,10 +95508,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..6e299e0dc
+index 000000000..a197a0320
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1744 @@
+@@ -0,0 +1,1730 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -96190,16 +96132,9 @@ index 000000000..6e299e0dc
 +            caller.source_sha256,
 +        ] {
 +            path.push(part);
-+            match fs::DirBuilder::new().mode(0o700).create(&path) {
-+                Ok(()) => (),
-+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-+                Err(error) => return Err(error.to_string()),
-+            }
-+            if path.canonicalize().map_err(|error| error.to_string())? != path
-+                || !fs::symlink_metadata(&path)
-+                    .map_err(|error| error.to_string())?
-+                    .is_dir()
-+            {
++            crate::resource_data::private_dir(&path, "exec_output_directory_invalid")
++                .map_err(|error| error.to_string())?;
++            if path.canonicalize().map_err(|error| error.to_string())? != path {
 +                return Err("exec_output_directory_invalid".into());
 +            }
 +        }
@@ -97139,15 +97074,8 @@ index 000000000..6e299e0dc
 +        let mut path = self.data_root.to_path_buf();
 +        for component in ["backups", &repository_key(self.repository()), caller.id] {
 +            path.push(component);
-+            match fs::DirBuilder::new().mode(0o700).create(&path) {
-+                Ok(()) => (),
-+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-+                Err(error) => return Err(error.to_string()),
-+            }
-+            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-+                return Err("backup_directory_invalid".into());
-+            }
++            crate::resource_data::private_dir(&path, "backup_directory_invalid")
++                .map_err(|error| error.to_string())?;
 +        }
 +        Ok(path)
 +    }
@@ -123049,10 +122977,10 @@ index 000000000..334cbf27e
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..ecf899710
+index 000000000..e33f6775e
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,366 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -123060,7 +122988,7 @@ index 000000000..ecf899710
 +use std::fs;
 +use std::io;
 +use std::io::Write;
-+use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 +use std::path::{Path, PathBuf};
 +
 +pub const PAGE_BYTES: usize = 16_384;
@@ -123068,6 +122996,20 @@ index 000000000..ecf899710
 +
 +pub fn hash(bytes: &[u8]) -> String {
 +    format!("{:x}", Sha256::digest(bytes))
++}
++
++/// Creates `path` as a 0700 directory or accepts an existing one, refusing a symlink or non-directory with `invalid`.
++pub(crate) fn private_dir(path: &Path, invalid: &'static str) -> io::Result<()> {
++    match fs::DirBuilder::new().mode(0o700).create(path) {
++        Ok(()) => (),
++        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
++        Err(error) => return Err(error),
++    }
++    let metadata = fs::symlink_metadata(path)?;
++    if !metadata.is_dir() || metadata.file_type().is_symlink() {
++        return Err(io::Error::other(invalid));
++    }
++    Ok(())
 +}
 +
 +pub fn token(value: &str) -> bool {
@@ -123239,15 +123181,8 @@ index 000000000..ecf899710
 +        let mut path = self.root.to_owned();
 +        for component in ["resources", &self.binding.repository, &self.binding.owner] {
 +            path.push(component);
-+            match fs::DirBuilder::new().create(&path) {
-+                Ok(()) => {
-+                    use std::os::unix::fs::PermissionsExt;
-+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-+                }
-+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+                Err(error) => return Err(error),
-+            }
-+            if path.canonicalize()? != path || !fs::symlink_metadata(&path)?.is_dir() {
++            private_dir(&path, "resource_directory_invalid")?;
++            if path.canonicalize()? != path {
 +                return Err(io::Error::other("resource_directory_invalid"));
 +            }
 +        }
@@ -123783,22 +123718,44 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..7c1d4aeb9
+index 000000000..ad2e0774d
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,572 @@
+@@ -0,0 +1,774 @@
++use crate::mods::{FileStamp, file_stamp};
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
-+use serde_json::{Value, json};
-+use std::collections::BTreeSet;
++use serde_json::{Map, Value, json};
++use std::collections::{BTreeMap, BTreeSet};
 +use std::fs;
 +use std::io::{self, BufRead, Read};
 +use std::path::{Path, PathBuf};
++use std::sync::{Arc, Mutex};
 +
 +const SOURCE_BYTES: usize = 32 * 1024 * 1024;
 +const HEAD_BYTES: u64 = 1024 * 1024;
 +const SCAN_FILES: usize = 4096;
 +const SCAN_BYTES: u64 = 128 * 1024 * 1024;
++const META_FIELDS: [&str; 11] = [
++    "id",
++    "session_id",
++    "parent_thread_id",
++    "cwd",
++    "timestamp",
++    "memory_mode",
++    "session_review",
++    "history_mode",
++    "history_base",
++    "forked_from_id",
++    "subagent_history_start_ordinal",
++];
++
++/// Rollout heads by path, valid while the file keeps its stamp; `None` marks a file that is not a session.
++static PARSED: Mutex<BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>> =
++    Mutex::new(BTreeMap::new());
++static PROJECTION: Mutex<Option<Projection>> = Mutex::new(None);
++#[cfg(test)]
++static READS: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
 +
 +pub struct SessionIndex<'a> {
 +    pub root: &'a Path,
@@ -123821,10 +123778,28 @@ index 000000000..7c1d4aeb9
 +    pub incomplete_tail: bool,
 +}
 +
++struct Parsed {
++    meta: Value,
++    revision: String,
++    incomplete_tail: bool,
++}
++
 +struct Session {
 +    summary: SessionSummary,
 +    meta: Value,
-+    bytes: Vec<u8>,
++    stamp: FileStamp,
++    bytes: Option<Vec<u8>>,
++}
++
++type Records = Arc<(Vec<Value>, bool)>;
++
++struct Projection {
++    path: PathBuf,
++    stamp: FileStamp,
++    repository: PathBuf,
++    tools: bool,
++    scopes: BTreeMap<String, bool>,
++    records: Records,
 +}
 +
 +#[derive(Deserialize)]
@@ -123984,25 +123959,34 @@ index 000000000..7c1d4aeb9
 +        names
 +    }
 +
-+    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
-+        if !active() {
-+            return Err(cancelled());
-+        }
++    /// The rollout's complete lines; a trailing partial record is dropped and reported.
++    fn read(&self, path: &Path) -> io::Result<(Vec<u8>, bool)> {
 +        let name = self.name(path)?;
-+        let snapshot =
++        #[cfg(test)]
++        if let Ok(mut reads) = READS.lock() {
++            *reads.entry(path.to_path_buf()).or_default() += 1;
++        }
++        let mut snapshot =
 +            crate::Snapshot::capture(self.root, &BTreeSet::from([name.to_owned()]), SOURCE_BYTES)?;
 +        let mut bytes = snapshot
 +            .files
-+            .get(name)
++            .remove(name)
 +            .ok_or_else(|| io::Error::other("session_missing"))?
-+            .bytes
-+            .clone();
++            .bytes;
 +        let complete = bytes
 +            .iter()
 +            .rposition(|byte| *byte == b'\n')
 +            .map_or(0, |index| index + 1);
 +        let incomplete_tail = complete != bytes.len();
 +        bytes.truncate(complete);
++        Ok((bytes, incomplete_tail))
++    }
++
++    fn parse(
++        bytes: &[u8],
++        incomplete_tail: bool,
++        active: &dyn Fn() -> bool,
++    ) -> io::Result<Option<Parsed>> {
 +        let mut lines = bytes
 +            .split(|byte| *byte == b'\n')
 +            .filter(|line| !line.is_empty());
@@ -124032,7 +124016,46 @@ index 000000000..7c1d4aeb9
 +                meta = record["payload"].clone();
 +            }
 +        }
-+        if !self.scoped(&meta)
++        let meta = META_FIELDS
++            .iter()
++            .filter_map(|field| Some(((*field).to_owned(), meta.get(field)?.clone())))
++            .collect::<Map<_, _>>();
++        Ok(Some(Parsed {
++            meta: Value::Object(meta),
++            revision: hash(bytes),
++            incomplete_tail,
++        }))
++    }
++
++    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
++        if !active() {
++            return Err(cancelled());
++        }
++        let name = self.name(path)?;
++        let stamp = file_stamp(&fs::symlink_metadata(path)?);
++        let cached = PARSED
++            .lock()
++            .ok()
++            .and_then(|parsed| parsed.get(path).filter(|(seen, _)| *seen == stamp).cloned());
++        let (parsed, bytes) = match cached {
++            Some((_, parsed)) => (parsed, None),
++            None => {
++                let (bytes, incomplete_tail) = self.read(path)?;
++                let parsed = Self::parse(&bytes, incomplete_tail, active)?.map(Arc::new);
++                if let Ok(mut cache) = PARSED.lock() {
++                    if cache.len() >= SCAN_FILES && !cache.contains_key(path) {
++                        cache.pop_first();
++                    }
++                    cache.insert(path.to_path_buf(), (stamp, parsed.clone()));
++                }
++                (parsed, Some(bytes))
++            }
++        };
++        let Some(parsed) = parsed else {
++            return Ok(None);
++        };
++        let meta = &parsed.meta;
++        if !self.scoped(meta)
 +            || meta["memory_mode"]
 +                .as_str()
 +                .is_some_and(|mode| mode != "enabled")
@@ -124060,30 +124083,83 @@ index 000000000..7c1d4aeb9
 +                .filter(|id| token(id))
 +                .map(str::to_owned),
 +            timestamp: timestamp.to_owned(),
-+            revision: hash(&bytes),
++            revision: parsed.revision.clone(),
 +            handle: hash(name.as_bytes()),
 +            history_mode: meta["history_mode"].as_str().unwrap_or("legacy").to_owned(),
 +            inherited_history: !meta["history_base"].is_null() || !meta["forked_from_id"].is_null(),
-+            incomplete_tail,
++            incomplete_tail: parsed.incomplete_tail,
 +        };
 +        Ok(Some(Session {
 +            summary,
-+            meta,
++            meta: parsed.meta.clone(),
++            stamp,
 +            bytes,
 +        }))
++    }
++
++    /// The session's projected records, reusing the last projection while the rollout keeps its stamp.
++    fn projection(
++        &self,
++        path: &Path,
++        session: Session,
++        active: &dyn Fn() -> bool,
++    ) -> io::Result<Records> {
++        let matches = |projection: &Projection| {
++            projection.path == path
++                && projection.stamp == session.stamp
++                && projection.repository == self.repository
++                && projection.tools == self.tools
++                && projection
++                    .scopes
++                    .iter()
++                    .all(|(cwd, scoped)| self.scoped(&json!({ "cwd": cwd })) == *scoped)
++        };
++        if let Some(records) = PROJECTION.lock().ok().and_then(|projection| {
++            projection
++                .as_ref()
++                .filter(|projection| matches(projection))
++                .map(|projection| projection.records.clone())
++        }) {
++            return Ok(records);
++        }
++        let reread;
++        let bytes = match &session.bytes {
++            Some(bytes) => bytes,
++            None => {
++                reread = self.read(path)?.0;
++                if hash(&reread) != session.summary.revision {
++                    return Err(io::Error::other("session_revision_changed"));
++                }
++                &reread
++            }
++        };
++        let mut scopes = BTreeMap::new();
++        let records = Arc::new(self.records(&session, bytes, &mut scopes, active)?);
++        if let Ok(mut projection) = PROJECTION.lock() {
++            *projection = Some(Projection {
++                path: path.to_path_buf(),
++                stamp: session.stamp,
++                repository: self.repository.to_path_buf(),
++                tools: self.tools,
++                scopes,
++                records: records.clone(),
++            });
++        }
++        Ok(records)
 +    }
 +
 +    fn records(
 +        &self,
 +        session: &Session,
++        bytes: &[u8],
++        scopes: &mut BTreeMap<String, bool>,
 +        active: &dyn Fn() -> bool,
 +    ) -> io::Result<(Vec<Value>, bool)> {
 +        let id = &session.summary.session_id;
 +        let mut records = Vec::new();
 +        let mut turn = String::new();
 +        let mut in_scope = false;
-+        let lines = session
-+            .bytes
++        let lines = bytes
 +            .split(|byte| *byte == b'\n')
 +            .filter(|line| !line.is_empty())
 +            .skip(1);
@@ -124101,6 +124177,9 @@ index 000000000..7c1d4aeb9
 +            }
 +            if value["type"] == "turn_context" {
 +                in_scope = self.scoped(payload);
++                if let Some(cwd) = payload["cwd"].as_str() {
++                    scopes.insert(cwd.to_owned(), in_scope);
++                }
 +                turn = payload["turn_id"]
 +                    .as_str()
 +                    .filter(|id| token(id))
@@ -124324,7 +124403,9 @@ index 000000000..7c1d4aeb9
 +                if input.revision != session.summary.revision {
 +                    return Err(io::Error::other("session_revision_changed"));
 +                }
-+                let (records, projection_truncated) = self.records(&session, &active)?;
++                let summary = session.summary.clone();
++                let projection = self.projection(path, session, &active)?;
++                let (records, projection_truncated) = (&projection.0, projection.1);
 +                let start = input.cursor.unwrap_or(0);
 +                if start > records.len() {
 +                    return Err(io::Error::other("session_cursor_invalid"));
@@ -124343,7 +124424,7 @@ index 000000000..7c1d4aeb9
 +                    return Err(io::Error::other("session_record_exceeds_page"));
 +                }
 +                Ok(
-+                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
++                    json!({"session":summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
 +                )
 +            }
 +            _ => Err(io::Error::other("session_operation_unavailable")),
@@ -124357,6 +124438,62 @@ index 000000000..7c1d4aeb9
 +            return Err(io::Error::other("session_policy_changed"));
 +        }
 +        Ok(result)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn paging_a_large_rollout_reads_it_once_after_listing() {
++        let temp = tempfile::tempdir().unwrap();
++        let base = temp.path().canonicalize().unwrap();
++        let (repo, root) = (base.join("repo"), base.join("sessions"));
++        fs::create_dir(&repo).unwrap();
++        fs::create_dir(&root).unwrap();
++        let text = "x".repeat(2000);
++        let mut rows = vec![
++            json!({"type":"session_meta","payload":{"id":"large","cwd":repo,"timestamp":"2026-09-26T12:00:00Z"}}),
++            json!({"type":"turn_context","payload":{"turn_id":"turn","cwd":repo}}),
++        ];
++        rows.extend((0..2048).map(|_| json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}})));
++        let path = root.join("large.jsonl");
++        fs::write(
++            &path,
++            rows.iter()
++                .map(|row| row.to_string() + "\n")
++                .collect::<String>(),
++        )
++        .unwrap();
++        assert!(fs::metadata(&path).unwrap().len() > 4 * 1024 * 1024);
++        let index = SessionIndex {
++            root: &root,
++            database: None,
++            repository: &repo,
++            enabled: true,
++            tools: false,
++        };
++        let reads = || READS.lock().unwrap().get(&path).copied().unwrap_or(0);
++        let summary =
++            index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
++        assert_eq!(reads(), 1);
++        let (mut cursor, mut pages, mut records) = (Some(0), 0, 0);
++        while let Some(start) = cursor {
++            let page = index
++                .call(
++                    "sessions.read",
++                    json!({"session_id":"large","revision":summary["revision"],"handle":summary["handle"],"cursor":start}),
++                    || true,
++                )
++                .unwrap();
++            records += page["records"].as_array().unwrap().len();
++            cursor = page["cursor"].as_u64().map(|cursor| cursor as usize);
++            pages += 1;
++        }
++        assert!(pages > 100);
++        assert_eq!(records, 2048);
++        assert_eq!(reads(), 2);
 +    }
 +}
 diff --git a/codex-rs/omd/src/tool_schema.rs b/codex-rs/omd/src/tool_schema.rs
@@ -126786,13 +126923,13 @@ index 000000000..3701f567d
 +}
 diff --git a/codex-rs/omd/src/workspace_lease.rs b/codex-rs/omd/src/workspace_lease.rs
 new file mode 100644
-index 000000000..600f92122
+index 000000000..ed12aa3f4
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace_lease.rs
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,170 @@
 +use std::fs::{self, File};
 +use std::io;
-+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
++use std::os::unix::fs::{MetadataExt, PermissionsExt};
 +use std::path::{Path, PathBuf};
 +
 +pub struct Lease {
@@ -126832,11 +126969,7 @@ index 000000000..600f92122
 +    let (_, key) = identity(path, exclusive)?;
 +    let uid = rustix::process::geteuid().as_raw();
 +    let directory = directory();
-+    match fs::DirBuilder::new().mode(0o700).create(&directory) {
-+        Ok(()) => (),
-+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-+        Err(error) => return Err(error),
-+    }
++    crate::resource_data::private_dir(&directory, "workspace_ownership_unavailable")?;
 +    let directory_file = File::from(rustix::fs::open(
 +        &directory,
 +        rustix::fs::OFlags::RDONLY

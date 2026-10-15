@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub const PROFILE_LIMIT: usize = 32;
@@ -145,15 +145,7 @@ impl CredentialProfiles {
             return Err(failure("credential_root_invalid"));
         }
         let root = store.join("credentials");
-        match fs::DirBuilder::new().mode(0o700).create(&root) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
-        let metadata = fs::symlink_metadata(&root)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(failure("credential_root_invalid"));
-        }
+        crate::resource_data::private_dir(&root, "credential_root_invalid")?;
         Ok(Self { root, broker: None })
     }
 
@@ -270,15 +262,7 @@ impl CredentialProfiles {
     fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
         index.profile(id)?;
         let home = self.root.join(id);
-        match fs::DirBuilder::new().mode(0o700).create(&home) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
-        let metadata = fs::symlink_metadata(&home)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(failure("credential_home_invalid"));
-        }
+        crate::resource_data::private_dir(&home, "credential_home_invalid")?;
         Ok(home)
     }
 

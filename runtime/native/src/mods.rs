@@ -1789,7 +1789,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if self
                 .host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_or(true, |accounts| accounts.contains_key(&thread.to_string()))
             {
@@ -1990,7 +1990,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
-            if let Ok(mut accounts) = self.host.accounts.0.lock() {
+            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
                 accounts.remove(&lead.thread.to_string());
             }
             self.host.accounts.forget_thread(&lead.thread.to_string());
