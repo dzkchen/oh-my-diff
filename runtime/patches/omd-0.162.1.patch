@@ -105613,10 +105613,10 @@ index 000000000..573dffa0f
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..27684b82d
+index 000000000..e3a4892c7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1046 @@
+@@ -0,0 +1,1049 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -105626,7 +105626,8 @@ index 000000000..27684b82d
 +    calls: Vec<Value>,
 +    violations: Vec<String>,
 +    now_ms: u64,
-+    timers: BTreeMap<(String, String), u64>,
++    /// Keyed by the scheduling thread, owner and key, like live timers.
++    timers: BTreeMap<(Option<String>, String, String), u64>,
 +    environment: Option<BTreeMap<String, String>>,
 +    clients: Vec<Value>,
 +    attached: u64,
@@ -105782,11 +105783,11 @@ index 000000000..27684b82d
 +                    .filter(|delay| (16..=86_400_000).contains(delay))
 +                    .ok_or_else(|| failure("timer_delay_invalid"))?;
 +                let deadline = self.now_ms.checked_add(delay).ok_or_else(|| failure("offline_time_overflow"))?;
-+                self.timers.insert((caller.to_owned(), key.clone()), deadline);
++                self.timers.insert((bound_thread(), caller.to_owned(), key.clone()), deadline);
 +                return Ok(json!({"key": key, "delay_ms": delay}));
 +            }
 +            (true, "events.cancel") => {
-+                let cancelled = self.timers.remove(&(caller.to_owned(), key)).is_some();
++                let cancelled = self.timers.remove(&(bound_thread(), caller.to_owned(), key)).is_some();
 +                return Ok(json!({"cancelled": cancelled}));
 +            }
 +            _ => {}
@@ -106015,6 +106016,7 @@ index 000000000..27684b82d
 +        now_ms: &mut u64,
 +    ) -> Result<Value> {
 +        let payload = step.get("payload").cloned().unwrap_or(Value::Null);
++        let _thread = StateThread::enter(state_thread(&payload));
 +        match kind {
 +            "advance_time" => {
 +                let delta = step
@@ -106026,7 +106028,7 @@ index 000000000..27684b82d
 +                    .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
 +                let mut fired = Vec::new();
 +                // Due timers fire in due order at their own virtual time; a handler may reschedule.
-+                while let Some(((owner, key), due)) = host
++                while let Some(((thread, owner, key), due)) = host
 +                    .timers
 +                    .iter()
 +                    .filter(|(_, due)| **due <= until)
@@ -106036,9 +106038,10 @@ index 000000000..27684b82d
 +                    if fired.len() >= 256 {
 +                        return Err(failure("offline_timer_limit"));
 +                    }
-+                    host.timers.remove(&(owner.clone(), key.clone()));
++                    host.timers.remove(&(thread.clone(), owner.clone(), key.clone()));
 +                    (*now_ms, host.now_ms) = (due, due);
 +                    self.virtual_time_ms = Some(due);
++                    let _thread = StateThread::enter(thread);
 +                    let value = self.invoke_scoped_with(
 +                        &owner,
 +                        self.generation,

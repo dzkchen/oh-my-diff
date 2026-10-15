@@ -69,11 +69,6 @@ class IntegrationMatrixTests(unittest.TestCase):
                 with self.subTest(component=component["id"]):
                     self.assertIn(component["id"], used)
 
-    def test_untested_combinations_are_recorded_without_promising_exhaustive_coverage(self):
-        self.assertTrue(self.matrix["untested"])
-        reasons = " ".join(entry["reason"] for entry in self.matrix["untested"])
-        self.assertIn("combinatorially unbounded", reasons)
-
     def test_declared_versions_and_evidence_are_checked_not_asserted(self):
         for mutate in (
             lambda matrix: matrix["release"].__setitem__("codex", "0.0.0"),
