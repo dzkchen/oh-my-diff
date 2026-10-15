@@ -1,24 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: {}, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const INSTRUCTION = 'Resume the interrupted task. First check the workspace, conversation and running processes to find the last completed step, partial edits and side effects. Continue from the first unfinished step without redoing or reverting finished work, then run the relevant verification.';
 
 function command(turns, text = '') {
-  const receipts = [];
-  for (;;) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {},
-      event: 'command', name: 'continue', payload: text, receipts, surface, hook_budget_ms: 2000 };
-    const output = JSON.parse(runnerSync(request).stdout);
-    if (output.error) throw new Error(output.error);
-    if (!output.host_call) return output.value;
-    assert.deepEqual(output.host_call, { operation: 'turns.activity', arguments: { last: 1 } });
-    receipts.push(typeof turns === 'string' ? { call: output.host_call, error: turns } : { call: output.host_call, value: { turns, recording: true } });
-  }
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {},
+    event: 'command', name: 'continue', payload: text, hook_budget_ms: 2000 };
+  const output = callback(request, call => {
+    assert.deepEqual(call, { operation: 'turns.activity', arguments: { last: 1 } });
+    if (typeof turns === 'string') throw new Error(turns);
+    return { turns, recording: true };
+  });
+  if (output.error) throw new Error(output.error);
+  return output.value;
 }
 
 const turn = (outcome, extra = {}) => ({ turn_id: 't', started_at: 'a', ended_at: null, outcome, reason: null, error: null, unrecorded_end: false,

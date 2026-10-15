@@ -6,14 +6,13 @@ import { runnerSync } from '../../../tests/mod_runner.mjs';
 const mod = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
-const surface = { events: {}, replacements: [], middleware: [], state: 'store', contracts: 'contracts', intercept: { render: 'terminal' } };
 
 function render(props, columns = 100) {
   if (props.kind === 'patch') props = { file_count: props.files.length, added: props.files.reduce((n, f) => n + f.added, 0), removed: props.files.reduce((n, f) => n + f.removed, 0), ...props };
   const input = { component: 'tool_call', id: props.call_id, surface: 'fullscreen', viewport: { columns, rows: 24 }, lifecycle: 'final', owner: null,
     props: { expanded: false, duration_ms: null, ...props } };
-  const reply = JSON.parse(runnerSync({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, surface, state: null,
-    settings: {}, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } }, hook_budget_ms: 1000 }).stdout);
+  const reply = runnerSync({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null,
+    settings: {}, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } }, hook_budget_ms: 1000 });
   if (reply.error) assert.fail(reply.error);
   return reply;
 }

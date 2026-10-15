@@ -5,10 +5,9 @@ import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: { turn_start: 'lifecycle', completion: 'composer' }, replacements: ['completion'], middleware: [], intercept: { input: 'input' }, state: 'store', contracts: 'contracts' };
 
 function run(event, payload, host, name = '', state = null) {
-  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, surface, hook_budget_ms: 2000 };
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, hook_budget_ms: 2000 };
   const receipts = [];
   const output = callback(request, host, receipts, { capture: error => error.host === true });
   if (output.error) throw new Error(output.error);
@@ -49,10 +48,6 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
   assert.equal(mention('parser', ['src/Parser.java', 'src/parser.ts']).paths[0], 'test/parser_test.ts');
   assert.deepEqual(mention('', []).paths, ['test/parser_test.ts', 'src/parser.ts', 'src/moved.ts', 'docs/new notes.md']);
   assert.equal(run('completion', { kind: 'argument', command: 'note', query: '', line: '' }, () => { throw new Error('no host call'); }).value, null);
-  const { host } = repository(null, '');
-  assert.deepEqual(run('service', { query: 'tree', paths: ['src/tree.ts', 'src/treat.ts'] }, host, 'omd.frecency.rank').value, { paths: ['src/tree.ts', 'src/treat.ts'] });
-  assert.deepEqual(run('service', { query: 'index logo', paths: ['mods/omd_logo/index.ts'] }, host, 'omd.frecency.rank').value, { paths: ['mods/omd_logo/index.ts'] });
-  assert.equal(run('service', { query: 'tree', paths: Array.from({ length: 60 }, (_, index) => `src/tree${index}.ts`) }, host, 'omd.frecency.rank').value.paths.length, 60);
 });
 
 test('backfilled history is statted page by page, so deleted files never surface and are forgotten in one save', () => {

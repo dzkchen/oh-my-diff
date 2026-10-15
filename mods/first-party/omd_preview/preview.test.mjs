@@ -13,8 +13,6 @@ const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const read = name => readFileSync(new URL(name, mod), 'utf8');
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
-const surface = { events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', composer: 'composer', component_event: 'terminal' },
-  intercept: { render: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 let responses = ['Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))', 'Earlier answer'];
 let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
 
@@ -28,6 +26,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     const { operation, arguments: args } = call;
     calls.push(call);
     const key = `${repository}\0${args?.key}`;
+    if (operation === 'session.info') return { thread_id: 'thread-1' };
     if (operation === 'store.get') return stores.get(key) ?? null;
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
@@ -35,7 +34,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       racing = null;
       const revision = (stores.get(key)?.revision ?? null);
       if (revision !== args.expected_revision) throw new Error('store_revision_conflict');
-      stores.set(key, { value: args.value, revision: (revision ?? 0) + 1, provenance: { thread_id: 'thread-1' } });
+      stores.set(key, { value: args.value, revision: (revision ?? 0) + 1 });
       return { revision: (revision ?? 0) + 1 };
     }
     if (operation === 'app.request') {
@@ -62,8 +61,8 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     assert.fail(`unexpected preview host operation: ${operation}`);
   };
   const request = { source: modSource, filename: fileURLToPath(new URL('index.ts', mod)), entrypoint: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings, event, name, payload,
-    surface, hook_budget_ms: 10000, assets };
-  const output = callback(request, host, [], { capture: error => !(error instanceof assert.AssertionError) });
+    hook_budget_ms: 10000, assets };
+  const output = callback(request, host);
   if (output.error) throw new Error(output.error);
   return { value: output.value, state: output.state, calls, registrations: output.registrations };
 }
@@ -242,7 +241,7 @@ test('a watch that loses its save race says it is not watched', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-race-')));
   try {
     writeFileSync(join(repository, 'a.md'), '# A\n');
-    racing = key => stores.set(key, { value: { watch: ['b.md'], hashes: {} }, revision: 9, provenance: { thread_id: 'thread-1' } });
+    racing = key => stores.set(key, { value: { watch: ['b.md'], hashes: {} }, revision: 9 });
     const { value, calls } = invoke(repository, null, 'command', 'a.md --watch', 'preview');
     assert.equal(value.display, 'Opened a.md in the browser; not watched: store_revision_conflict');
     assert.deepEqual(watching(repository).watch, ['b.md']);

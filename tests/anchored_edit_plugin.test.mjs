@@ -20,8 +20,8 @@ test('anchored-edit configuration typechecks against the shared API', () => {
 });
 
 function invoke(payload, host, extra = {}) {
-  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, surface: { events: { context: 'context', turn_end: 'lifecycle' }, state: 'store', middleware: [], replacements: [] }, state: null, settings: {}, event: 'tool', name: 'edit', payload, ...extra };
-  const reply = callback(request, host, [], { capture: error => !(error instanceof assert.AssertionError) });
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'tool', name: 'edit', payload, ...extra };
+  const reply = callback(request, host);
   if (reply.error) throw new Error(reply.error);
   return reply;
 }

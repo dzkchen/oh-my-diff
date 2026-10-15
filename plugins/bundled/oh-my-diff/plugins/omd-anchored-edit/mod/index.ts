@@ -115,15 +115,7 @@ function apply(text: string, rows: Row[], spans: Span[]): { text: string; diff: 
   return { text: result, diff };
 }
 
-function bytes(value: Json): number {
-  const text = JSON.stringify(value);
-  let total = text.length;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    if (code >= 0x80) total += code < 0x800 || (code >= 0xd800 && code <= 0xdfff) ? 1 : 2;
-  }
-  return total;
-}
+const bytes = (value: Json) => new TextEncoder().encode(JSON.stringify(value)).length;
 
 const receipt = (operation: string, args: Json, value: Json) => bytes({ call: { operation, arguments: args }, value }) + 1;
 

@@ -97,14 +97,8 @@ export default function activate(api: ModAPI) {
     return shown.cut || more ? { display: `Showing the first ${limit / 1000} KB inline; /preview without --inline opens all of it in the browser` } : null;
   };
 
-  const currentThread = () => {
-    const before = api.host.call('store.get', { key: 'thread' });
-    api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
-    return api.host.call('store.get', { key: 'thread' })?.provenance.thread_id ?? null;
-  };
-
   const responses = (limit: number): string[] => {
-    const page = api.host.call('app.request', { method: 'thread/turns/list', params: { threadId: currentThread(), limit, itemsView: 'summary' } }) as { data?: Turn[] };
+    const page = api.host.call('app.request', { method: 'thread/turns/list', params: { threadId: api.session().thread_id, limit, itemsView: 'summary' } }) as { data?: Turn[] };
     return (page.data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));
   };
 

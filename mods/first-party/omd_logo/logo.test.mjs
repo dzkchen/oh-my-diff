@@ -3,18 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runnerSync } from '../../../tests/mod_runner.mjs';
 
-const surface = {
-  events: { terminal: 'terminal', component_event: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle', app_notification: 'threads' },
-  replacements: [], intercept: { render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
-};
 const source = readFileSync(new URL('index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', import.meta.url), 'utf8'));
 const assets = Object.fromEntries((manifest.assets ?? []).map(asset => [asset, { text: readFileSync(new URL(asset, import.meta.url), 'utf8') }]));
 function run(input) {
-  const result = runnerSync({ source, assets, filename: 'index.ts', api: manifest.api, surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input });
-  assert.ifError(result.error);
-  const output = JSON.parse(result.stdout);
-  assert.equal(result.status, 0, `${result.stderr}\n${output.error ?? ''}`);
+  const output = runnerSync({ source, assets, filename: 'index.ts', api: manifest.api, capabilities: [], settings: {}, state: null, event: 'inspect', ...input });
   assert.equal(output.error, undefined, output.error);
   return output;
 }

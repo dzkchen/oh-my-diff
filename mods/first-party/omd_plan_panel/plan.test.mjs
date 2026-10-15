@@ -5,11 +5,10 @@ import { runnerSync } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: { app_notification: 'threads', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 
 function run(event, payload, state, name = '', ui_state = null) {
-  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, ui_state, settings: { rows: 6 }, event, name, payload, surface, hook_budget_ms: 2000 };
-  const output = JSON.parse(runnerSync(request).stdout);
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, ui_state, settings: { rows: 6 }, event, name, payload, hook_budget_ms: 2000 };
+  const output = runnerSync(request);
   if (output.error) throw new Error(output.error);
   return { ...output, ui_state: JSON.parse(output.ui_state) };
 }
