@@ -152,14 +152,6 @@ fn walk(request: &Value) -> Vec<Raw<'_>> {
     raw
 }
 
-fn cut(text: &str, limit: usize) -> &str {
-    let mut end = limit.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
 /// The classified prompt items of a Responses request with bounded text previews, in request order.
 pub fn sections(request: &Value) -> Vec<Value> {
     let mut room = SECTIONS_PREVIEW_BYTES;
@@ -169,7 +161,7 @@ pub fn sections(request: &Value) -> Vec<Value> {
             let bytes = raw.text.map_or(0, str::len);
             let text = raw
                 .text
-                .map(|text| cut(text, SECTION_PREVIEW_BYTES))
+                .map(|text| &text[..text.floor_char_boundary(SECTION_PREVIEW_BYTES)])
                 .filter(|preview| preview.len() <= room);
             room -= text.map_or(0, str::len);
             json!({"id": raw.id, "kind": raw.kind, "role": raw.role, "group": raw.group,
@@ -888,8 +880,8 @@ pub fn send_pages(segments: Vec<Value>) -> Vec<Vec<Value>> {
             let mut offset = 0;
             while offset < text.len() {
                 let end = offset + encoded_cut(&text[offset..], SEND_PIECE_BYTES).len();
-                let start = offset - cut_back(&text[..offset], SEND_CONTEXT_BYTES).len();
-                let after = end + cut(&text[end..], SEND_CONTEXT_BYTES).len();
+                let start = text.ceil_char_boundary(offset.saturating_sub(SEND_CONTEXT_BYTES));
+                let after = end + text[end..].floor_char_boundary(SEND_CONTEXT_BYTES);
                 let mut piece = segment.clone();
                 piece["text"] = text[offset..end].into();
                 piece["offset"] = text[..offset].encode_utf16().count().into();
@@ -911,14 +903,6 @@ pub fn send_pages(segments: Vec<Value>) -> Vec<Vec<Value>> {
         }
     }
     pages
-}
-
-fn cut_back(text: &str, limit: usize) -> &str {
-    let mut start = text.len().saturating_sub(limit);
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    &text[start..]
 }
 
 /// The byte offset of a JavaScript string index (UTF-16 code units) on a character boundary.

@@ -36,10 +36,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 sha2 = { workspace = true }
-tiny_http = { workspace = true }
 tempfile = { workspace = true }
 codex-file-system = { workspace = true }
 codex-sandboxing = { workspace = true }
 
 [dev-dependencies]
 codex-login = { workspace = true }
+tiny_http = { workspace = true }

@@ -66,6 +66,7 @@ type Shape = 'rect' | 'round' | 'diamond' | 'plain';
 type GraphNode = { sections: string[][]; shape: Shape };
 type GraphEdge = { from: string; to: string; label: string[]; head: string; tail: string; style: string };
 type Graph = { direction: string; nodes: Map<string, GraphNode>; edges: GraphEdge[]; legend: string[] };
+const newGraph = (direction = 'TD'): Graph => ({ direction, nodes: new Map(), edges: [], legend: [] });
 type Segment = { from: Slot; to: Slot; edge: GraphEdge; reversed: boolean; start: number; end: number; track: number };
 type Slot = { node?: GraphNode; text?: string[]; style?: string; rank: number; row: number; order: number; weight: number; w: number; h: number; pos: number; ins: Segment[]; outs: Segment[] };
 const FRAMES: Record<string, string[]> = { rect: ['┌┐└┘', '++++'], round: ['╭╮╰╯', "..''"], diamond: ['╱╲╲╱', '/\\\\/'] };
@@ -227,7 +228,7 @@ const closing = (body: string, close: string) => {
 };
 
 const flowchart = (statements: string[], direction: string): Graph => {
-  const graph: Graph = { direction, nodes: new Map(), edges: [], legend: [] };
+  const graph = newGraph(direction);
   const groups: { id: string; title: string; members: Set<string> }[] = [], open: number[] = [];
   const touch = (id: string, text?: string, shape: Shape = 'rect') => {
     if (text !== undefined || !graph.nodes.has(id)) graph.nodes.set(id, { sections: [label(text ?? id)], shape });
@@ -286,7 +287,7 @@ const flowchart = (statements: string[], direction: string): Graph => {
 };
 
 const stateDiagram = (statements: string[], unicode: boolean): Graph => {
-  const graph: Graph = { direction: 'TD', nodes: new Map(), edges: [], legend: [] };
+  const graph = newGraph();
   const scope: string[] = [], parts = new Map<string, string[]>();
   const state = (id: string, side: 'start' | 'end') => {
     if (id === '[*]') {
@@ -341,7 +342,7 @@ const stateDiagram = (statements: string[], unicode: boolean): Graph => {
 const RELATION = /^([^\s"]+?)\s*(?:"([^"]*)"\s*)?(<\||\*|o|<)?(--|\.\.)(\|>|\*|o|>)?\s*(?:"([^"]*)"\s*)?([^\s":]+)\s*(?::\s*(.*))?$/;
 const RELATION_MARKS: Record<string, string> = { '<|': 'open', '|>': 'open', '*': 'diamond', o: 'hollow', '<': 'arrow', '>': 'arrow' };
 const classDiagram = (statements: string[], unicode: boolean): Graph => {
-  const graph: Graph = { direction: 'TD', nodes: new Map(), edges: [], legend: [] };
+  const graph = newGraph();
   const generic = (text: string) => text.replace(/~([^~]*)~/g, '<$1>');
   const types = new Map<string, { stereotype: string; title: string; fields: string[]; methods: string[] }>();
   const spaces: { name: string; members: string[] }[] = [], blocks: string[] = [];
@@ -388,7 +389,7 @@ const CARDINALITY: Record<string, string> = { '|o': '0..1', 'o|': '0..1', '||': 
 const ENTITY = '([\\p{L}\\p{N}_-]+|"[^"]+")';
 const RELATIONSHIP = new RegExp(`^${ENTITY}\\s*(\\|o|\\|\\||\\}o|\\}\\|)(--|\\.\\.)(o\\||\\|\\||o\\{|\\|\\{)\\s*${ENTITY}\\s*:\\s*(.+)$`, 'u');
 const erDiagram = (statements: string[]): Graph => {
-  const graph: Graph = { direction: 'TD', nodes: new Map(), edges: [], legend: [] };
+  const graph = newGraph();
   const entities = new Map<string, string[]>();
   const entity = (name: string) => { const id = name.replace(/^"|"$/g, ''); if (!entities.has(id)) entities.set(id, []); return id; };
   let open = '';
@@ -422,7 +423,7 @@ const sequenceDiagram = (statements: string[], unicode: boolean) => {
   for (const statement of statements) {
     let match: RegExpExecArray | null;
     if ((match = MESSAGE.exec(statement))) {
-      const arrow = match[2], text = label(match[5] ?? '').filter((line, at, all) => line || all.length > 1);
+      const arrow = match[2], text = label(match[5] ?? '').filter((line, _, all) => line || all.length > 1);
       if (numbered) text[0] = `${++count}. ${text[0] ?? ''}`.trim();
       steps.push({ kind: 'message', from: who(match[1]), to: who(match[4]), text, style: arrow.includes('--') ? 'dot' : '', head: arrow.endsWith('>>') ? 'arrow' : arrow.endsWith('x') ? 'cross' : arrow.endsWith(')') ? 'async' : '', tail: arrow.startsWith('<<') ? 'arrow' : '' });
       continue;

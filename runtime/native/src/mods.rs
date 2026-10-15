@@ -7,7 +7,7 @@ mod compaction;
 mod elicitation;
 mod evidence;
 mod expansion;
-mod intercept;
+pub(crate) mod intercept;
 mod inventory;
 mod launch_snapshot;
 mod mentions;
@@ -509,7 +509,7 @@ fn publish(
         "client": codex_omd::client_surface::client(),
         "clients": codex_omd::client_surface::clients()});
     let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
-    let rendered_ms = codex_omd::ModViewSnapshot::clock();
+    let rendered_ms = codex_omd::peers::now_ms();
     let mut terminal = runtime.terminal_view(input.clone(), active);
     input["pty_scope"] = pty_scope;
     let status = runtime.status();

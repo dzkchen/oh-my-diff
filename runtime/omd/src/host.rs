@@ -403,13 +403,6 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-fn now_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default()
-}
-
 fn relative(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 4096
@@ -675,7 +668,7 @@ impl Host<'_> {
                     }
                 }
             }
-            let temporary = directory.join(format!(".{digest}.{}.tmp", now_ms()));
+            let temporary = directory.join(format!(".{digest}.{}.tmp", crate::peers::now_ms()));
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -1577,7 +1570,7 @@ impl Host<'_> {
             "schema": 1,
             "owner": caller.id,
             "repository": repository_key(self.repository()),
-            "created_ms": now_ms() as u64,
+            "created_ms": crate::peers::now_ms(),
             "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;

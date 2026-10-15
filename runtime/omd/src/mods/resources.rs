@@ -322,10 +322,7 @@ impl ModHost {
         if start > text.len() || !text.is_char_boundary(start) {
             return Err(failure("local_cursor_invalid"));
         }
-        let mut end = start.saturating_add(limit).min(text.len());
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = text.floor_char_boundary(start.saturating_add(limit));
         if start == end && end < text.len() {
             return Err(failure("local_page_too_small"));
         }

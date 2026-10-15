@@ -81,11 +81,7 @@ fn call_id(item: &Value) -> Option<&str> {
 }
 
 fn preview(text: &str) -> &str {
-    let mut end = text.len().min(PREVIEW_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
+    &text[..text.floor_char_boundary(PREVIEW_BYTES)]
 }
 
 pub fn view(items: &[Value]) -> Value {
@@ -121,16 +117,10 @@ pub fn compaction_view(items: &[Value]) -> Value {
         .rev()
         .map(|(index, item)| {
             let body = text(item);
-            let mut end = body.as_deref().map_or(0, |body| {
-                body.len().min(COMPACTION_PREVIEW_BYTES).min(budget)
-            });
             let preview = body.as_deref().map(|body| {
-                while !body.is_char_boundary(end) {
-                    end -= 1;
-                }
-                &body[..end]
+                &body[..body.floor_char_boundary(COMPACTION_PREVIEW_BYTES.min(budget))]
             });
-            budget -= end;
+            budget -= preview.map_or(0, str::len);
             json!({"index": index, "type": item["type"], "role": item.get("role"),
                 "call_id": call_id(item), "editable": editable(item), "images": images(item),
                 "text": preview, "bytes": body.as_deref().map_or(0, str::len)})

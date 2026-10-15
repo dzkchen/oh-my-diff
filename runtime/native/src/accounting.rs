@@ -1,3 +1,4 @@
+use crate::mods::intercept::settled_by;
 use codex_api::request_observer::ResponseAttempt;
 use codex_api::request_observer::ResponseObserver;
 use codex_client::EncodedJsonBody;
@@ -158,14 +159,6 @@ fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
 }
 const SUMMARY_TEXT_BYTES: usize = 4096;
 const COLLECTED_TEXT_BYTES: usize = 32_768;
-
-fn cut(text: &str, limit: usize) -> &str {
-    let mut end = limit.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
 
 fn mark_route(request: &mut Request, name: &str) -> Result<(), TransportError> {
     let value = http::HeaderValue::from_str(name)
@@ -837,18 +830,6 @@ fn route_info(route: &RequestRoute) -> Value {
     json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
         "roles":["lead"],"billing":billing(Some(&route.rates)),
         "tools":[],"available":true,"credential":route.credential})
-}
-
-/// The mod whose result settled a chain: the outermost link that returned or caught.
-fn settled_by(chain: &codex_omd::ModChain) -> String {
-    chain
-        .trace
-        .iter()
-        .rev()
-        .find(|entry| matches!(entry["outcome"].as_str(), Some("returned" | "caught")))
-        .and_then(|entry| entry["mod"].as_str())
-        .unwrap_or("mod")
-        .to_owned()
 }
 
 fn chain_record(surface: &str, request_id: &str, chain: &codex_omd::ModChain) -> Value {
@@ -1650,7 +1631,7 @@ struct Attempt {
     failed: bool,
     reported: bool,
     started: Instant,
-    started_at_ms: u128,
+    started_at_ms: u64,
     first_event: Option<Duration>,
     served_model: Option<String>,
     usage: Option<Value>,
@@ -1691,9 +1672,7 @@ impl Accounts {
             failed: false,
             reported: false,
             started: Instant::now(),
-            started_at_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_millis()),
+            started_at_ms: codex_omd::peers::now_ms(),
             first_event: None,
             served_model: None,
             usage: None,
@@ -2222,7 +2201,7 @@ impl Attempt {
             "provider": self.account.provider, "credential": self.account.credential,
             "requested_model": self.model, "served_model": self.served_model,
             "status": status, "stop_reason": stop_reason,
-            "output": {"text": cut(&text, SUMMARY_TEXT_BYTES), "tool_calls": self.tool_calls},
+            "output": {"text": &text[..text.floor_char_boundary(SUMMARY_TEXT_BYTES)], "tool_calls": self.tool_calls},
             "usage": usage,
             "cache": {"read_tokens": usage.pointer("/input_tokens_details/cached_tokens"),
                 "write_tokens": usage.pointer("/input_tokens_details/cache_write_tokens")},
@@ -2236,7 +2215,7 @@ impl Attempt {
             && collected.len() < 16
         {
             let mut kept = payload.clone();
-            kept["output"]["text"] = cut(&text, COLLECTED_TEXT_BYTES).into();
+            kept["output"]["text"] = text[..text.floor_char_boundary(COLLECTED_TEXT_BYTES)].into();
             collected.push(kept);
         }
         if let Some(notify) = &self.notifier {

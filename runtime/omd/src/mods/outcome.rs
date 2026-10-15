@@ -26,13 +26,7 @@ fn text(value: &Value, limit: usize) -> Result<String> {
 }
 
 fn truncated(mut text: String) -> String {
-    if text.len() > TEXT_LIMIT {
-        let mut end = TEXT_LIMIT;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-    }
+    text.truncate(text.floor_char_boundary(TEXT_LIMIT));
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect()

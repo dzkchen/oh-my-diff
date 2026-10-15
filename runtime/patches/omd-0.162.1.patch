@@ -48399,7 +48399,7 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..b3c205f50
+index 000000000..17a0c996f
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,45 @@
@@ -48441,19 +48441,20 @@ index 000000000..b3c205f50
 +serde_json = { workspace = true }
 +tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 +sha2 = { workspace = true }
-+tiny_http = { workspace = true }
 +tempfile = { workspace = true }
 +codex-file-system = { workspace = true }
 +codex-sandboxing = { workspace = true }
 +
 +[dev-dependencies]
 +codex-login = { workspace = true }
++tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..14b11aeb4
+index 000000000..96f9a300b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2344 @@
+@@ -0,0 +1,2323 @@
++use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -48614,14 +48615,6 @@ index 000000000..14b11aeb4
 +}
 +const SUMMARY_TEXT_BYTES: usize = 4096;
 +const COLLECTED_TEXT_BYTES: usize = 32_768;
-+
-+fn cut(text: &str, limit: usize) -> &str {
-+    let mut end = limit.min(text.len());
-+    while !text.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    &text[..end]
-+}
 +
 +fn mark_route(request: &mut Request, name: &str) -> Result<(), TransportError> {
 +    let value = http::HeaderValue::from_str(name)
@@ -49293,18 +49286,6 @@ index 000000000..14b11aeb4
 +    json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
 +        "roles":["lead"],"billing":billing(Some(&route.rates)),
 +        "tools":[],"available":true,"credential":route.credential})
-+}
-+
-+/// The mod whose result settled a chain: the outermost link that returned or caught.
-+fn settled_by(chain: &codex_omd::ModChain) -> String {
-+    chain
-+        .trace
-+        .iter()
-+        .rev()
-+        .find(|entry| matches!(entry["outcome"].as_str(), Some("returned" | "caught")))
-+        .and_then(|entry| entry["mod"].as_str())
-+        .unwrap_or("mod")
-+        .to_owned()
 +}
 +
 +fn chain_record(surface: &str, request_id: &str, chain: &codex_omd::ModChain) -> Value {
@@ -50106,7 +50087,7 @@ index 000000000..14b11aeb4
 +    failed: bool,
 +    reported: bool,
 +    started: Instant,
-+    started_at_ms: u128,
++    started_at_ms: u64,
 +    first_event: Option<Duration>,
 +    served_model: Option<String>,
 +    usage: Option<Value>,
@@ -50147,9 +50128,7 @@ index 000000000..14b11aeb4
 +            failed: false,
 +            reported: false,
 +            started: Instant::now(),
-+            started_at_ms: std::time::SystemTime::now()
-+                .duration_since(std::time::UNIX_EPOCH)
-+                .map_or(0, |elapsed| elapsed.as_millis()),
++            started_at_ms: codex_omd::peers::now_ms(),
 +            first_event: None,
 +            served_model: None,
 +            usage: None,
@@ -50678,7 +50657,7 @@ index 000000000..14b11aeb4
 +            "provider": self.account.provider, "credential": self.account.credential,
 +            "requested_model": self.model, "served_model": self.served_model,
 +            "status": status, "stop_reason": stop_reason,
-+            "output": {"text": cut(&text, SUMMARY_TEXT_BYTES), "tool_calls": self.tool_calls},
++            "output": {"text": &text[..text.floor_char_boundary(SUMMARY_TEXT_BYTES)], "tool_calls": self.tool_calls},
 +            "usage": usage,
 +            "cache": {"read_tokens": usage.pointer("/input_tokens_details/cached_tokens"),
 +                "write_tokens": usage.pointer("/input_tokens_details/cache_write_tokens")},
@@ -50692,7 +50671,7 @@ index 000000000..14b11aeb4
 +            && collected.len() < 16
 +        {
 +            let mut kept = payload.clone();
-+            kept["output"]["text"] = cut(&text, COLLECTED_TEXT_BYTES).into();
++            kept["output"]["text"] = text[..text.floor_char_boundary(COLLECTED_TEXT_BYTES)].into();
 +            collected.push(kept);
 +        }
 +        if let Some(notify) = &self.notifier {
@@ -59580,7 +59559,7 @@ index 000000000..310f9cf88
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..4209a844f
+index 000000000..6a05ede06
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,2457 @@
@@ -59593,7 +59572,7 @@ index 000000000..4209a844f
 +mod elicitation;
 +mod evidence;
 +mod expansion;
-+mod intercept;
++pub(crate) mod intercept;
 +mod inventory;
 +mod launch_snapshot;
 +mod mentions;
@@ -60095,7 +60074,7 @@ index 000000000..4209a844f
 +        "client": codex_omd::client_surface::client(),
 +        "clients": codex_omd::client_surface::clients()});
 +    let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
-+    let rendered_ms = codex_omd::ModViewSnapshot::clock();
++    let rendered_ms = codex_omd::peers::now_ms();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    input["pty_scope"] = pty_scope;
 +    let status = runtime.status();
@@ -62860,10 +62839,10 @@ index 000000000..304f44c7d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..dcfdb64c9
+index 000000000..e2ef492bb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2612 @@
+@@ -0,0 +1,2609 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -63047,7 +63026,7 @@ index 000000000..dcfdb64c9
 +        findings: Vec::new(),
 +        resolves: Vec::new(),
 +        submitted_by: submitted_by.to_owned(),
-+        at: operations::now(),
++        at: u128::from(codex_omd::peers::now_ms()),
 +    }
 +}
 +
@@ -64382,10 +64361,7 @@ index 000000000..dcfdb64c9
 +            &format!(
 +                "integration-{}-{}.json",
 +                execution::hash(handle.as_bytes()),
-+                std::time::SystemTime::now()
-+                    .duration_since(std::time::UNIX_EPOCH)
-+                    .map(|elapsed| elapsed.as_millis())
-+                    .unwrap_or_default()
++                codex_omd::peers::now_ms()
 +            ),
 +            &json!({"schema":2,"agent":handle,"candidate_sha256":candidate_sha256,
 +                "changed_paths":changed,"apply":applied}),
@@ -65478,11 +65454,12 @@ index 000000000..dcfdb64c9
 +}
 diff --git a/codex-rs/ext/omd/src/mods/autonomy.rs b/codex-rs/ext/omd/src/mods/autonomy.rs
 new file mode 100644
-index 000000000..2795185db
+index 000000000..593261212
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/autonomy.rs
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,415 @@
 +use super::*;
++use codex_omd::peers::now_ms;
 +use codex_protocol::turn_input::StartIfIdleSubmission;
 +use codex_protocol::turn_input::TurnInputRequest;
 +use codex_protocol::user_input::UserInput;
@@ -65599,12 +65576,6 @@ index 000000000..2795185db
 +#[derive(Default)]
 +pub(super) struct Queues {
 +    threads: Mutex<BTreeMap<String, Queue>>,
-+}
-+
-+fn now_ms() -> u64 {
-+    std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 +}
 +
 +fn notify(core: &Arc<Core>, lead: &Lead, owner: String, payload: Value) {
@@ -66509,10 +66480,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..60ce32ec3
+index 000000000..f781aa1ab
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,831 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -66942,11 +66913,7 @@ index 000000000..60ce32ec3
 +    if output.len() <= TOOL_RESULT_BYTES {
 +        return (output, false);
 +    }
-+    let mut end = TOOL_RESULT_BYTES;
-+    while !output.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    output.truncate(end);
++    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
 +    (output, true)
 +}
 +
@@ -68928,10 +68895,10 @@ index 000000000..440571a15
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 000000000..b0a2320cb
+index 000000000..a58181ec0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,214 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -68942,26 +68909,8 @@ index 000000000..b0a2320cb
 +const TAIL_BYTES: usize = 16 * 1024;
 +const APPEND_BYTES: usize = 4096;
 +
-+fn bounded(text: &str, limit: usize) -> &str {
-+    if text.len() <= limit {
-+        return text;
-+    }
-+    let mut end = limit;
-+    while !text.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    &text[..end]
-+}
-+
-+fn tail(text: &str, limit: usize) -> Option<&str> {
-+    if text.len() <= HEAD_BYTES {
-+        return None;
-+    }
-+    let mut start = text.len() - limit;
-+    while !text.is_char_boundary(start) {
-+        start += 1;
-+    }
-+    Some(&text[start..])
++fn bounded(text: &str) -> &str {
++    &text[..text.floor_char_boundary(HEAD_BYTES)]
 +}
 +
 +async fn original(
@@ -69028,7 +68977,7 @@ index 000000000..b0a2320cb
 +                self.views
 +                    .diagnostic(&self.host, "tool_output", Some(message));
 +            };
-+            let executed = json!({"output": bounded(input.text, HEAD_BYTES), "success": input.success,
++            let executed = json!({"output": bounded(input.text), "success": input.success,
 +                "truncated": input.text.len() > HEAD_BYTES});
 +            let mut text = None;
 +            let mut replaced_by = "feedback".to_owned();
@@ -69106,13 +69055,14 @@ index 000000000..b0a2320cb
 +                .arguments
 +                .map(|raw| {
 +                    serde_json::from_str::<Value>(raw)
-+                        .unwrap_or_else(|_| Value::String(bounded(raw, HEAD_BYTES).to_owned()))
++                        .unwrap_or_else(|_| Value::String(bounded(raw).to_owned()))
 +                })
 +                .unwrap_or(Value::Null);
 +            let payload = |text: &str| {
 +                json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
 +                    "arguments": arguments, "success": input.success,
-+                    "text": bounded(text, HEAD_BYTES), "tail": tail(text, TAIL_BYTES),
++                    "text": bounded(text),
++                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
 +                    "bytes": text.len()})
 +            };
 +            let mut appended = String::new();
@@ -75018,7 +74968,7 @@ index 000000000..78e876af2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 000000000..1520e9885
+index 000000000..003ab8e13
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
 @@ -0,0 +1,246 @@
@@ -75117,7 +75067,7 @@ index 000000000..1520e9885
 +}
 +
 +/// The mod whose result settled last, i.e. the outermost link that answered or transformed it.
-+pub(super) fn settled_by(chain: &codex_omd::ModChain) -> String {
++pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
 +    chain
 +        .trace
 +        .iter()
@@ -75270,11 +75220,12 @@ index 000000000..1520e9885
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 000000000..874a6b63b
+index 000000000..24db6d687
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,195 @@
 +use super::*;
++use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
 +
 +const ANSWER_CHARS: usize = 4096;
@@ -75284,12 +75235,6 @@ index 000000000..874a6b63b
 +#[derive(Default)]
 +pub(super) struct Inventory {
 +    records: Mutex<BTreeMap<String, Value>>,
-+}
-+
-+fn now_ms() -> u64 {
-+    std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 +}
 +
 +impl Inventory {
@@ -75948,10 +75893,10 @@ index 000000000..597f22682
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..c5ee49f03
+index 000000000..3bbf9dbfd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,761 @@
+@@ -0,0 +1,754 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -76086,13 +76031,6 @@ index 000000000..c5ee49f03
 +        .transpose()
 +}
 +
-+pub(super) fn now() -> u128 {
-+    std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map(|elapsed| elapsed.as_millis())
-+        .unwrap_or_default()
-+}
-+
 +fn notify_contract(core: &Core, payload: Value) {
 +    let runtime = core.runtime.clone();
 +    tokio::task::spawn_blocking(move || {
@@ -76179,7 +76117,7 @@ index 000000000..c5ee49f03
 +        findings: input.findings,
 +        resolves: input.resolves,
 +        submitted_by: caller.id.to_owned(),
-+        at: now(),
++        at: u128::from(codex_omd::peers::now_ms()),
 +    };
 +    receipt.validate()?;
 +    let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
@@ -76247,7 +76185,7 @@ index 000000000..c5ee49f03
 +        .map_err(|_| "contract_lock_poisoned")?
 +        .status();
 +    lead.session.evidence(
-+        &format!("completion-{current}-{}.json", now()),
++        &format!("completion-{current}-{}.json", codex_omd::peers::now_ms()),
 +        &json!({"candidate_sha256": current, "contract": status}),
 +    )?;
 +    Ok(json!({"status": "completed", "receipts": status["receipts"]}))
@@ -86388,10 +86326,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..829511e77
+index 000000000..a77ddb9ed
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,553 @@
+@@ -0,0 +1,538 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -86408,6 +86346,14 @@ index 000000000..829511e77
 +use std::io;
 +use std::path::PathBuf;
 +use std::process::Command;
++
++fn open(root: &str) -> io::Result<ModStore> {
++    ModStore::open(PathBuf::from(root).canonicalize()?)
++}
++
++fn json(value: impl serde::Serialize) -> io::Result<Value> {
++    serde_json::to_value(value).map_err(io::Error::other)
++}
 +
 +fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> {
 +    let mut files = BTreeMap::new();
@@ -86566,7 +86512,7 @@ index 000000000..829511e77
 +            Ok(summary(load_managed()?))
 +        }
 +        ("explain", [root, project @ ..]) if project.len() <= 1 => {
-+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let store = open(root)?;
 +            let project = project
 +                .first()
 +                .map(|project| PathBuf::from(project).canonicalize())
@@ -86614,61 +86560,49 @@ index 000000000..829511e77
 +        [command, codex, home, id, candidate] if command == "plugin-preview" => {
 +            plugin_preview(codex, home, id, candidate)
 +        }
-+        [command, root, request] if command == "package-plan" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
-+                .and_then(|plan| serde_json::to_value(plan).map_err(io::Error::other))
-+        }
-+        [command, root, request, confirmation] if command == "package-apply" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_apply(
-+                    serde_json::from_str::<ModInstallRequest>(request)?,
-+                    confirmation,
-+                )
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-+        }
-+        [command, root] if command == "package-lock" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_lock()
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-+        }
++        [command, root, request] if command == "package-plan" => open(root)?
++            .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
++            .and_then(json),
++        [command, root, request, confirmation] if command == "package-apply" => open(root)?
++            .package_apply(
++                serde_json::from_str::<ModInstallRequest>(request)?,
++                confirmation,
++            )
++            .and_then(json),
++        [command, root] if command == "package-lock" => open(root)?.package_lock().and_then(json),
 +        [command, root, id] if command == "package-disable" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_disable(id)
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++            open(root)?.package_disable(id).and_then(json)
 +        }
 +        [command, root, id] if command == "package-enable" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_enable(id)
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++            open(root)?.package_enable(id).and_then(json)
 +        }
 +        [command, root, id]
 +            if command == "package-rollback-plan" || command == "package-uninstall-plan" =>
 +        {
-+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let store = open(root)?;
 +            let plan = if command == "package-rollback-plan" {
 +                store.package_rollback_plan(id)?
 +            } else {
 +                store.package_uninstall_plan(id)?
 +            };
-+            serde_json::to_value(plan).map_err(io::Error::other)
++            json(plan)
 +        }
 +        [command, root, id, confirmation]
 +            if command == "package-rollback" || command == "package-uninstall" =>
 +        {
-+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let store = open(root)?;
 +            let lock = if command == "package-rollback" {
 +                store.package_rollback(id, confirmation)?
 +            } else {
 +                store.package_uninstall(id, confirmation)?
 +            };
-+            serde_json::to_value(lock).map_err(io::Error::other)
++            json(lock)
 +        }
 +        [command, user, project] if command == "discover" => {
 +            ModStore::discover(&PathBuf::from(user), &PathBuf::from(project))
 +        }
 +        [command, root, path, settings] if command == "settings" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.settings(
++            open(root)?.settings(
 +                &PathBuf::from(path).canonicalize()?,
 +                serde_json::from_str(settings)?,
 +            )?;
@@ -86677,12 +86611,10 @@ index 000000000..829511e77
 +            ))
 +        }
 +        [command, root, path] if command == "migrate" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .migrate(&PathBuf::from(path).canonicalize()?)
++            open(root)?.migrate(&PathBuf::from(path).canonicalize()?)
 +        }
 +        [command, root, path, backup] if command == "rollback" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
++            open(root)?.rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
 +        }
 +        [command, root, node] if command == "init" => {
 +            ModStore::create(PathBuf::from(root), PathBuf::from(node))?;
@@ -86726,16 +86658,14 @@ index 000000000..829511e77
 +                .map(str::to_string)
 +                .collect();
 +            let exposure = codex_omd::authority_exposure(&capabilities);
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(vec![
-+                codex_omd::Trust {
-+                    path: PathBuf::from(path).canonicalize()?,
-+                    sha256: sha.clone(),
-+                    capabilities,
-+                    scope: scope.clone(),
-+                    secret_environment: secrets,
-+                    expires_at,
-+                },
-+            ])?;
++            open(root)?.trust_all(vec![codex_omd::Trust {
++                path: PathBuf::from(path).canonicalize()?,
++                sha256: sha.clone(),
++                capabilities,
++                scope: scope.clone(),
++                secret_environment: secrets,
++                expires_at,
++            }])?;
 +            Ok(json!({
 +                "status": format!("trusted in the {scope} scope; disabled until explicitly enabled"),
 +                "expires_at": expires_at,
@@ -86747,24 +86677,20 @@ index 000000000..829511e77
 +                Ok(path) if target.contains('/') => path.display().to_string(),
 +                _ => target.clone(),
 +            };
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.revoke(&target)?;
++            open(root)?.revoke(&target)?;
 +            Ok(Value::String(
 +                "disabled and every grant dropped; owned work stops at the next reload; trust or install again to renew".into(),
 +            ))
 +        }
-+        [command, root, id, reason @ ..] if command == "package-quarantine" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_quarantine(id, &reason.join(" "))
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-+        }
++        [command, root, id, reason @ ..] if command == "package-quarantine" => open(root)?
++            .package_quarantine(id, &reason.join(" "))
++            .and_then(json),
 +        [command, root, id] if command == "package-unblock" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .package_unblock(id)
-+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++            open(root)?.package_unblock(id).and_then(json)
 +        }
-+        [command, root] if command == "security-events" => Ok(Value::Array(
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
-+        )),
++        [command, root] if command == "security-events" => {
++            Ok(Value::Array(open(root)?.security_events()?))
++        }
 +        [command, root, packages] if command == "trust-all" => {
 +            let packages: Vec<Value> = serde_json::from_str(packages)?;
 +            let packages = packages
@@ -86787,13 +86713,13 @@ index 000000000..829511e77
 +                })
 +                .collect::<io::Result<Vec<_>>>()?;
 +            let count = packages.len();
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(packages)?;
++            open(root)?.trust_all(packages)?;
 +            Ok(Value::String(format!(
 +                "trusted {count} packages; disabled until explicitly enabled"
 +            )))
 +        }
 +        [command, root, rest @ ..] if command == "broker-grants-import" && rest.len() <= 1 => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.broker_grants_import(
++            open(root)?.broker_grants_import(
 +                rest.first()
 +                    .map(|snapshot| serde_json::from_str(snapshot))
 +                    .transpose()?,
@@ -86801,8 +86727,7 @@ index 000000000..829511e77
 +        }
 +        [command, root, path] if command == "enable" || command == "disable" => {
 +            let path = PathBuf::from(path);
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?
-+                .enable(&path.canonicalize().unwrap_or(path), command == "enable")?;
++            open(root)?.enable(&path.canonicalize().unwrap_or(path), command == "enable")?;
 +            Ok(Value::String(
 +                "selection saved; takes effect at the next turn boundary".into(),
 +            ))
@@ -86833,13 +86758,13 @@ index 000000000..829511e77
 +                .visible("")?,
 +        )),
 +        [command, root] if command == "reload" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.reload()?;
++            open(root)?.reload()?;
 +            Ok(Value::String(
 +                "reload queued for the next turn boundary".into(),
 +            ))
 +        }
 +        [command, root, name] if command == "reset" => {
-+            let aside = ModStore::open(PathBuf::from(root).canonicalize()?)?.reset(name)?;
++            let aside = open(root)?.reset(name)?;
 +            Ok(json!({"reset": name, "aside": aside}))
 +        }
 +        [command, root] if command == "status" => {
@@ -86857,12 +86782,10 @@ index 000000000..829511e77
 +                "conflicts": terminal.conflicts, "diagnostics": terminal.diagnostics});
 +            Ok(status)
 +        }
-+        [command, root] if command == "selection-status" => {
-+            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
-+        }
++        [command, root] if command == "selection-status" => open(root)?.selection_status(),
 +        [command, action, rest @ ..] if command == "policy" => policy(action, rest),
 +        [command, root, flags @ ..] if command == "package-sync" && flags.len() <= 1 => {
-+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let store = open(root)?;
 +            match flags {
 +                [] => store.package_sync(false),
 +                [flag] if flag == "--offline" => store.package_sync(true),
@@ -86947,10 +86870,10 @@ index 000000000..829511e77
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 000000000..7a5c3d779
+index 000000000..150d8d953
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,734 @@
+@@ -0,0 +1,698 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -87010,6 +86933,21 @@ index 000000000..7a5c3d779
 +    Ok(sqlite.join("state_5.sqlite"))
 +}
 +
++fn set_once(slot: &mut Option<PathBuf>, value: Option<&String>, name: &str) -> io::Result<()> {
++    if slot.is_some() {
++        return Err(io::Error::other(format!("duplicate_{name}")));
++    }
++    let value = value.ok_or_else(|| io::Error::other(format!("{name}_required")))?;
++    *slot = Some(PathBuf::from(value));
++    Ok(())
++}
++
++fn store_root(flag: Option<PathBuf>) -> io::Result<PathBuf> {
++    flag.or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
++        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
++        .canonicalize()
++}
++
 +fn store(args: &[String]) -> io::Result<Value> {
 +    let usage = || {
 +        io::Error::other(
@@ -87030,21 +86968,13 @@ index 000000000..7a5c3d779
 +        match argument.as_str() {
 +            "--mod" => id = Some(value.clone()),
 +            "--repo" => repository = Some(PathBuf::from(value).canonicalize()?),
-+            "--store" => {
-+                if root.is_some() {
-+                    return Err(io::Error::other("duplicate_store"));
-+                }
-+                root = Some(PathBuf::from(value));
-+            }
++            "--store" => set_once(&mut root, Some(value), "store")?,
 +            "--scope" => scope = value.clone(),
 +            _ => return Err(usage()),
 +        }
 +    }
 +    let id = id.ok_or_else(usage)?;
-+    let root = root
-+        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-+        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-+        .canonicalize()?;
++    let root = store_root(root)?;
 +    let key = match (&repository, scope.as_str()) {
 +        (Some(repository), "repository") => codex_omd::host::repository_key(repository),
 +        (None, "repository") => return Err(io::Error::other("explicit_repository_required")),
@@ -87119,11 +87049,7 @@ index 000000000..7a5c3d779
 +            _ => positional.push(argument.clone()),
 +        }
 +    }
-+    let store = codex_omd::ModStore::open(
-+        root.or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-+            .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-+            .canonicalize()?,
-+    )?;
++    let store = codex_omd::ModStore::open(store_root(root)?)?;
 +    let first = || positional.first().cloned().ok_or_else(usage);
 +    let done = |display: String| Ok(json!({"display": display}));
 +    match action {
@@ -87413,56 +87339,17 @@ index 000000000..7a5c3d779
 +    while let Some(argument) = remaining.next() {
 +        match argument.as_str() {
 +            "--repo" => {
-+                if repository.is_some() {
-+                    return Err(io::Error::other("duplicate_repository"));
-+                }
-+                repository = Some(
-+                    PathBuf::from(
-+                        remaining
-+                            .next()
-+                            .ok_or_else(|| io::Error::other("repository_required"))?,
-+                    )
-+                    .canonicalize()?,
-+                );
++                set_once(&mut repository, remaining.next(), "repository")?;
++                repository = repository.map(|path| path.canonicalize()).transpose()?;
 +            }
-+            "--store" => {
-+                if store.is_some() {
-+                    return Err(io::Error::other("duplicate_store"));
-+                }
-+                store = Some(PathBuf::from(
-+                    remaining
-+                        .next()
-+                        .ok_or_else(|| io::Error::other("store_required"))?,
-+                ));
-+            }
-+            "--home" => {
-+                if home.is_some() {
-+                    return Err(io::Error::other("duplicate_home"));
-+                }
-+                home = Some(PathBuf::from(
-+                    remaining
-+                        .next()
-+                        .ok_or_else(|| io::Error::other("home_required"))?,
-+                ));
-+            }
-+            "--sqlite-home" => {
-+                if sqlite.is_some() {
-+                    return Err(io::Error::other("duplicate_sqlite_home"));
-+                }
-+                sqlite = Some(PathBuf::from(
-+                    remaining
-+                        .next()
-+                        .ok_or_else(|| io::Error::other("sqlite_home_required"))?,
-+                ));
-+            }
++            "--store" => set_once(&mut store, remaining.next(), "store")?,
++            "--home" => set_once(&mut home, remaining.next(), "home")?,
++            "--sqlite-home" => set_once(&mut sqlite, remaining.next(), "sqlite_home")?,
 +            _ => payload.push(argument.clone()),
 +        }
 +    }
 +    let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
-+    let root = store
-+        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-+        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-+        .canonicalize()?;
++    let root = store_root(store)?;
 +    let home = home
 +        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
 +        .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
@@ -92790,10 +92677,10 @@ index 000000000..948462abe
 +}
 diff --git a/codex-rs/omd/src/contract_document.rs b/codex-rs/omd/src/contract_document.rs
 new file mode 100644
-index 000000000..2c27d1cd4
+index 000000000..1d73fbb2a
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_document.rs
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,627 @@
 +use crate::resource_data::ResourceRef;
 +use serde::Deserialize;
 +use serde::Serialize;
@@ -92969,22 +92856,6 @@ index 000000000..2c27d1cd4
 +            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 +}
 +
-+fn canonical(value: &Value) -> Value {
-+    match value {
-+        Value::Object(object) => {
-+            let mut keys = object.keys().collect::<Vec<_>>();
-+            keys.sort();
-+            Value::Object(
-+                keys.into_iter()
-+                    .map(|key| (key.clone(), canonical(&object[key])))
-+                    .collect(),
-+            )
-+        }
-+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-+        other => other.clone(),
-+    }
-+}
-+
 +impl ContractDocument {
 +    pub fn parse(value: &Value) -> Result<Self, String> {
 +        let document: Self =
@@ -92998,11 +92869,8 @@ index 000000000..2c27d1cd4
 +    }
 +
 +    pub fn digest(&self) -> String {
-+        let value = canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
-+        format!(
-+            "{:x}",
-+            Sha256::digest(serde_json::to_vec(&value).unwrap_or_default())
-+        )
++        let value = crate::broker::canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
++        format!("{:x}", Sha256::digest(value))
 +    }
 +
 +    pub fn validate(&self) -> Result<(), String> {
@@ -94288,10 +94156,10 @@ index 000000000..441c77d85
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..d3197bb70
+index 000000000..676092f8a
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,421 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -94413,13 +94281,6 @@ index 000000000..d3197bb70
 +        && value
 +            .bytes()
 +            .all(|byte| byte.is_ascii_graphic() && byte != b'\\')
-+}
-+
-+fn now() -> u128 {
-+    std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map(|elapsed| elapsed.as_millis())
-+        .unwrap_or_default()
 +}
 +
 +fn newest_change(path: &Path) -> Option<std::time::SystemTime> {
@@ -94620,7 +94481,7 @@ index 000000000..d3197bb70
 +                    .ok_or_else(|| failure("store_value_required"))?;
 +                let expected = input.expected_revision;
 +                let provenance = StoreProvenance {
-+                    at: now(),
++                    at: u128::from(crate::peers::now_ms()),
 +                    ..self.provenance.clone()
 +                };
 +                self.with_document(&input.scope, true, |document| {
@@ -95236,10 +95097,10 @@ index 000000000..7f016fb39
 +}
 diff --git a/codex-rs/omd/src/history.rs b/codex-rs/omd/src/history.rs
 new file mode 100644
-index 000000000..90a086ea7
+index 000000000..8dc731193
 --- /dev/null
 +++ b/codex-rs/omd/src/history.rs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,293 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -95323,11 +95184,7 @@ index 000000000..90a086ea7
 +}
 +
 +fn preview(text: &str) -> &str {
-+    let mut end = text.len().min(PREVIEW_BYTES);
-+    while !text.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    &text[..end]
++    &text[..text.floor_char_boundary(PREVIEW_BYTES)]
 +}
 +
 +pub fn view(items: &[Value]) -> Value {
@@ -95363,16 +95220,10 @@ index 000000000..90a086ea7
 +        .rev()
 +        .map(|(index, item)| {
 +            let body = text(item);
-+            let mut end = body.as_deref().map_or(0, |body| {
-+                body.len().min(COMPACTION_PREVIEW_BYTES).min(budget)
-+            });
 +            let preview = body.as_deref().map(|body| {
-+                while !body.is_char_boundary(end) {
-+                    end -= 1;
-+                }
-+                &body[..end]
++                &body[..body.floor_char_boundary(COMPACTION_PREVIEW_BYTES.min(budget))]
 +            });
-+            budget -= end;
++            budget -= preview.map_or(0, str::len);
 +            json!({"index": index, "type": item["type"], "role": item.get("role"),
 +                "call_id": call_id(item), "editable": editable(item), "images": images(item),
 +                "text": preview, "bytes": body.as_deref().map_or(0, str::len)})
@@ -95664,10 +95515,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..bd39773dc
+index 000000000..f869edc23
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1729 @@
+@@ -0,0 +1,1722 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -96073,13 +95924,6 @@ index 000000000..bd39773dc
 +        .collect()
 +}
 +
-+fn now_ms() -> u128 {
-+    std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map(|elapsed| elapsed.as_millis())
-+        .unwrap_or_default()
-+}
-+
 +fn relative(name: &str) -> bool {
 +    !name.is_empty()
 +        && name.len() <= 4096
@@ -96345,7 +96189,7 @@ index 000000000..bd39773dc
 +                    }
 +                }
 +            }
-+            let temporary = directory.join(format!(".{digest}.{}.tmp", now_ms()));
++            let temporary = directory.join(format!(".{digest}.{}.tmp", crate::peers::now_ms()));
 +            let mut file = fs::OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
@@ -97247,7 +97091,7 @@ index 000000000..bd39773dc
 +            "schema": 1,
 +            "owner": caller.id,
 +            "repository": repository_key(self.repository()),
-+            "created_ms": now_ms() as u64,
++            "created_ms": crate::peers::now_ms(),
 +            "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
 +        });
 +        let bytes = serde_json::to_vec(&record)?;
@@ -97968,10 +97812,10 @@ index 000000000..705a8738f
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 000000000..2c9f6b17d
+index 000000000..98c677eb2
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1176 @@
+@@ -0,0 +1,1160 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -98126,14 +97970,6 @@ index 000000000..2c9f6b17d
 +    raw
 +}
 +
-+fn cut(text: &str, limit: usize) -> &str {
-+    let mut end = limit.min(text.len());
-+    while !text.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    &text[..end]
-+}
-+
 +/// The classified prompt items of a Responses request with bounded text previews, in request order.
 +pub fn sections(request: &Value) -> Vec<Value> {
 +    let mut room = SECTIONS_PREVIEW_BYTES;
@@ -98143,7 +97979,7 @@ index 000000000..2c9f6b17d
 +            let bytes = raw.text.map_or(0, str::len);
 +            let text = raw
 +                .text
-+                .map(|text| cut(text, SECTION_PREVIEW_BYTES))
++                .map(|text| &text[..text.floor_char_boundary(SECTION_PREVIEW_BYTES)])
 +                .filter(|preview| preview.len() <= room);
 +            room -= text.map_or(0, str::len);
 +            json!({"id": raw.id, "kind": raw.kind, "role": raw.role, "group": raw.group,
@@ -98862,8 +98698,8 @@ index 000000000..2c9f6b17d
 +            let mut offset = 0;
 +            while offset < text.len() {
 +                let end = offset + encoded_cut(&text[offset..], SEND_PIECE_BYTES).len();
-+                let start = offset - cut_back(&text[..offset], SEND_CONTEXT_BYTES).len();
-+                let after = end + cut(&text[end..], SEND_CONTEXT_BYTES).len();
++                let start = text.ceil_char_boundary(offset.saturating_sub(SEND_CONTEXT_BYTES));
++                let after = end + text[end..].floor_char_boundary(SEND_CONTEXT_BYTES);
 +                let mut piece = segment.clone();
 +                piece["text"] = text[offset..end].into();
 +                piece["offset"] = text[..offset].encode_utf16().count().into();
@@ -98885,14 +98721,6 @@ index 000000000..2c9f6b17d
 +        }
 +    }
 +    pages
-+}
-+
-+fn cut_back(text: &str, limit: usize) -> &str {
-+    let mut start = text.len().saturating_sub(limit);
-+    while !text.is_char_boundary(start) {
-+        start += 1;
-+    }
-+    &text[start..]
 +}
 +
 +/// The byte offset of a JavaScript string index (UTF-16 code units) on a character boundary.
@@ -99676,10 +99504,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..c98ee6678
+index 000000000..a86d8474e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6016 @@
+@@ -0,0 +1,6012 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -99799,8 +99627,6 @@ index 000000000..c98ee6678
 +use std::sync::OnceLock;
 +use std::time::Duration;
 +use std::time::Instant;
-+use std::time::SystemTime;
-+use std::time::UNIX_EPOCH;
 +
 +fn profiling() -> bool {
 +    static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -102583,9 +102409,7 @@ index 000000000..c98ee6678
 +    let thread = state_thread(&payload);
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
-+    let now_ms = SystemTime::now()
-+        .duration_since(UNIX_EPOCH)
-+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
++    let now_ms = crate::peers::now_ms();
 +    let mut replay: Vec<Value> = Vec::new();
 +    loop {
 +        let replaying = !replay.is_empty();
@@ -106750,10 +106574,10 @@ index 000000000..27684b82d
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..1cb23fc3b
+index 000000000..c153117c8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,436 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -107001,11 +106825,7 @@ index 000000000..1cb23fc3b
 +        metadata,
 +        invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
 +    };
-+    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(|| {
-+        std::time::SystemTime::now()
-+            .duration_since(std::time::UNIX_EPOCH)
-+            .map_or(0, |elapsed| elapsed.as_millis() as u64)
-+    }));
++    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
 +    let render = event == "intercept" && request["payload"]["surface"] == "render";
 +    let component = event == "component";
 +    let warm = (render || component || loaded.package.environment.is_empty()).then(|| {
@@ -107196,10 +107016,10 @@ index 000000000..1cb23fc3b
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..3d364042c
+index 000000000..6b0c0395a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1936 @@
+@@ -0,0 +1,1933 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -108373,10 +108193,7 @@ index 000000000..3d364042c
 +    result: std::result::Result<&Value, String>,
 +) -> Option<Value> {
 +    let arguments = &call.arguments;
-+    let at = std::time::SystemTime::now()
-+        .duration_since(std::time::UNIX_EPOCH)
-+        .map(|elapsed| elapsed.as_millis() as u64)
-+        .unwrap_or_default();
++    let at = crate::peers::now_ms();
 +    let mut receipt = json!({"mod": caller, "operation": call.operation, "at": at});
 +    match call.operation.as_str() {
 +        "http.request" | "http.open" => {
@@ -109525,10 +109342,10 @@ index 000000000..8ccd23f33
 +}
 diff --git a/codex-rs/omd/src/mods/outcome.rs b/codex-rs/omd/src/mods/outcome.rs
 new file mode 100644
-index 000000000..383bf405b
+index 000000000..e25e0ed2f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/outcome.rs
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,75 @@
 +use super::*;
 +
 +const TEXT_LIMIT: usize = 16_384;
@@ -109557,13 +109374,7 @@ index 000000000..383bf405b
 +}
 +
 +fn truncated(mut text: String) -> String {
-+    if text.len() > TEXT_LIMIT {
-+        let mut end = TEXT_LIMIT;
-+        while !text.is_char_boundary(end) {
-+            end -= 1;
-+        }
-+        text.truncate(end);
-+    }
++    text.truncate(text.floor_char_boundary(TEXT_LIMIT));
 +    text.chars()
 +        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
 +        .collect()
@@ -114965,10 +114776,10 @@ index 000000000..020b96212
 +}
 diff --git a/codex-rs/omd/src/mods/resources.rs b/codex-rs/omd/src/mods/resources.rs
 new file mode 100644
-index 000000000..accac76f6
+index 000000000..606f8350c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/resources.rs
-@@ -0,0 +1,339 @@
+@@ -0,0 +1,336 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -115293,10 +115104,7 @@ index 000000000..accac76f6
 +        if start > text.len() || !text.is_char_boundary(start) {
 +            return Err(failure("local_cursor_invalid"));
 +        }
-+        let mut end = start.saturating_add(limit).min(text.len());
-+        while !text.is_char_boundary(end) {
-+            end -= 1;
-+        }
++        let end = text.floor_char_boundary(start.saturating_add(limit));
 +        if start == end && end < text.len() {
 +            return Err(failure("local_page_too_small"));
 +        }
@@ -117672,10 +117480,10 @@ index 000000000..c65297cf6
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..c969f5e70
+index 000000000..b120bb73d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2189 @@
+@@ -0,0 +1,2182 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -119820,13 +119628,6 @@ index 000000000..c969f5e70
 +}
 +
 +impl ModViewSnapshot {
-+    pub fn clock() -> u64 {
-+        std::time::SystemTime::now()
-+            .duration_since(std::time::UNIX_EPOCH)
-+            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-+            .unwrap_or_default()
-+    }
-+
 +    pub fn read(path: &Path) -> Result<Self> {
 +        let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
 +        let mut snapshot: Self = serde_json::from_value(value)?;
@@ -123136,10 +122937,10 @@ index 000000000..334cbf27e
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..8148030c6
+index 000000000..5a6423e9d
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,349 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -123480,10 +123281,7 @@ index 000000000..8148030c6
 +        if cursor > payload.len() || !payload.is_char_boundary(cursor) {
 +            return Err(io::Error::other("resource_cursor_invalid"));
 +        }
-+        let mut end = cursor.saturating_add(max_bytes).min(payload.len());
-+        while !payload.is_char_boundary(end) {
-+            end -= 1;
-+        }
++        let end = payload.floor_char_boundary(cursor.saturating_add(max_bytes));
 +        if end == cursor && end < payload.len() {
 +            return Err(io::Error::other("resource_page_too_small"));
 +        }
@@ -145624,15 +145422,16 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..847a27e72
+index 000000000..08613a0e5
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2176 @@
+@@ -0,0 +1,2167 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
 +use crate::bottom_pane::SelectionItem;
 +use crate::bottom_pane::SelectionViewParams;
++use crate::omd::LockExt;
 +use crate::tui;
 +use codex_app_server_protocol::ServerNotification;
 +use codex_app_server_protocol::ServerRequest;
@@ -145882,12 +145681,6 @@ index 000000000..847a27e72
 +
 +static CONFIRMED: std::sync::Mutex<std::collections::BTreeMap<u64, Confirmed>> =
 +    std::sync::Mutex::new(std::collections::BTreeMap::new());
-+
-+fn confirmed() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<u64, Confirmed>> {
-+    CONFIRMED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+}
 +
 +type Confirmation = (Option<String>, String, Option<Confirmed>);
 +
@@ -146588,7 +146381,7 @@ index 000000000..847a27e72
 +        let caller = call.caller.clone();
 +        let id = crate::mod_surface::hold(call);
 +        if let Some(held) = held {
-+            confirmed().insert(id, held);
++            CONFIRMED.locked().insert(id, held);
 +        }
 +        let item = |name: &str, approved: bool| SelectionItem {
 +            name: name.to_owned(),
@@ -146624,7 +146417,7 @@ index 000000000..847a27e72
 +        id: u64,
 +        approved: bool,
 +    ) {
-+        let held = confirmed().remove(&id);
++        let held = CONFIRMED.locked().remove(&id);
 +        let Some(call) = crate::mod_surface::release(id) else {
 +            return;
 +        };
@@ -146671,11 +146464,7 @@ index 000000000..847a27e72
 +        let held_call = call.clone();
 +        let reply = std::sync::Arc::new(std::sync::Mutex::new(Some(call.reply)));
 +        let answer = move |value: Value| {
-+            if let Some(reply) = reply
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                .take()
-+            {
++            if let Some(reply) = reply.locked().take() {
 +                let _ = reply.send(crate::mod_surface::validate_call(&held_call).map(|()| value));
 +            }
 +        };
@@ -149850,10 +149639,11 @@ index 000000000..bf8d3805c
 +}
 diff --git a/codex-rs/tui/src/mod_client.rs b/codex-rs/tui/src/mod_client.rs
 new file mode 100644
-index 000000000..f5d20f833
+index 000000000..91586928d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_client.rs
-@@ -0,0 +1,1002 @@
+@@ -0,0 +1,739 @@
++use crate::omd::LockExt;
 +use codex_terminal_detection::TerminalName;
 +use crossterm::event::MouseEvent;
 +use crossterm::event::MouseEventKind;
@@ -149875,304 +149665,51 @@ index 000000000..f5d20f833
 +use std::sync::atomic::Ordering;
 +
 +const PLACEHOLDER: char = '\u{10EEEE}';
++#[rustfmt::skip]
 +const DIACRITICS: [char; 297] = [
-+    '\u{0305}',
-+    '\u{030D}',
-+    '\u{030E}',
-+    '\u{0310}',
-+    '\u{0312}',
-+    '\u{033D}',
-+    '\u{033E}',
-+    '\u{033F}',
-+    '\u{0346}',
-+    '\u{034A}',
-+    '\u{034B}',
-+    '\u{034C}',
-+    '\u{0350}',
-+    '\u{0351}',
-+    '\u{0352}',
-+    '\u{0357}',
-+    '\u{035B}',
-+    '\u{0363}',
-+    '\u{0364}',
-+    '\u{0365}',
-+    '\u{0366}',
-+    '\u{0367}',
-+    '\u{0368}',
-+    '\u{0369}',
-+    '\u{036A}',
-+    '\u{036B}',
-+    '\u{036C}',
-+    '\u{036D}',
-+    '\u{036E}',
-+    '\u{036F}',
-+    '\u{0483}',
-+    '\u{0484}',
-+    '\u{0485}',
-+    '\u{0486}',
-+    '\u{0487}',
-+    '\u{0592}',
-+    '\u{0593}',
-+    '\u{0594}',
-+    '\u{0595}',
-+    '\u{0597}',
-+    '\u{0598}',
-+    '\u{0599}',
-+    '\u{059C}',
-+    '\u{059D}',
-+    '\u{059E}',
-+    '\u{059F}',
-+    '\u{05A0}',
-+    '\u{05A1}',
-+    '\u{05A8}',
-+    '\u{05A9}',
-+    '\u{05AB}',
-+    '\u{05AC}',
-+    '\u{05AF}',
-+    '\u{05C4}',
-+    '\u{0610}',
-+    '\u{0611}',
-+    '\u{0612}',
-+    '\u{0613}',
-+    '\u{0614}',
-+    '\u{0615}',
-+    '\u{0616}',
-+    '\u{0617}',
-+    '\u{0657}',
-+    '\u{0658}',
-+    '\u{0659}',
-+    '\u{065A}',
-+    '\u{065B}',
-+    '\u{065D}',
-+    '\u{065E}',
-+    '\u{06D6}',
-+    '\u{06D7}',
-+    '\u{06D8}',
-+    '\u{06D9}',
-+    '\u{06DA}',
-+    '\u{06DB}',
-+    '\u{06DC}',
-+    '\u{06DF}',
-+    '\u{06E0}',
-+    '\u{06E1}',
-+    '\u{06E2}',
-+    '\u{06E4}',
-+    '\u{06E7}',
-+    '\u{06E8}',
-+    '\u{06EB}',
-+    '\u{06EC}',
-+    '\u{0730}',
-+    '\u{0732}',
-+    '\u{0733}',
-+    '\u{0735}',
-+    '\u{0736}',
-+    '\u{073A}',
-+    '\u{073D}',
-+    '\u{073F}',
-+    '\u{0740}',
-+    '\u{0741}',
-+    '\u{0743}',
-+    '\u{0745}',
-+    '\u{0747}',
-+    '\u{0749}',
-+    '\u{074A}',
-+    '\u{07EB}',
-+    '\u{07EC}',
-+    '\u{07ED}',
-+    '\u{07EE}',
-+    '\u{07EF}',
-+    '\u{07F0}',
-+    '\u{07F1}',
-+    '\u{07F3}',
-+    '\u{0816}',
-+    '\u{0817}',
-+    '\u{0818}',
-+    '\u{0819}',
-+    '\u{081B}',
-+    '\u{081C}',
-+    '\u{081D}',
-+    '\u{081E}',
-+    '\u{081F}',
-+    '\u{0820}',
-+    '\u{0821}',
-+    '\u{0822}',
-+    '\u{0823}',
-+    '\u{0825}',
-+    '\u{0826}',
-+    '\u{0827}',
-+    '\u{0829}',
-+    '\u{082A}',
-+    '\u{082B}',
-+    '\u{082C}',
-+    '\u{082D}',
-+    '\u{0951}',
-+    '\u{0953}',
-+    '\u{0954}',
-+    '\u{0F82}',
-+    '\u{0F83}',
-+    '\u{0F86}',
-+    '\u{0F87}',
-+    '\u{135D}',
-+    '\u{135E}',
-+    '\u{135F}',
-+    '\u{17DD}',
-+    '\u{193A}',
-+    '\u{1A17}',
-+    '\u{1A75}',
-+    '\u{1A76}',
-+    '\u{1A77}',
-+    '\u{1A78}',
-+    '\u{1A79}',
-+    '\u{1A7A}',
-+    '\u{1A7B}',
-+    '\u{1A7C}',
-+    '\u{1B6B}',
-+    '\u{1B6D}',
-+    '\u{1B6E}',
-+    '\u{1B6F}',
-+    '\u{1B70}',
-+    '\u{1B71}',
-+    '\u{1B72}',
-+    '\u{1B73}',
-+    '\u{1CD0}',
-+    '\u{1CD1}',
-+    '\u{1CD2}',
-+    '\u{1CDA}',
-+    '\u{1CDB}',
-+    '\u{1CE0}',
-+    '\u{1DC0}',
-+    '\u{1DC1}',
-+    '\u{1DC3}',
-+    '\u{1DC4}',
-+    '\u{1DC5}',
-+    '\u{1DC6}',
-+    '\u{1DC7}',
-+    '\u{1DC8}',
-+    '\u{1DC9}',
-+    '\u{1DCB}',
-+    '\u{1DCC}',
-+    '\u{1DD1}',
-+    '\u{1DD2}',
-+    '\u{1DD3}',
-+    '\u{1DD4}',
-+    '\u{1DD5}',
-+    '\u{1DD6}',
-+    '\u{1DD7}',
-+    '\u{1DD8}',
-+    '\u{1DD9}',
-+    '\u{1DDA}',
-+    '\u{1DDB}',
-+    '\u{1DDC}',
-+    '\u{1DDD}',
-+    '\u{1DDE}',
-+    '\u{1DDF}',
-+    '\u{1DE0}',
-+    '\u{1DE1}',
-+    '\u{1DE2}',
-+    '\u{1DE3}',
-+    '\u{1DE4}',
-+    '\u{1DE5}',
-+    '\u{1DE6}',
-+    '\u{1DFE}',
-+    '\u{20D0}',
-+    '\u{20D1}',
-+    '\u{20D4}',
-+    '\u{20D5}',
-+    '\u{20D6}',
-+    '\u{20D7}',
-+    '\u{20DB}',
-+    '\u{20DC}',
-+    '\u{20E1}',
-+    '\u{20E7}',
-+    '\u{20E9}',
-+    '\u{20F0}',
-+    '\u{2CEF}',
-+    '\u{2CF0}',
-+    '\u{2CF1}',
-+    '\u{2DE0}',
-+    '\u{2DE1}',
-+    '\u{2DE2}',
-+    '\u{2DE3}',
-+    '\u{2DE4}',
-+    '\u{2DE5}',
-+    '\u{2DE6}',
-+    '\u{2DE7}',
-+    '\u{2DE8}',
-+    '\u{2DE9}',
-+    '\u{2DEA}',
-+    '\u{2DEB}',
-+    '\u{2DEC}',
-+    '\u{2DED}',
-+    '\u{2DEE}',
-+    '\u{2DEF}',
-+    '\u{2DF0}',
-+    '\u{2DF1}',
-+    '\u{2DF2}',
-+    '\u{2DF3}',
-+    '\u{2DF4}',
-+    '\u{2DF5}',
-+    '\u{2DF6}',
-+    '\u{2DF7}',
-+    '\u{2DF8}',
-+    '\u{2DF9}',
-+    '\u{2DFA}',
-+    '\u{2DFB}',
-+    '\u{2DFC}',
-+    '\u{2DFD}',
-+    '\u{2DFE}',
-+    '\u{2DFF}',
-+    '\u{A66F}',
-+    '\u{A67C}',
-+    '\u{A67D}',
-+    '\u{A6F0}',
-+    '\u{A6F1}',
-+    '\u{A8E0}',
-+    '\u{A8E1}',
-+    '\u{A8E2}',
-+    '\u{A8E3}',
-+    '\u{A8E4}',
-+    '\u{A8E5}',
-+    '\u{A8E6}',
-+    '\u{A8E7}',
-+    '\u{A8E8}',
-+    '\u{A8E9}',
-+    '\u{A8EA}',
-+    '\u{A8EB}',
-+    '\u{A8EC}',
-+    '\u{A8ED}',
-+    '\u{A8EE}',
-+    '\u{A8EF}',
-+    '\u{A8F0}',
-+    '\u{A8F1}',
-+    '\u{AAB0}',
-+    '\u{AAB2}',
-+    '\u{AAB3}',
-+    '\u{AAB7}',
-+    '\u{AAB8}',
-+    '\u{AABE}',
-+    '\u{AABF}',
-+    '\u{AAC1}',
-+    '\u{FE20}',
-+    '\u{FE21}',
-+    '\u{FE22}',
-+    '\u{FE23}',
-+    '\u{FE24}',
-+    '\u{FE25}',
-+    '\u{FE26}',
-+    '\u{10A0F}',
-+    '\u{10A38}',
-+    '\u{1D185}',
-+    '\u{1D186}',
-+    '\u{1D187}',
-+    '\u{1D188}',
-+    '\u{1D189}',
-+    '\u{1D1AA}',
-+    '\u{1D1AB}',
-+    '\u{1D1AC}',
-+    '\u{1D1AD}',
-+    '\u{1D242}',
-+    '\u{1D243}',
-+    '\u{1D244}',
++    '\u{0305}', '\u{030D}', '\u{030E}', '\u{0310}', '\u{0312}', '\u{033D}', '\u{033E}',
++    '\u{033F}', '\u{0346}', '\u{034A}', '\u{034B}', '\u{034C}', '\u{0350}', '\u{0351}',
++    '\u{0352}', '\u{0357}', '\u{035B}', '\u{0363}', '\u{0364}', '\u{0365}', '\u{0366}',
++    '\u{0367}', '\u{0368}', '\u{0369}', '\u{036A}', '\u{036B}', '\u{036C}', '\u{036D}',
++    '\u{036E}', '\u{036F}', '\u{0483}', '\u{0484}', '\u{0485}', '\u{0486}', '\u{0487}',
++    '\u{0592}', '\u{0593}', '\u{0594}', '\u{0595}', '\u{0597}', '\u{0598}', '\u{0599}',
++    '\u{059C}', '\u{059D}', '\u{059E}', '\u{059F}', '\u{05A0}', '\u{05A1}', '\u{05A8}',
++    '\u{05A9}', '\u{05AB}', '\u{05AC}', '\u{05AF}', '\u{05C4}', '\u{0610}', '\u{0611}',
++    '\u{0612}', '\u{0613}', '\u{0614}', '\u{0615}', '\u{0616}', '\u{0617}', '\u{0657}',
++    '\u{0658}', '\u{0659}', '\u{065A}', '\u{065B}', '\u{065D}', '\u{065E}', '\u{06D6}',
++    '\u{06D7}', '\u{06D8}', '\u{06D9}', '\u{06DA}', '\u{06DB}', '\u{06DC}', '\u{06DF}',
++    '\u{06E0}', '\u{06E1}', '\u{06E2}', '\u{06E4}', '\u{06E7}', '\u{06E8}', '\u{06EB}',
++    '\u{06EC}', '\u{0730}', '\u{0732}', '\u{0733}', '\u{0735}', '\u{0736}', '\u{073A}',
++    '\u{073D}', '\u{073F}', '\u{0740}', '\u{0741}', '\u{0743}', '\u{0745}', '\u{0747}',
++    '\u{0749}', '\u{074A}', '\u{07EB}', '\u{07EC}', '\u{07ED}', '\u{07EE}', '\u{07EF}',
++    '\u{07F0}', '\u{07F1}', '\u{07F3}', '\u{0816}', '\u{0817}', '\u{0818}', '\u{0819}',
++    '\u{081B}', '\u{081C}', '\u{081D}', '\u{081E}', '\u{081F}', '\u{0820}', '\u{0821}',
++    '\u{0822}', '\u{0823}', '\u{0825}', '\u{0826}', '\u{0827}', '\u{0829}', '\u{082A}',
++    '\u{082B}', '\u{082C}', '\u{082D}', '\u{0951}', '\u{0953}', '\u{0954}', '\u{0F82}',
++    '\u{0F83}', '\u{0F86}', '\u{0F87}', '\u{135D}', '\u{135E}', '\u{135F}', '\u{17DD}',
++    '\u{193A}', '\u{1A17}', '\u{1A75}', '\u{1A76}', '\u{1A77}', '\u{1A78}', '\u{1A79}',
++    '\u{1A7A}', '\u{1A7B}', '\u{1A7C}', '\u{1B6B}', '\u{1B6D}', '\u{1B6E}', '\u{1B6F}',
++    '\u{1B70}', '\u{1B71}', '\u{1B72}', '\u{1B73}', '\u{1CD0}', '\u{1CD1}', '\u{1CD2}',
++    '\u{1CDA}', '\u{1CDB}', '\u{1CE0}', '\u{1DC0}', '\u{1DC1}', '\u{1DC3}', '\u{1DC4}',
++    '\u{1DC5}', '\u{1DC6}', '\u{1DC7}', '\u{1DC8}', '\u{1DC9}', '\u{1DCB}', '\u{1DCC}',
++    '\u{1DD1}', '\u{1DD2}', '\u{1DD3}', '\u{1DD4}', '\u{1DD5}', '\u{1DD6}', '\u{1DD7}',
++    '\u{1DD8}', '\u{1DD9}', '\u{1DDA}', '\u{1DDB}', '\u{1DDC}', '\u{1DDD}', '\u{1DDE}',
++    '\u{1DDF}', '\u{1DE0}', '\u{1DE1}', '\u{1DE2}', '\u{1DE3}', '\u{1DE4}', '\u{1DE5}',
++    '\u{1DE6}', '\u{1DFE}', '\u{20D0}', '\u{20D1}', '\u{20D4}', '\u{20D5}', '\u{20D6}',
++    '\u{20D7}', '\u{20DB}', '\u{20DC}', '\u{20E1}', '\u{20E7}', '\u{20E9}', '\u{20F0}',
++    '\u{2CEF}', '\u{2CF0}', '\u{2CF1}', '\u{2DE0}', '\u{2DE1}', '\u{2DE2}', '\u{2DE3}',
++    '\u{2DE4}', '\u{2DE5}', '\u{2DE6}', '\u{2DE7}', '\u{2DE8}', '\u{2DE9}', '\u{2DEA}',
++    '\u{2DEB}', '\u{2DEC}', '\u{2DED}', '\u{2DEE}', '\u{2DEF}', '\u{2DF0}', '\u{2DF1}',
++    '\u{2DF2}', '\u{2DF3}', '\u{2DF4}', '\u{2DF5}', '\u{2DF6}', '\u{2DF7}', '\u{2DF8}',
++    '\u{2DF9}', '\u{2DFA}', '\u{2DFB}', '\u{2DFC}', '\u{2DFD}', '\u{2DFE}', '\u{2DFF}',
++    '\u{A66F}', '\u{A67C}', '\u{A67D}', '\u{A6F0}', '\u{A6F1}', '\u{A8E0}', '\u{A8E1}',
++    '\u{A8E2}', '\u{A8E3}', '\u{A8E4}', '\u{A8E5}', '\u{A8E6}', '\u{A8E7}', '\u{A8E8}',
++    '\u{A8E9}', '\u{A8EA}', '\u{A8EB}', '\u{A8EC}', '\u{A8ED}', '\u{A8EE}', '\u{A8EF}',
++    '\u{A8F0}', '\u{A8F1}', '\u{AAB0}', '\u{AAB2}', '\u{AAB3}', '\u{AAB7}', '\u{AAB8}',
++    '\u{AABE}', '\u{AABF}', '\u{AAC1}', '\u{FE20}', '\u{FE21}', '\u{FE22}', '\u{FE23}',
++    '\u{FE24}', '\u{FE25}', '\u{FE26}', '\u{10A0F}', '\u{10A38}', '\u{1D185}', '\u{1D186}',
++    '\u{1D187}', '\u{1D188}', '\u{1D189}', '\u{1D1AA}', '\u{1D1AB}', '\u{1D1AC}', '\u{1D1AD}',
++    '\u{1D242}', '\u{1D243}', '\u{1D244}',
 +];
 +const FIRST_IMAGE_ID: u32 = 0x4f_4d_01;
 +pub(crate) const DEFAULT_CELL: (u16, u16) = (8, 16);
@@ -150274,15 +149811,8 @@ index 000000000..f5d20f833
 +static RERENDER: AtomicBool = AtomicBool::new(false);
 +static HALF: AtomicU8 = AtomicU8::new(HALF_UNKNOWN);
 +static FRACTION: Mutex<Option<(f64, f64)>> = Mutex::new(None);
-+fn fraction() -> std::sync::MutexGuard<'static, Option<(f64, f64)>> {
-+    FRACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+}
 +fn with<T>(run: impl FnOnce(&mut Facts) -> T) -> T {
-+    let mut facts = FACTS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut facts = FACTS.locked();
 +    run(facts.get_or_insert_with(|| {
 +        if cfg!(test) {
 +            Facts::default()
@@ -150367,21 +149897,19 @@ index 000000000..f5d20f833
 +        .flatten();
 +    let Some((width, height)) = cell else {
 +        HALF.store(HALF_UNKNOWN, Ordering::Relaxed);
-+        *fraction() = None;
++        *FRACTION.locked() = None;
 +        return Some(event);
 +    };
 +    let half = u8::from(event.row % height >= height.div_ceil(2));
 +    HALF.store(half, Ordering::Relaxed);
-+    *fraction() = Some((
++    *FRACTION.locked() = Some((
 +        f64::from(event.column % width) / f64::from(width),
 +        f64::from(event.row % height) / f64::from(height),
 +    ));
 +    event.column /= width;
 +    event.row /= height;
 +    let position = Some((event.column, event.row, half));
-+    let mut last = LAST_MOTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut last = LAST_MOTION.locked();
 +    if matches!(event.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
 +        if *last == position {
 +            return None;
@@ -150401,7 +149929,7 @@ index 000000000..f5d20f833
 +
 +/// The in-cell offset, each side in `[0, 1)`, of the pointer event most recently converted by `to_cells`.
 +pub(crate) fn last_fraction() -> Option<(f64, f64)> {
-+    *fraction()
++    *FRACTION.locked()
 +}
 +
 +pub(crate) struct Pixels {
@@ -150438,9 +149966,7 @@ index 000000000..f5d20f833
 +});
 +
 +fn images() -> std::sync::MutexGuard<'static, Images> {
-+    IMAGES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    IMAGES.locked()
 +}
 +
 +impl Images {
@@ -151509,14 +151035,15 @@ index 000000000..fa99be1a8
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..44588ee65
+index 000000000..bca98aa1b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,655 @@
+@@ -0,0 +1,640 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
 +use crate::mod_document::DocumentView;
++use crate::omd::LockExt;
 +use codex_omd::ModFind;
 +use codex_omd::ModRange;
 +use codex_omd::ModSpan;
@@ -151554,9 +151081,7 @@ index 000000000..44588ee65
 +static DOCUMENTS: Mutex<BTreeMap<String, Document>> = Mutex::new(BTreeMap::new());
 +
 +fn documents() -> std::sync::MutexGuard<'static, BTreeMap<String, Document>> {
-+    DOCUMENTS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    DOCUMENTS.locked()
 +}
 +
 +fn span_text(spans: &[ModSpan]) -> String {
@@ -151641,14 +151166,8 @@ index 000000000..44588ee65
 +    sha256: &str,
 +    load: impl FnOnce() -> Option<Vec<u8>>,
 +) -> Option<Arc<image::DynamicImage>> {
-+    let failed = || {
-+        UNDECODABLE
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner)
-+    };
-+    let mut decoded = DECODED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let failed = || UNDECODABLE.locked();
++    let mut decoded = DECODED.locked();
 +    if let Some((cached, image)) = decoded.as_ref()
 +        && cached == sha256
 +    {
@@ -151844,9 +151363,7 @@ index 000000000..44588ee65
 +    {
 +        return Some(rows);
 +    }
-+    let mut images = IMAGES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut images = IMAGES.locked();
 +    if let Some((cached, rows)) = images.get(component)
 +        && cached == key
 +    {
@@ -152148,10 +151665,7 @@ index 000000000..44588ee65
 +
 +pub(crate) fn retain(ids: &std::collections::BTreeSet<String>) {
 +    documents().retain(|id, _| ids.contains(id));
-+    IMAGES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .retain(|id, _| ids.contains(id));
++    IMAGES.locked().retain(|id, _| ids.contains(id));
 +    crate::mod_client::retain(ids);
 +    crate::mod_raster::retain(ids);
 +}
@@ -152159,10 +151673,7 @@ index 000000000..44588ee65
 +pub(crate) fn invalidate() {
 +    documents().clear();
 +    crate::mod_raster::retain(&BTreeSet::new());
-+    IMAGES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .clear();
++    IMAGES.locked().clear();
 +}
 +
 +#[cfg(test)]
@@ -152961,10 +152472,11 @@ index 000000000..4d651c195
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..416115c09
+index 000000000..d7c09ea69
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,313 @@
++use crate::omd::LockExt;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -153037,9 +152549,7 @@ index 000000000..416115c09
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
 +
 +fn with<T>(run: impl FnOnce(&mut State) -> T) -> T {
-+    let mut guard = STATE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut guard = STATE.locked();
 +    run(guard.get_or_insert_with(State::default))
 +}
 +
@@ -153409,10 +152919,10 @@ index 000000000..8e4a9d37f
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 000000000..52ab64dec
+index 000000000..4527c627a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,462 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -153422,6 +152932,7 @@ index 000000000..52ab64dec
 +use std::time::Duration;
 +use std::time::Instant;
 +
++use crate::omd::LockExt;
 +use codex_omd::ModComponent;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -153477,9 +152988,7 @@ index 000000000..52ab64dec
 +}
 +
 +fn instances<T>(run: impl FnOnce(&mut HashMap<String, Instance>) -> T) -> T {
-+    let mut instances = INSTANCES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut instances = INSTANCES.locked();
 +    run(instances.get_or_insert_with(HashMap::new))
 +}
 +
@@ -153834,9 +153343,7 @@ index 000000000..52ab64dec
 +fn deliver(post: Post) {
 +    static SENDER: OnceLock<std::thread::Thread> = OnceLock::new();
 +    {
-+        let mut posts = POSTS
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut posts = POSTS.locked();
 +        posts.retain(|queued| queued.owner != post.owner || queued.id != post.id);
 +        posts.push(post);
 +    }
@@ -153845,9 +153352,7 @@ index 000000000..52ab64dec
 +            std::thread::spawn(|| {
 +                loop {
 +                    let next = {
-+                        let mut posts = POSTS
-+                            .lock()
-+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
++                        let mut posts = POSTS.locked();
 +                        (!posts.is_empty()).then(|| posts.remove(0))
 +                    };
 +                    match next {
@@ -154025,10 +153530,11 @@ index 000000000..9aceab1eb
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 000000000..95bc511f4
+index 000000000..2ae62c4a1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,610 @@
++use crate::omd::LockExt;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyModifiers;
@@ -154083,9 +153589,7 @@ index 000000000..95bc511f4
 +    std::sync::LazyLock::new(|| Mutex::new(Sessions::default()));
 +
 +fn sessions() -> std::sync::MutexGuard<'static, Sessions> {
-+    SESSIONS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    SESSIONS.locked()
 +}
 +
 +fn owned<'a>(
@@ -154326,19 +153830,14 @@ index 000000000..95bc511f4
 +    let (reader, reader_frames) = (screen.clone(), frames.clone());
 +    tokio::spawn(async move {
 +        while let Some(bytes) = output.recv().await {
-+            reader
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                .process(&bytes);
++            reader.locked().process(&bytes);
 +            reader_frames.schedule_frame();
 +        }
 +    });
 +    let status = exit.clone();
 +    tokio::spawn(async move {
 +        let code = exited.await.unwrap_or(-1);
-+        *status
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(code);
++        *status.locked() = Some(code);
 +        frames.schedule_frame();
 +    });
 +    let mut sessions = sessions();
@@ -154381,16 +153880,8 @@ index 000000000..95bc511f4
 +        }
 +        Some("read") => {
 +            let pane = owned(&mut sessions, binding, &session)?;
-+            let text = pane
-+                .screen
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                .screen()
-+                .contents();
-+            let exit_code = *pane
-+                .exit
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let text = pane.screen.locked().screen().contents();
++            let exit_code = *pane.exit.locked();
 +            Ok(json!({"text": text, "running": exit_code.is_none(), "exit_code": exit_code}))
 +        }
 +        Some("stop") => {
@@ -154425,10 +153916,7 @@ index 000000000..95bc511f4
 +        ))];
 +    };
 +    let (rows, cols) = (height.max(2), width.max(10));
-+    let mut screen = pane
-+        .screen
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut screen = pane.screen.locked();
 +    if pane.size != (rows, cols) {
 +        pane.size = (rows, cols);
 +        screen.screen_mut().set_size(rows, cols);
@@ -154436,10 +153924,7 @@ index 000000000..95bc511f4
 +            .handle
 +            .resize(codex_utils_pty::TerminalSize { rows, cols });
 +    }
-+    let exited = *pane
-+        .exit
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let exited = *pane.exit.locked();
 +    let mut lines = (0..rows)
 +        .map(|row| {
 +            let mut spans = vec![Span::raw(prefix.to_owned())];
@@ -154506,12 +153991,7 @@ index 000000000..95bc511f4
 +    let Some(pane) = binding.and_then(|binding| owned(&mut sessions, binding, session).ok()) else {
 +        return;
 +    };
-+    let bracketed = pane
-+        .screen
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .screen()
-+        .bracketed_paste();
++    let bracketed = pane.screen.locked().screen().bracketed_paste();
 +    let bytes = if bracketed {
 +        format!("\x1b[200~{text}\x1b[201~")
 +    } else {
@@ -154666,10 +154146,10 @@ index 000000000..95bc511f4
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..875296c00
+index 000000000..ac83aac02
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,451 @@
+@@ -0,0 +1,448 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -154685,6 +154165,7 @@ index 000000000..875296c00
 +use unicode_segmentation::UnicodeSegmentation;
 +use unicode_width::UnicodeWidthStr;
 +
++use crate::omd::LockExt;
 +pub(crate) use codex_omd::client_surface::BLIT_FRAME as FRAME;
 +use codex_omd::client_surface::BLIT_QUEUE_BYTES as QUEUE_BYTES;
 +use codex_omd::client_surface::BLIT_QUEUE_UPDATES as QUEUE_UPDATES;
@@ -154790,9 +154271,7 @@ index 000000000..875296c00
 +static RASTERS: Mutex<BTreeMap<String, Raster>> = Mutex::new(BTreeMap::new());
 +
 +fn rasters() -> std::sync::MutexGuard<'static, BTreeMap<String, Raster>> {
-+    RASTERS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    RASTERS.locked()
 +}
 +
 +/// A raster's last rendered cell size, and the process binding, drawable box and client cell its process was last told.
@@ -154805,9 +154284,7 @@ index 000000000..875296c00
 +static LAYOUTS: Mutex<BTreeMap<String, Layout>> = Mutex::new(BTreeMap::new());
 +
 +fn layouts() -> std::sync::MutexGuard<'static, BTreeMap<String, Layout>> {
-+    LAYOUTS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    LAYOUTS.locked()
 +}
 +
 +pub(crate) fn rendered(id: &str) -> Option<(u16, u16)> {
@@ -155958,10 +155435,10 @@ index 000000000..1f2190484
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..7c395bc09
+index 000000000..d2408d7f1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
-@@ -0,0 +1,710 @@
+@@ -0,0 +1,683 @@
 +use std::cell::Cell;
 +use std::collections::HashMap;
 +use std::collections::VecDeque;
@@ -155981,6 +155458,7 @@ index 000000000..7c395bc09
 +use serde_json::Value;
 +use serde_json::json;
 +
++use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +
 +const DONE_LIMIT: usize = 2048;
@@ -156022,11 +155500,7 @@ index 000000000..7c395bc09
 +
 +/// Props carry at most `MOD_TEXT_BYTES` of text; hooks needing more read their own sources.
 +pub(crate) fn bounded(text: &str) -> String {
-+    let mut end = text.len().min(PROP_BYTES);
-+    while !text.is_char_boundary(end) {
-+        end -= 1;
-+    }
-+    text[..end].to_owned()
++    text[..text.floor_char_boundary(PROP_BYTES)].to_owned()
 +}
 +
 +pub(crate) fn bounded_json(value: &Value) -> Value {
@@ -156145,29 +155619,17 @@ index 000000000..7c395bc09
 +}
 +
 +pub(crate) fn clear_tool_notices() {
-+    DRAWN_CALLS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .clear();
-+    TOOL_NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .clear();
++    DRAWN_CALLS.locked().clear();
++    TOOL_NOTICES.locked().clear();
 +    EPOCH.fetch_add(1, Ordering::Relaxed);
 +}
 +
 +/// Attaches a mod notice beneath the drawn transcript cell of one tool call; false, storing nothing, when no drawn cell claims the call.
 +pub(crate) fn tool_notice(call_id: &str, kind: &str, text: &str, owner: &str) -> bool {
-+    if !DRAWN_CALLS
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .contains(call_id)
-+    {
++    if !DRAWN_CALLS.locked().contains(call_id) {
 +        return false;
 +    }
-+    let mut notices = TOOL_NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut notices = TOOL_NOTICES.locked();
 +    if notices.len() >= 256 {
 +        notices.pop_front();
 +    }
@@ -156192,17 +155654,13 @@ index 000000000..7c395bc09
 +        .chain(target.props["call_id"].as_str())
 +        .collect::<Vec<_>>();
 +    if target.component.starts_with("tool_") {
-+        let mut drawn = DRAWN_CALLS
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut drawn = DRAWN_CALLS.locked();
 +        if drawn.len() >= DONE_LIMIT {
 +            drawn.clear();
 +        }
 +        drawn.extend(calls.iter().map(|call| (*call).to_owned()));
 +    }
-+    let notices = TOOL_NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let notices = TOOL_NOTICES.locked();
 +    if notices.is_empty() {
 +        return Vec::new();
 +    }
@@ -156226,16 +155684,12 @@ index 000000000..7c395bc09
 +}
 +
 +fn engine<T>(run: impl FnOnce(&mut Engine) -> T) -> T {
-+    let mut engine = ENGINE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut engine = ENGINE.locked();
 +    run(engine.get_or_insert_with(Engine::default))
 +}
 +
 +pub(crate) fn set_frames(frames: crate::tui::FrameRequester) {
-+    *FRAMES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(frames);
++    *FRAMES.locked() = Some(frames);
 +}
 +
 +pub(crate) fn set_surface(fullscreen: bool, columns: u16, rows: u16) {
@@ -156354,11 +155808,7 @@ index 000000000..7c395bc09
 +}
 +
 +pub(crate) fn schedule_frame(delay: Duration) {
-+    if let Some(frames) = FRAMES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .as_ref()
-+    {
++    if let Some(frames) = FRAMES.locked().as_ref() {
 +        frames.schedule_frame_in(delay);
 +    }
 +}
@@ -156884,10 +156334,11 @@ index 000000000..7ca758b14
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..dd9191141
+index 000000000..8ea952283
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1602 @@
+@@ -0,0 +1,1555 @@
++use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -156995,18 +156446,14 @@ index 000000000..dd9191141
 +}
 +
 +pub(crate) fn synchronize_context(context: ModContext) -> bool {
-+    let mut active = ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut active = ACTIVE_CONTEXT.locked();
 +    let changed = active.synchronize(context);
 +    sync_pty_context(&active);
 +    changed
 +}
 +
 +pub(crate) fn begin(context: ModContext) -> ModInvocation {
-+    let mut active = ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut active = ACTIVE_CONTEXT.locked();
 +    let invocation = active.begin(context);
 +    sync_pty_context(&active);
 +    invocation
@@ -157014,9 +156461,7 @@ index 000000000..dd9191141
 +
 +/// Shares the current invocation, so a nested or intercepted command never supersedes the command running it.
 +pub(crate) fn join(context: ModContext) -> ModInvocation {
-+    let mut active = ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut active = ACTIVE_CONTEXT.locked();
 +    let invocation = active.join(context);
 +    sync_pty_context(&active);
 +    invocation
@@ -157034,33 +156479,17 @@ index 000000000..dd9191141
 +}
 +
 +pub(crate) fn current(invocation: &ModInvocation) -> bool {
-+    ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .current(invocation)
++    ACTIVE_CONTEXT.locked().current(invocation)
 +}
 +
 +/// True until the session context (thread, repository or permissions) changes.
 +pub(crate) fn context_unchanged() -> (u64, impl Fn() -> bool + Send + Sync + 'static) {
-+    let epoch = ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .epoch;
-+    (epoch, move || {
-+        ACTIVE_CONTEXT
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner)
-+            .epoch
-+            == epoch
-+    })
++    let epoch = ACTIVE_CONTEXT.locked().epoch;
++    (epoch, move || ACTIVE_CONTEXT.locked().epoch == epoch)
 +}
 +
 +pub(crate) fn active_context() -> Option<ModContext> {
-+    ACTIVE_CONTEXT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .context
-+        .clone()
++    ACTIVE_CONTEXT.locked().context.clone()
 +}
 +
 +pub(crate) struct Entry {
@@ -157282,9 +156711,7 @@ index 000000000..dd9191141
 +}
 +
 +pub(crate) fn slash_commands() -> Vec<ModSlashCommand> {
-+    let mut cache = CATALOG
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = CATALOG.locked();
 +    if let Some((loaded, commands)) = cache.as_ref()
 +        && loaded.elapsed() < CATALOG_TTL
 +    {
@@ -157591,7 +157018,7 @@ index 000000000..dd9191141
 +        return None;
 +    }
 +    let mut snapshot = ModViewSnapshot::read(&paths.evidence.join("mod-view.json")).ok()?;
-+    snapshot.rendered_ms = ModViewSnapshot::clock();
++    snapshot.rendered_ms = codex_omd::peers::now_ms();
 +    if command.is_none() {
 +        reload_active(runtime, active);
 +    }
@@ -157695,9 +157122,7 @@ index 000000000..dd9191141
 +fn reload_active(runtime: &mut ModHost, active: &dyn Fn() -> bool) {
 +    static CHECKOUT: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 +    if let Some(paths) = crate::omd::mod_paths() {
-+        let mut checkout = CHECKOUT
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut checkout = CHECKOUT.locked();
 +        if checkout.as_ref() != Some(&paths.repository) {
 +            runtime.set_checkout(&paths.repository);
 +            *checkout = Some(paths.repository);
@@ -157732,9 +157157,7 @@ index 000000000..dd9191141
 +fn with_host<T>(run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>) -> Option<T> {
 +    let paths = crate::omd::mod_paths()?;
 +    let runtime = shared_host().ok()?;
-+    let mut runtime = runtime
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut runtime = runtime.locked();
 +    reload(&mut runtime);
 +    let result = run(&mut runtime, &paths);
 +    record_status(&runtime, &paths);
@@ -157799,9 +157222,7 @@ index 000000000..dd9191141
 +    let paths = crate::omd::mod_paths()?;
 +    let runtime = shared_host().ok()?;
 +    let (generation, grants, before) = {
-+        let mut runtime = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut runtime = runtime.locked();
 +        if !current() {
 +            return None;
 +        }
@@ -157850,9 +157271,7 @@ index 000000000..dd9191141
 +        |_| {},
 +    );
 +    let snapshot = {
-+        let mut runtime = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut runtime = runtime.locked();
 +        record_status(&runtime, &paths);
 +        reload(&mut runtime);
 +        let changed = runtime.state(id) != before.0.as_ref()
@@ -157882,9 +157301,7 @@ index 000000000..dd9191141
 +        return;
 +    };
 +    let snapshot = {
-+        let mut runtime = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut runtime = runtime.locked();
 +        active_context().and_then(|context| preview(&mut runtime, &paths, &context))
 +    };
 +    if let Some(snapshot) = snapshot {
@@ -158100,9 +157517,7 @@ index 000000000..dd9191141
 +    let paths = crate::omd::mod_paths().ok_or("mods are not configured for this session")?;
 +    let runtime = shared_host()?;
 +    let grants = {
-+        let mut runtime = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut runtime = runtime.locked();
 +        reload(&mut runtime);
 +        owner_grants(&runtime)
 +    };
@@ -158237,9 +157652,7 @@ index 000000000..dd9191141
 +    let ModSlashTarget { id, command } = target;
 +    let runtime = shared_host()?;
 +    let (generation, grants) = {
-+        let mut runtime = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut runtime = runtime.locked();
 +        reload(&mut runtime);
 +        (runtime.generation(), owner_grants(&runtime))
 +    };
@@ -158282,9 +157695,7 @@ index 000000000..dd9191141
 +    let outcome = ModCommandOutcome::parse(&value).map_err(|e| e.to_string())?;
 +    let started = Instant::now();
 +    let preview = preview_with(
-+        &mut runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner),
++        &mut runtime.locked(),
 +        &paths,
 +        &invocation.context,
 +        outcome
@@ -158316,9 +157727,7 @@ index 000000000..dd9191141
 +        return rows;
 +    };
 +    let key = format!("{key}:{}", Value::Array(rows.clone()));
-+    let mut cache = COMPOSED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = COMPOSED.locked();
 +    if let Some((cached, composed)) = cache.as_ref()
 +        && *cached == key
 +    {
@@ -158343,9 +157752,7 @@ index 000000000..dd9191141
 +
 +/// The popup text of a command: its composed description and argument hint.
 +pub(crate) fn command_label(command: &str, fallback: &str) -> String {
-+    let cache = COMPOSED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let cache = COMPOSED.locked();
 +    let Some(row) = cache
 +        .as_ref()
 +        .and_then(|(_, rows)| rows.iter().find(|row| row["command"] == command))
@@ -158370,9 +157777,7 @@ index 000000000..dd9191141
 +/// A busy runtime answers from the last lookup; a surface never looked up fails closed so it takes the blocking path.
 +fn remembered_intercept(surface: &str, fresh: Option<bool>) -> bool {
 +    static KNOWN: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
-+    let mut known = KNOWN
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut known = KNOWN.locked();
 +    match fresh {
 +        Some(intercepted) => {
 +            known.insert(surface.to_owned(), intercepted);
@@ -158421,9 +157826,7 @@ index 000000000..dd9191141
 +            .ok_or("mods are not configured for this session")?;
 +        let runtime = shared_host()?;
 +        let grants = {
-+            let mut runtime = runtime
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let mut runtime = runtime.locked();
 +            reload(&mut runtime);
 +            owner_grants(&runtime)
 +        };
@@ -159749,12 +159152,13 @@ index 000000000..bea0a86a5
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..d4dcda300
+index 000000000..6789087d2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1082 @@
+@@ -0,0 +1,1070 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
++use crate::omd::LockExt;
 +use codex_omd::app_routes::NotificationQueue;
 +use codex_omd::client_surface::ClientSurface;
 +use codex_omd::client_surface::Registration;
@@ -159836,14 +159240,8 @@ index 000000000..d4dcda300
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
 +static CONTEXT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +
-+fn state() -> MutexGuard<'static, Option<State>> {
-+    STATE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+}
-+
 +fn with<T>(run: impl FnOnce(&mut State) -> T) -> T {
-+    let mut guard = state();
++    let mut guard = STATE.locked();
 +    run(guard.get_or_insert_with(State::default))
 +}
 +
@@ -159852,10 +159250,10 @@ index 000000000..d4dcda300
 +    struct Restore(Option<State>);
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
-+            *state() = self.0.take();
++            *STATE.locked() = self.0.take();
 +        }
 +    }
-+    Restore(state().replace(State {
++    Restore(STATE.locked().replace(State {
 +        checked: Some(Instant::now()),
 +        completers: [id.to_owned()].into(),
 +        triggers: [(trigger.to_owned(), id.to_owned())].into(),
@@ -160428,11 +159826,9 @@ index 000000000..d4dcda300
 +    motion().remove(payload["component"].as_str()?)
 +}
 +
-+fn motion() -> std::sync::MutexGuard<'static, BTreeMap<String, Value>> {
++fn motion() -> MutexGuard<'static, BTreeMap<String, Value>> {
 +    static MOTION: Mutex<BTreeMap<String, Value>> = Mutex::new(BTreeMap::new());
-+    MOTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++    MOTION.locked()
 +}
 +
 +/// Pointer motion is latest-wins per component: one queued marker delivers the newest position.
@@ -160684,10 +160080,7 @@ index 000000000..d4dcda300
 +        let thread = scope.thread.map(str::to_owned).or_else(current_thread);
 +        let grants = grants.ok_or_else(|| other("host_caller_inactive"))?;
 +        let runtime = crate::mod_runtime::shared_host().map_err(std::io::Error::other)?;
-+        let generation = runtime
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner)
-+            .generation();
++        let generation = runtime.locked().generation();
 +        let source = grants.source_sha256.clone();
 +        let admitted_source = source.clone();
 +        let capabilities = grants.capabilities.clone();
@@ -160698,9 +160091,7 @@ index 000000000..d4dcda300
 +                if !continued() {
 +                    return false;
 +                }
-+                let mut runtime = runtime
-+                    .lock()
-+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
++                let mut runtime = runtime.locked();
 +                if runtime.reload().is_err() {
 +                    return false;
 +                }
@@ -160837,7 +160228,7 @@ index 000000000..d4dcda300
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..d514561ff
+index 000000000..753e73fba
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
 @@ -0,0 +1,830 @@
@@ -160880,7 +160271,7 @@ index 000000000..d514561ff
 +    let (directory, _store, source) = surface_package();
 +    let _environment =
 +        crate::omd::tests::omd_environment(&directory.path().canonicalize().unwrap().join("store"));
-+    let previous = state().take();
++    let previous = STATE.locked().take();
 +    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 +    let sender = AppEventSender::new(tx);
 +    attach(&sender, Some("surface-thread".into()));
@@ -160922,7 +160313,7 @@ index 000000000..d514561ff
 +    attach(&sender, Some("surface-thread".into()));
 +    assert!(validate_call(&call).is_err());
 +    drop(pending);
-+    *state() = previous;
++    *STATE.locked() = previous;
 +}
 +
 +#[test]
@@ -160931,7 +160322,7 @@ index 000000000..d514561ff
 +    let (directory, store, source) = surface_package();
 +    let store_path = directory.path().canonicalize().unwrap().join("store");
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
-+    let previous = state().take();
++    let previous = STATE.locked().take();
 +    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 +    let sender = AppEventSender::new(tx);
 +    attach(&sender, Some("surface-thread".into()));
@@ -160978,7 +160369,7 @@ index 000000000..d514561ff
 +    let result = waiter.join().unwrap();
 +    let _ = reply.join();
 +    assert_eq!(result.unwrap()["status"], "applied");
-+    *state() = previous;
++    *STATE.locked() = previous;
 +}
 +
 +#[test]
@@ -161062,7 +160453,7 @@ index 000000000..d514561ff
 +    }
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
-+            *state() = self.previous.take();
++            *STATE.locked() = self.previous.take();
 +            match self.mode.take() {
 +                Some(mode) => unsafe { std::env::set_var(codex_omd::MODE_ENV, mode) },
 +                None => unsafe { std::env::remove_var(codex_omd::MODE_ENV) },
@@ -161071,7 +160462,7 @@ index 000000000..d514561ff
 +    }
 +    let _restore = Restore {
 +        mode: std::env::var_os(codex_omd::MODE_ENV),
-+        previous: state().take(),
++        previous: STATE.locked().take(),
 +    };
 +    unsafe { std::env::set_var(codex_omd::MODE_ENV, "omd") };
 +    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -161495,7 +160886,7 @@ index 000000000..d514561ff
 +    let dir = tempfile::tempdir().unwrap();
 +    let paths = paths(dir.path());
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
-+    let previous = state().take();
++    let previous = STATE.locked().take();
 +    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
 +    attach(&AppEventSender::new(tx), Some("new-ui-thread".into()));
 +    let scope = crate::mod_runtime::CallScope {
@@ -161524,7 +160915,7 @@ index 000000000..d514561ff
 +        .unwrap()
 +        .drain("scope_observer", 1);
 +    assert_eq!(events[0].thread, "captured-thread");
-+    state().take();
++    STATE.locked().take();
 +    let unavailable = host_call(
 +        &paths,
 +        &policy,
@@ -161544,7 +160935,7 @@ index 000000000..d514561ff
 +        .lock()
 +        .unwrap()
 +        .unsubscribe("scope_observer");
-+    *state() = previous;
++    *STATE.locked() = previous;
 +}
 +
 +#[test]
@@ -161620,7 +161011,7 @@ index 000000000..d514561ff
 +#[test]
 +#[serial_test::serial]
 +fn clipboard_surface_waits_for_matching_completion_and_cleans_cancelled_calls() {
-+    let previous = state().take();
++    let previous = STATE.locked().take();
 +    let make_call = || {
 +        let (reply, answer) = std::sync::mpsc::sync_channel(1);
 +        let caller = codex_omd::broker::HOST_CALLER.to_string();
@@ -161669,14 +161060,15 @@ index 000000000..d514561ff
 +    assert!(!complete_clipboard(None));
 +    assert_eq!(answer.recv().unwrap(), Err("client_context_changed".into()));
 +    assert!(with(|state| state.clipboard.is_none()));
-+    *state() = previous;
++    *STATE.locked() = previous;
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..9b9dcb17e
+index 000000000..9b15abe0f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4615 @@
+@@ -0,0 +1,4550 @@
++use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
 +use codex_omd::ModActivity;
@@ -162568,9 +161960,7 @@ index 000000000..9b9dcb17e
 +        crate::terminal_palette::stdout_color_level(),
 +    );
 +    {
-+        let mut cache = MARKDOWN
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut cache = MARKDOWN.locked();
 +        if let Some(index) = cache.iter().position(|(cached, _, _)| *cached == key) {
 +            let entry = cache.remove(index);
 +            let lines = Arc::clone(&entry.2);
@@ -162586,9 +161976,7 @@ index 000000000..9b9dcb17e
 +        crate::markdown_render::ListSpacing::AfterMultiline,
 +    )
 +    .into();
-+    let mut cache = MARKDOWN
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = MARKDOWN.locked();
 +    cache.retain(|(cached, _, _)| *cached != key);
 +    cache.push((key, markdown_weight(&lines), Arc::clone(&lines)));
 +    let mut bytes = cache.iter().map(|(_, bytes, _)| bytes).sum::<usize>();
@@ -162603,9 +161991,7 @@ index 000000000..9b9dcb17e
 +
 +pub(crate) fn sync_placeholder() -> Option<Option<String>> {
 +    let current = with_cache(|cache| cache.snapshot.view.placeholder.clone()).flatten();
-+    let mut applied = APPLIED_PLACEHOLDER
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut applied = APPLIED_PLACEHOLDER.locked();
 +    if applied.as_ref() == Some(&current) {
 +        return None;
 +    }
@@ -162625,9 +162011,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +pub(crate) fn first_warning(key: &str) -> bool {
-+    let mut warned = WARNED
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut warned = WARNED.locked();
 +    if warned.iter().any(|seen| seen == key) {
 +        return false;
 +    }
@@ -162637,9 +162021,7 @@ index 000000000..9b9dcb17e
 +
 +pub(crate) fn sync_syntax_theme() -> Option<String> {
 +    let requested = syntax_theme();
-+    let mut applied = APPLIED_SYNTAX
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut applied = APPLIED_SYNTAX.locked();
 +    if *applied == requested {
 +        return None;
 +    }
@@ -162893,9 +162275,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +fn sync_interaction(view: &ModView) {
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let previous = std::mem::take(&mut interaction.ids);
 +    interaction.hotkeys.clear();
 +    interaction.autofocus.clear();
@@ -162957,9 +162337,7 @@ index 000000000..9b9dcb17e
 +            == context.thread_id.map(|id| id.to_string()).as_deref()
 +            && snapshot.input["ledger"]["cwd"].as_str() == context.repository.to_str()
 +    });
-+    let mut blocked = BLOCKED_SNAPSHOT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut blocked = BLOCKED_SNAPSHOT.locked();
 +    if context.is_some() && !matches_context
 +        || blocked.as_ref() == Some(&(snapshot.epoch, snapshot.revision))
 +    {
@@ -163025,16 +162403,11 @@ index 000000000..9b9dcb17e
 +                == context.thread_id.map(|id| id.to_string()).as_deref()
 +                && snapshot.input["ledger"]["cwd"].as_str() == context.repository.to_str()
 +        });
-+    *BLOCKED_SNAPSHOT
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-+        (!matches_context).then_some((snapshot.epoch, snapshot.revision));
++    *BLOCKED_SNAPSHOT.locked() = (!matches_context).then_some((snapshot.epoch, snapshot.revision));
 +    *CACHE
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-+    *INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Interaction::default();
++    *INTERACTION.locked() = Interaction::default();
 +}
 +
 +pub(crate) fn preview(snapshot: ModViewSnapshot) {
@@ -163062,9 +162435,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +pub(crate) fn startup_preview(snapshot: Option<ModViewSnapshot>, repository: &std::path::Path) {
-+    *INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Interaction::default();
++    *INTERACTION.locked() = Interaction::default();
 +    if let Some(snapshot) = snapshot {
 +        preview(snapshot);
 +        if let Some(cache) = CACHE
@@ -163204,12 +162575,7 @@ index 000000000..9b9dcb17e
 +
 +pub(crate) fn dialog_visible(snapshot: &ModViewSnapshot) -> bool {
 +    site(&snapshot.view, "dialog").is_some_and(|dialog| {
-+        !dialog.components.is_empty()
-+            && INTERACTION
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner)
-+                .dismissed
-+                != Some(dialog_key(dialog))
++        !dialog.components.is_empty() && INTERACTION.locked().dismissed != Some(dialog_key(dialog))
 +    })
 +}
 +
@@ -164363,9 +163729,7 @@ index 000000000..9b9dcb17e
 +    if available.is_empty() {
 +        return;
 +    }
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let rows = component_rows(
 +        &welcome.components,
 +        available.width,
@@ -164417,9 +163781,7 @@ index 000000000..9b9dcb17e
 +
 +pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let style = panel_style(&snapshot.view);
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -164977,9 +164339,7 @@ index 000000000..9b9dcb17e
 +        return;
 +    };
 +    let style = panel_style(&snapshot.view);
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -165060,9 +164420,7 @@ index 000000000..9b9dcb17e
 +    text: &str,
 +    ttl: std::time::Duration,
 +) {
-+    let mut notices = NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut notices = NOTICES.locked();
 +    notices
 +        .0
 +        .retain(|notice| id.is_none() || notice.owner != owner || notice.id.as_deref() != id);
@@ -165090,9 +164448,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +pub(crate) fn clear_notice(owner: &str, id: &str) -> bool {
-+    let mut notices = NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut notices = NOTICES.locked();
 +    let count = notices.0.len();
 +    notices
 +        .0
@@ -165105,9 +164461,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +fn live_notices(placement: NoticePlacement) -> Vec<Notice> {
-+    let mut notices = NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut notices = NOTICES.locked();
 +    let now = std::time::Instant::now();
 +    let count = notices.0.len();
 +    notices.0.retain(|notice| notice.expires > now);
@@ -165127,10 +164481,7 @@ index 000000000..9b9dcb17e
 +/// True once after notices were added, cleared or expired.
 +pub(crate) fn notices_changed() -> bool {
 +    live_notices(NoticePlacement::Status);
-+    let revision = NOTICES
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .1;
++    let revision = NOTICES.locked().1;
 +    SEEN_NOTICES.swap(revision, std::sync::atomic::Ordering::Relaxed) != revision
 +}
 +
@@ -165322,9 +164673,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +fn focus_unobserved(id: &str) -> bool {
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    if !interaction.ids.contains(id) {
 +        return false;
 +    }
@@ -165340,9 +164689,7 @@ index 000000000..9b9dcb17e
 +    if key.kind != KeyEventKind::Press {
 +        return None;
 +    }
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let escape = (key.code, key.modifiers) == (KeyCode::Esc, KeyModifiers::NONE);
 +    let in_terminal = interaction.focused.as_ref().is_some_and(|focused| {
 +        matches!(
@@ -165539,9 +164886,7 @@ index 000000000..9b9dcb17e
 +
 +/// True while a mod component has focus or a mod dialog is on screen.
 +pub(crate) fn holds_keys() -> bool {
-+    let interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let interaction = INTERACTION.locked();
 +    interaction
 +        .focused
 +        .as_ref()
@@ -165551,9 +164896,7 @@ index 000000000..9b9dcb17e
 +
 +/// Lets a mod command reopen and focus a dialog the user dismissed.
 +pub(crate) fn reopen_dialogs() {
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    if interaction.dismissed.take().is_some() {
 +        interaction.dialog = None;
 +    }
@@ -165571,8 +164914,7 @@ index 000000000..9b9dcb17e
 +
 +pub(crate) fn component_owner(component: &str) -> Option<String> {
 +    INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .locked()
 +        .component_owners
 +        .get(component)
 +        .cloned()
@@ -165632,9 +164974,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +fn handle_paste(text: &str) -> bool {
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let Some(focused) = interaction.focused.clone() else {
 +        return false;
 +    };
@@ -165798,9 +165138,7 @@ index 000000000..9b9dcb17e
 +}
 +
 +fn handle_pointer(event: MouseEvent) -> Option<ModPointer> {
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let top = interaction
 +        .layers
 +        .iter()
@@ -165993,11 +165331,7 @@ index 000000000..9b9dcb17e
 +
 +/// Reports what a user gesture changed to the owner of each affected component.
 +fn observed<T>(run: impl FnOnce() -> T) -> T {
-+    let lock = || {
-+        INTERACTION
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner)
-+    };
++    let lock = || INTERACTION.locked();
 +    let before = observe(&lock());
 +    let result = run();
 +    let after = observe(&lock());
@@ -166067,9 +165401,7 @@ index 000000000..9b9dcb17e
 +            }
 +        }
 +        if target != to {
-+            let mut interaction = INTERACTION
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let mut interaction = INTERACTION.locked();
 +            interaction.focused = target.filter(|id| interaction.ids.contains(id));
 +        }
 +    }
@@ -166088,9 +165420,7 @@ index 000000000..9b9dcb17e
 +            Err(_) => previous,
 +        };
 +        if applied != Some(*offset) {
-+            let mut interaction = INTERACTION
-+                .lock()
-+                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let mut interaction = INTERACTION.locked();
 +            match applied {
 +                Some(applied) => interaction.scroll.insert(id.clone(), applied),
 +                None => interaction.scroll.remove(id),
@@ -166211,9 +165541,7 @@ index 000000000..9b9dcb17e
 +
 +/// `terminal.panes`: the caller's own panes; a pane is visible while its header row is on screen.
 +pub(crate) fn panes(caller: &str) -> serde_json::Value {
-+    let interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let interaction = INTERACTION.locked();
 +    let panes = interaction
 +        .collapsed
 +        .iter()
@@ -166241,9 +165569,7 @@ index 000000000..9b9dcb17e
 +    if component_owner(id).as_deref() != Some(caller) {
 +        return Err("terminal_pane_not_owned".into());
 +    }
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    let before = observe(&interaction);
 +    let dialog = with_cache(|cache| {
 +        site(&cache.snapshot.view, "dialog").is_some_and(|site| {
@@ -166294,11 +165620,12 @@ index 000000000..9b9dcb17e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..b127214e8
+index 000000000..e5c401b5c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,289 @@
 +use super::*;
++use crate::omd::LockExt;
 +use std::sync::Arc;
 +
 +const BELOW_COMPOSER_ROWS: u16 = 6;
@@ -166325,9 +165652,7 @@ index 000000000..b127214e8
 +pub(crate) struct FooterFrame;
 +
 +pub(crate) fn footer_frame() -> FooterFrame {
-+    *FOOTER
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner) = FooterCache {
++    *FOOTER.locked() = FooterCache {
 +        active: true,
 +        ..FooterCache::default()
 +    };
@@ -166336,9 +165661,7 @@ index 000000000..b127214e8
 +
 +impl Drop for FooterFrame {
 +    fn drop(&mut self) {
-+        *FOOTER
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner) = FooterCache::default();
++        *FOOTER.locked() = FooterCache::default();
 +    }
 +}
 +
@@ -166350,20 +165673,13 @@ index 000000000..b127214e8
 +}
 +
 +pub(crate) fn footer_layout(site: FooterSite, width: u16) -> Arc<FooterLayout> {
-+    if let Some(layout) = FOOTER
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .layouts
-+        .get(&(site, width))
-+    {
++    if let Some(layout) = FOOTER.locked().layouts.get(&(site, width)) {
 +        return Arc::clone(layout);
 +    }
 +    let snapshot = with_cache(|cache| Arc::clone(&cache.snapshot)).unwrap_or_default();
 +    let style = panel_style(&snapshot.view);
 +    let look = (snapshot.view.theme.border, snapshot.view.theme.icons);
-+    let mut interaction = INTERACTION
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut interaction = INTERACTION.locked();
 +    interaction.component_owners = snapshot.component_owners.clone();
 +    bind_terminals(&mut interaction, &snapshot);
 +    let rows = match site {
@@ -166445,9 +165761,7 @@ index 000000000..b127214e8
 +        key_panes,
 +        site,
 +    });
-+    let mut cache = FOOTER
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = FOOTER.locked();
 +    if cache.active {
 +        cache.layouts.insert((site, width), Arc::clone(&layout));
 +    }
@@ -166464,9 +165778,7 @@ index 000000000..b127214e8
 +    }
 +
 +    pub(crate) fn render(self: &Arc<Self>, area: Rect, buffer: &mut Buffer) {
-+        let interaction = INTERACTION
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let interaction = INTERACTION.locked();
 +        let scroll = focused_scroll(&self.rows, area.height, &interaction);
 +        drop(interaction);
 +        crate::terminal_hyperlinks::HyperlinkParagraph::new(
@@ -166474,9 +165786,7 @@ index 000000000..b127214e8
 +            Style::default(),
 +        )
 +        .render(area, buffer);
-+        let mut cache = FOOTER
-+            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        let mut cache = FOOTER.locked();
 +        if cache.active {
 +            if area.is_empty() {
 +                cache.rendered.remove(&self.site);
@@ -166490,9 +165800,7 @@ index 000000000..b127214e8
 +}
 +
 +pub(super) fn register_footer(interaction: &mut Interaction) {
-+    let cache = FOOTER
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let cache = FOOTER.locked();
 +    for (area, layout, scroll) in cache.rendered.values() {
 +        interaction
 +            .key_panes
@@ -169180,10 +168488,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..43be18a83
+index 000000000..de3beae98
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,771 @@
+@@ -0,0 +1,773 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -169193,6 +168501,18 @@ index 000000000..43be18a83
 +pub(crate) const MODE_ENV: &str = codex_omd::MODE_ENV;
 +pub(crate) const INSTALL_PROFILE_ENV: &str = "OMD_INSTALL_PROFILE";
 +const HOST_CONFIG: &str = "host.json";
++
++/// Locks a mutex, recovering the data if a panicking holder poisoned it.
++pub(crate) trait LockExt<T> {
++    fn locked(&self) -> std::sync::MutexGuard<'_, T>;
++}
++
++impl<T> LockExt<T> for std::sync::Mutex<T> {
++    fn locked(&self) -> std::sync::MutexGuard<'_, T> {
++        self.lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++    }
++}
 +
 +#[derive(Clone, Debug, Default, Eq, PartialEq)]
 +pub(crate) struct Snapshot {
@@ -169228,9 +168548,7 @@ index 000000000..43be18a83
 +    };
 +    let (view, status) = (root.join("mod-view.json"), root.join("mod-status.json"));
 +    let stamps = [file_stamp(&view), file_stamp(&status)];
-+    let mut cache = CACHE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = CACHE.locked();
 +    if let Some((cached_root, cached, snapshot)) = cache.as_ref()
 +        && *cached_root == root
 +        && *cached == stamps
@@ -169326,15 +168644,11 @@ index 000000000..43be18a83
 +
 +/// The store plus `host.json` protected and secret paths, re-read only when the file changes.
 +fn host_protected_paths(root: &Path) -> Vec<PathBuf> {
-+    type Cached = (PathBuf, Option<(std::time::SystemTime, u64)>, Vec<PathBuf>);
++    type Cached = (PathBuf, Option<FileStamp>, Vec<PathBuf>);
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
 +    let path = root.join(HOST_CONFIG);
-+    let stamp = std::fs::symlink_metadata(&path)
-+        .ok()
-+        .and_then(|metadata| Some((metadata.modified().ok()?, metadata.len())));
-+    let mut cache = CACHE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let stamp = file_stamp(&path);
++    let mut cache = CACHE.locked();
 +    if let Some((cached_root, cached_stamp, protected)) = cache.as_ref()
 +        && cached_root == root
 +        && *cached_stamp == stamp
@@ -169374,9 +168688,7 @@ index 000000000..43be18a83
 +    let Some(stamp) = file_stamp(&path) else {
 +        return serde_json::from_slice(&bounded_read(&path, 262_144).ok()?).ok();
 +    };
-+    let mut cache = CACHE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = CACHE.locked();
 +    if let Some((cached_path, cached, status)) = cache.as_ref()
 +        && *cached_path == path
 +        && *cached == stamp
@@ -169401,9 +168713,7 @@ index 000000000..43be18a83
 +        .ok()
 +        .and_then(|launch| mod_paths_for(&launch))
 +        .and_then(|paths| Some((paths.store?, paths.repository)));
-+    let mut cache = CACHE
-+        .lock()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let mut cache = CACHE.locked();
 +    if let Some((cached, loaded, snapshot)) = cache.as_ref()
 +        && *cached == root
 +        && loaded.elapsed() < std::time::Duration::from_secs(2)

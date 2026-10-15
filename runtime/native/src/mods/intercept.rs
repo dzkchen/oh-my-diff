@@ -93,7 +93,7 @@ pub(super) async fn chain(
 }
 
 /// The mod whose result settled last, i.e. the outermost link that answered or transformed it.
-pub(super) fn settled_by(chain: &codex_omd::ModChain) -> String {
+pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
     chain
         .trace
         .iter()

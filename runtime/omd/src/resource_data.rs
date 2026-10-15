@@ -338,10 +338,7 @@ impl ResourceStore<'_> {
         if cursor > payload.len() || !payload.is_char_boundary(cursor) {
             return Err(io::Error::other("resource_cursor_invalid"));
         }
-        let mut end = cursor.saturating_add(max_bytes).min(payload.len());
-        while !payload.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = payload.floor_char_boundary(cursor.saturating_add(max_bytes));
         if end == cursor && end < payload.len() {
             return Err(io::Error::other("resource_page_too_small"));
         }

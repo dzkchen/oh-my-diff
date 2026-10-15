@@ -39,7 +39,6 @@ export const languageId = (path: string) => /\.(?:js|jsx|mjs|cjs)$/.test(path) ?
 export const object = (value: Json): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 export const string = (value: Json): string | null => typeof value === 'string' ? value : null;
 export const number = (value: Json): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-export const message = (value: Json): Message | null => object(value);
 export const linesOf = (text: string): number[] => {
   const lines = [0];
   for (let index = text.indexOf('\n'); index >= 0; index = text.indexOf('\n', index + 1)) lines.push(index + 1);
@@ -99,8 +98,9 @@ export function checkedRange(text: string, value: Json): { start: { line: number
   const range = object(value);
   const start = object(range?.start ?? null);
   const end = object(range?.end ?? null);
-  const first = offset(text, linesOf(text), start);
-  const last = offset(text, linesOf(text), end);
+  const lines = linesOf(text);
+  const first = offset(text, lines, start);
+  const last = offset(text, lines, end);
   if (first === null || last === null || first > last) return null;
   return { start: { line: Number(start?.line), character: Number(start?.character) }, end: { line: Number(end?.line), character: Number(end?.character) } };
 }
