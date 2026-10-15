@@ -125,60 +125,20 @@ impl ModStore {
             return Err(failure("migration_requires_different_state_version"));
         }
         let to = package.state_version;
-        let mut loaded = Loaded {
+        let mut loaded = detached(
             package,
-            source: source.into(),
-            assets: Arc::new(store::asset_map(assets)),
-            request_metadata: Arc::new(OnceLock::new()),
-            selection: selection.clone(),
-            adapter: None,
-            state: previous["value"].clone(),
-            ui: None,
-            ui_state: Value::Null,
-            ui_revision: 0,
-            ui_clears: 0,
-            command_view: None,
-            registrations: Registrations::default(),
-            source_use: ModSourceUse::default(),
-            unused_grants: Vec::new(),
-            unused_environment: Vec::new(),
-            withheld: Vec::new(),
-            error: None,
-            telemetry: ModTelemetry::default(),
-        };
-        let inspected = ModHost::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
-        ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
-        if inspected.state != loaded.state
-            || !inspected
-                .registrations
-                .events
-                .iter()
-                .any(|e| e == "migrate")
-        {
-            return Err(failure("explicit_migration_handler_required"));
-        }
-        loaded.registrations = inspected.registrations.clone();
-        let reply = ModHost::run(
-            &config.node,
-            &loaded,
-            "migrate",
-            "",
-            json!({"from":from,"to":to}),
-            &|| true,
-        )?;
-        if reply.registrations != inspected.registrations {
-            return Err(failure("migration_changed_registration"));
-        }
-        let state_name = ModStore::state_name(&loaded.package.id, &selection.scope);
-        let backup = format!(
-            "{}-backup-{}",
-            state_name,
-            digest(&serde_json::to_vec(&previous)?)
+            source,
+            assets,
+            selection.clone(),
+            previous["value"].clone(),
         );
+        loaded.registrations = migration_registrations(&config.node, &loaded)?;
+        let state = run_migration(&config.node, &loaded, from, &|| true)?;
+        let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
         self.write(&backup, &previous)?;
         self.write(
             &name,
-            &json!({"schema":MOD_STATE_STORAGE_SCHEMA_VERSION,"version":to,"value":reply.state}),
+            &json!({"schema":MOD_STATE_STORAGE_SCHEMA_VERSION,"version":to,"value":state}),
         )?;
         Ok(
             json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup),
@@ -252,4 +212,109 @@ impl ModStore {
             "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
         )
     }
+}
+
+/// Whether a state read failed on thread or checkout state stored at another version that
+/// the mod can migrate. Store-scope state migrates only through `ModStore::migrate`.
+pub(super) fn migratable(
+    loaded: &Loaded,
+    location: &store::StateLocation,
+    error: &io::Error,
+) -> bool {
+    matches!(location, store::StateLocation::Directory(..))
+        && error.to_string().starts_with("state_migration_required")
+        && loaded.package.capabilities.iter().any(|c| c == "store")
+        && loaded.registrations.events.iter().any(|e| e == "migrate")
+}
+
+/// Runs the mod's `migrate` handler on its older thread or checkout state and stores the result.
+pub(super) fn migrate_state(
+    node: &Path,
+    loaded: &Loaded,
+    location: &store::StateLocation,
+    active: &dyn Fn() -> bool,
+) -> Result<Value> {
+    let store::StateLocation::Directory(directory, name) = location else {
+        return Err(failure(
+            "state_migration_required: previous state preserved",
+        ));
+    };
+    store::migrate_directory_state(
+        directory,
+        name,
+        loaded.package.state_version,
+        |from, value| {
+            let mut previous = loaded.clone();
+            previous.state = value;
+            previous.registrations = migration_registrations(node, &previous)?;
+            run_migration(node, &previous, from, active)
+        },
+    )
+}
+
+/// A package loaded outside the host, for inspection and migration only.
+pub(super) fn detached(
+    package: ModPackage,
+    source: String,
+    assets: BTreeMap<String, String>,
+    selection: ModSelection,
+    state: Value,
+) -> Loaded {
+    Loaded {
+        package,
+        source: source.into(),
+        assets: Arc::new(store::asset_map(assets)),
+        request_metadata: Arc::new(OnceLock::new()),
+        selection,
+        adapter: None,
+        state,
+        ui: None,
+        ui_state: Value::Null,
+        ui_revision: 0,
+        ui_clears: 0,
+        command_view: None,
+        registrations: Registrations::default(),
+        source_use: ModSourceUse::default(),
+        unused_grants: Vec::new(),
+        unused_environment: Vec::new(),
+        withheld: Vec::new(),
+        error: None,
+        telemetry: ModTelemetry::default(),
+    }
+}
+
+pub(super) fn migration_registrations(node: &Path, loaded: &Loaded) -> Result<Registrations> {
+    let inspected = ModHost::run(node, loaded, "inspect", "", Value::Null, &|| true)?;
+    ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
+    if inspected.state != loaded.state
+        || !inspected
+            .registrations
+            .events
+            .iter()
+            .any(|e| e == "migrate")
+    {
+        return Err(failure("explicit_migration_handler_required"));
+    }
+    Ok(inspected.registrations)
+}
+
+fn run_migration(
+    node: &Path,
+    loaded: &Loaded,
+    from: u64,
+    active: &dyn Fn() -> bool,
+) -> Result<Value> {
+    let to = loaded.package.state_version;
+    let reply = ModHost::run(
+        node,
+        loaded,
+        "migrate",
+        "",
+        json!({"from":from,"to":to}),
+        active,
+    )?;
+    if reply.registrations != loaded.registrations {
+        return Err(failure("migration_changed_registration"));
+    }
+    Ok(reply.state)
 }

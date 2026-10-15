@@ -903,6 +903,64 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
+fn thread_state_from_an_older_state_version_migrates_at_its_next_callback() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(&root, "fixture", COUNTER, &["commands", "store"]);
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands", "store"]);
+    let mut runtime = host(&temp);
+    let count = |runtime: &mut ModHost| {
+        let generation = runtime.generation();
+        runtime.invoke(
+            "fixture",
+            generation,
+            "command",
+            "count",
+            json!({"thread_id":"t1"}),
+        )
+    };
+    assert_eq!(count(&mut runtime).unwrap(), json!(1));
+    manifest["state_version"] = json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        path.join("index.ts"),
+        "export default api => { api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to})); api.command('count', () => api.state.get()); }",
+    )
+    .unwrap();
+    trust(&store, &path, &["commands", "store"]);
+    let _thread = codex_omd::StateThread::enter(Some("t1".into()));
+    runtime.reload().unwrap();
+    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
+    assert_eq!(
+        count(&mut runtime).unwrap(),
+        json!({"count":1,"from":1,"to":2})
+    );
+    let directory = root.join("store/data/threads/t1/.state");
+    let stored: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("state-fixture.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["version"], 2);
+    let backups: Vec<Value> = std::fs::read_dir(&directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("state-fixture.json-backup-")
+        })
+        .map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap())
+        .collect();
+    assert_eq!(backups, vec![json!({"schema":1,"version":1,"value":1})]);
+}
+
+#[test]
 fn migration_and_rollback_read_state_up_to_the_store_limit() {
     let (temp, store, path) = fixture(
         "export default api => api.command('big', () => { api.state.set({ pad: 'x'.repeat(100000) }); })",

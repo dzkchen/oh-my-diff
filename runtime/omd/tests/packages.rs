@@ -2226,3 +2226,45 @@ fn the_package_lock_can_outgrow_the_state_write_limit() {
     assert!(size > 65_536 && size <= 524_288);
     assert_eq!(store.package_lock().unwrap().packages.len(), 80);
 }
+
+#[test]
+fn thread_state_version_updates_require_a_migrate_handler() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands", "store"], json!([]));
+    let store = store_with_node(&temp);
+    let manifest_path = package.join("mod.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let install = request(&package, &["commands", "store"]);
+    let plan = store.package_plan(install.clone()).unwrap();
+    store
+        .package_apply(install.clone(), &plan.confirmation)
+        .unwrap();
+    manifest["version"] = json!("1.1.0");
+    manifest["state_version"] = json!(2);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        store
+            .package_plan(install.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("migration_handler_required: fixture changes its thread state_version")
+    );
+    std::fs::write(
+        package.join("main.ts"),
+        "export default api => api.on('migrate', () => api.state.set(null))\n",
+    )
+    .unwrap();
+    assert_eq!(store.package_plan(install).unwrap().action, "update");
+}
