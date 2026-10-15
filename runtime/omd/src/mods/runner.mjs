@@ -118,8 +118,20 @@ function serve(line) {
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
+const utf8 = globalThis.__utf8;
 delete globalThis.__exchange;
 delete globalThis.__clock;
+delete globalThis.__utf8;
+// Host limits are UTF-8 bytes; arrays and results are rebuilt here so mods only see this realm's objects.
+globalThis.TextEncoder = class TextEncoder {
+  get encoding() { return 'utf-8'; }
+  encode(input = '') { return new Uint8Array(utf8.encode(String(input))); }
+  encodeInto(source, destination) {
+    if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
+    const { read, written } = utf8.encodeInto(String(source), destination);
+    return { read, written };
+  }
+};
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -789,6 +801,7 @@ globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynami
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 let live = null;
+const utf8 = new TextEncoder();
 function prepare() {
   const globals = Object.create(null);
   globals.__exchange = frame => {
@@ -801,6 +814,7 @@ function prepare() {
     }
   };
   globals.__clock = () => performance.now();
+  globals.__utf8 = utf8;
   const context = createContext(globals, {
     codeGeneration: { strings: false, wasm: false },
   });

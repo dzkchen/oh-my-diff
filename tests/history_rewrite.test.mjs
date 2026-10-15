@@ -68,11 +68,11 @@ function thread() {
 
 function run(source, name, payload, target) {
   const request = { source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'sessions', 'history_write'],
-    state: null, settings: {}, event: 'command', name, payload, receipts: [], surface: { events: {}, replacements: [], middleware: [] }, hook_budget_ms: 10000 };
+    state: null, settings: {}, event: 'command', name, payload, hook_budget_ms: 10000 };
   const output = callback(request, call => {
     assert.equal(call.operation, 'app.request');
     return target.request(call.arguments.method, call.arguments.params ?? {});
-  }, []);
+  });
   if (output.error) throw new Error(output.error);
   return output.value.display;
 }

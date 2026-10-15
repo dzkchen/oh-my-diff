@@ -12,11 +12,12 @@ const target = (value: string) => {
   return { path: match?.[1] ?? '', line: Number(match?.[2] ?? 1), character: Number(match?.[3] ?? 1) };
 };
 
+const utf8 = new TextEncoder();
 const clip = (text: string, limit: number, json = false) => {
+  if (!json) return text.slice(0, utf8.encodeInto(text, new Uint8Array(limit)).read);
   let end = 0;
   for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    limit -= code < 0x80 ? (json ? JSON.stringify(char).length - 2 : 1) : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    limit -= utf8.encode(JSON.stringify(char)).length - 2;
     if (limit < 0) break;
     end += char.length;
   }
@@ -65,8 +66,8 @@ export default function activate(api: ModAPI) {
       const { path, line } = target(argument);
       if (!path || /^\/|(^|\/)\.\.?(\/|$)/.test(path)) return { display: USAGE };
       if (op === 'editor') {
-        const root = api.host.tryCall('exec.run', { program: 'pwd', timeout_ms: 5_000 });
-        const opened = root.ok ? api.host.tryCall('terminal.open', { path: `${root.value.stdout.trim()}/${path}`, line, editor: true }) : root;
+        const session = api.host.tryCall('session.info', null);
+        const opened = session.ok ? api.host.tryCall('terminal.open', { path: `${session.value.root}/${path}`, line, editor: true }) : session;
         return opened.ok ? null : { display: opened.error };
       }
       const start = Math.max(1, line - 12);

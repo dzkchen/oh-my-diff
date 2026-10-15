@@ -1,25 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { runnerSync } from './mod_runner.mjs';
 
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const examples = new URL('../mods/examples/', import.meta.url);
 const names = ['context', 'coordination', 'guard', 'interception', 'kernel', 'recovery', 'routing',
   'service-consumer', 'service-provider', 'service_request', 'terminal', 'virtual_reader', 'workflow', 'workspace'];
-const surface = {
-  events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
-    model_response: 'model', tool_result: 'lifecycle', start: 'lifecycle', process_event: 'exec',
-    compaction: 'compaction', routing: 'model', terminal: 'terminal',
-    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals', component_event: 'terminal', timer: 'events', channel: 'events',
-    composer: 'composer', prompt: 'middleware' },
-  replacements: ['context', 'routing', 'compaction'],
-  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', response_stream: 'middleware', input: 'input', tool_specs: 'tools',
-    command_list: 'commands', command: 'commands', config_list: 'config', config_set: 'config.write', admission: 'policy', render: 'terminal',
-    composer_edit: 'composer', composer_key: 'composer', mention: 'input', history_persist: 'history_persist' },
-  middleware: ['tool_result', 'approval', 'prompt'], state: 'store', contracts: 'contracts',
-};
 
 function packageFile(name, file) {
   return new URL(`${name}/${file}`, examples);
@@ -29,10 +15,8 @@ function runRaw(name, event, payload = null, options = {}) {
   const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
   const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
   const request = { source, filename: `${name}/index.ts`, api: manifest.api, capabilities: manifest.capabilities,
-    surface, state: null, settings: {}, event, payload, hook_budget_ms: 1000, ...options };
-  const result = runnerSync(request);
-  assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+    state: null, settings: {}, event, payload, hook_budget_ms: 1000, ...options };
+  return runnerSync(request);
 }
 
 function run(name, event, payload = null, options = {}) {

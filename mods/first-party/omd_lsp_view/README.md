@@ -37,8 +37,8 @@ or failed server side by side, its open documents and up to three current
 errors from `omd_lsp_sync/status`. Neither card opens a sidebar.
 
 Capabilities: `commands`, `terminal`, `store`, `events` (the request hop),
-`exec` (`pwd` and `awk` for excerpts) and `services` (imports `omd.lsp`
-1.0.0).
+`exec` (`awk` for excerpts), `services` (imports `omd.lsp` 1.0.0) and
+`inventory` (the repository root for `/lsp editor`).
 
 Ported from [neoism](https://github.com/parkers0405/neoism)'s editor code
 intelligence (Parker Settle and the Neoism contributors, MIT; see
