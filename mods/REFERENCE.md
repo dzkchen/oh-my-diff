@@ -97,7 +97,7 @@ native work.
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 | `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
-| `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request`; the `elicitation` interceptor and `elicitation_result` |
+| `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
@@ -512,7 +512,9 @@ the mod's `migrate` handler (it needs `store`) on it and keeps the previous file
 beside it as `<file>-backup-<sha256>`; until then registration and render reads
 see `null`. A package update that changes the `state_version` of a thread- or
 checkout-scoped mod is refused (`migration_handler_required`) unless the new
-version registers `migrate`; an adapter-wrapped package is not checked.
+version registers `migrate`; an adapter-wrapped package is not checked. To
+tell, `package plan` and `apply` load the new version's code once in the
+sandboxed runner with host operations unavailable.
 Migration handlers can import declared package assets by relative path.
 
 ### Reactive state (`reactive_state_v1`)
@@ -1246,6 +1248,24 @@ coalesced, 256 events / 1 MiB per mod, oldest dropped with a count) and
 `codex exec` or a headless `codex app-server`, see
 [External clients](#external-clients-omd-client1)) is reachable; hosts without
 one return `client_surface_unavailable`.
+
+`app.respond {request_id, result}` (`app_respond_v1`, capability `approvals`)
+answers a server request that is still pending and whose method the mod
+subscribes to, from user or event contexts, as the terminal's own answer: the
+first answer wins and `serverRequest/resolved` closes the native prompt.
+`result` can never grant authority (`app_response_refused` otherwise): command
+and file-change approvals take only `{decision: 'decline' | 'cancel'}`,
+permission requests only `{permissions: {}}`, MCP elicitations only `{action:
+'decline' | 'cancel'}`, and `item/tool/requestUserInput` takes `{answers: {id:
+{answers: string[]}}}` (at most 16 questions of 16 answers, 16,384 bytes).
+Approving stays with the `approval` middleware and the `approve` grant; a
+question answer still reaches the model as the user's reply. A request that
+was already answered fails with `app_request_not_pending`, and a call bound to
+a thread the terminal is not showing fails with the retryable
+`client_context_changed` (`client_surface_context_changed` when the view
+changes after the call was queued). It
+needs the terminal; headless hosts and `codex exec` refuse it, and it is never
+delegated to external clients.
 
 ### Approvals (`approval_v1`)
 

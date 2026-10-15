@@ -158,6 +158,83 @@ pub fn server_request_routed(method: &str) -> bool {
     TABLE.server_requests.contains(method)
 }
 
+/// Checks a mod's answer to a pending server request: approvals and elicitations may only be
+/// declined or cancelled (approving stays with the `approve` grant), permissions only granted
+/// nothing, and `requestUserInput` only answered with bounded text.
+pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
+    let refused = |reason: &str| Err(format!("app_response_refused: {reason}"));
+    let object = result
+        .as_object()
+        .ok_or_else(|| "app_response_refused: result must be an object".to_owned())?;
+    let only = |keys: &[&str]| object.keys().all(|key| keys.contains(&key.as_str()));
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            if only(&["decision"])
+                && matches!(
+                    object.get("decision").and_then(Value::as_str),
+                    Some("decline" | "cancel")
+                )
+            {
+                Ok(())
+            } else {
+                refused("approvals accept only {decision: 'decline' | 'cancel'}")
+            }
+        }
+        "item/permissions/requestApproval" => {
+            if only(&["permissions"])
+                && object
+                    .get("permissions")
+                    .and_then(Value::as_object)
+                    .is_some_and(|value| value.is_empty())
+            {
+                Ok(())
+            } else {
+                refused("permission requests accept only {permissions: {}}")
+            }
+        }
+        "mcpServer/elicitation/request" => {
+            let empty = |key: &str| object.get(key).is_none_or(Value::is_null);
+            if only(&["action", "content", "_meta"])
+                && matches!(
+                    object.get("action").and_then(Value::as_str),
+                    Some("decline" | "cancel")
+                )
+                && empty("content")
+                && empty("_meta")
+            {
+                Ok(())
+            } else {
+                refused("elicitations accept only {action: 'decline' | 'cancel'}")
+            }
+        }
+        "item/tool/requestUserInput" => {
+            let answers = object.get("answers").and_then(Value::as_object);
+            let valid = only(&["answers"])
+                && answers.is_some_and(|answers| {
+                    answers.len() <= 16
+                        && answers.values().all(|answer| {
+                            answer.as_object().is_some_and(|answer| {
+                                answer.len() == 1
+                                    && answer.get("answers").and_then(Value::as_array).is_some_and(
+                                        |items| {
+                                            items.len() <= 16 && items.iter().all(Value::is_string)
+                                        },
+                                    )
+                            })
+                        })
+                });
+            if !valid {
+                refused("requestUserInput accepts only {answers: {id: {answers: string[]}}}")
+            } else if result.to_string().len() > 16_384 {
+                refused("answers exceed 16384 bytes")
+            } else {
+                Ok(())
+            }
+        }
+        _ => refused("method is not answerable"),
+    }
+}
+
 pub fn notification_patterns_match(pattern: &str) -> bool {
     let patterns = [pattern.to_owned()];
     TABLE

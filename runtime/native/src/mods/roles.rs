@@ -78,7 +78,7 @@ impl Core {
                 let provider = lead
                     .host
                     .accounts
-                    .0
+                    .by_thread
                     .lock()
                     .map_err(|_| "account lock poisoned")?
                     .get(&lead.thread.to_string())

@@ -48,6 +48,7 @@ pub fn current_generation() -> Option<u64> {
 
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
+    "app.respond",
     "credentials.request",
     "terminal.notify",
     "terminal.show_thread",

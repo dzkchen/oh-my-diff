@@ -3644,6 +3644,43 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
 }
 
 #[test]
+fn offline_timers_fire_in_the_thread_that_scheduled_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let capabilities = ["commands", "events", "lifecycle", "store"];
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => { api.on('start', ({thread_id}) => { api.state.set(thread_id); api.host.call('events.schedule', {key:'tick',delay_ms:100}); }); \
+         api.on('timer', () => api.state.set(`${api.state.get()} fired`)); api.command('read', () => api.state.get()); }",
+        &capabilities,
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &capabilities);
+    let mut runtime = host(&temp);
+    let result = runtime
+        .offline_test(json!({
+            "schema": 1,
+            "virtual_time_ms": 1000,
+            "steps": [
+                {"type": "event", "event": "start", "payload": {"thread_id": "t1"}},
+                {"type": "event", "event": "start", "payload": {"thread_id": "t2"}},
+                {"type": "advance_time", "ms": 200, "expect": {"now_ms": 1200, "timers": [
+                    {"mod": "fixture", "key": "tick", "at_ms": 1100}, {"mod": "fixture", "key": "tick", "at_ms": 1100}]}},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t1"}, "expect": "t1 fired"},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t2"}, "expect": "t2 fired"}
+            ]
+        }))
+        .unwrap();
+    assert_eq!(result["steps"].as_array().unwrap().len(), 5);
+}
+
+#[test]
 fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

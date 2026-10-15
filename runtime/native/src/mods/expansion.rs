@@ -427,11 +427,7 @@ pub(super) fn bounded_output(mut output: String) -> (String, bool) {
     if output.len() <= TOOL_RESULT_BYTES {
         return (output, false);
     }
-    let mut end = TOOL_RESULT_BYTES;
-    while !output.is_char_boundary(end) {
-        end -= 1;
-    }
-    output.truncate(end);
+    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
     (output, true)
 }
 
@@ -604,7 +600,7 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
     let mut accounts = lead
         .host
         .accounts
-        .0
+        .by_thread
         .lock()
         .map_err(|_| "account lock poisoned")?;
     let account = accounts

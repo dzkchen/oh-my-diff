@@ -9,7 +9,6 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
-use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixListener;
@@ -319,14 +318,6 @@ pub struct Broker {
     state: Mutex<()>,
 }
 
-fn private_directory(path: &Path) -> io::Result<PathBuf> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(path)?;
-    Ok(path.to_path_buf())
-}
-
 fn write_private(path: &Path, value: &Value) -> io::Result<()> {
     let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
@@ -464,7 +455,11 @@ impl Broker {
         if !Path::new(store).is_absolute() {
             return Err(failure("authority_request_invalid"));
         }
-        private_directory(&self.root.join("stores").join(sha256(store.as_bytes())))
+        crate::workspace::private_path(
+            &self.root,
+            &["stores", &sha256(store.as_bytes())],
+            "authority_directory_invalid",
+        )
     }
 
     fn profiles(&self, arguments: &Value) -> io::Result<crate::credentials::CredentialProfiles> {
@@ -655,7 +650,7 @@ impl Broker {
             }
             "anchor.get" | "anchor.append" | "anchor.seed" => {
                 let stream = text(&arguments, "stream")?;
-                let path = private_directory(&self.root.join("anchors"))?
+                let path = crate::workspace::private_path(&self.root, &["anchors"], "authority_directory_invalid")?
                     .join(format!("{}.json", sha256(stream.as_bytes())));
                 let mut anchor = read_json(
                     &path,

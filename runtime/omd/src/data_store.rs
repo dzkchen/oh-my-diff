@@ -121,13 +121,6 @@ fn key(value: &str) -> bool {
             .all(|byte| byte.is_ascii_graphic() && byte != b'\\')
 }
 
-fn now() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default()
-}
-
 fn newest_change(path: &Path) -> Option<std::time::SystemTime> {
     let mut newest = fs::symlink_metadata(path).ok()?.modified().ok()?;
     for entry in fs::read_dir(path).ok()?.filter_map(Result::ok) {
@@ -247,20 +240,7 @@ impl DataStore<'_> {
         {
             return Err(failure("store_root_invalid"));
         }
-        let mut path = self.root.to_path_buf();
-        for component in components {
-            path.push(component);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error),
-            }
-            let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(failure("store_directory_invalid"));
-            }
-        }
-        Ok(path)
+        crate::workspace::private_path(self.root, &components, "store_directory_invalid")
     }
 
     fn with_document<T>(
@@ -339,7 +319,7 @@ impl DataStore<'_> {
                     .ok_or_else(|| failure("store_value_required"))?;
                 let expected = input.expected_revision;
                 let provenance = StoreProvenance {
-                    at: now(),
+                    at: u128::from(crate::peers::now_ms()),
                     ..self.provenance.clone()
                 };
                 self.with_document(&input.scope, true, |document| {

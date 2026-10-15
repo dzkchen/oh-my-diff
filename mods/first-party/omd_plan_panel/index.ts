@@ -66,7 +66,7 @@ export default function activate(api: ModAPI) {
         const prefix = index === all.length - 1 ? '└─ ' : '├─ ';
         components.push(line(`step_${index}`, `Step ${index + 1}`, step.status === 'more'
           ? [{ text: `${prefix}${step.step}`, tone: 'muted' }]
-          : [{ text: `${prefix}${GLYPH[step.status]} `, tone: TONE[step.status] }, { text: step.step, tone: step.status === 'pending' ? 'normal' : TONE[step.status] }]));
+          : [{ text: `${prefix}${GLYPH[step.status]} `, tone: TONE[step.status] }, { text: step.step, tone: TONE[step.status] }]));
       });
     }
     return { sites: { above_composer: { mode: 'wrap', components: [...components, { type: 'slot' }] } }, keybindings: { 'Alt+p': { command: 'omd_plan_panel:todos', args: 'toggle' } } };

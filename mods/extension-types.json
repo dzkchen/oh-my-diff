@@ -111,6 +111,18 @@
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
     },
     {
+      "path": "mods/first-party/omd_auto_continue",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Times pending approvals and questions from public app_server_request events and answers expired ones through the generic app.respond operation, which can only decline, deny or answer; active by default in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_idle_compact",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Arms a timer from public model_response telemetry and starts compaction through the routed thread/compact/start app-server method when the prompt cache is about to expire; active by default in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_statusline",
       "extension_type": "mod",
       "role": "bundled",
