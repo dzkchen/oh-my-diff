@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "22b2973556afa27402aceae915a4036f6ffb0de51eaa275f1628dd67a99f8711"
+    "sha256": "9f92da14b7d4412b0962f6b7f1e6d13b6f24fa4a6ec8dc1efeacf3845b6fca59"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1219,7 +1219,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "faedeb58f8dd53bc75edff80339edd3df36b9a6515807c0eb857a90c113b6aec"
+      "after": "6f53fcf56701e8fdfbd56d869efc858f5842ab52b216d090721d88a3713c532a"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1247,11 +1247,11 @@
     },
     "codex-rs/omd/src/mods/package_manager.rs": {
       "before": null,
-      "after": "648a5b2d06514e01233bcb3bc1bf1dfc652e481789ef1961ba94dbddf704efa9"
+      "after": "39bf602f617bd2664778189917c9430a0c9744471339728c65efef43dee04e7e"
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
-      "after": "2ef928c440019a67c065158ef1abba41687e1d10c4a77231550e409647f36ab2"
+      "after": "42d95b5ad45ac673bcaa72a75911b44f08a019576a960862bace7e822b0881e9"
     },
     "codex-rs/omd/src/mods/persisted.rs": {
       "before": null,
@@ -1283,7 +1283,7 @@
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
-      "after": "d3e9007d7158375b1dfedc689141b16467e185177dd5e2eaa742dd891511238c"
+      "after": "36f3e65b6b7527b18f250f0e4bf32ff1b1e104956054cb00a98f500558881916"
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
@@ -1391,11 +1391,11 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "95c66ecfefc30e024776542314ad004d071fa7d9a6261d22b117eacf00a4593e"
+      "after": "9e3cc34f5ba36e107d239968919de08239423cceeb280d51ecf1f052e9d0703d"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
-      "after": "6c72945788f4df5df97728ee5b0cad42df8cce32fd1ed0a3a813f7f898907d88"
+      "after": "f8208777c3c27d9cfd766a95123e7a57de95f6b37450149c4e6c3cbe65cfdf6e"
     },
     "codex-rs/omd/tests/review_bridge.rs": {
       "before": null,
