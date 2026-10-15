@@ -2315,24 +2315,17 @@ pub struct ModConfiguration {
 
 impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-        Self::from_bytes(bytes, path)?.resolve_node()
-    }
-
-    fn from_bytes(bytes: &[u8], path: &Path) -> Result<Self> {
-        serde_json::from_slice(bytes)
-            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
-    }
-
-    fn resolve_node(mut self) -> Result<Self> {
-        if !self.node.is_file() {
-            self.node = node_on_path().ok_or_else(|| {
+        let mut config: Self = serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
+        if !config.node.is_file() {
+            config.node = node_on_path().ok_or_else(|| {
                 failure(format!(
                     "node_unavailable: {} is missing and no node is on PATH",
-                    self.node.display()
+                    config.node.display()
                 ))
             })?;
         }
-        Ok(self)
+        Ok(config)
     }
 }
 
@@ -2589,6 +2582,21 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
+/// Reads `mods.json` stamped `stamp` beforehand: the stamp (`None` if the file changed during
+/// the read), the digest and the bytes.
+fn read_configuration(
+    path: &Path,
+    stamp: Option<FileStamp>,
+) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
+    let bytes = store::read(path, 65_536);
+    let sha256 = digest(bytes.as_deref().unwrap_or_default());
+    (
+        stamp.filter(|_| configuration_stamp(path) == stamp),
+        sha256,
+        bytes,
+    )
+}
+
 type Brokered = Option<(u64, BTreeSet<String>)>;
 
 #[cfg(test)]
@@ -2709,7 +2717,7 @@ pub struct ModHost {
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
-    callback_configuration: Mutex<Option<(FileStamp, String, ModConfiguration)>>,
+    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3353,8 +3361,7 @@ impl ModHost {
             return Ok(false);
         }
         self.configuration_stamp = None;
-        let bytes = store::read(&path, 65_536);
-        let sha256 = digest(bytes.as_deref().unwrap_or_default());
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
         drop(config_profile);
         let (brokered, managed, deployment) = match self.authority(&sha256) {
             Ok(authority) => authority,
@@ -4586,13 +4593,16 @@ impl ModHost {
             managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
             deployment.generation,
             self.project.as_deref().unwrap_or(Path::new("")).display());
+        // An unchanged authority inventory cannot introduce a different precedence winner.
+        let unchanged = hash == self.configuration_sha256;
         match configuration {
-            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
+            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
+                config.mods.iter().filter(|selection| !unchanged || selection.path == loaded.selection.path).cloned(),
+            ),
             _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
             _ => return Err(failure("callback_authority_changed")),
         }
-        // An unchanged authority inventory cannot introduce a different precedence winner.
-        if hash == self.configuration_sha256 {
+        if unchanged {
             administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
             selections.retain(|selection| selection.path == loaded.selection.path);
         }
@@ -4615,8 +4625,9 @@ impl ModHost {
         Ok(())
     }
 
-    /// The digest and parse of `mods.json` for callback checks, re-read only when its stamp changes.
-    fn callback_configuration(&self) -> (String, Result<ModConfiguration>) {
+    /// The digest and parse of `mods.json` for callback checks, re-read when its stamp changes or
+    /// the resolved node binary is gone.
+    fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
         let mut cached = self
@@ -4625,17 +4636,18 @@ impl ModHost {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
             && stamp == *cached_stamp
+            && configuration.node.is_file()
         {
-            return (sha256.clone(), configuration.clone().resolve_node());
+            return (sha256.clone(), Ok(configuration.clone()));
         }
-        let bytes = store::read(&path, 65_536);
-        let sha256 = digest(bytes.as_deref().unwrap_or_default());
-        let configuration = bytes.and_then(|bytes| ModConfiguration::from_bytes(&bytes, &path));
-        *cached = match (stamp, &configuration) {
-            (Some(stamp), Ok(configuration)) => Some((stamp, sha256.clone(), configuration.clone())),
-            _ => None,
-        };
-        (sha256, configuration.and_then(ModConfiguration::resolve_node))
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let configuration = bytes
+            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
+            .map(Arc::new);
+        *cached = stamp
+            .zip(configuration.as_ref().ok())
+            .map(|(stamp, configuration)| (stamp, sha256.clone(), configuration.clone()));
+        (sha256, configuration)
     }
 
     fn begin(

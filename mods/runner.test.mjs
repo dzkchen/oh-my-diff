@@ -26,12 +26,21 @@ test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
     const lone = encoder.encodeInto('\\uD800x', new Uint8Array(3));
     const realm = probe => { try { probe(); return 'none'; } catch (error) { return error.constructor.constructor === Function ? 'local' : 'outer'; } };
     const disguised = new Proxy({}, { getPrototypeOf: () => Uint8Array.prototype });
+    const whole = encoder.encode(text.repeat(110_000));
+    const chunk = new Uint8Array(64);
+    let rest = text.repeat(110_000), offset = 0, same = true;
+    while (rest) {
+      const step = encoder.encodeInto(rest, chunk);
+      for (let index = 0; index < step.written; index++) same &&= chunk[index] === whole[offset + index];
+      offset += step.written;
+      rest = rest.slice(step.read);
+    }
     return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read), lone,
-      errors: [realm(() => encoder.encodeInto('a', disguised)), realm(() => encoder.encodeInto('a', {}))] };
+      errors: [realm(() => encoder.encodeInto('a', disguised)), realm(() => encoder.encodeInto('a', {}))], streamed: same && offset === whole.length };
   })`;
   const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'encode', payload: 'a€😀' });
   assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€',
-    lone: { read: 1, written: 3 }, errors: ['none', 'local'] }, 'no outer-realm error reaches mod code');
+    lone: { read: 1, written: 3 }, errors: ['none', 'local'], streamed: true }, 'no outer-realm error reaches mod code');
 });
 
 test('UI state requires terminal authority and refuses activation and render writes', () => {

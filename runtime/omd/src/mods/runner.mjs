@@ -133,17 +133,17 @@ globalThis.TextEncoder = class TextEncoder {
   encodeInto(source, destination) {
     if (!(destination instanceof Uint8Array)) throw new TypeError('encodeInto destination must be a Uint8Array');
     const text = String(source);
-    const bytes = encoded(text);
     let read = 0;
     let written = 0;
     for (const char of text) {
       const code = char.codePointAt(0);
       const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
       if (written + size > destination.length) break;
-      for (let index = 0; index < size; index++) destination[written + index] = bytes[written + index];
       written += size;
       read += char.length;
     }
+    const bytes = encoded(text.slice(0, read));
+    for (let index = 0; index < written; index++) destination[index] = bytes[index];
     return { read, written };
   }
 };

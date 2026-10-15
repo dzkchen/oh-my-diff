@@ -511,8 +511,10 @@ migrates before the mod's next callback in that thread or checkout: the host run
 the mod's `migrate` handler (it needs `store`) on it and keeps the previous file
 beside it as `<file>-backup-<sha256>`; until then registration and render reads
 see `null`. A package update that changes the `state_version` of a thread- or
-checkout-scoped mod is refused (`migration_handler_required`) unless the new
-version registers `migrate`; an adapter-wrapped package is not checked.
+checkout-scoped mod with `store` is refused (`migration_handler_required`)
+unless the new version registers `migrate`; an adapter-wrapped package is not
+checked. The preview runs no new code: it marks such a package
+`state_version.handler_required`, and the confirmed apply loads it to check.
 Migration handlers can import declared package assets by relative path.
 
 ### Reactive state (`reactive_state_v1`)
@@ -3140,8 +3142,9 @@ was on and its grant, authority scopes and origin are unchanged; otherwise it
 is off until enabled. `package-plan` shows per package `authority {from, to}`
 (exposure text plus the `os_access`, `approves`, `http_access`, `fs_access`,
 `mcp_servers`, `policy`, `peer_access` and `autonomy` scopes), `grant {from,
-to}` and `renewed_approval`, true for a new install or a changed grant,
-authority or origin.
+to}`, `renewed_approval`, true for a new install or a changed grant,
+authority or origin, and `state_version {from, to, migration_required,
+handler_required}`.
 
 `omd-mod`'s protection and recovery commands work without any control mod.
 Quarantine keeps the package's data, cache and sources, so unblocking and

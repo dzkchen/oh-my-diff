@@ -254,7 +254,8 @@ function viewServer() {
 }
 
 // A real language server over stdio: Content-Length framing through FIFOs, read without blocking so `exchange` can wait up to `wait_ms`.
-// While a request is unanswered it waits up to `patience`, so a server slowed by a parallel suite still answers inside one mod wait.
+// Until `patience` after each request was sent, a wait lasts until a message arrives, so a server slowed by a parallel suite still
+// answers inside the mod's request loop and a request that is never answered stops stretching later waits.
 function spawnServer(command, cwd, patience = 30_000) {
   const directory = mkdtempSync(join(tmpdir(), 'omd-lsp-'));
   const [input, output] = [join(directory, 'in'), join(directory, 'out')];
@@ -263,7 +264,7 @@ function spawnServer(command, cwd, patience = 30_000) {
   const writer = openSync(input, 'w');
   const reader = openSync(output, constants.O_RDWR | constants.O_NONBLOCK);
   let buffer = Buffer.alloc(0);
-  const pending = new Set();
+  const pending = new Map();
   const frame = () => {
     const end = buffer.indexOf('\r\n\r\n');
     if (end < 0) return null;
@@ -276,12 +277,12 @@ function spawnServer(command, cwd, patience = 30_000) {
   return {
     exchange(send, wait) {
       for (const message of send) {
-        if ('id' in message && 'method' in message) pending.add(message.id);
+        if ('id' in message && 'method' in message) pending.set(message.id, Date.now() + patience);
         const body = JSON.stringify(message);
         writeSync(writer, `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
       }
       const messages = [];
-      const deadline = Date.now() + (pending.size ? Math.max(wait, patience) : wait);
+      const deadline = Math.max(Date.now() + wait, ...pending.values());
       for (;;) {
         for (let next = frame(); next; next = frame()) {
           if (!('method' in next)) pending.delete(next.id);

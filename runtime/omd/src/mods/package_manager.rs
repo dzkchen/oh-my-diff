@@ -504,6 +504,7 @@ impl ModStore {
         };
         let mut resolved = BTreeMap::new();
         let mut visiting = Vec::new();
+        let mut handlers = BTreeSet::new();
         let cached = deployment.map(|entry| {
             self.root
                 .join("package-cache")
@@ -582,13 +583,22 @@ impl ModStore {
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
-                let state_migration_required = previous.is_some_and(|locked| {
-                    locked.state_version != resolved.package.state_version
-                        && self
-                            .root
-                            .join(ModStore::state_name(&resolved.package.id, &request.scope))
-                            .exists()
-                });
+                let state_version_changed = previous
+                    .is_some_and(|locked| locked.state_version != resolved.package.state_version);
+                let state_migration_required = state_version_changed
+                    && self
+                        .root
+                        .join(ModStore::state_name(&resolved.package.id, &request.scope))
+                        .exists();
+                // Thread and checkout state migrates at its next callback; an adapter-wrapped
+                // package cannot be inspected outside the host.
+                if state_version_changed
+                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
+                    && resolved.package.adapter.is_none()
+                    && resolved.package.capabilities.iter().any(|c| c == "store")
+                {
+                    handlers.insert(resolved.package.id.clone());
+                }
                 resolved.locked.enabled = previous.is_some_and(|locked| {
                     locked.enabled && same_approval(locked, &resolved.locked)
                 }) && !state_migration_required;
@@ -608,7 +618,7 @@ impl ModStore {
                 "package_plan_action_mismatch: {requested} requested, {action} computed"
             )));
         }
-        let changes = package_changes(&existing, &packages);
+        let changes = package_changes(&existing, &packages, &handlers);
         let mut plan = ModPackagePlan {
             schema: PACKAGE_LOCK_SCHEMA,
             action: action.to_owned(),
@@ -652,7 +662,7 @@ impl ModStore {
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
-        require_migration_handlers(&lock, &plan, &scope, &config.node)?;
+        require_migration_handlers(&plan, &scope, &config.node)?;
         let mut selection_ids = config
             .mods
             .iter()
@@ -2673,7 +2683,11 @@ fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Resul
     }
 }
 
-fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> Value {
+fn package_changes(
+    existing: &ModPackageLock,
+    packages: &[ModLockedPackage],
+    handlers: &BTreeSet<String>,
+) -> Value {
     let mut changes = Vec::new();
     for package in packages {
         let previous = existing.packages.get(&package.id);
@@ -2687,7 +2701,8 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
             "entrypoint":{"from":previous.map(|value|&value.entrypoint),"to":package.entrypoint},
             "api":{"from":previous.map(|value|&value.api),"to":package.api},
             "state_version":{"from":previous.map(|value|value.state_version),"to":package.state_version,
-                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled},
+                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled,
+                "handler_required":handlers.contains(&package.id)},
             "dependencies":{"from":previous.map(|value|&value.dependencies),"to":package.dependencies},
             "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
             "authority":{"from":previous.map(|value|&value.authority),"to":package.authority},
@@ -2733,30 +2748,15 @@ fn selected_settings(
         )
 }
 
-/// Thread and checkout state migrates at its next callback, so an update that changes its
-/// `state_version` needs a `migrate` handler. The new source runs only once the preview is
-/// confirmed; an adapter-wrapped package cannot be inspected outside the host.
-fn require_migration_handlers(
-    existing: &ModPackageLock,
-    plan: &ModPackagePlan,
-    scope: &str,
-    node: &Path,
-) -> Result<()> {
-    for locked in &plan.packages {
-        if !existing
-            .packages
-            .get(&locked.id)
-            .is_some_and(|previous| previous.state_version != locked.state_version)
-        {
+/// Runs the packages the confirmed plan marks `handler_required` to check that they register
+/// `migrate`; the new source runs only once the preview is confirmed.
+fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
+    let changes = plan.changes["packages"].as_array().map_or(&[][..], Vec::as_slice);
+    for (locked, change) in plan.packages.iter().zip(changes) {
+        if change["state_version"]["handler_required"] != true {
             continue;
         }
         let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
-        if !matches!(package.state_scope.as_str(), "thread" | "checkout")
-            || package.adapter.is_some()
-            || !package.capabilities.iter().any(|c| c == "store")
-        {
-            continue;
-        }
         let state_scope = package.state_scope.clone();
         let selection = ModSelection {
             path: locked.path.clone(),

@@ -389,6 +389,12 @@ fn describe(preview: &Value) -> String {
                 "  needs your approval: new or changed grant, authority or origin".to_owned(),
             );
         }
+        if package["state_version"]["handler_required"] == true {
+            lines.push(
+                "  state version changes: apply loads this version and refuses it without a migrate handler"
+                    .to_owned(),
+            );
+        }
     }
     if let Some(removed) = changes["removed"].as_array() {
         lines.push(format!(

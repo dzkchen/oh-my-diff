@@ -23,7 +23,7 @@ function main() {
     const filename = resolve(root, config);
     const parsed = ts.getParsedCommandLineOfConfigFile(filename, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: diagnostic => { throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')); } });
     if (parsed.errors.length) throw new Error(ts.formatDiagnostics(parsed.errors, { getCanonicalFileName: name => name, getCurrentDirectory: () => dirname(filename), getNewLine: () => '\n' }));
-    for (const file of parsed.fileNames) coverage.set(file.slice(root.length), config);
+    for (const file of parsed.fileNames) if (parsed.options.checkJs || !/\.[cm]?jsx?$/.test(file)) coverage.set(file.slice(root.length), config);
   }
   const files = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'mods', 'plugins/bundled'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(file => existsSync(resolve(root, file)));
