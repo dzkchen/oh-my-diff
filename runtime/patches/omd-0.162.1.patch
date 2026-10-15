@@ -33116,7 +33116,7 @@ index 6ab2ea930..03538cd12 100644
              }
          },
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index f75d17f57..c45392e23 100644
+index f75d17f57..d1ecfcb6c 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -30,6 +30,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -33220,7 +33220,7 @@ index f75d17f57..c45392e23 100644
              })
              .collect();
          assert!(
-@@ -689,25 +698,8 @@ mod tests {
+@@ -689,6 +698,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected plan command, got service tier {command:?}")
              }
@@ -33228,25 +33228,14 @@ index f75d17f57..c45392e23 100644
              other => panic!("expected plan to be selected for exact match, got {other:?}"),
          }
      }
--
--    #[test]
--    fn debug_commands_are_hidden_from_popup() {
--        let popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
--        let cmds: Vec<String> = popup
--            .filtered_items()
--            .into_iter()
--            .map(|item| match item {
--                CommandItem::Builtin(cmd) => cmd.command().to_string(),
--                CommandItem::ServiceTier(command) => command.name,
--            })
--            .collect();
--
--        assert!(
--            !cmds.iter().any(|name| name.starts_with("debug")),
--            "expected no /debug* command in popup menu, got {cmds:?}"
--        );
--    }
- }
+@@ -702,6 +712,7 @@ mod tests {
+             .map(|item| match item {
+                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
+                 CommandItem::ServiceTier(command) => command.name,
++                CommandItem::Mod(command) => command.invocation,
+             })
+             .collect();
+
 diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
 index f0b809ce5..6ca31803f 100644
 --- a/codex-rs/tui/src/bottom_pane/footer.rs
@@ -99645,10 +99634,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..6afc7b933
+index 000000000..eef8fc345
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,251 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -99874,6 +99863,7 @@ index 000000000..6afc7b933
 +pub use mods::event_shared;
 +pub use mods::file_stamp;
 +pub use mods::host_namespace;
++pub use mods::install_profile;
 +pub use mods::intercept_shared;
 +pub use mods::invalid_render_tree;
 +pub use mods::invoke_shared;
@@ -101790,10 +101780,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..d209fac27
+index 000000000..8aaae1cfb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5971 @@
+@@ -0,0 +1,5977 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -102444,6 +102434,16 @@ index 000000000..d209fac27
 +        exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
 +    }
 +    exposure
++}
++
++/// The bounded install-profile label reported for an `OMD_INSTALL_PROFILE` value.
++pub fn install_profile(value: &str) -> &'static str {
++    match value {
++        "full" => "full",
++        "platform_only" => "platform_only",
++        "private" => "private",
++        _ => "unknown",
++    }
 +}
 +pub const MOD_EVENTS: &[(&str, &str)] = &[
 +    ("context", "context"),
@@ -107504,11 +107504,7 @@ index 000000000..d209fac27
 +        install_profile: Option<&str>,
 +        mode: &str,
 +    ) -> Value {
-+        let install_profile = match install_profile {
-+            Some(profile @ ("full" | "platform_only" | "private")) => profile,
-+            Some(_) => "unknown",
-+            None => "unreported",
-+        };
++        let install_profile = install_profile.map_or("unreported", self::install_profile);
 +        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
 +            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
 +                "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
@@ -170759,10 +170755,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..27ba8608f
+index 000000000..3e44c0845
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,787 @@
+@@ -0,0 +1,770 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -171063,19 +171059,10 @@ index 000000000..27ba8608f
 +    }
 +}
 +
-+fn profile_selector(value: &str) -> &'static str {
-+    match value {
-+        "full" => "full",
-+        "platform_only" => "platform_only",
-+        "private" => "private",
-+        _ => "unknown",
-+    }
-+}
-+
 +pub(crate) fn install_profile() -> Option<&'static str> {
 +    std::env::var(INSTALL_PROFILE_ENV)
 +        .ok()
-+        .map(|value| profile_selector(&value))
++        .map(|value| codex_omd::install_profile(&value))
 +}
 +
 +pub(crate) fn ligatures_enabled() -> bool {
@@ -171367,14 +171354,6 @@ index 000000000..27ba8608f
 +        .unwrap();
 +        std::fs::rename(&replacement, store.join("mod-status.json")).unwrap();
 +        assert_eq!(mod_snapshot().1.view.panels[0].lines, ["fixture: failed"]);
-+    }
-+
-+    #[test]
-+    fn profile_selectors_are_bounded() {
-+        assert_eq!(profile_selector("full"), "full");
-+        assert_eq!(profile_selector("platform_only"), "platform_only");
-+        assert_eq!(profile_selector("private"), "private");
-+        assert_eq!(profile_selector("unexpected"), "unknown");
 +    }
 +
 +    #[test]

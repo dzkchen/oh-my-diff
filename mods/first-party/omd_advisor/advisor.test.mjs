@@ -13,7 +13,6 @@ test('every-turn advisor suppresses the same model unless explicitly enabled', (
     const calls = [];
     const result = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities,
       settings: { every_turn: true, skip_same_model: skip }, state: null, environment: manifest.environment,
-      surface: { events: { start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', workspace_change: 'fs.read', turn_end: 'lifecycle', agent_end: 'agents', context: 'context', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' },
       event: 'turn_end', payload: { outcome: 'completed', turn_id: 'turn', evidence: { sha256: 'a'.repeat(64) } },
     }, ({ operation }) => {
       calls.push(operation);
@@ -22,7 +21,7 @@ test('every-turn advisor suppresses the same model unless explicitly enabled', (
       if (operation === 'app.request') return { thread: { model: 'same' } };
       if (operation === 'evidence.read') throw new Error('fixture_stop_after_suppression');
       throw new Error(`unexpected ${operation}`);
-    }, []);
+    });
     assert.equal(result.error, undefined);
     assert.equal(calls.includes('evidence.read'), !skip);
     assert.equal(calls.includes('workspace.snapshot'), false);
@@ -31,12 +30,11 @@ test('every-turn advisor suppresses the same model unless explicitly enabled', (
 });
 
 test('the opt-in observer flags cited visible output, drops forged quotes and duplicates, and clears stale or superseded notes', () => {
-  const surface = { events: { start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', workspace_change: 'fs.read', turn_end: 'lifecycle', agent_end: 'agents', context: 'context', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
   const said = 'I raised the upload retry limit to unlimited, so failed uploads now retry forever. The api_key=sk-live-123456 stays in config.';
   const evidence = sha => ({ turn_id: `turn-${sha}`, thread_id: 'thread', workspace_sha256: 'c'.repeat(64), records: [{ item: 1, role: 'user', text: 'Make uploads reliable' }, { item: 2, role: 'assistant', text: `${said} ${'Details follow. '.repeat(10)}` }, { item: 3, type: 'tool_call', name: 'shell', call_id: 'c1' }] });
   const run = (event, payload, state, host = () => { throw new Error('unexpected'); }, { settings = { observe: true }, name } = {}) => {
     const calls = [];
-    const result = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, environment: manifest.environment, surface, event, payload, name }, call => { calls.push(call); return host(call); }, []);
+    const result = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, environment: manifest.environment, event, payload, name }, call => { calls.push(call); return host(call); });
     assert.equal(result.error, undefined);
     return { ...result, calls };
   };
@@ -109,14 +107,13 @@ test('the opt-in observer flags cited visible output, drops forged quotes and du
 const digest = text => createHash('sha256').update(text).digest('hex');
 
 function invoke(payload, host, extra = {}) {
-  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: manifest.environment, surface: { events: {}, state: 'store', contracts: 'contracts' }, state: null, settings: {}, event: 'command', name: '', payload, ...extra };
-  const reply = callback(request, host, [], { capture: error => !error.crash && !(error instanceof assert.AssertionError) });
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, environment: manifest.environment, state: null, settings: {}, event: 'command', name: '', payload, ...extra };
+  const reply = callback(request, host);
   if (reply.error) throw new Error(reply.error);
   return reply;
 }
 
-const nativeEvents = readFileSync(new URL('../../../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const advisorOptions = { surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true } };
+const advisorOptions = { event: 'turn_end', name: '', settings: { every_turn: true } };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };
 const completed = { turn_id: 'turn-1', outcome: 'completed', evidence: reference };

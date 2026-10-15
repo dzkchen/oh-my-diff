@@ -2,21 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { callback, runnerSync } from '../tests/mod_runner.mjs';
+import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
-const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
-const currentSurface = {
-  events: Object.fromEntries([...table('MOD_EVENTS').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  replacements: [...table('MOD_REPLACEMENT_POINTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  middleware: [...table('MOD_MIDDLEWARE_EVENTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  intercept: Object.fromEntries([...table('MOD_INTERCEPT_SURFACES').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  state: 'store', contracts: 'contracts',
-};
 function run(source, extra = {}) {
-  const result = runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra });
-  assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+  return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
 
 test('UI state serialized boundaries agree with the native validator', () => {
@@ -75,7 +64,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
   const input = { component: 'tool_call' };
   const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
     api.intercept('render', (e, next) => e.replay ? next({ ...e, value: value.get() }) : { value: value.get() }); };`,
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface: currentSurface,
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface,
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
@@ -97,13 +86,13 @@ test('typed module context callback', () => {
 });
 test('a callback clock stands still except across its own sleeps', () => {
   const source = 'export default api => api.command("wait", async () => { const start = Date.now(); api.host.call("session.info", null); const mid = Date.now(); await api.time.sleep(40); return [mid - start, Date.now() - start, new Date().getTime() - start]; })';
-  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, surface: currentSurface, event: 'command', name: 'wait', virtual_time_ms: 1000 };
-  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {}, []);
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, event: 'command', name: 'wait', virtual_time_ms: 1000 };
+  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {});
   assert.deepEqual(reply.value, [0, 40, 40]);
 });
 test('the test harness kills an interactive callback that never returns', () => {
-  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 500 };
-  assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
+  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 500 };
+  assert.throws(() => callback(request, () => null), /runner_timed_out/);
 });
 test('package text assets are read only and limited to the selected package', () => {
   const source = 'export default api => api.command("asset", () => api.assets.read("worker.mjs"))';
@@ -132,7 +121,7 @@ test('component module steps deliver input, ticks and one post without host auth
   const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
-    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface: currentSurface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
+    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
   const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
@@ -148,7 +137,7 @@ test('component module steps deliver input, ticks and one post without host auth
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface: currentSurface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
   const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
@@ -329,7 +318,7 @@ test('independent workspace mod uses public read and transaction calls', () => {
   const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
   const capabilities = ['fs.read', 'fs.write', 'tools', 'store'];
   const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
-  const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload });
+  const first = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload });
   assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
   const read = { files: {
     'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
@@ -337,20 +326,20 @@ test('independent workspace mod uses public read and transaction calls', () => {
     'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
   } };
   const receipts = [{ call: first.host_call, value: read }];
-  const second = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts });
+  const second = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts });
   assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
     expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
     writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
   } });
   const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
-  const final = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
+  const final = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
   assert.deepEqual(final.value, result);
-  const observed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
+  const observed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
   assert.equal(observed.state.last_write.status, 'observed');
   const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
-  const proposed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
+  const proposed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
   assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
-  const requested = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
+  const requested = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
   assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.match(run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
+  assert.match(run(source, { api: '0.2.0-experimental.5', capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
 });

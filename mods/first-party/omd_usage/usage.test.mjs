@@ -1,33 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const usageMod = {
   source: readFileSync(new URL('index.ts', import.meta.url), 'utf8'),
   capabilities: JSON.parse(readFileSync(new URL('mod.json', import.meta.url), 'utf8')).capabilities,
 };
-const surface = {
-  events: { terminal: 'terminal', channel: 'events', timer: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', tool_result: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', model_response: 'model', agent: 'middleware', tool_call: 'middleware', app_notification: 'threads' },
-  replacements: [], intercept: { model_request: 'middleware', render: 'terminal' }, middleware: [], state: 'store', contracts: 'contracts',
-};
 const NOW = 1_800_000_000_000;
 
 function call({ source, capabilities }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
-  const receipts = [];
   const published = [];
-  for (;;) {
-    const result = runnerSync({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input, receipts });
-    assert.ifError(result.error);
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.error, undefined, `${output.error}\n${result.stderr}`);
-    if (!output.host_call) return { ...output, published };
-    if (output.host_call.operation === 'events.publish') published.push(output.host_call.arguments);
-    const value = answer(output.host_call);
-    receipts.push(value instanceof Error ? { call: output.host_call, error: value.message } : { call: output.host_call, value });
-  }
+  const output = callback({ source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
+    if (hostCall.operation === 'events.publish') published.push(hostCall.arguments);
+    const value = answer(hostCall);
+    if (value instanceof Error) throw value;
+    return value;
+  });
+  assert.equal(output.error, undefined, output.error);
+  return { ...output, published };
 }
 
 const hud = { categories: true };

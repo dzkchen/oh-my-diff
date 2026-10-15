@@ -4,13 +4,17 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
-const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const mod = new URL('./', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
-const surface = { events: { terminal: 'terminal', component_event: 'terminal', channel: 'events' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
+
+const driver = host => (state, event, payload, name) => {
+  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, hook_budget_ms: 10000 }, host);
+  if (output.error) throw new Error(output.error);
+  return output;
+};
 
 test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to results and shows server state', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-lsp-view-')));
@@ -18,22 +22,15 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
   writeFileSync(join(repository, 'tab.py'), 'a\tb\r\n\u0001c\n');
   const calls = [];
   let answer = { status: 'ready', message: '', items: [{ label: 'box.py:2:7', value: 'box.py:2' }], text: null, action: 'open' };
-  const invoke = (state, event, payload, name) => {
-    const receipts = [];
-    for (;;) {
-      const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 10000 };
-      const output = JSON.parse(runnerSync(request).stdout);
-      if (output.error) throw new Error(output.error);
-      if (!output.host_call) return output;
-      const { operation, arguments: args } = output.host_call;
-      calls.push({ operation, args });
-      if (operation === 'mods.service' && typeof answer === 'string') receipts.push({ call: output.host_call, error: answer });
-      else if (operation === 'exec.run') {
-        const run = spawnSync(args.program, args.argv ?? [], { cwd: repository, encoding: 'utf8' });
-        receipts.push({ call: output.host_call, value: { exit_code: run.status, stdout: run.stdout, stderr: run.stderr } });
-      } else receipts.push({ call: output.host_call, value: operation === 'mods.service' ? answer : { delivered: 1, dropped: 0 } });
+  const invoke = driver(({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'mods.service' && typeof answer === 'string') throw new Error(answer);
+    if (operation === 'exec.run') {
+      const run = spawnSync(args.program, args.argv ?? [], { cwd: repository, encoding: 'utf8' });
+      return { exit_code: run.status, stdout: run.stdout, stderr: run.stderr };
     }
-  };
+    return operation === 'mods.service' ? answer : { delivered: 1, dropped: 0 };
+  });
   try {
     let state = invoke(null, 'command', 'definition box.py:2:7', 'lsp').state;
     assert.equal(state.view.status, 'working');
@@ -98,16 +95,10 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
 
 test('answers for a closed view or a superseded request are dropped without asking the language server', () => {
   const services = [];
-  const invoke = (state, event, payload, name) => {
-    const receipts = [];
-    for (;;) {
-      const output = JSON.parse(runnerSync({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 10000 }).stdout);
-      if (output.error) throw new Error(output.error);
-      if (!output.host_call) return output;
-      if (output.host_call.operation === 'mods.service') services.push(output.host_call.arguments.input);
-      receipts.push({ call: output.host_call, value: output.host_call.operation === 'mods.service' ? { status: 'ready', message: '', items: [], text: `answer ${output.host_call.arguments.input.line}`, action: 'open' } : { delivered: 1, dropped: 0 } });
-    }
-  };
+  const invoke = driver(call => {
+    if (call.operation === 'mods.service') services.push(call.arguments.input);
+    return call.operation === 'mods.service' ? { status: 'ready', message: '', items: [], text: `answer ${call.arguments.input.line}`, action: 'open' } : { delivered: 1, dropped: 0 };
+  });
   const command = (state, text) => invoke(state, 'command', text, 'lsp').state;
   const deliver = (state, data) => invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data, correlation: null, sequence: 1, dropped: 0 }).state;
   const opened = command(null, 'hover box.py:1');
