@@ -11,6 +11,8 @@ struct OfflineHost {
     timers: BTreeMap<(Option<String>, String, String), u64>,
     /// The state thread of the callback in flight.
     thread: Option<String>,
+    /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
+    thread_scoped: std::collections::BTreeSet<String>,
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
@@ -108,6 +110,10 @@ impl OfflineHost {
         Ok(())
     }
 
+    fn timer_thread(&self, caller: &str) -> Option<String> {
+        self.thread.clone().filter(|_| self.thread_scoped.contains(caller))
+    }
+
     fn call(&mut self, caller: &str, call: ModHostCall) -> Result<Value> {
         self.calls.push(
             json!({"at_ms":self.now_ms,"caller":caller,"operation":call.operation,
@@ -166,11 +172,11 @@ impl OfflineHost {
                     .filter(|delay| (16..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
                 let deadline = self.now_ms.checked_add(delay).ok_or_else(|| failure("offline_time_overflow"))?;
-                self.timers.insert((self.thread.clone(), caller.to_owned(), key.clone()), deadline);
+                self.timers.insert((self.timer_thread(caller), caller.to_owned(), key.clone()), deadline);
                 return Ok(json!({"key": key, "delay_ms": delay}));
             }
             (true, "events.cancel") => {
-                let cancelled = self.timers.remove(&(self.thread.clone(), caller.to_owned(), key)).is_some();
+                let cancelled = self.timers.remove(&(self.timer_thread(caller), caller.to_owned(), key)).is_some();
                 return Ok(json!({"cancelled": cancelled}));
             }
             _ => {}
@@ -354,6 +360,12 @@ impl ModHost {
             self.virtual_time_ms = Some(*now_ms);
             host.now_ms = *now_ms;
             host.thread = state_thread(step.get("payload").unwrap_or(&Value::Null));
+            host.thread_scoped = self
+                .loaded
+                .iter()
+                .filter(|(_, loaded)| loaded.package.state_scope == "thread")
+                .map(|(id, _)| id.clone())
+                .collect();
             let result = self.offline_step(kind, step, !cancelled, host, now_ms);
             let output = match result {
                 Ok(value) => {

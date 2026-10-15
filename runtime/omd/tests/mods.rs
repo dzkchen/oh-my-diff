@@ -3662,6 +3662,14 @@ fn offline_timers_fire_in_the_thread_that_scheduled_them() {
     manifest["state_scope"] = json!("thread");
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     trust(&store, &path, &capabilities);
+    let plain = package(
+        &root,
+        "plain",
+        "export default api => { api.on('start', () => api.host.call('events.schedule', {key:'tick',delay_ms:100})); \
+         api.command('stop', () => api.host.call('events.cancel', {key:'tick'})); }",
+        &capabilities,
+    );
+    trust(&store, &plain, &capabilities);
     let mut runtime = host(&temp);
     let result = runtime
         .offline_test(json!({
@@ -3670,6 +3678,7 @@ fn offline_timers_fire_in_the_thread_that_scheduled_them() {
             "steps": [
                 {"type": "event", "event": "start", "payload": {"thread_id": "t1"}},
                 {"type": "event", "event": "start", "payload": {"thread_id": "t2"}},
+                {"type": "invoke", "mod": "plain", "event": "command", "name": "stop", "expect": {"cancelled": true}},
                 {"type": "advance_time", "ms": 200, "expect": {"now_ms": 1200, "timers": [
                     {"mod": "fixture", "key": "tick", "at_ms": 1100}, {"mod": "fixture", "key": "tick", "at_ms": 1100}]}},
                 {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t1"}, "expect": "t1 fired"},
@@ -3677,7 +3686,7 @@ fn offline_timers_fire_in_the_thread_that_scheduled_them() {
             ]
         }))
         .unwrap();
-    assert_eq!(result["steps"].as_array().unwrap().len(), 5);
+    assert_eq!(result["steps"].as_array().unwrap().len(), 6);
 }
 
 #[test]

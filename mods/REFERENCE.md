@@ -1261,11 +1261,11 @@ permission requests only `{permissions: {}}`, MCP elicitations only `{action:
 Approving stays with the `approval` middleware and the `approve` grant; a
 question answer still reaches the model as the user's reply. A request that
 was already answered fails with `app_request_not_pending`, and a call bound to
-a thread the terminal is not showing fails with the retryable
-`client_context_changed` (`client_surface_context_changed` when the view
-changes after the call was queued). It
-needs the terminal; headless hosts and `codex exec` refuse it, and it is never
-delegated to external clients.
+a thread the terminal is not showing fails with `client_context_changed`; a
+call whose terminal binding changed before it ran (another client surface
+attached, or the shown thread changed) fails with the retryable
+`client_surface_context_changed`. It needs the terminal; headless hosts and
+`codex exec` refuse it, and it is never delegated to external clients.
 
 ### Approvals (`approval_v1`)
 
