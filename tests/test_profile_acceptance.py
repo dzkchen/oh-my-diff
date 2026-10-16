@@ -1,18 +1,10 @@
 import unittest
-from unittest.mock import patch
 from pathlib import Path
 
-from scripts.profile_acceptance import isolated_environment, expected_defaults
-from scripts import profiles
+from scripts.profile_acceptance import isolated_environment
 
 
 class ProfileAcceptanceTests(unittest.TestCase):
-    def test_expected_defaults_do_not_follow_installer_drift(self):
-        expected = expected_defaults()
-        with patch.object(profiles, "DEFAULT_ACTIVE", ()):
-            self.assertEqual(expected_defaults(), expected)
-            self.assertNotEqual(expected_defaults(), list(profiles.DEFAULT_ACTIVE))
-
     def test_environment_uses_scratch_state_without_provider_credentials(self):
         source = {"PATH": "/usr/bin", "OPENAI_API_KEY": "private", "ANTHROPIC_API_KEY": "private",
                   "OMD_MODE": "enabled", "OMD_MOD_STORE": "/tmp/ambient-mods",

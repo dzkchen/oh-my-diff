@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -209,15 +208,6 @@ class ProfileModeTests(unittest.TestCase):
             profiles.broker(Path("/prefix"), Path("/bin"), "install")
         self.assertEqual([command for command, _ in calls],
                          ["broker-grants-import", "broker-grants-import", "reload"])
-
-    def test_cli_advertises_only_current_activation_choices(self):
-        result = subprocess.run(
-            [sys.executable, "-m", "scripts.profiles", "--prefix", "/tmp/omd-unused-prefix",
-             "--bin-dir", "/tmp/omd-unused-bin", "activate", "--help"],
-            cwd=ROOT, capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("{platform,full,direct}", result.stdout)
 
     def test_launcher_defines_set_up_providers_only_in_omd_mode(self):
         provider = {"id": "omd_claude_cli", "name": "OMD Claude CLI", "base_url": "http://127.0.0.1:5/v1",

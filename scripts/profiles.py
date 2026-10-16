@@ -454,6 +454,9 @@ def install(args):
         for source, name in ((Path(binary["path"]), "codex"), (code_mode_host, "codex-code-mode-host"),
                              (broker_helper, "omd-broker"), (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
+        # macOS scans a new executable at its first run; pay that here instead of at the first launch.
+        for name, flag in (("codex", "--version"), ("codex-code-mode-host", "--help")):
+            subprocess.run([artifacts / name, flag], stdin=subprocess.DEVNULL, capture_output=True, timeout=60, check=True)
         author_root = prefix / "author"
         author_root.mkdir()
         with tarfile.open(author_archive, "r:gz") as archive:

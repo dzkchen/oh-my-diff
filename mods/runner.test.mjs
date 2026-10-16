@@ -23,10 +23,24 @@ test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
     const encoder = new TextEncoder();
     const bytes = encoder.encode(text);
     const fitted = encoder.encodeInto(text, new Uint8Array(4));
-    return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read) };
+    const lone = encoder.encodeInto('\\uD800x', new Uint8Array(3));
+    const realm = probe => { try { probe(); return 'none'; } catch (error) { return error.constructor.constructor === Function ? 'local' : 'outer'; } };
+    const disguised = new Proxy({}, { getPrototypeOf: () => Uint8Array.prototype });
+    const whole = encoder.encode(text.repeat(110_000));
+    const chunk = new Uint8Array(64);
+    let rest = text.repeat(110_000), offset = 0, same = true;
+    while (rest) {
+      const step = encoder.encodeInto(rest, chunk);
+      for (let index = 0; index < step.written; index++) same &&= chunk[index] === whole[offset + index];
+      offset += step.written;
+      rest = rest.slice(step.read);
+    }
+    return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read), lone,
+      errors: [realm(() => encoder.encodeInto('a', disguised)), realm(() => encoder.encodeInto('a', {}))], streamed: same && offset === whole.length };
   })`;
   const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'encode', payload: 'a€😀' });
-  assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€' });
+  assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€',
+    lone: { read: 1, written: 3 }, errors: ['local', 'local'], streamed: true }, 'no outer-realm error reaches mod code');
 });
 
 test('UI state requires terminal authority and refuses activation and render writes', () => {
@@ -68,7 +82,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = result.stdout.trim().split('\n').map(JSON.parse);
@@ -122,7 +136,7 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
@@ -139,7 +153,7 @@ test('a pinned component runner reads the state and UI state of the step it serv
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
     filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
@@ -227,19 +241,29 @@ test('patched intrinsics never receive host values from TextEncoder, crypto or r
     assets: { 'a.ts': { text: 'export {}', sha256: 'a'.repeat(64) } }, event: 'command', name: 'probe' });
   assert.deepEqual(reply.value, [[], 'contained'], reply.error);
 });
-test('host errors from stack overflow cannot compile code', () => {
+test('host errors from stack overflow can neither compile code nor patch the host realm', () => {
   const source = `const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
-  export default api => api.command('probe', () => {
-    const found = new Set();
-    for (const probe of [() => import('x'), () => new Error('x').stack]) {
+  const patch = (value, write) => { try { write(value); return 'patched'; } catch { return 'frozen'; } };
+  export default api => api.command('probe', async () => {
+    const errors = [];
+    const note = error => { errors.push(error); };
+    const pending = [];
+    for (const probe of [() => { pending.push(import('x').catch(note)); }, () => new Error('x').stack]) {
       let attempts = 0;
-      const recurse = () => { try { recurse(); } catch { if (attempts++ < 3000) { try { probe(); } catch (error) { found.add(reach(error)); } } } };
+      const recurse = () => { try { recurse(); } catch { if (attempts++ < 3000) { try { probe(); } catch (error) { note(error); } } } };
       recurse();
     }
-    return [...found];
+    await Promise.all(pending);
+    const found = new Set(errors.map(reach));
+    const host = new Set(errors.filter(error => !(error instanceof Error)).flatMap(error => [
+      patch(error, value => { Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(value))).omdProbe = 1; }),
+      patch(error, value => { Object.getPrototypeOf(value.constructor).prepareStackTrace = () => 'x'; }),
+    ]));
+    return { found: [...found], host: [...host] };
   })`;
   const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'probe' });
-  assert.deepEqual(reply.value, ['contained'], reply.error);
+  assert.deepEqual(reply.value?.found, ['contained'], reply.error);
+  assert.ok(!reply.value.host.includes('patched'), JSON.stringify(reply.value));
 });
 test('duplicate registrations rejected', () => {
   assert.match(run('export default api => { api.command("a", () => null); api.command("a", () => null) }', { capabilities: ['commands'] }).error, /conflict/);

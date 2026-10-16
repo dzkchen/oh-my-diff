@@ -432,11 +432,21 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
+    runtime
+        .invoke("fixture", generation, "command", "count", Value::Null)
+        .unwrap();
     std::fs::write(
         path.join("index.ts"),
         "export default () => { throw new Error('broken') }",
     )
     .unwrap();
+    assert!(
+        runtime
+            .invoke("fixture", generation, "command", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("untrusted_source")
+    );
     trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
     assert_eq!(runtime.generation(), generation);
@@ -3652,7 +3662,8 @@ fn offline_timers_fire_in_the_thread_that_scheduled_them() {
         &root,
         "fixture",
         "export default api => { api.on('start', ({thread_id}) => { api.state.set(thread_id); api.host.call('events.schedule', {key:'tick',delay_ms:100}); }); \
-         api.on('timer', () => api.state.set(`${api.state.get()} fired`)); api.command('read', () => api.state.get()); }",
+         api.on('timer', () => api.state.set(`${api.state.get()} fired`)); api.command('read', () => api.state.get()); \
+         api.command('arm', () => { api.state.set('t3'); api.host.call('events.schedule', {key:'tick',delay_ms:100}); return 'armed'; }); }",
         &capabilities,
     );
     let manifest_path = path.join("mod.json");
@@ -3681,11 +3692,15 @@ fn offline_timers_fire_in_the_thread_that_scheduled_them() {
                 {"type": "advance_time", "ms": 200, "expect": {"now_ms": 1200, "timers": [
                     {"mod": "fixture", "key": "tick", "at_ms": 1100}, {"mod": "fixture", "key": "tick", "at_ms": 1100}]}},
                 {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t1"}, "expect": "t1 fired"},
-                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t2"}, "expect": "t2 fired"}
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t2"}, "expect": "t2 fired"},
+                {"type": "wait_until", "max_ms": 1000, "until": "armed",
+                    "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "arm", "payload": {"thread_id": "t3"}}},
+                {"type": "advance_time", "ms": 200},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t3"}, "expect": "t3 fired"}
             ]
         }))
         .unwrap();
-    assert_eq!(result["steps"].as_array().unwrap().len(), 6);
+    assert_eq!(result["steps"].as_array().unwrap().len(), 9);
 }
 
 #[test]

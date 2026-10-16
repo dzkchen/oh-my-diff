@@ -303,7 +303,9 @@ impl ModHost {
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
+        self.tier_selections = tiers.iter().map(|(id, (_, selection))| (id.clone(), selection.clone())).collect();
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        self.tier_selections.clear();
         process::detach(&host.owner);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
@@ -356,7 +358,6 @@ impl ModHost {
                 .unwrap_or(false);
             self.virtual_time_ms = Some(*now_ms);
             host.now_ms = *now_ms;
-            host.thread = state_thread(step.get("payload").unwrap_or(&Value::Null));
             host.thread_scoped = self
                 .loaded
                 .iter()
@@ -409,6 +410,8 @@ impl ModHost {
         now_ms: &mut u64,
     ) -> Result<Value> {
         let payload = step.get("payload").cloned().unwrap_or(Value::Null);
+        let _thread = StateThread::enter(state_thread(&payload));
+        host.thread = bound_thread();
         match kind {
             "advance_time" => {
                 let delta = step

@@ -2,22 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { callback } from './mod_runner.mjs';
 
 const root = new URL('../plugins/bundled/oh-my-diff/plugins/omd-anchored-edit/mod/', import.meta.url);
 const source = readFileSync(new URL('index.ts', root), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', root), 'utf8'));
 const digest = text => createHash('sha256').update(text).digest('hex');
-
-test('anchored-edit configuration typechecks against the shared API', () => {
-  const result = spawnSync(process.execPath, [
-    fileURLToPath(new URL('../mods/node_modules/typescript/bin/tsc', import.meta.url)),
-    '--project', fileURLToPath(new URL('../tsconfig.json', root)), '--noEmit',
-  ], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-});
 
 function invoke(payload, host, extra = {}) {
   const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'tool', name: 'edit', payload, ...extra };

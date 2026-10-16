@@ -2252,9 +2252,14 @@ fn thread_state_version_updates_require_a_migrate_handler() {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .unwrap();
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(
+        plan.changes["packages"][0]["state_version"]["handler_required"],
+        true
+    );
     assert!(
         store
-            .package_plan(install.clone())
+            .package_apply(install.clone(), &plan.confirmation)
             .unwrap_err()
             .to_string()
             .contains("migration_handler_required: fixture changes its thread state_version")
@@ -2264,5 +2269,26 @@ fn thread_state_version_updates_require_a_migrate_handler() {
         "export default api => api.on('migrate', () => api.state.set(null))\n",
     )
     .unwrap();
-    assert_eq!(store.package_plan(install).unwrap().action, "update");
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(plan.action, "update");
+    store.package_apply(install, &plan.confirmation).unwrap();
+
+    let stateless = mod_package(&root, "stateless", "1.0.0", &["commands"], json!([]));
+    let manifest_path = stateless.join("mod.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let install = request(&stateless, &["commands"]);
+    let plan = store.package_plan(install.clone()).unwrap();
+    store.package_apply(install.clone(), &plan.confirmation).unwrap();
+    manifest["version"] = json!("1.1.0");
+    manifest["state_version"] = json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(
+        plan.changes["packages"][0]["state_version"]["handler_required"],
+        false
+    );
+    store.package_apply(install, &plan.confirmation).unwrap();
 }

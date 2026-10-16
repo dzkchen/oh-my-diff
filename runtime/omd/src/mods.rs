@@ -2570,6 +2570,20 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
+/// The returned stamp is `None` if the file changed during the read.
+fn read_configuration(
+    path: &Path,
+    stamp: Option<FileStamp>,
+) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
+    let bytes = store::read(path, 65_536);
+    let sha256 = digest(bytes.as_deref().unwrap_or_default());
+    (
+        stamp.filter(|_| configuration_stamp(path) == stamp),
+        sha256,
+        bytes,
+    )
+}
+
 type Brokered = Option<(u64, BTreeSet<String>)>;
 
 #[cfg(test)]
@@ -2680,6 +2694,7 @@ pub struct ModHost {
     service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
     virtual_time_ms: Option<u64>,
+    tier_selections: BTreeMap<String, ModSelection>,
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
@@ -2690,6 +2705,7 @@ pub struct ModHost {
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
+    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3170,6 +3186,7 @@ impl ModHost {
             service_calls: Vec::new(),
             tool_validator,
             virtual_time_ms: None,
+            tier_selections: BTreeMap::new(),
             dynamic_tools: BTreeMap::new(),
             checkout: None,
             valid_views: BTreeMap::new(),
@@ -3180,6 +3197,7 @@ impl ModHost {
             access: Vec::new(),
             admissions: BTreeMap::new(),
             brokered: None,
+            callback_configuration: Mutex::default(),
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
             codex_config: Arc::default(),
@@ -3326,8 +3344,7 @@ impl ModHost {
             return Ok(false);
         }
         self.configuration_stamp = None;
-        let bytes = store::read(&path, 65_536);
-        let sha256 = digest(bytes.as_deref().unwrap_or_default());
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
         drop(config_profile);
         let (brokered, managed, deployment) = match self.authority(&sha256) {
             Ok(authority) => authority,
@@ -3457,6 +3474,7 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             self.managed.as_ref().map(|managed| &managed.policy),
             &mut rejected,
+            store::package,
         )?;
         drop(selection_profile);
         let adapters = Self::adapters(&selected);
@@ -3854,6 +3872,7 @@ impl ModHost {
         grants: Option<&BTreeSet<String>>,
         managed: Option<&ManagedPolicy>,
         rejected: &mut Vec<ModRejection>,
+        inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
         let rank = |scope: &str| match scope {
             MANAGED_SCOPE => 2,
@@ -3881,7 +3900,7 @@ impl ModHost {
                         selection.path.display()
                     )));
                 }
-                let (package, source, hash) = store::package(&selection.path)?;
+                let (package, source, hash) = inspect(&selection.path)?;
                 if hash != selection.sha256 {
                     return Err(failure(if administered {
                         format!(
@@ -4544,21 +4563,24 @@ impl ModHost {
             None => Vec::new(),
         };
         let mut administered = selections.len();
-        let path = self.store.root.join("mods.json");
-        let bytes = store::read(&path, 65_536);
+        let configured = self.tier_selections.get(&loaded.package.id).unwrap_or(&loaded.selection);
+        let (configuration_sha256, configuration) = self.callback_configuration();
         let hash = format!("{}:{}:{}:{}:{}",
-            digest(bytes.as_deref().unwrap_or_default()),
+            configuration_sha256,
             brokered.as_ref().map_or(0, |(generation, _)| *generation),
             managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
             deployment.generation,
             self.project.as_deref().unwrap_or(Path::new("")).display());
-        match bytes.and_then(|bytes| ModConfiguration::parse(&bytes, &path)) {
-            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(config.mods),
-            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
+        // An unchanged authority inventory cannot introduce a different precedence winner.
+        let unchanged = hash == self.configuration_sha256;
+        match configuration {
+            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
+                config.mods.iter().filter(|selection| !unchanged || selection.path == loaded.selection.path).cloned(),
+            ),
+            _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
             _ => return Err(failure("callback_authority_changed")),
         }
-        // An unchanged authority inventory cannot introduce a different precedence winner.
-        if hash == self.configuration_sha256 {
+        if unchanged {
             administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
             selections.retain(|selection| selection.path == loaded.selection.path);
         }
@@ -4567,17 +4589,41 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             managed.as_ref().map(|managed| &managed.policy),
             &mut Vec::new(),
+            |path| store::verified_package(path).map(|(package, hash)| (package, String::new(), hash)),
         )?;
         let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
             return Err(failure("callback_authority_changed"));
         };
-        if selection.path != loaded.selection.path
-            || selection.scope != loaded.selection.scope
-            || store::grant(&json!(selection)) != store::grant(&json!(loaded.selection))
+        if selection.path != configured.path
+            || selection.scope != configured.scope
+            || store::grant(&json!(selection)) != store::grant(&json!(configured))
         {
             return Err(failure("callback_authority_changed"));
         }
         Ok(())
+    }
+
+    fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
+        let path = self.store.root.join("mods.json");
+        let stamp = configuration_stamp(&path);
+        let mut cached = self
+            .callback_configuration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
+            && stamp == *cached_stamp
+            && configuration.node.is_file()
+        {
+            return (sha256.clone(), Ok(configuration.clone()));
+        }
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let configuration = bytes
+            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
+            .map(Arc::new);
+        *cached = stamp
+            .zip(configuration.as_ref().ok())
+            .map(|(stamp, configuration)| (stamp, sha256.clone(), configuration.clone()));
+        (sha256, configuration)
     }
 
     fn begin(

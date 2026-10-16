@@ -252,7 +252,8 @@ function viewServer() {
   };
 }
 
-function spawnServer(command, cwd) {
+// Within `patience` of a request, waits block until a message arrives so a slow server still answers in the mod's loop.
+function spawnServer(command, cwd, patience = 30_000) {
   const directory = mkdtempSync(join(tmpdir(), 'omd-lsp-'));
   const [input, output] = [join(directory, 'in'), join(directory, 'out')];
   execFileSync('mkfifo', [input, output]);
@@ -260,6 +261,7 @@ function spawnServer(command, cwd) {
   const writer = openSync(input, 'w');
   const reader = openSync(output, constants.O_RDWR | constants.O_NONBLOCK);
   let buffer = Buffer.alloc(0);
+  const pending = new Map();
   const frame = () => {
     const end = buffer.indexOf('\r\n\r\n');
     if (end < 0) return null;
@@ -272,13 +274,17 @@ function spawnServer(command, cwd) {
   return {
     exchange(send, wait) {
       for (const message of send) {
+        if ('id' in message && 'method' in message) pending.set(message.id, Date.now() + patience);
         const body = JSON.stringify(message);
         writeSync(writer, `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
       }
       const messages = [];
-      const deadline = Date.now() + wait;
+      const deadline = Math.max(Date.now() + wait, ...pending.values());
       for (;;) {
-        for (let next = frame(); next; next = frame()) messages.push(next);
+        for (let next = frame(); next; next = frame()) {
+          if (!('method' in next)) pending.delete(next.id);
+          messages.push(next);
+        }
         const chunk = Buffer.alloc(65_536);
         let read = 0;
         try { read = readSync(reader, chunk); } catch (error) { if (error.code !== 'EAGAIN') throw error; }
