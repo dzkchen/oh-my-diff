@@ -26872,7 +26872,7 @@ index d93373861..857e8752e 100644
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 61cdbe4da..e924fb98e 100644
+index 61cdbe4da..8f944dd3b 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -27128,11 +27128,12 @@ index 61cdbe4da..e924fb98e 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -405,6 +570,128 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -405,6 +570,129 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
-+/// Tightens approvals before hooks, automatic review or policy shortcuts run; it never approves.
++/// Decides approvals before hooks, automatic review or policy shortcuts run. Across gates any deny
++/// wins, then any ask, then any approve; an approval answers a request the host would otherwise ask about.
 +pub trait ApprovalGateContributor: Send + Sync {
 +    fn gate_approval<'a>(
 +        &'a self,
@@ -27663,7 +27664,7 @@ index c8436c8fe..a9aa6ace2 100644
  pub use registry::ExtensionRegistryBuilder;
  pub use registry::empty_extension_registry;
 diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
-index ddb02113e..64b232f9d 100644
+index ddb02113e..9b4532e9f 100644
 --- a/codex-rs/ext/extension-api/src/registry.rs
 +++ b/codex-rs/ext/extension-api/src/registry.rs
 @@ -1,5 +1,7 @@
@@ -27704,18 +27705,19 @@ index ddb02113e..64b232f9d 100644
                  turn_item_contributors: Vec::new(),
              },
          }
-@@ -70,6 +80,10 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+@@ -69,6 +79,11 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+         self.registry.turn_start_admission = Some(admission);
      }
 
-     /// Registers one approval-review contributor.
++    /// Registers one approval-gate contributor.
 +    pub fn approval_gate_contributor(&mut self, contributor: Arc<dyn ApprovalGateContributor>) {
 +        self.registry.approval_gate_contributors.push(contributor);
 +    }
 +
+     /// Registers one approval-review contributor.
      pub fn approval_review_contributor(&mut self, contributor: Arc<dyn ApprovalReviewContributor>) {
          self.registry.approval_review_contributors.push(contributor);
-     }
-@@ -139,6 +153,22 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+@@ -139,6 +154,22 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
          self.registry.tool_lifecycle_contributors.push(contributor);
      }
 
@@ -27738,7 +27740,7 @@ index ddb02113e..64b232f9d 100644
      /// Registers one ordered turn-item contributor.
      pub fn turn_item_contributor(&mut self, contributor: Arc<dyn TurnItemContributor>) {
          self.registry.turn_item_contributors.push(contributor);
-@@ -165,8 +195,13 @@ pub struct ExtensionRegistry<C: Sync> {
+@@ -165,8 +196,13 @@ pub struct ExtensionRegistry<C: Sync> {
      tool_contributors: Vec<Arc<dyn ToolContributor>>,
      tool_lifecycle_contributors: Vec<Arc<dyn ToolLifecycleContributor>>,
      model_request_contributors: Vec<Arc<dyn ModelRequestContributor>>,
@@ -27752,7 +27754,7 @@ index ddb02113e..64b232f9d 100644
  }
 
  impl<C: Sync> ExtensionRegistry<C> {
-@@ -187,8 +222,13 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -187,8 +223,13 @@ impl<C: Sync> ExtensionRegistry<C> {
                  tool_contributors: self.tool_contributors.clone(),
                  tool_lifecycle_contributors: self.tool_lifecycle_contributors.clone(),
                  model_request_contributors: self.model_request_contributors.clone(),
@@ -27766,7 +27768,7 @@ index ddb02113e..64b232f9d 100644
              },
          }
      }
-@@ -243,6 +283,10 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -243,6 +284,10 @@ impl<C: Sync> ExtensionRegistry<C> {
                  .any(|contributor| contributor.requires_host_skill_discovery())
      }
 
@@ -27777,7 +27779,7 @@ index ddb02113e..64b232f9d 100644
      /// Returns the first claimed decision in registration order.
      pub async fn decide_approval(
          &self,
-@@ -286,6 +330,22 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -286,6 +331,22 @@ impl<C: Sync> ExtensionRegistry<C> {
          &self.tool_lifecycle_contributors
      }
 
@@ -142456,10 +142458,10 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..c8af52c27
+index 000000000..9af55c46e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,637 @@
+@@ -0,0 +1,689 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -142481,19 +142483,61 @@ index 000000000..c8af52c27
 +
 +const DEFAULT_HEIGHT: usize = 12;
 +
++#[derive(Clone, Copy)]
 +pub(crate) enum Content<'a> {
 +    Spans(&'a [Vec<ModSpan>]),
 +    Source(&'a codex_omd::resource_data::ResourceRef),
 +    Diff(&'a str),
 +}
 +
++#[derive(Default, PartialEq)]
++enum Key {
++    #[default]
++    None,
++    Spans(Vec<Vec<ModSpan>>),
++    Source(
++        codex_omd::resource_data::ResourceRef,
++        Vec<String>,
++        Option<String>,
++        Option<Authority>,
++    ),
++    Diff(String),
++}
++
++type Authority = (
++    std::path::PathBuf,
++    std::path::PathBuf,
++    [Option<codex_omd::FileStamp>; 2],
++);
++
++/// Resource records are content-addressed, so resolved lines stay valid until the files that grant owners access change.
++fn authority() -> Option<Authority> {
++    let paths = crate::omd::mod_paths()?;
++    let store = paths.store?;
++    let stamps =
++        ["mod-status.json", "mods.json"].map(|name| crate::omd::file_stamp(&store.join(name)));
++    Some((store, paths.repository, stamps))
++}
++
++impl Key {
++    fn matches(&self, content: &Content<'_>) -> bool {
++        match (self, content) {
++            (Self::Spans(cached), Content::Spans(lines)) => cached.as_slice() == *lines,
++            (Self::Diff(cached), Content::Diff(unified)) => cached == unified,
++            _ => false,
++        }
++    }
++}
++
 +#[derive(Default)]
 +struct Document {
 +    view: DocumentView,
-+    key: String,
++    key: Key,
 +    lines: Arc<Vec<String>>,
 +    spans: Arc<Vec<Vec<Span<'static>>>>,
 +    anchors: Arc<Vec<Option<String>>>,
++    /// Whether the view's `anchors` apply: not for diffs or an unavailable source.
++    anchored: bool,
 +    applied_find: Option<ModFind>,
 +    applied_selection: Option<ModRange>,
 +    height: usize,
@@ -142851,25 +142895,28 @@ index 000000000..c8af52c27
 +    keys: bool,
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
-+    let resolved = match &content {
-+        Content::Source(reference) => resolve(reference, owners),
-+        _ => Ok(Vec::new()),
-+    };
-+    let supplied_anchors = !matches!(&content, Content::Diff(_)) && resolved.is_ok();
-+    let key = match &content {
-+        Content::Spans(lines) => {
-+            format!("spans:{}", serde_json::to_string(lines).unwrap_or_default())
-+        }
-+        Content::Source(reference) => format!(
-+            "source:{reference:?}:{owners:?}:{}",
-+            crate::mod_surface::current_thread().unwrap_or_default()
-+        ),
-+        Content::Diff(unified) => format!("diff:{unified}"),
++    let source = match &content {
++        Content::Source(reference) => Some(Key::Source(
++            (*reference).clone(),
++            owners.to_vec(),
++            crate::mod_surface::current_thread(),
++            authority(),
++        )),
++        _ => None,
 +    };
 +    let mut documents = documents();
 +    let document = documents.entry(id.to_owned()).or_default();
-+    if document.key != key || matches!(&content, Content::Source(_)) {
-+        let (lines, spans, parsed_anchors) = match content {
++    let current = match &source {
++        Some(source) => document.key == *source,
++        None => document.key.matches(&content),
++    };
++    if !current {
++        let key = match content {
++            Content::Spans(lines) => Key::Spans(lines.to_vec()),
++            Content::Diff(unified) => Key::Diff(unified.to_owned()),
++            Content::Source(_) => source.unwrap_or_default(),
++        };
++        let (lines, spans, parsed_anchors, anchored) = match content {
 +            Content::Spans(lines) => (
 +                lines.iter().map(|line| span_text(line)).collect::<Vec<_>>(),
 +                lines
@@ -142885,8 +142932,9 @@ index 000000000..c8af52c27
 +                (0..lines.len())
 +                    .map(|index| anchors.get(index).cloned())
 +                    .collect::<Vec<_>>(),
++                true,
 +            ),
-+            Content::Source(_) => match resolved {
++            Content::Source(reference) => match resolve(reference, owners) {
 +                Ok(lines) => {
 +                    let count = lines.len();
 +                    (
@@ -142898,12 +142946,14 @@ index 000000000..c8af52c27
 +                        (0..count)
 +                            .map(|index| anchors.get(index).cloned())
 +                            .collect(),
++                        true,
 +                    )
 +                }
 +                Err(error) => (
 +                    vec![format!("unavailable: {error}")],
 +                    vec![vec![format!("unavailable: {error}").dim()]],
 +                    vec![None],
++                    false,
 +                ),
 +            },
 +            Content::Diff(unified) => {
@@ -142915,10 +142965,11 @@ index 000000000..c8af52c27
 +                        .map(|(kind, text, _)| vec![Span::styled(text.clone(), diff_style(*kind))])
 +                        .collect(),
 +                    parsed.into_iter().map(|(_, _, anchor)| anchor).collect(),
++                    false,
 +                )
 +            }
 +        };
-+        if document.key != key || document.lines.as_ref() != &lines {
++        if document.lines.as_ref() != &lines {
 +            let view = if keys {
 +                DocumentView {
 +                    cursor: document.view.cursor,
@@ -142930,18 +142981,21 @@ index 000000000..c8af52c27
 +            };
 +            *document = Document {
 +                view,
-+                key,
-+                lines: Arc::new(lines),
-+                spans: Arc::new(spans),
-+                anchors: Arc::new(parsed_anchors),
 +                ..Document::default()
 +            };
 +        }
++        document.key = key;
++        document.lines = Arc::new(lines);
++        document.spans = Arc::new(spans);
++        document.anchors = Arc::new(parsed_anchors);
++        document.anchored = anchored;
 +    }
-+    if supplied_anchors
-+        && !document.anchors.iter().map(Option::as_ref).eq(
-+            (0..document.lines.len()).map(|index| anchors.get(index)),
-+        )
++    if document.anchored
++        && !document
++            .anchors
++            .iter()
++            .map(Option::as_ref)
++            .eq((0..document.lines.len()).map(|index| anchors.get(index)))
 +    {
 +        document.anchors = Arc::new(
 +            (0..document.lines.len())
@@ -143099,12 +143153,13 @@ index 000000000..c8af52c27
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..81244bb7f
+index 000000000..49d330991
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,181 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
++use std::path::PathBuf;
 +
 +#[test]
 +#[serial_test::serial]
@@ -143114,10 +143169,19 @@ index 000000000..81244bb7f
 +        sha256: "a".repeat(64),
 +    };
 +    let owners: Vec<String> = Vec::new();
-+    let thread = crate::mod_surface::current_thread().unwrap_or_default();
++    let revoked = Some((
++        PathBuf::from("/store"),
++        PathBuf::from("/repo"),
++        [None, None],
++    ));
 +    for key in [
-+        format!("source:{}", reference.sha256),
-+        format!("source:{reference:?}:{owners:?}:{thread}"),
++        Key::None,
++        Key::Source(
++            reference.clone(),
++            owners.clone(),
++            crate::mod_surface::current_thread(),
++            revoked,
++        ),
 +    ] {
 +        documents().insert(
 +            "revoked-document".to_owned(),
@@ -143144,6 +143208,7 @@ index 000000000..81244bb7f
 +        assert!(rendered.iter().all(|line| !line.contains("private cached")));
 +        assert!(rendered.iter().any(|line| line.contains("unavailable")));
 +    }
++    let thread = crate::mod_surface::current_thread().unwrap_or_default();
 +    for key in [
 +        format!("{}:4:2", reference.sha256),
 +        format!("{reference:?}:{owners:?}:{thread}:4:2:"),
@@ -143198,7 +143263,7 @@ index 000000000..81244bb7f
 +    documents().insert(
 +        "revoked".into(),
 +        Document {
-+            key: format!("source:{}", reference.sha256),
++            key: Key::None,
 +            lines: Arc::new(vec!["private document".into()]),
 +            spans: Arc::new(vec![vec![Span::raw("private document")]]),
 +            anchors: Arc::new(vec![None]),
@@ -143223,6 +143288,55 @@ index 000000000..81244bb7f
 +            .any(|line| line.contains("private document"))
 +    );
 +    assert!(rendered.iter().any(|line| line.contains("unavailable")));
++}
++
++#[test]
++#[serial_test::serial]
++fn resolved_resource_rows_are_reused_until_authority_changes() {
++    let root = tempfile::TempDir::new().unwrap();
++    let store = root.path().canonicalize().unwrap();
++    std::fs::write(store.join("mod-status.json"), r#"{"mods":[]}"#).unwrap();
++    let _omd = crate::omd::tests::omd_environment(&store);
++    let reference = codex_omd::resource_data::ResourceRef {
++        reference: "b".repeat(64),
++        sha256: "b".repeat(64),
++    };
++    assert!(authority().is_some());
++    documents().insert(
++        "reused".into(),
++        Document {
++            key: Key::Source(
++                reference.clone(),
++                Vec::new(),
++                crate::mod_surface::current_thread(),
++                authority(),
++            ),
++            lines: Arc::new(vec!["resolved document".into()]),
++            spans: Arc::new(vec![vec![Span::raw("resolved document")]]),
++            anchors: Arc::new(vec![None]),
++            ..Default::default()
++        },
++    );
++    let render = || {
++        text(&rows(
++            "reused",
++            Content::Source(&reference),
++            &[],
++            None,
++            None,
++            Some(4),
++            &[],
++            false,
++            false,
++            "",
++        ))
++    };
++    assert_eq!(render(), vec!["  resolved document"]);
++    let replacement = store.join("mod-status.next");
++    std::fs::write(&replacement, r#"{"mods":[]}"#).unwrap();
++    std::fs::rename(&replacement, store.join("mod-status.json")).unwrap();
++    assert!(render().iter().any(|line| line.contains("unavailable")));
++    invalidate();
 +}
 diff --git a/codex-rs/tui/src/mod_document.rs b/codex-rs/tui/src/mod_document.rs
 new file mode 100644
@@ -146787,10 +146901,10 @@ index 000000000..ef92b4ed0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..2ba872db1
+index 000000000..f61453ce7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1555 @@
+@@ -0,0 +1,1563 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -146942,6 +147056,14 @@ index 000000000..2ba872db1
 +
 +pub(crate) fn active_context() -> Option<ModContext> {
 +    ACTIVE_CONTEXT.locked().context.clone()
++}
++
++pub(crate) fn active_repository() -> Option<std::path::PathBuf> {
++    ACTIVE_CONTEXT
++        .locked()
++        .context
++        .as_ref()
++        .map(|context| context.repository.clone())
 +}
 +
 +pub(crate) struct Entry {
@@ -157854,10 +157976,10 @@ index 000000000..fdbccb32c
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..569ba6091
+index 000000000..7b73cc91c
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,702 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -157948,7 +158070,7 @@ index 000000000..569ba6091
 +
 +/// The host's identity stamp (device, inode, length, mtime and ctime in ns): a same-length rewrite
 +/// still changes the ctime the writer cannot set.
-+fn file_stamp(path: &Path) -> Option<FileStamp> {
++pub(crate) fn file_stamp(path: &Path) -> Option<FileStamp> {
 +    std::fs::symlink_metadata(path)
 +        .ok()
 +        .map(|metadata| codex_omd::file_stamp(&metadata))
@@ -157995,18 +158117,12 @@ index 000000000..569ba6091
 +}
 +
 +pub(crate) fn mod_paths() -> Option<ModPaths> {
-+    let repository = crate::mod_runtime::active_context()
-+        .map(|context| context.repository)
-+        .or_else(|| std::env::current_dir().ok())?;
-+    mod_paths_for(&repository)
++    mod_paths_for(&session_repository()?)
 +}
 +
 +pub(crate) fn mod_paths_for(repository: &Path) -> Option<ModPaths> {
 +    let root = store_root()?;
-+    let repository = repository.canonicalize().ok()?;
-+    if codex_omd::app_routes::unscoped_directory(&repository) {
-+        return None;
-+    }
++    let repository = scoped_repository(repository)?;
 +    let protected = host_protected_paths(&root);
 +    Some(ModPaths {
 +        evidence: root.clone(),
@@ -158016,12 +158132,48 @@ index 000000000..569ba6091
 +    })
 +}
 +
++fn session_repository() -> Option<PathBuf> {
++    crate::mod_runtime::active_repository().or_else(|| std::env::current_dir().ok())
++}
++
++type Memo<K, V> = std::sync::Mutex<std::collections::BTreeMap<K, (std::time::Instant, V)>>;
++
++/// Frames and keystrokes resolve these paths, so each input's canonical result is reused for up to 2 s.
++fn memo<K: Ord, V: Clone>(cache: &Memo<K, V>, key: K, resolve: impl FnOnce() -> V) -> V {
++    let mut cache = cache.locked();
++    if let Some((checked, value)) = cache.get(&key)
++        && checked.elapsed() < std::time::Duration::from_secs(2)
++    {
++        return value.clone();
++    }
++    if cache.len() >= 16 {
++        cache.clear();
++    }
++    let value = resolve();
++    cache.insert(key, (std::time::Instant::now(), value.clone()));
++    value
++}
++
++fn scoped_repository(repository: &Path) -> Option<PathBuf> {
++    static CACHE: Memo<(PathBuf, Option<std::ffi::OsString>), Option<PathBuf>> =
++        std::sync::Mutex::new(std::collections::BTreeMap::new());
++    let key = (repository.to_path_buf(), std::env::var_os("HOME"));
++    memo(&CACHE, key, || {
++        let repository = repository.canonicalize().ok()?;
++        (!codex_omd::app_routes::unscoped_directory(&repository)).then_some(repository)
++    })
++}
++
 +pub(crate) fn store_root() -> Option<PathBuf> {
++    static CACHE: Memo<PathBuf, bool> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 +    if !is_active() {
 +        return None;
 +    }
 +    let root = PathBuf::from(std::env::var_os(codex_omd::MOD_STORE_ENV)?);
-+    (root.is_absolute() && root.canonicalize().ok()? == root).then_some(root)
++    memo(&CACHE, root.clone(), || {
++        root.is_absolute() && root.canonicalize().is_ok_and(|canonical| canonical == root)
++    })
++    .then_some(root)
 +}
 +
 +/// The store plus `host.json` protected and secret paths, re-read only when the file changes.
@@ -158095,8 +158247,7 @@ index 000000000..569ba6091
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
 +    let root = std::env::current_dir()
 +        .ok()
-+        .and_then(|launch| mod_paths_for(&launch))
-+        .and_then(|paths| Some((paths.store?, paths.repository)));
++        .and_then(|launch| Some((store_root()?, scoped_repository(&launch)?)));
 +    let mut cache = CACHE.locked();
 +    if let Some((cached, loaded, snapshot)) = cache.as_ref()
 +        && *cached == root
@@ -158159,7 +158310,8 @@ index 000000000..569ba6091
 +}
 +
 +pub(crate) fn terminal_active() -> bool {
-+    mod_paths().is_some()
++    store_root().is_some()
++        && session_repository().is_some_and(|repository| scoped_repository(&repository).is_some())
 +}
 +
 +pub(crate) fn effective_mode() -> Result<codex_omd::EffectiveMode, String> {
