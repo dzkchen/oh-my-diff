@@ -1807,7 +1807,9 @@ interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
-and dialogs (`ui_composition_v1`).
+and dialogs (`ui_composition_v1`). These events wait in order behind a slow
+callback; beyond 256 waiting events new ones are dropped and the next delivered
+event reports the count as `dropped`.
 
 Component modules (experimental, required feature `component_modules_v1`,
 which `mod_host_check.py --static` requires of any package that calls

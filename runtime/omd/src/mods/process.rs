@@ -168,7 +168,6 @@ fn reap() {
 }
 
 fn spawn(node: &Path) -> Result<Child> {
-    let _profile = super::Profile::new("runner_spawn");
     let child = command(node)?
         .args([
             "--max-old-space-size=64",
@@ -191,7 +190,6 @@ fn spawn(node: &Path) -> Result<Child> {
 }
 
 fn runner(node: &Path) -> Result<Child> {
-    let _profile = super::Profile::new("spare_acquisition");
     let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
@@ -517,11 +515,6 @@ pub(super) fn evaluate_warm<R>(
 where
     R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
 {
-    let _profile = super::Profile::new(if request["serve"] == true {
-        "render_callback"
-    } else {
-        "fresh_callback"
-    });
     let kept = (request["reuse"] == true)
         .then(|| kept_digest(request))
         .transpose()?;
