@@ -113403,10 +113403,10 @@ index 000000000..262995594
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..2c6c005ac
+index 000000000..7d9a42483
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,748 @@
+@@ -0,0 +1,750 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -113956,9 +113956,11 @@ index 000000000..2c6c005ac
 +        let index = runners.iter().position(|runner| runner.key == key)?;
 +        Some(runners.swap_remove(index))
 +    });
-+    // A runner that died idle, even by the watchdog, is replaced: the next callback did not cause it.
 +    if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child)) {
-+        dead.halt();
++        let stateful = dead.serve || dead.pinned.is_some();
++        if dead.halt().1 && stateful {
++            return Err(memory_failure());
++        }
 +    }
 +    let (mut warm, bytes) = match reused {
 +        Some(warm) if kept.is_some() && warm.kept == kept => {
@@ -114157,10 +114159,10 @@ index 000000000..2c6c005ac
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 000000000..26f43f821
+index 000000000..480d65f1e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,583 @@
+@@ -0,0 +1,617 @@
 +use super::WARM;
 +use super::command;
 +use super::evaluate_warm;
@@ -114272,23 +114274,57 @@ index 000000000..26f43f821
 +        json!(2),
 +        "a live runner gets the changed source"
 +    );
-+    let pid = WARM
-+        .lock()
-+        .unwrap()
-+        .iter()
-+        .find(|runner| runner.key == "kept-fields")
-+        .unwrap()
-+        .child
-+        .id();
-+    // SAFETY: the pooled runner is an unreaped child of this process.
-+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-+    std::thread::sleep(Duration::from_millis(100));
++    watchdog_kill("kept-fields");
 +    assert_eq!(
 +        run(&request),
 +        json!(2),
 +        "a runner that died idle is replaced"
 +    );
 +    super::invalidate_warm("kept-fields");
++}
++
++fn watchdog_kill(key: &str) {
++    let pid = WARM
++        .lock()
++        .unwrap()
++        .iter()
++        .find(|runner| runner.key == key)
++        .unwrap()
++        .child
++        .id();
++    let mut tracked = super::TRACKED.lock().unwrap();
++    // SAFETY: the pooled runner is an unreaped child of this process.
++    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
++    tracked.get_mut(&pid).unwrap().0 = true;
++    drop(tracked);
++    std::thread::sleep(Duration::from_millis(100));
++}
++
++#[test]
++fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
++    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
++    let input = json!({"component":"tool_call"});
++    let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
++        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
++        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
++        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
++        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
++    let run = || {
++        evaluate_warm(
++            &node,
++            "idle-watchdog",
++            &request,
++            Duration::from_secs(2),
++            &|| true,
++            &mut |_| unreachable!(),
++        )
++    };
++    run().unwrap();
++    watchdog_kill("idle-watchdog");
++    let error = run().unwrap_err().to_string();
++    assert!(error.starts_with("mod_out_of_memory:"), "{error}");
++    run().unwrap();
++    super::invalidate_warm("idle-watchdog");
 +}
 +
 +#[test]
@@ -161776,10 +161812,10 @@ index 000000000..914213e90
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..c8e493ce3
+index 000000000..90803ef84
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4600 @@
+@@ -0,0 +1,4601 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -165612,7 +165648,8 @@ index 000000000..c8e493ce3
 +            ComponentTarget::Button(action) => component_action(&action),
 +            _ => ModKeyAction::Focus { focus: id },
 +        };
-+        return Some(if blocked(&action) {
++        // A laid-out dialog keeps only its own targets, whose hotkeys act like Enter on them.
++        return Some(if interaction.dialog_area.is_none() && blocked(&action) {
 +            ModInput::Consumed
 +        } else {
 +            ModInput::Binding(name, action)
@@ -166756,10 +166793,10 @@ index 000000000..3c5584ded
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..55f53ec0e
+index 000000000..2833118bc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2547 @@
+@@ -0,0 +1,2552 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -167138,7 +167175,8 @@ index 000000000..55f53ec0e
 +    let dialog = snapshot(serde_json::json!({
 +        "keybindings":{"F6":"draft","F7":{"command":"workspace:layout"}},
 +        "sites":{"dialog":{"components":[{"type":"dialog","id":"note","label":"Note","title":"Note",
-+            "children":[{"type":"text","id":"body","label":"Body","text":"Read me"}]}]}}
++            "children":[{"type":"text","id":"body","label":"Body","text":"Read me"},
++                {"type":"button","id":"paste","label":"Paste","text":"Paste","hotkey":"F5","action":{"insert":"x"}}]}]}}
 +    }));
 +    preview(dialog.clone());
 +    let area = Rect::new(0, 0, 80, 24);
@@ -167146,6 +167184,10 @@ index 000000000..55f53ec0e
 +    assert!(matches!(
 +        input(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE)),
 +        Some(ModInput::Consumed)
++    ));
++    assert!(matches!(
++        input(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
++        Some(ModInput::Binding(_, ModKeyAction::Insert { .. }))
 +    ));
 +    assert!(matches!(
 +        input(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE)),

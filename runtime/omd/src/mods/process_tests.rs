@@ -109,23 +109,57 @@ fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died
         json!(2),
         "a live runner gets the changed source"
     );
-    let pid = WARM
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|runner| runner.key == "kept-fields")
-        .unwrap()
-        .child
-        .id();
-    // SAFETY: the pooled runner is an unreaped child of this process.
-    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
-    std::thread::sleep(Duration::from_millis(100));
+    watchdog_kill("kept-fields");
     assert_eq!(
         run(&request),
         json!(2),
         "a runner that died idle is replaced"
     );
     super::invalidate_warm("kept-fields");
+}
+
+fn watchdog_kill(key: &str) {
+    let pid = WARM
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|runner| runner.key == key)
+        .unwrap()
+        .child
+        .id();
+    let mut tracked = super::TRACKED.lock().unwrap();
+    // SAFETY: the pooled runner is an unreaped child of this process.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    tracked.get_mut(&pid).unwrap().0 = true;
+    drop(tracked);
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+#[test]
+fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let input = json!({"component":"tool_call"});
+    let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
+        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
+    let run = || {
+        evaluate_warm(
+            &node,
+            "idle-watchdog",
+            &request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+    };
+    run().unwrap();
+    watchdog_kill("idle-watchdog");
+    let error = run().unwrap_err().to_string();
+    assert!(error.starts_with("mod_out_of_memory:"), "{error}");
+    run().unwrap();
+    super::invalidate_warm("idle-watchdog");
 }
 
 #[test]

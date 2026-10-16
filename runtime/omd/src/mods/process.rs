@@ -547,9 +547,11 @@ where
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
     });
-    // A runner that died idle, even by the watchdog, is replaced: the next callback did not cause it.
     if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child)) {
-        dead.halt();
+        let stateful = dead.serve || dead.pinned.is_some();
+        if dead.halt().1 && stateful {
+            return Err(memory_failure());
+        }
     }
     let (mut warm, bytes) = match reused {
         Some(warm) if kept.is_some() && warm.kept == kept => {
