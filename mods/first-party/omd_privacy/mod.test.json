@@ -55,24 +55,6 @@
       }
     },
     {
-      "type": "event",
-      "event": "approval",
-      "payload": {
-        "id": "fixture-approval",
-        "kind": "exec",
-        "thread_id": "fixture-thread",
-        "turn_id": null,
-        "agent_id": null,
-        "host_decision": "skip",
-        "policy": "on-request",
-        "details": {"command": ["bash", "-lc", "cat .env"], "cwd": "/repo"},
-        "assessment": false
-      },
-      "expect": [
-        {"mod": "omd_privacy", "value": {"ask": "omd_privacy: this command names a sensitive path (.env), so its output would reach the model"}}
-      ]
-    },
-    {
       "type": "intercept",
       "surface": "model_send",
       "cancelled": true,

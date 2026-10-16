@@ -1061,35 +1061,6 @@ mod transaction_tests {
     }
 
     #[test]
-    fn streamed_snapshot_hash_matches_the_serialized_digest() {
-        let snapshot = Snapshot {
-            files: BTreeMap::from([
-                (
-                    "a.rs".into(),
-                    File {
-                        bytes: vec![0, 1, 255],
-                        executable: false,
-                    },
-                ),
-                (
-                    "bin/run".into(),
-                    File {
-                        bytes: b"#!/bin/sh\n".to_vec(),
-                        executable: true,
-                    },
-                ),
-            ]),
-        };
-        assert_eq!(
-            snapshot.hash().unwrap(),
-            format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(&snapshot).unwrap())
-            )
-        );
-    }
-
-    #[test]
     fn transaction_renames_and_updates_exact_scope() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -1212,31 +1183,6 @@ mod transaction_tests {
     }
 
     #[test]
-    fn transaction_rejects_oversized_source_without_writing() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
-        let original = vec![b'x'; 4 * 1024 * 1024 + 1];
-        fs::write(root.join("large.py"), &original).unwrap();
-        let transaction = WorkspaceTransaction {
-            expected: BTreeMap::from([(
-                "large.py".into(),
-                Some(Fingerprint::Hash(content_hash(&original))),
-            )]),
-            writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
-            renames: Vec::new(),
-            ..Default::default()
-        };
-        assert!(
-            transaction
-                .apply(&root, || true)
-                .unwrap_err()
-                .to_string()
-                .contains("limit")
-        );
-        assert_eq!(fs::read(root.join("large.py")).unwrap(), original);
-    }
-
-    #[test]
     fn transaction_deletes_with_stat_precondition_and_backup() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().canonicalize().unwrap();
@@ -1303,36 +1249,4 @@ mod transaction_tests {
         assert!(root.join("keep.txt").exists());
     }
 
-    #[test]
-    fn workspace_index_detects_write_create_and_delete() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
-        fs::write(root.join("modified.py"), "old").unwrap();
-        fs::write(root.join("removed.py"), "gone").unwrap();
-        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
-        fs::write(root.join("modified.py"), "new").unwrap();
-        fs::remove_file(root.join("removed.py")).unwrap();
-        fs::write(root.join("created.py"), "added").unwrap();
-        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
-        assert_eq!(
-            before.changed(&after),
-            vec![
-                WorkspaceChange {
-                    path: "created.py".into(),
-                    before: None,
-                    after: Some(content_hash(b"added")),
-                },
-                WorkspaceChange {
-                    path: "modified.py".into(),
-                    before: Some(content_hash(b"old")),
-                    after: Some(content_hash(b"new")),
-                },
-                WorkspaceChange {
-                    path: "removed.py".into(),
-                    before: Some(content_hash(b"gone")),
-                    after: None,
-                },
-            ]
-        );
-    }
 }

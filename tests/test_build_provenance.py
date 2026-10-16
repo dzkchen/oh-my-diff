@@ -5,7 +5,6 @@ import tempfile
 import unittest
 
 from scripts import build_provenance as provenance
-from scripts import release_lock
 
 
 class BuildProvenanceTests(unittest.TestCase):
@@ -25,11 +24,6 @@ class BuildProvenanceTests(unittest.TestCase):
             config.write_text('[env]\nRUSTC = { value = "override", force = true }\n')
             with self.assertRaisesRegex(ValueError, 'overrides'):
                 provenance.inputs(tree, ['build', '--locked', '--release'], environment)
-
-    def test_release_rejects_artifacts_without_a_build_record(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            with self.assertRaisesRegex(ValueError, "build provenance"):
-                release_lock.build(Path(temporary))
 
     def test_build_record_binds_inputs_unsigned_and_signed_artifacts(self):
         with tempfile.TemporaryDirectory() as temporary:

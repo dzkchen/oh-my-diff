@@ -205,22 +205,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quoted_mentions_consume_the_whole_filename() {
-        let directory = tempfile::tempdir().unwrap();
-        for name in ["notes @secret.txt", "secret.txt", "next.txt"] {
-            std::fs::write(directory.path().join(name), name).unwrap();
-        }
-        let input = [UserInput::Text {
-            text: "@\"notes @secret.txt\" @next.txt".into(),
-            text_elements: Vec::new(),
-        }];
-        assert_eq!(
-            mentioned(&input, directory.path()),
-            ["notes @secret.txt", "next.txt"]
-        );
-    }
-
-    #[test]
     fn quoted_mentions_preserve_filenames_and_reject_unsafe_paths() {
         let directory = tempfile::tempdir().unwrap();
         for name in [

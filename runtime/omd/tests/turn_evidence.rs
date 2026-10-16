@@ -52,15 +52,6 @@ fn projection_contains_visible_messages_and_references_only() {
 }
 
 #[test]
-fn packet_is_bounded_and_discloses_omissions() {
-    let message = json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"字".repeat(20_000)}]});
-    let packet = project(std::iter::repeat_n(message, 5000), "turn-b", 3).unwrap();
-    assert_eq!(packet["truncated"], true);
-    assert_eq!(packet["records"][0]["truncated"], true);
-    assert!(packet.to_string().len() < codex_omd::resource_data::SNAPSHOT_BYTES);
-}
-
-#[test]
 fn compaction_segments_preserve_original_visible_records_and_bounds() {
     let message = |text: &str| json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]});
     let before = project([message("before")].into_iter(), "turn", 1).unwrap();

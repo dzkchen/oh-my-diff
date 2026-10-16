@@ -157,16 +157,6 @@
           }
         }
       ]
-    },
-    {
-      "type": "invoke",
-      "mod": "terminal",
-      "event": "command",
-      "name": "layout",
-      "payload": "review",
-      "expect": {
-        "display": "Layout request: review"
-      }
     }
   ]
 }

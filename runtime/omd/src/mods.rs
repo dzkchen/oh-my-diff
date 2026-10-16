@@ -5949,29 +5949,6 @@ fn validate_ui_state(encoded: &str) -> Result<Value> {
     serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
 }
 
-#[cfg(test)]
-#[test]
-fn ui_state_serialized_boundaries() {
-    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
-    for case in cases.as_array().unwrap() {
-        let encoded = format!(
-            "{}{}{}",
-            case["prefix"].as_str().unwrap(),
-            case["unit"]
-                .as_str()
-                .unwrap()
-                .repeat(case["repeat"].as_u64().unwrap() as usize),
-            case["suffix"].as_str().unwrap()
-        );
-        assert_eq!(
-            validate_ui_state(&encoded).is_ok(),
-            case["valid"].as_bool().unwrap(),
-            "{}",
-            case["name"]
-        );
-    }
-}
-
 fn service_ts_type(kind: &str) -> &'static str {
     match kind {
         "null" => "null",

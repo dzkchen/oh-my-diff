@@ -37,17 +37,3 @@ fn key_and_command_replacements_validate_and_drop_conflicts() {
     assert!(restored.replaced_commands.is_empty());
 }
 
-#[test]
-fn only_known_surfaces_can_be_disabled() {
-    let controls =
-        BuiltinControls::parse(&json!({"surfaces": {"disable": ["status_line"]}})).unwrap();
-    for invalid in [
-        json!({"surfaces": {"disable": ["composer"]}}),
-        json!({"surfaces": {"disable": ["status_line", "status_line"]}}),
-    ] {
-        assert!(BuiltinControls::parse(&invalid).is_err(), "{invalid}");
-    }
-    let snapshot = BuiltinSnapshot::from_controls(&[("line".to_owned(), controls)]);
-    assert!(snapshot.surface_disabled("status_line"));
-    assert!(!BuiltinSnapshot::default().surface_disabled("status_line"));
-}

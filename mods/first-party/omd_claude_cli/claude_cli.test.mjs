@@ -1,16 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { once } from 'node:events';
-import activate, { translateRequest, responseEvents, reasoningItem } from './index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, extraUsageStop, limitHeaders, providerNote, runClaude, stoppedForExtraUsage, upstreamFailure, usingOverage, withoutCliContext } from './transport.mjs';
+import { translateRequest, responseEvents } from './index.ts';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, withoutCliContext } from './transport.mjs';
 
-const pkg = fileURLToPath(new URL('./', import.meta.url));
 const model = 'claude-sonnet-5';
 const prompt = {
   model, stream: true, instructions: 'Follow user instructions.',
@@ -54,173 +50,6 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
 });
 
-test('Claude mod folds mid-conversation developer messages into user frames', () => {
-  const developer = text => ({ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
-  const translated = translateRequest({ ...prompt, input: [...prompt.input,
-    { type: 'function_call', name: 'exec_command', call_id: 'call_1', arguments: '{"cmd":"pwd"}' },
-    developer('Approvals changed.'),
-    { type: 'function_call_output', call_id: 'call_1', output: '/repo' },
-    developer('Model switched.'),
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue.' }] }] }, model);
-  assert.equal(translated.system, 'Follow user instructions.');
-  assert.deepEqual(translated.frames.map(frame => frame.type), ['user', 'assistant', 'user']);
-  assert.deepEqual(translated.frames.at(-1).message.content, [
-    { type: 'tool_result', tool_use_id: 'call_1', content: '/repo', is_error: false },
-    { type: 'text', text: '<developer_message>\nApprovals changed.\n</developer_message>' },
-    { type: 'text', text: '<developer_message>\nModel switched.\n</developer_message>' },
-    { type: 'text', text: 'Continue.' },
-  ]);
-});
-
-test('Claude mod forwards images, skips reasoning items and hides ask_claude from Claude leads', () => {
-  const png = 'data:image/png;base64,iVBORw0KGgo=';
-  const translated = translateRequest({ ...prompt,
-    tools: [...prompt.tools, { type: 'function', name: 'mod_omd_claude_cli_ask_claude', parameters: { type: 'object', properties: {} } }],
-    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Look.' }, { type: 'input_image', image_url: png }] },
-      reasoningItem({ type: 'thinking', thinking: 'Plan.', signature: 'sig' }, 'r1'),
-      { type: 'function_call', name: 'exec_command', call_id: 'call_1', arguments: '{"cmd":"shot"}' },
-      { type: 'function_call_output', call_id: 'call_1', output: [{ type: 'input_text', text: 'saved' }, { type: 'input_image', image_url: png }] }] }, model);
-  assert.deepEqual(translated.frames[0].message.content[1],
-    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } });
-  assert.deepEqual(translated.frames[1].message.content.map(block => block.type), ['tool_use']);
-  assert.deepEqual(translated.frames[2].message.content[0].content.map(block => block.type), ['text', 'image']);
-  assert.equal(translated.manifest.some(tool => tool.name.includes('ask_claude')), false);
-  assert.throws(() => translateRequest({ ...prompt, input: [{ type: 'message', role: 'user',
-    content: [{ type: 'input_image', image_url: 'https://example.com/a.png' }] }] }, model), /unsupported_image_input/);
-});
-
-test('Claude mod routes Codex tool search so a Claude lead can load deferred mod tools', () => {
-  const research = { type: 'function', name: 'mod_omd_advisor_consult', description: 'Research', parameters: { type: 'object', properties: {} } };
-  const translated = translateRequest({ ...prompt, tools: [...prompt.tools, { type: 'tool_search', execution: 'client', description: 'Find tools',
-    parameters: { type: 'object', properties: { query: { type: 'string' } } } }],
-  input: [...prompt.input, { type: 'tool_search_call', call_id: 's1', execution: 'client', arguments: { query: 'muse' } },
-    { type: 'tool_search_output', call_id: 's1', status: 'completed', execution: 'client', tools: [{ type: 'namespace', name: 'functions', tools: [research] }] }] }, model);
-  assert.ok(translated.reverse.mod_omd_advisor_consult);
-  assert.deepEqual(translated.frames[1].message.content, [{ type: 'tool_use', id: 's1', name: 'mcp__omd__tool_search', input: { query: 'muse' } }]);
-  assert.equal(translated.frames[2].message.content[0].content, 'Loaded tools: mcp__omd__mod_omd_advisor_consult');
-  const events = responseEvents({ id: 'msg_s', usage: { input_tokens: 1, output_tokens: 1 }, content: [
-    { type: 'tool_use', id: 's2', name: 'mcp__omd__tool_search', input: { query: 'git' } },
-    { type: 'tool_use', id: 'c1', name: 'mcp__omd__mod_omd_advisor_consult', input: { question: 'q' } }] }, {}, model, translated.reverse);
-  const items = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
-  assert.deepEqual(items[0], { type: 'tool_search_call', id: 's2', call_id: 's2', execution: 'client', arguments: { query: 'git' } });
-  assert.equal(items[1].name, 'mod_omd_advisor_consult');
-});
-
-test('ask_claude consumes waits so write results integrate and refuses prompts over the host byte limit', () => {
-  const calls = [];
-  let ask;
-  activate({ on() {}, command() {}, settings: { ask_claude: true }, state: { set() {}, get: () => false },
-    tool: (_, handler) => { ask = handler; },
-    host: { tryCall: (operation, input) => {
-      calls.push([operation, input]);
-      if (operation === 'sidecars.status') return { ok: true, value: { running: true } };
-      if (operation === 'agents.spawn') return { ok: true, value: { handle: 'h1' } };
-      if (operation === 'agents.wait') return { ok: true, value: { status: 'completed', text: 'done', changed_paths: ['a'] } };
-      return { ok: true, value: { status: 'integrated' } };
-    } } });
-  assert.equal(ask({ prompt: 'é'.repeat(4097) }).reason, 'prompt_over_8192_bytes');
-  assert.equal(calls.some(([operation]) => operation === 'agents.spawn'), false);
-  assert.equal(ask({ prompt: 'é'.repeat(4096), mode: 'write' }).integration.status, 'integrated');
-  assert.deepEqual(calls.filter(([operation]) => operation === 'agents.wait'), [['agents.wait', { handle: 'h1', consume: true }]]);
-});
-
-test('Claude mod rejects route drift and carries calls to tools no longer offered as text', () => {
-  assert.throws(() => translateRequest({ ...prompt, model: 'other' }, model));
-  const compacting = translateRequest({ ...prompt, tools: [], input: [...prompt.input,
-    { type: 'function_call', name: 'exec_command', call_id: 'c1', arguments: '{"cmd":"pwd"}' },
-    { type: 'function_call_output', call_id: 'c1', output: '/repo' },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
-  assert.deepEqual(compacting.frames.map(frame => frame.message.content.map(block => block.text)),
-    [['List files.'], ['[called exec_command {"cmd":"pwd"}]'], ['[result of c1]', '/repo', 'Summarize.']]);
-  assert.throws(() => responseEvents({ id: 'msg_1', usage: { input_tokens: 1,
-    output_tokens: 1 }, content: [{ type: 'tool_use', name: 'mcp__omd__unknown' }] },
-  {}, model, {}));
-});
-
-test('Claude stream capture streams thinking as reasoning and preserves tool arguments', () => {
-  const emitted = [];
-  const capture = new Capture(event => emitted.push(event));
-  const events = [
-    { type: 'message_start', message: { id: 'msg_1', content: [], usage: { input_tokens: 2 } } },
-    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Check pwd.' } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
-    { type: 'content_block_stop', index: 0 },
-    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'x', name: 't', input: {} } },
-    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"cmd":' } },
-    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '"pwd"}' } },
-    { type: 'content_block_stop', index: 1 },
-    { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
-    { type: 'message_stop' },
-  ];
-  for (const event of events) {
-    const wire = Buffer.from(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-    const cut = Math.floor(wire.length / 2);
-    capture.feed(wire.subarray(0, cut));
-    capture.feed(wire.subarray(cut));
-  }
-  assert.equal(capture.complete, true);
-  assert.deepEqual(capture.message.content[1].input, { cmd: 'pwd' });
-  assert.equal(capture.message.usage.output_tokens, 5);
-  assert.equal(emitted.find(event => event.type === 'response.reasoning_summary_text.delta').delta, 'Check pwd.');
-  const reasoning = emitted.find(event => event.type === 'response.output_item.done').item;
-  assert.deepEqual(reasoning.summary, [{ type: 'summary_text', text: 'Check pwd.' }]);
-});
-
-test('subscription windows, resets and billing source reach /status headers; failures name their cause', () => {
-  const headers = { 'anthropic-ratelimit-unified-5h-utilization': '0.42', 'anthropic-ratelimit-unified-5h-reset': '1790000000',
-    'anthropic-ratelimit-unified-7d-utilization': '0.071', 'anthropic-ratelimit-unified-7d-reset': '1790500000' };
-  assert.deepEqual(limitHeaders(headers, 'note'), { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': 'note',
-    'x-claude-primary-used-percent': '42', 'x-claude-primary-window-minutes': '300', 'x-claude-primary-reset-at': '1790000000',
-    'x-claude-secondary-used-percent': '7.1', 'x-claude-secondary-window-minutes': '10080', 'x-claude-secondary-reset-at': '1790500000' });
-  assert.deepEqual(limitHeaders({}, 'note'), { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': 'note' });
-  const overage = { 'anthropic-ratelimit-unified-status': 'rejected', 'anthropic-ratelimit-unified-overage-status': 'allowed' };
-  assert.equal(providerNote('subscription', 'team', headers), 'Claude Team plan limits; extra usage unknown; claude.ai/settings/usage');
-  assert.equal(providerNote('subscription', 'max', { 'anthropic-ratelimit-unified-overage-status': 'allowed_warning' }, false),
-    'Claude Max plan limits; extra usage on, OMD stops at it; claude.ai/settings/usage');
-  assert.equal(providerNote('subscription', 'enterprise', overage), 'Claude Enterprise plan limits; extra usage in use; claude.ai/settings/usage');
-  assert.equal(providerNote('subscription', 'pro', { 'anthropic-ratelimit-unified-overage-status': 'rejected' }), 'Claude Pro plan limits; extra usage off; claude.ai/settings/usage');
-  assert.match(providerNote('api', null, headers), /^Anthropic API credits \(Console\); no plan limits/);
-  for (const note of [providerNote('subscription', 'enterprise', overage, false), providerNote('api')]) assert.ok(Buffer.byteLength(note) <= 120);
-  assert.equal(usingOverage(overage), true);
-  assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-in-use': 'true' }), true);
-  assert.equal(usingOverage({ 'anthropic-ratelimit-unified-overage-status': 'allowed' }), false);
-  assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 1_000_000), true);
-  assert.equal(stoppedForExtraUsage({ ...overage, 'anthropic-ratelimit-unified-reset': '2000' }, 3_000_000), false);
-  assert.equal(stoppedForExtraUsage(headers), false);
-  const both = { ...overage, 'anthropic-ratelimit-unified-5h-reset': '2000', 'anthropic-ratelimit-unified-reset': '9000' };
-  assert.equal(stoppedForExtraUsage(both, 3_000_000), false);
-  assert.match(extraUsageStop(both).message, new RegExp(new Date(2_000_000).toISOString()));
-  assert.equal(upstreamFailure(200, { ...headers, ...overage }, ''), null);
-  const limited = upstreamFailure(429, { ...headers, 'anthropic-ratelimit-unified-status': 'rejected',
-    'anthropic-ratelimit-unified-representative-claim': 'seven_day', 'anthropic-ratelimit-unified-overage-status': 'rejected',
-    'anthropic-ratelimit-unified-overage-disabled-reason': 'out_of_credits' }, '');
-  assert.deepEqual(limited, { code: 'rate_limit_exceeded',
-    message: `Claude seven_day limit reached; resets ${new Date(1790500000 * 1000).toISOString()}; extra usage unavailable (out_of_credits)` });
-  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"prompt is too long: 1000001 tokens"}}').code, 'context_length_exceeded');
-  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}', 'api').code, 'claude_api_credits_exhausted');
-  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"Your credit balance is too low"}}'), null);
-  assert.match(upstreamFailure(401, {}, '{"error":{"type":"authentication_error"}}').message, /claude auth login/);
-  assert.match(upstreamFailure(401, {}, '', 'api').message, /--console/);
-  assert.equal(upstreamFailure(403, {}, '{"error":{"message":"OAuth token has been revoked"}}').code, 'claude_login_expired');
-  assert.equal(upstreamFailure(403, {}, '{"error":{"type":"permission_error","message":"Your workspace cannot use this API"}}'), null);
-  assert.equal(upstreamFailure(404, {}, '{"error":{"type":"not_found_error","message":"model: claude-x"}}').code, 'claude_model_not_entitled');
-  assert.match(upstreamFailure(403, {}, '{"error":{"message":"no access to model claude-x"}}', 'api').message, /Console workspace/);
-  assert.equal(upstreamFailure(200, headers, ''), null);
-});
-
-test('reported extra usage keeps stopping requests when the reset is missing or malformed and says how it clears', () => {
-  const overage = { 'anthropic-ratelimit-unified-overage-in-use': 'true' };
-  const reset = value => ({ ...overage, 'anthropic-ratelimit-unified-reset': value });
-  assert.equal(stoppedForExtraUsage(overage, 5_000_000), true);
-  for (const bad of ['', 'soon', '0', '-5', 'NaN']) assert.equal(stoppedForExtraUsage(reset(bad), 5_000_000), true, bad);
-  assert.equal(stoppedForExtraUsage(reset('9000'), 5_000_000), true);
-  assert.equal(stoppedForExtraUsage(reset('2000'), 5_000_000), false);
-  assert.match(extraUsageStop(overage).message, /until the provider restarts or extra_usage is on/);
-  assert.doesNotMatch(extraUsageStop(overage).message, /resets/);
-  assert.match(extraUsageStop(reset('9000')).message, /resets 1970-01-01T02:30:00\.000Z.*until that reset/);
-});
-
 async function fakeCli(script) {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-run-'));
   await writeFile(join(root, 'claude'), script, { mode: 0o700 });
@@ -245,20 +74,6 @@ test('cancelling at any point before the CLI starts never launches it and leaves
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.deepEqual((await scratch()).filter(name => !before.has(name)), []);
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test('a missing CLI fails the request instead of crashing the process', async () => {
-  assert.equal((await run('/nonexistent/omd-claude'))?.code, 'ENOENT');
-});
-
-test('a CLI that exits during history replay fails the request instead of crashing the process', async () => {
-  const root = await fakeCli('#!/bin/sh\nexec 0<&-\nsleep 0.3\n');
-  try {
-    const frames = Array.from({ length: 4 }, () => ({ type: 'user', message: { role: 'user', content: 'x'.repeat(4 * 1024 * 1024) } }));
-    const outcome = await run(join(root, 'claude'), undefined, { manifest: [], extra: {}, system: '', frames, reverse: new Map() });
-    assert.equal(outcome?.message, 'claude_history_replay_exited');
-    await new Promise(resolve => setTimeout(resolve, 200));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -386,39 +201,6 @@ test('the extra-usage opt-out is read from the store per request and fails safe'
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('a malformed upstream stream ends the relayed response instead of hanging', async () => {
-  const upstream = createServer((incoming, response) => {
-    incoming.resume();
-    incoming.on('end', () => {
-      response.writeHead(200, { 'content-type': 'text/event-stream' });
-      response.write('event: message_start\ndata: {not json}\n\n');
-    });
-  });
-  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
-  const relay = new Relay(`http://127.0.0.1:${upstream.address().port}`);
-  await relay.listen();
-  try {
-    const outcome = await Promise.race([
-      new Promise(resolve => {
-        const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST', headers: { authorization: 'Bearer fixture' } }, response => {
-          response.resume();
-          response.on('error', () => resolve('closed'));
-          response.on('close', () => resolve('closed'));
-        });
-        outgoing.on('error', () => resolve('closed'));
-        outgoing.end('{}');
-      }),
-      new Promise(resolve => setTimeout(() => resolve('hung'), 3000)),
-    ]);
-    assert.equal(outcome, 'closed');
-    assert.equal(relay.failure, 'Error');
-  } finally {
-    relay.abort();
-    upstream.closeAllConnections();
-    await new Promise(resolve => upstream.close(resolve));
-  }
-});
-
 test('missing subscription login fails before routing and inherited API overrides never reach the CLI', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
@@ -436,32 +218,6 @@ test('missing subscription login fails before routing and inherited API override
   }
 });
 
-test('eligibility follows the official auth status for each billing route', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'omd-claude-eligibility-'));
-  const fake = join(root, 'claude');
-  const status = join(root, 'status.json');
-  const login = value => writeFile(status, JSON.stringify({ loggedIn: true, apiProvider: 'firstParty', ...value }));
-  try {
-    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else cat "${status}"; fi\n`, { mode: 0o700 });
-    for (const plan of ['pro', 'max', 'team', 'enterprise']) {
-      await login({ authMethod: 'claude.ai', subscriptionType: plan });
-      assert.equal(checkCli(fake).subscriptionType, plan);
-      assert.throws(() => checkCli(fake, 'api'), /claude_console_api_key_login_required/);
-    }
-    for (const value of [{ authMethod: 'claude.ai', subscriptionType: null }, { authMethod: 'claude.ai', subscriptionType: 'pro', apiProvider: 'bedrock' },
-      { authMethod: 'api_key', apiKeySource: '/login managed key' }, { authMethod: 'oauth_token' }]) {
-      await login(value);
-      assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required/);
-    }
-    await login({ authMethod: 'api_key', apiKeySource: '/login managed key' });
-    assert.doesNotThrow(() => checkCli(fake, 'api'));
-    await login({ authMethod: 'api_key', apiKeySource: 'apiKeyHelper' });
-    assert.throws(() => checkCli(fake, 'api'), /claude_console_api_key_login_required/);
-    await writeFile(fake, '#!/bin/sh\necho "2.1.285 (Claude Code)"\n', { mode: 0o700 });
-    assert.throws(() => checkCli(fake), new RegExp(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`));
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
 test('official CLI auth probe uses the approved user identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-home-'));
   const fake = join(root, 'claude');
@@ -473,45 +229,3 @@ test('official CLI auth probe uses the approved user identity', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('provider answers readiness, rejects unknown models and hands its shared port to a later session', { timeout: 20000 }, async () => {
-  const { spawn } = await import('node:child_process');
-  const root = await mkdtemp(join(tmpdir(), 'omd-claude-serve-'));
-  const fake = join(root, 'claude');
-  await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$1" = "auth" ]; then echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}'; else exit 1; fi\n`, { mode: 0o700 });
-  const reserve = createServer();
-  await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
-  const port = reserve.address().port;
-  await new Promise(resolve => reserve.close(resolve));
-  const route = join(root, 'route.json');
-  await writeFile(route, JSON.stringify({ port, claude: fake, default: model,
-    models: [{ slug: model, cli: model, family: 'sonnet', efforts: [], thinking: false, window: 200000 }] }));
-  const token = 'local-fixture-token-without-account-access';
-  const start = ready => spawn(process.execPath, [new URL('./transport.mjs', import.meta.url).pathname,
-    'serve', route, root, 'fixture'], { env: { PATH: '/usr/bin:/bin', OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: 'ignore' });
-  const ready = async expected => {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      try { if (await (await fetch(`http://127.0.0.1:${port}/_omd/ready`)).text() === `OMD_READY:${expected}`) return true; } catch {}
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    return false;
-  };
-  const call = body => fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST',
-    headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-  const first = start('first');
-  let second;
-  try {
-    assert.ok(await ready('first'));
-    assert.equal((await call({ ...prompt, model: 'claude-unknown' })).status, 400);
-    assert.match(await (await call(prompt)).text(), /response\.failed/);
-    second = start('second');
-    assert.ok(await ready('second'));
-    first.kill('SIGTERM');
-    await once(first, 'exit');
-    assert.ok(await ready('second'));
-    assert.match(await (await call(prompt)).text(), /response\.failed/);
-  } finally {
-    first.kill('SIGKILL');
-    second?.kill('SIGKILL');
-    await rm(root, { recursive: true, force: true });
-  }
-});

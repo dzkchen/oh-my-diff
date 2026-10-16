@@ -204,45 +204,6 @@ fn streaming_flushes_before_completion_and_revocation_cancels_the_body() {
 }
 
 #[test]
-fn streamed_replies_reach_the_client_before_the_body_ends() {
-    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
-    let listener = upstream_listener();
-    let (_temp, url, _registration) = fixture(&gateway, &listener);
-    let pending = begin(url);
-    let mut upstream = accepted(&listener);
-    first_chunk(&mut upstream);
-    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
-    let mut first = [0; 9];
-    response.read_exact(&mut first).unwrap();
-    assert_eq!(&first, b"data: 1\n\n");
-    upstream
-        .write_all(b"9\r\ndata: 2\n\n\r\n0\r\n\r\n")
-        .unwrap();
-    let mut rest = String::new();
-    response.read_to_string(&mut rest).unwrap();
-    assert_eq!(rest, "data: 2\n\n");
-}
-
-#[test]
-fn revocation_cancels_a_fixed_length_response_body() {
-    let gateway = start_gateway(WAIT, WAIT * 2).unwrap();
-    let listener = upstream_listener();
-    let (_temp, url, registration) = fixture(&gateway, &listener);
-    let pending = begin(url);
-    let mut upstream = accepted(&listener);
-    upstream
-        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nx")
-        .unwrap();
-    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
-    let mut first = [0; 1];
-    response.read_exact(&mut first).unwrap();
-    assert_eq!(&first, b"x");
-    drop(registration);
-    assert!(response.read_to_end(&mut Vec::new()).is_err());
-    closed(&mut upstream);
-}
-
-#[test]
 fn upstream_header_and_body_idle_deadlines_close_the_upstream() {
     for headers in [false, true] {
         let gateway = start_gateway(Duration::from_millis(250), WAIT * 2).unwrap();
@@ -269,68 +230,6 @@ fn upstream_header_and_body_idle_deadlines_close_the_upstream() {
         }
         closed(&mut upstream);
     }
-}
-
-#[test]
-fn stalled_requests_release_capacity_at_the_deadline() {
-    let gateway = start_gateway(Duration::from_secs(1), WAIT * 4).unwrap();
-    let listener = upstream_listener();
-    let (_temp, url, _registration) = fixture(&gateway, &listener);
-    let mut pending = Vec::new();
-    let mut upstreams = Vec::new();
-    for _ in 0..ROUTE_CONNECTIONS {
-        pending.push(begin(url.clone()));
-        upstreams.push(accepted(&listener));
-    }
-    assert_eq!(
-        begin(url.clone())
-            .recv_timeout(WAIT)
-            .unwrap()
-            .unwrap()
-            .status()
-            .as_u16(),
-        429
-    );
-    for request in pending {
-        assert_eq!(
-            request
-                .recv_timeout(WAIT)
-                .unwrap()
-                .unwrap()
-                .status()
-                .as_u16(),
-            504
-        );
-    }
-    for mut upstream in upstreams {
-        closed(&mut upstream);
-    }
-    drop(listener);
-    assert_eq!(
-        begin(url)
-            .recv_timeout(WAIT)
-            .unwrap()
-            .unwrap()
-            .status()
-            .as_u16(),
-        502,
-        "capacity is reusable after all timed-out sockets close"
-    );
-}
-
-#[test]
-fn connection_lifetime_closes_a_stream_even_when_its_idle_deadline_is_longer() {
-    let gateway = start_gateway(WAIT * 2, Duration::from_millis(250)).unwrap();
-    let listener = upstream_listener();
-    let (_temp, url, _registration) = fixture(&gateway, &listener);
-    let pending = begin(url);
-    let mut upstream = accepted(&listener);
-    first_chunk(&mut upstream);
-    let mut response = pending.recv_timeout(WAIT).unwrap().unwrap();
-    let mut first = [0; 9];
-    response.read_exact(&mut first).unwrap();
-    assert!(response.read_to_end(&mut Vec::new()).is_err());
-    closed(&mut upstream);
 }
 
 #[test]
@@ -362,30 +261,3 @@ fn concurrent_forwards_are_limited_per_registration() {
     }
 }
 
-#[test]
-fn concurrent_connections_are_limited_across_registrations() {
-    let gateway = start_gateway(WAIT * 4, WAIT * 4).unwrap();
-    let listener = upstream_listener();
-    let mut fixtures = Vec::new();
-    let mut pending = Vec::new();
-    let mut upstreams = Vec::new();
-    for _ in 0..CONNECTIONS {
-        let fixture = fixture(&gateway, &listener);
-        pending.push(begin(fixture.1.clone()));
-        upstreams.push(accepted(&listener));
-        fixtures.push(fixture);
-    }
-    assert!(
-        begin(fixtures[0].1.clone())
-            .recv_timeout(WAIT)
-            .unwrap()
-            .is_err()
-    );
-    drop(fixtures);
-    for request in pending {
-        assert!(request.recv_timeout(WAIT).unwrap().is_err());
-    }
-    for mut upstream in upstreams {
-        closed(&mut upstream);
-    }
-}

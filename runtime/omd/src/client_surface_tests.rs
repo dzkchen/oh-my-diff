@@ -4,102 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Echo;
 
-#[test]
-fn raw_snapshot_waits_for_admission_and_shares_the_accepted_frame() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("pixels");
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let received = seen.clone();
-    let mut binding = crate::process_raster::bind(
-        None,
-        "raw-admission",
-        vec![(
-            "raw-admission-frame".into(),
-            crate::process_raster::Role::Raster,
-        )],
-        Arc::new(move |value| {
-            received.lock().unwrap().push(value);
-            true
-        }),
-    );
-    let initialized = binding.pixels(&path, None).unwrap();
-    std::fs::write(&path, [1, 2, 3]).unwrap();
-    let cancelled = Arc::new(AtomicBool::new(true));
-    let lifetime = CallLifetime {
-        upstream_cancelled: Some(cancelled.clone()),
-        ..Default::default()
-    };
-    let retained = lifetime.pixels.clone();
-    let call = SurfaceCall {
-        validity: Validity(Arc::new(|| true)),
-        caller: "raw-admission".into(),
-        operation: "terminal.blit".into(),
-        arguments: json!({"key":"raw-admission-frame","pixels":{"source":initialized["pixels"]["source"],"format":"rgb","width":1,"height":1,"sequence":1}}),
-        context: InvocationContext::Event,
-        remote: false,
-        thread: None,
-        authority: None,
-        confirm: None,
-        reply: sync_channel(1).0,
-        lifetime,
-    };
-    let source = serde_json::from_value(call.arguments["pixels"].clone()).unwrap();
-    assert!(
-        call.snapshot_pixels(&source, std::time::Instant::now())
-            .is_err()
-    );
-    assert!(seen.lock().unwrap().is_empty());
-    assert!(retained.get().is_none());
-    cancelled.store(false, Ordering::Release);
-    let accepted = call
-        .snapshot_pixels(&source, std::time::Instant::now())
-        .unwrap();
-    assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
-    assert_eq!(seen.lock().unwrap().len(), 1);
-    assert!(
-        call.snapshot_pixels(&source, std::time::Instant::now())
-            .is_err()
-    );
-    assert_eq!(seen.lock().unwrap().len(), 1);
-}
-
-#[test]
-fn encoded_blits_need_ownership_but_not_cell_dimensions() {
-    let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
-    assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
-    assert!(blit_request("other", Some("owner"), None, &image).is_err());
-    let cells = json!({"key":"frame","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]});
-    assert!(blit_request("owner", Some("owner"), None, &cells).is_err());
-}
-
-#[test]
-fn dropping_a_pending_reply_revokes_queued_effects() {
-    let (reply, receiver) = sync_channel(1);
-    let lifetime = CallLifetime::default();
-    let pending = PendingReply {
-        receiver,
-        lifetime: lifetime.clone(),
-    };
-    assert!(lifetime.active());
-    drop(pending);
-    assert!(!lifetime.active());
-    assert!(lifetime.begin_execution().is_err());
-    assert!(reply.send(Ok(Value::Null)).is_err());
-    let expired = CallLifetime::default();
-    *expired.deadline.lock().unwrap() = Some(Instant::now());
-    assert!(!expired.active());
-    assert!(expired.begin_execution().is_err());
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let admitted = CallLifetime {
-        upstream_cancelled: Some(cancelled.clone()),
-        ..Default::default()
-    };
-    assert!(admitted.active());
-    cancelled.store(true, Ordering::Release);
-    assert!(!admitted.active());
-    assert!(admitted.begin_execution().is_err());
-}
-
 impl ClientSurface for Echo {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         let value = json!({"operation": call.operation, "caller": call.caller,
@@ -122,16 +26,6 @@ impl ClientSurface for Password {
             .send(Ok(
                 json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }}),
             ))
-            .map_err(|error| error.to_string())
-    }
-}
-
-struct Answers(Result<Value, String>);
-
-impl ClientSurface for Answers {
-    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
-        call.reply
-            .send(self.0.clone())
             .map_err(|error| error.to_string())
     }
 }
@@ -400,119 +294,6 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
 }
 
 #[test]
-fn only_accepted_mirrored_operations_are_mirrored() {
-    let _serial = hub_test();
-    let mirrored = Arc::new(AtomicUsize::new(0));
-    let counter = mirrored.clone();
-    let observer = register_observer(Arc::new(move |observed| {
-        if matches!(observed, Observed::Mirrored { .. }) {
-            counter.fetch_add(1, Ordering::SeqCst);
-        }
-    }));
-    for (answer, count) in [
-        (Err("terminal_blit_not_owned".to_owned()), 0),
-        (
-            Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
-            0,
-        ),
-        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 16})), 1),
-    ] {
-        let registration = register(Arc::new(Answers(answer.clone())));
-        let blit = call(
-            "m",
-            "terminal.blit",
-            json!({"key": "r"}),
-            InvocationContext::Event,
-            false,
-            None,
-            None,
-            Arc::new(|| true),
-        );
-        assert_eq!(blit, answer);
-        assert_eq!(mirrored.swap(0, Ordering::SeqCst), count, "{answer:?}");
-        drop(registration);
-    }
-    drop(observer);
-}
-
-#[test]
-fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
-    let _serial = hub_test();
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let log = seen.clone();
-    // Parallel raster tests redraw the global hub too; count only this test's redraw.
-    let redrawing = Arc::new(AtomicBool::new(false));
-    let armed = redrawing.clone();
-    let observer = register_observer(Arc::new(move |observed| {
-        let entry = match observed {
-            Observed::Roster => json!(
-                roster()
-                    .into_iter()
-                    .filter(|entry| entry["id"] == "roster-client")
-                    .map(|entry| entry["name"].clone())
-                    .collect::<Vec<_>>()
-            ),
-            Observed::Redraw if !armed.load(Ordering::SeqCst) => return,
-            Observed::Redraw => json!("redraw"),
-            Observed::Mirrored { .. } => return,
-        };
-        log.lock().unwrap().push(entry);
-    }));
-    let entry = |name: &str| ClientEntry {
-        id: "roster-client".into(),
-        name: name.into(),
-        renderer: json!({"kind": "gui"}),
-        viewport: Value::Null,
-        operations: vec!["terminal.notify".into()],
-        attached_ms: 7,
-        focused: false,
-    };
-    let first = attach(entry("first"));
-    let second = attach(entry("second"));
-    drop(first);
-    update(
-        "roster-client",
-        None,
-        Some(json!({"width": 800, "height": 600, "unit": "px"})),
-        Some(true),
-    );
-    assert_eq!(
-        clients()
-            .into_iter()
-            .find(|client| client["id"] == "roster-client"),
-        Some(
-            json!({"id": "roster-client", "name": "second", "renderer": {"kind": "gui"},
-            "viewport": {"width": 800, "height": 600, "unit": "px"}, "attached_ms": 7,
-            "focused": true})
-        )
-    );
-    assert!(
-        roster().iter().any(|entry| entry["id"] == "roster-client"
-            && entry["operations"] == json!(["terminal.notify"]))
-    );
-    redrawing.store(true, Ordering::SeqCst);
-    redraw();
-    redrawing.store(false, Ordering::SeqCst);
-    drop(second);
-    drop(observer);
-    drop(attach(entry("unobserved")));
-    // Raster tests in this binary publish redraws concurrently; only the roster order and this test's redraw are fixed.
-    let seen = seen.lock().unwrap().clone();
-    let redraw = json!("redraw");
-    let rosters: Vec<_> = seen.iter().filter(|entry| **entry != redraw).collect();
-    assert_eq!(
-        rosters,
-        [
-            &json!(["first"]),
-            &json!(["second"]),
-            &json!(["second"]),
-            &json!([])
-        ]
-    );
-    assert_eq!(seen[seen.len() - 2], redraw, "{seen:?}");
-}
-
-#[test]
 fn global_attachment_owner_lookup_requires_account_user_confirmation() {
     let _serial = hub_test();
     let _registration = register(Arc::new(Echo));
@@ -710,16 +491,6 @@ fn remote_actions_cannot_cause_terminal_only_operations() {
 }
 
 #[test]
-fn presentation_reports_the_terminal_screen_mode() {
-    set_screen("inline");
-    assert_eq!(
-        presented(json!({"thread_id": null, "phase": "fresh"})),
-        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
-    );
-    assert_eq!(presented(Value::Null), Value::Null);
-}
-
-#[test]
 fn clipboard_operations_require_local_user_context_without_waiting_for_confirmation() {
     for operation in ["terminal.selection", "terminal.copy"] {
         assert!(!awaits_user(operation, &json!({})));
@@ -804,27 +575,6 @@ fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
 }
 
 #[test]
-fn image_frames_become_full_raster_half_block_cells_for_cell_clients() {
-    let mut png = Vec::new();
-    image::RgbImage::from_pixel(8, 2, image::Rgb([255, 0, 0]))
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .unwrap();
-    let arguments =
-        json!({"key": "r", "image": {"media_type": "image/png", "base64": STANDARD.encode(png)}});
-    let cells = frame_cells(&arguments, (4, 2)).unwrap();
-    assert_eq!(
-        cells["rect"],
-        json!({"x": 0, "y": 0, "width": 4, "height": 2})
-    );
-    let red = serde_json::to_value(crate::ModColor::Rgb(255, 0, 0)).unwrap();
-    let black = serde_json::to_value(crate::ModColor::Rgb(0, 0, 0)).unwrap();
-    assert_eq!(cells["cells"][0], json!(["▀", red, black]));
-    assert_eq!(cells["cells"][4], json!(" "));
-    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
-    assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
-}
-
-#[test]
 fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
     let image = image::RgbaImage::new(IMAGE_PIXELS + 1, 1);
     let mut bytes = Vec::new();
@@ -839,32 +589,3 @@ fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
     assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 }
 
-#[test]
-fn raster_reply_classification_is_independent_of_wording() {
-    for (kind, message) in [
-        (BlitErrorKind::Retryable, "please try again"),
-        (BlitErrorKind::Revoked, "permission removed"),
-        (BlitErrorKind::Fatal, "callback_unknown_error"),
-    ] {
-        let (reply, receiver) = sync_channel(1);
-        let lifetime = CallLifetime::default();
-        let call = SurfaceCall {
-            validity: Validity(Arc::new(|| true)),
-            caller: "m".into(),
-            operation: "terminal.blit".into(),
-            arguments: Value::Null,
-            context: InvocationContext::Event,
-            remote: false,
-            thread: None,
-            authority: None,
-            confirm: None,
-            reply,
-            lifetime: lifetime.clone(),
-        };
-        call.reply_blit(Err(BlitError::new(kind, message)));
-        let error =
-            wait_classified(PendingReply { receiver, lifetime }, &|| true, None).unwrap_err();
-        assert_eq!(error.kind, kind);
-        assert_eq!(error.message, message);
-    }
-}

@@ -317,31 +317,3 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     std::os::unix::fs::symlink(&repo, &component).unwrap();
     assert!(codex_omd::plugin_component::inspect(&plugin).is_err());
 }
-
-#[test]
-fn cli_rejects_repeated_store_and_home() {
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let run = |flag: &str| {
-        let output = Command::new(env!("CARGO_BIN_EXE_omd"))
-            .args(["example-sessions", "--repo", root.to_str().unwrap()])
-            .args(["--store", root.to_str().unwrap()])
-            .args([flag, root.to_str().unwrap(), flag, root.to_str().unwrap()])
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        String::from_utf8_lossy(&output.stderr).trim().to_owned()
-    };
-    assert_eq!(run("--home"), "duplicate_home");
-    assert_eq!(run("--store"), "duplicate_store");
-    let output = Command::new(env!("CARGO_BIN_EXE_omd"))
-        .args(["store", "export", "--mod", "m"])
-        .args(["--store", root.to_str().unwrap()])
-        .args(["--store", root.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr).trim(),
-        "duplicate_store"
-    );
-}

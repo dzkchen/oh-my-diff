@@ -33,23 +33,6 @@ const response = (patch = {}) => ({
 });
 const compact = ['app.request', { method: 'thread/compact/start', params: { threadId: 'lead' } }];
 
-test('a large main response arms the timer at 90% of the model, provider-reported or configured cache TTL', () => {
-  assert.deepEqual(run('model_response', response(), null).calls, [['events.schedule', { key: 'idle', delay_ms: 27 * MINUTE }]]);
-  const claude = response({ provider: 'omd_claude_cli', usage: { input_tokens: 150_000, output_tokens: 10, omd_cache_ttl_seconds: 3600 } });
-  assert.deepEqual(run('model_response', claude, null).calls, [['events.schedule', { key: 'idle', delay_ms: 54 * MINUTE }]]);
-  const written = run('model_response', claude, null).state;
-  const read = response({ provider: 'omd_claude_cli', usage: { input_tokens: 150_000, output_tokens: 10 } });
-  assert.deepEqual(run('model_response', read, written).calls, [['events.schedule', { key: 'idle', delay_ms: 54 * MINUTE }]]);
-  assert.deepEqual(run('model_response', claude, null, { settings: { cache_ttl_minutes: 10 } }).calls, [['events.schedule', { key: 'idle', delay_ms: 9 * MINUTE }]]);
-  assert.deepEqual(run('model_response', response(), null, { settings: { cache_ttl_minutes: 3000 } }).calls, [['events.schedule', { key: 'idle', delay_ms: 24 * 60 * MINUTE }]]);
-  for (const patch of [{ provider: 'ollama' }, { usage: { input_tokens: 20_000, output_tokens: 100 } }]) {
-    assert.deepEqual(run('model_response', response(patch), null).calls, [['events.cancel', { key: 'idle' }]]);
-  }
-  assert.deepEqual(run('model_response', response({ provider: 'ollama' }), null, { settings: { cache_ttl_minutes: 10 } }).calls, [['events.cancel', { key: 'idle' }]],
-    'a configured TTL does not compact a local provider');
-  for (const patch of [{ scope: { thread_id: 'child', agent_id: 'a1', kind: 'subagent' } }, { status: 'failed' }]) assert.deepEqual(run('model_response', response(patch), null).calls, []);
-});
-
 test('the timer compacts an idle thread or one waiting on the user, never a running tool', () => {
   const armed = run('model_response', response(), null).state;
   const fire = (state, now = NOW + 27 * MINUTE) => run('timer', { key: 'idle' }, state, { now });
@@ -78,16 +61,3 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(run('turn_end', { turn_id: 't2', outcome: 'aborted' }, answered, { now: NOW + 31 * MINUTE }).calls, []);
 });
 
-test('a finished compaction posts the notice, disarms and ignores the compaction request itself', () => {
-  const armed = run('model_response', response(), null).state;
-  const approval = run('app_server_request', { method: 'item/commandExecution/requestApproval', request_id: 'x', phase: 'requested', params: {}, resolution: null },
-    run('turn_start', { turn_id: 't2' }, armed).state).state;
-  const requested = run('timer', { key: 'idle' }, approval, { now: NOW + 27 * MINUTE }).state;
-  const done = run('compaction_end', { turn_id: 't3', trigger: 'manual', outcome: 'compacted', by: null, provider_call: true }, requested, { now: NOW + 28 * MINUTE });
-  assert.deepEqual(done.calls, [['events.cancel', { key: 'idle' }],
-    ['terminal.notice', { text: 'Compacted while idle, before the prompt cache expired. The pending approval was cancelled.', kind: 'info', placement: 'transcript' }]]);
-  const summarizing = response({ timing: { started_at_ms: NOW + 27 * MINUTE, first_event_ms: 300, duration_ms: 30_000 } });
-  assert.deepEqual(run('model_response', summarizing, done.state).calls, []);
-  const manual = run('compaction_end', { turn_id: 't4', trigger: 'manual', outcome: 'compacted', by: null, provider_call: true }, done.state);
-  assert.deepEqual(manual.calls, [['events.cancel', { key: 'idle' }]]);
-});

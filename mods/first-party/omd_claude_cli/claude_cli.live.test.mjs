@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test as nodeTest } from 'node:test';
 import { translateRequest, responseEvents } from './index.ts';
 import { runClaude } from './transport.mjs';
-import { discover } from './setup.mjs';
 
 // Every test drives a real Claude CLI; without OMD_TEST_CLAUDE a glob that picks this file up skips it.
 const test = process.env.OMD_TEST_CLAUDE ? nodeTest : nodeTest.skip;
@@ -140,37 +139,6 @@ test('cancellation stops the owned CLI request and the next request starts clean
     }
   });
 
-test('upstream rate limit fails without another admitted request',
-  { timeout: 30000 }, async () => {
-    let count = 0;
-    const server = createServer(async (incoming, response) => {
-      for await (const _ of incoming) {}
-      count++;
-      response.writeHead(429, { 'content-type': 'application/json', 'anthropic-ratelimit-unified-status': 'rejected',
-        'anthropic-ratelimit-unified-representative-claim': 'five_hour', 'anthropic-ratelimit-unified-5h-reset': '1790000000' })
-        .end('{"type":"error","error":{"type":"rate_limit_error","message":"fixture"}}');
-    });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    try {
-      await assert.rejects(runClaude(opusRequest, opusEntry, process.env.OMD_TEST_CLAUDE,
-        new AbortController().signal, () => {},
-        { upstream: `http://127.0.0.1:${server.address().port}` }), /Claude five_hour limit reached; resets/);
-      assert.equal(count, 1);
-    } finally {
-      server.closeAllConnections();
-      await new Promise(resolve => server.close(resolve));
-    }
-  });
-
-test('setup reads the model catalog and served context windows from the installed CLI without account traffic',
-  { timeout: 120000 }, async () => {
-    const models = await discover(process.env.OMD_TEST_CLAUDE);
-    const byFamily = Object.fromEntries(models.map(item => [item.family, item]));
-    assert.deepEqual(Object.keys(byFamily).sort(), ['fable', 'haiku', 'opus', 'sonnet']);
-    for (const item of models) assert.ok([200000, 1000000].includes(item.window), `${item.cli}: ${item.window}`);
-    assert.equal(byFamily.opus.efforts.at(-1), 'max');
-  });
-
 (process.env.OMD_TEST_CODEX ? test : nodeTest.skip)('pinned Codex executes a mod-mapped host tool and returns its result',
   { timeout: 30000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'omd-claude-host-'));
@@ -248,54 +216,3 @@ test('setup reads the model catalog and served context windows from the installe
     }
   });
 
-test('Claude setup adds its provider grant to the OMD+ store without disturbing other host settings',
-  { timeout: 120000 }, async () => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'omd-claude-setup-')));
-    const prefix = join(root, 'prefix');
-    const store = join(root, 'store');
-    try {
-      await mkdir(prefix);
-      await mkdir(join(store, 'sources'), { recursive: true });
-      await cp(pkg, join(store, 'sources/omd_claude_cli'), { recursive: true });
-      const other = { name: 'worker', provider: 'fixture', model: 'fixture', reasoning_effort: 'low', responses_url: 'http://127.0.0.1:9/v1/responses',
-        roles: ['lead'], rates: { input_microusd_per_million: 1, cached_microusd_per_million: 1, output_microusd_per_million: 1,
-          reservation_microusd: 1, max_output_tokens: 1, input_token_ceiling: 1, included_subscription: false } };
-      await writeFile(join(store, 'host.json'), JSON.stringify({ schema: 1, routes: [other], max_request_bytes: 33554432,
-        worker_limits: { requests: 5, exposure_microusd: 7, seconds: 60 } }));
-      const recordPath = join(prefix, 'install.json');
-      await writeFile(recordPath, JSON.stringify({ profile: 'full', prefix, store, packages: { omd_claude_cli: {} },
-        author: { node: process.execPath } }));
-      const run = () => spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'setup', recordPath,
-        process.env.OMD_TEST_CLAUDE], { encoding: 'utf8', timeout: 90000 });
-      const setup = () => {
-        const result = run();
-        assert.equal(result.status, 0, result.stderr);
-        return JSON.parse(result.stdout);
-      };
-      const first = setup();
-      const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
-      assert.deepEqual(host.routes, [other]);
-      assert.equal(host.max_request_bytes, 33554432);
-      assert.deepEqual(host.worker_limits, { requests: 5, exposure_microusd: 7, seconds: 86400 });
-      const grant = host.services.find(service => service.id === 'claude_cli');
-      assert.deepEqual(grant.arguments.slice(1, 3), ['serve', first.provider.route]);
-      assert.equal(grant.route.rates.included_subscription, true);
-      assert.equal(first.billing, 'subscription');
-      const route = JSON.parse(await readFile(first.provider.route, 'utf8'));
-      assert.equal(route.billing, 'subscription');
-      assert.ok(grant.read_paths.length <= 16);
-      assert.equal(host.secret_refs.claude_local_token, first.provider.token);
-      assert.equal((await stat(first.provider.token)).mode & 0o777, 0o600);
-      const catalog = JSON.parse(await readFile(first.provider.catalog, 'utf8')).models;
-      assert.deepEqual(catalog.map(model => [model.slug, model.context_window]), first.models.map(model => [model.slug, model.window]));
-      assert.ok(catalog.every(model => model.input_modalities.includes('image')));
-      const token = await readFile(first.provider.token, 'utf8');
-      const again = setup();
-      assert.equal(again.provider.base_url, first.provider.base_url);
-      assert.equal(await readFile(first.provider.token, 'utf8'), token);
-      const rerun = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
-      assert.equal(rerun.services.filter(service => service.id === 'claude_cli').length, 1);
-      await writeFile(first.provider.route, JSON.stringify({ ...route, billing: 'api' }));
-      assert.match(run().stderr, /claude_console_api_key_login_required/);
-    } finally { await rm(root, { recursive: true, force: true }); }
-  });

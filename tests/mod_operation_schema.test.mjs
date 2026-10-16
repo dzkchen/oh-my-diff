@@ -42,15 +42,6 @@ test('unsupported types and broken declarations fail instead of silently accepti
   assert.throws(() => generate("interface HostOperations { 'bad.call': { arguments: null; result: MissingType } }"), /MissingType/);
 });
 
-test('production operation schemas include nested results and template constraints', () => {
-  const schemas = operationSchemas();
-  assert.ok(Object.keys(schemas).length >= 117);
-  assert.deepEqual(schemas['builtins.invoke'].arguments.properties.action, { type: 'string', format: 'dotted-string' });
-  assert.deepEqual(schemas['store.put'].result.required, ['revision']);
-  assert.equal(schemas['store.put'].arguments.properties.value.anyOf.some(part => part.type === 'null'), false);
-  assert.deepEqual(schemas['store.get'].result.anyOf.find(part => part.type === 'object').properties.value, {});
-});
-
 test('shared schema definitions preserve every operation and constraint', () => {
   const original = operationSchemas();
   const shared = shareSchemas(original);

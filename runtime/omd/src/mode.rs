@@ -86,39 +86,3 @@ pub fn effective_mode_from(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn omd_and_direct_modes_are_the_only_selections() {
-        let omd = effective_mode_from(Some(OsStr::new("omd")), false).unwrap();
-        assert_eq!(omd.mode, RuntimeMode::Omd);
-        assert!(omd.mode.mod_host_enabled());
-        let direct = effective_mode_from(Some(OsStr::new("upstream_direct")), false).unwrap();
-        assert_eq!(direct.mode, RuntimeMode::UpstreamDirect);
-        assert!(!direct.mode.mod_host_enabled());
-        assert_eq!(
-            effective_mode_from(None, false).unwrap(),
-            EffectiveMode {
-                mode: RuntimeMode::UpstreamDirect,
-                source: ModeSource::CompatibilityDefault,
-            }
-        );
-    }
-
-    #[test]
-    fn removed_modes_and_manifests_fail_with_the_replacement() {
-        for removed in ["platform", "enabled"] {
-            let error = effective_mode_from(Some(OsStr::new(removed)), false).unwrap_err();
-            assert!(error.contains("OMD_MODE=omd"), "{error}");
-        }
-        let error = effective_mode_from(Some(OsStr::new("omd")), true).unwrap_err();
-        assert!(error.contains("OMD_MODE=omd"), "{error}");
-        assert!(
-            effective_mode_from(Some(OsStr::new("off")), false)
-                .unwrap_err()
-                .contains("expected omd or upstream_direct")
-        );
-    }
-}

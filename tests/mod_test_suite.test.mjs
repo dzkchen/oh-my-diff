@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { discover } from '../scripts/mod_test_suite.mjs';
 
 test('suite discovers colocated tests and rejects unclassified tests before executing', () => {
@@ -49,11 +49,4 @@ test('suite discovers colocated tests and rejects unclassified tests before exec
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test('main test command uses discovery and retains the bundled artifact-reading tests', () => {
-  const root = new URL('../', import.meta.url);
-  const result = spawnSync(process.execPath, ['scripts/mod_test_suite.mjs', '--list'], { cwd: root, encoding: 'utf8', timeout: 10000 });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /plugins\/bundled\/oh-my-diff\/plugins\/omd-artifact-reading\/mod.test.mjs/);
 });

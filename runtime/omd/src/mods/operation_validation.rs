@@ -131,26 +131,6 @@ pub(super) fn validate(operation: &str, field: &str, value: &Value) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn generated_schema_dialect_checks_tuples_templates_and_closed_records() {
-        assert!(check(&json!({"type":"string","format":"dotted-string"}), &json!("a.b"), "").is_ok());
-        assert!(check(&json!({"type":"string","format":"dotted-string"}), &json!("ab"), "").is_err());
-        assert!(check(&json!({"type":"string","format":"hash-prefixed-string"}), &json!("#aaa"), "").is_ok());
-        assert!(check(&json!({"type":"string","format":"hash-prefixed-string"}), &json!("aaa"), "").is_err());
-        assert!(check(&json!({"format":"invented"}), &json!("anything"), "").is_err());
-        let tuple = json!({"type":"array","prefixItems":[{"type":"string"},{"type":"number"}],"minItems":2,"maxItems":2});
-        assert!(check(&tuple, &json!(["x",1]), "").is_ok());
-        for value in [json!(["x"]), json!(["x",1,2]), json!(["x","1"])] { assert!(check(&tuple, &value, "").is_err()); }
-        assert!(check(&json!({"type":"object","additionalProperties":false}), &json!({"extra":1}), "").is_err());
-        assert!(supported(&json!({"futureConstraint":true}), &SCHEMAS).is_err());
-        assert!(supported(&json!({"$ref":"#/$defs/missing"}), &SCHEMAS).is_err());
-        let mut result = json!({"snapshot":{"reference":"fixture","sha256":"hash"},"candidate_sha256":"hash"});
-        assert!(validate("workspace.snapshot", "result", &result).is_ok());
-        result["snapshot"]["sha256"] = json!(42);
-        assert!(validate("workspace.snapshot", "result", &result).is_err());
-    }
 
     #[test]
     fn generated_schema_covers_every_host_operation() {

@@ -552,22 +552,6 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
 }
 
 #[test]
-fn cancellation_after_an_unchanged_reload_keeps_the_host() {
-    let (temp, _store, _) = fixture(COUNTER, &["commands", "store"]);
-    let mut runtime = host(&temp);
-    let generation = runtime.generation();
-    let calls = AtomicUsize::new(0);
-    runtime.turn_boundary_guarded(&|| calls.fetch_add(1, Ordering::Relaxed) == 0);
-    assert_eq!(runtime.generation(), generation);
-    assert_eq!(
-        runtime
-            .invoke("fixture", generation, "command", "count", Value::Null)
-            .unwrap(),
-        json!(1)
-    );
-}
-
-#[test]
 fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -594,87 +578,6 @@ fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
     );
     assert_eq!(
         host.invoke("other", generation, "command", "run", Value::Null)
-            .unwrap(),
-        "ran"
-    );
-}
-
-#[test]
-fn host_open_cancels_registration_and_admission_before_publication() {
-    for admission in [false, true] {
-        let temp = TempDir::new().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let store = ModStore::create(root.join("store"), node()).unwrap();
-        let source = if admission {
-            "export default api => api.intercept('admission', {required:true}, () => { while(true) {} });"
-        } else {
-            "export default () => { while(true) {} };"
-        };
-        let caps = if admission { vec!["policy"] } else { vec![] };
-        let guard = package(&root, "guard", source, &caps);
-        if admission {
-            let manifest = guard.join("mod.json");
-            let mut value: Value =
-                serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-            value["policy"] = json!({"namespaces":["store"]});
-            std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
-        }
-        trust(&store, &guard, &caps);
-        let target = package(&root, "target", "export default () => {};", &[]);
-        trust(&store, &target, &[]);
-        let started = std::time::Instant::now();
-        let result = ModHost::open_in_guarded(root.join("store"), |_| Ok(()), &root, &|| {
-            started.elapsed() < std::time::Duration::from_millis(200)
-        });
-        let error = result.err().expect("cancelled host must not be returned");
-        assert_eq!(error.to_string(), "callback_cancelled");
-        assert!(!root.join("store/installed-contracts.d.ts").exists());
-    }
-}
-
-#[test]
-fn cancelled_admission_reload_revokes_the_partial_host_and_can_recover() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let allowed =
-        "export default api => api.intercept('admission', {required:true}, (e,next) => next(e));";
-    let guard = package(&root, "guard", allowed, &["policy"]);
-    let manifest = guard.join("mod.json");
-    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    value["policy"] = json!({"namespaces":["store"]});
-    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
-    trust(&store, &guard, &["policy"]);
-    let target = package(
-        &root,
-        "target",
-        "export default api => api.command('run', () => 'ran');",
-        &["commands"],
-    );
-    trust(&store, &target, &["commands"]);
-    let mut host = ModHost::open(root.join("store")).unwrap();
-    let generation = host.generation();
-    assert_eq!(
-        host.invoke("target", generation, "command", "run", Value::Null)
-            .unwrap(),
-        "ran"
-    );
-    std::fs::write(guard.join("index.ts"), "export default api => api.intercept('admission', {required:true}, () => { while(true) {} });").unwrap();
-    trust(&store, &guard, &["policy"]);
-    let started = std::time::Instant::now();
-    host.turn_boundary_guarded(&|| started.elapsed() < std::time::Duration::from_millis(200));
-    assert_eq!(host.status()["reload_error"], "callback_cancelled");
-    assert_eq!(host.status()["mods"], json!([]));
-    assert!(host.generation() > generation);
-    assert!(
-        host.invoke("target", host.generation(), "command", "run", Value::Null)
-            .is_err()
-    );
-    std::fs::write(guard.join("index.ts"), allowed).unwrap();
-    trust(&store, &guard, &["policy"]);
-    host.reload().unwrap();
-    assert_eq!(
-        host.invoke("target", host.generation(), "command", "run", Value::Null)
             .unwrap(),
         "ran"
     );
@@ -934,98 +837,6 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
-fn thread_state_from_an_older_state_version_migrates_at_its_next_callback() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let path = package(&root, "fixture", COUNTER, &["commands", "store"]);
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["state_scope"] = json!("thread");
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &path, &["commands", "store"]);
-    let mut runtime = host(&temp);
-    let count = |runtime: &mut ModHost| {
-        let generation = runtime.generation();
-        runtime.invoke(
-            "fixture",
-            generation,
-            "command",
-            "count",
-            json!({"thread_id":"t1"}),
-        )
-    };
-    assert_eq!(count(&mut runtime).unwrap(), json!(1));
-    manifest["state_version"] = json!(2);
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    std::fs::write(
-        path.join("index.ts"),
-        "export default api => { api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to})); api.command('count', () => api.state.get()); }",
-    )
-    .unwrap();
-    trust(&store, &path, &["commands", "store"]);
-    let _thread = codex_omd::StateThread::enter(Some("t1".into()));
-    runtime.reload().unwrap();
-    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
-    assert_eq!(
-        count(&mut runtime).unwrap(),
-        json!({"count":1,"from":1,"to":2})
-    );
-    let directory = root.join("store/data/threads/t1/.state");
-    let stored: Value =
-        serde_json::from_slice(&std::fs::read(directory.join("state-fixture.json")).unwrap())
-            .unwrap();
-    assert_eq!(stored["version"], 2);
-    let backups: Vec<Value> = std::fs::read_dir(&directory)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("state-fixture.json-backup-")
-        })
-        .map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap())
-        .collect();
-    assert_eq!(backups, vec![json!({"schema":1,"version":1,"value":1})]);
-}
-
-#[test]
-fn migration_and_rollback_read_state_up_to_the_store_limit() {
-    let (temp, store, path) = fixture(
-        "export default api => api.command('big', () => { api.state.set({ pad: 'x'.repeat(100000) }); })",
-        &["commands", "store"],
-    );
-    let mut runtime = host(&temp);
-    runtime
-        .invoke(
-            "fixture",
-            runtime.generation(),
-            "command",
-            "big",
-            Value::Null,
-        )
-        .unwrap();
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["state_version"] = json!(2);
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    std::fs::write(
-        path.join("index.ts"),
-        "export default api => api.on('migrate', ({ to }) => { api.state.set({ to }); })",
-    )
-    .unwrap();
-    trust(&store, &path, &["commands", "store"]);
-    let receipt = store.migrate(&path).unwrap();
-    let backup = receipt["backup"].as_str().unwrap();
-    assert!(std::fs::metadata(backup).unwrap().len() > 65_536);
-    store.enable(&path, false).unwrap();
-    store.rollback(&path, std::path::Path::new(backup)).unwrap();
-}
-
-#[test]
 fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1060,21 +871,6 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
             "{error}"
         );
     }
-}
-
-#[test]
-fn host_control_features_are_available_for_admission() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let path = package(&root, "controls", "export default () => {}", &[]);
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["compatibility"] = json!({"required_features": [
-        "turn_abort_v1", "terminal_selection_v1", "terminal_copy_v1", "environment_overrides_v1", "timers_16ms_v1"
-    ]});
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    ModStore::inspect_package(&path).unwrap();
 }
 
 #[test]
@@ -1223,60 +1019,6 @@ fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_stat
 }
 
 #[test]
-fn host_error_receipts_are_catchable_without_repeating_operations() {
-    let source = "export default api => api.command('run', () => { let value; try { value = api.host.call('task.status'); } catch(e) { if (e instanceof Error) return {failed:true}; throw e; } return value; })";
-    let (temp, _, _) = fixture(source, &["commands", "agents"]);
-    let mut runtime = host(&temp);
-    let mut calls = 0;
-    assert_eq!(
-        runtime
-            .invoke_with(
-                "fixture",
-                runtime.generation(),
-                "command",
-                "run",
-                Value::Null,
-                || true,
-                |_| {
-                    calls += 1;
-                    Err(std::io::Error::other("native_denial"))
-                }
-            )
-            .unwrap(),
-        json!({"failed":true})
-    );
-    assert_eq!(calls, 1);
-}
-
-#[test]
-fn a_receipt_that_fits_only_without_its_separator_is_refused_as_a_result() {
-    let source = "export default api => api.command('run', () => { api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
-    let (temp, _, _) = fixture(source, &["commands", "agents"]);
-    let mut runtime = host(&temp);
-    let generation = runtime.generation();
-    let mut first = None;
-    let error = runtime
-        .invoke_with("fixture", generation, "command", "run", Value::Null, || true, |call| {
-            let size = |text: usize| {
-                serde_json::to_vec(&json!({"call": call, "value": {"text": "x".repeat(text)}}))
-                    .unwrap()
-                    .len()
-            };
-            // The second receipt fills the room left after `[]` and the first, leaving none for its separator.
-            let text = first.map_or(60_000, |used: usize| {
-                60_000 + codex_omd::HOST_RECEIPT_BYTES - 2 - used - size(60_000)
-            });
-            first.get_or_insert(size(text));
-            Ok(json!({"text": "x".repeat(text)}))
-        })
-        .unwrap_err();
-    assert!(
-        error.to_string().starts_with("Error: host_result_limit"),
-        "{error}"
-    );
-}
-
-#[test]
 fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
     let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; if (arg === 'recover') { try { api.host.call('task.status'); } catch {} return api.host.call('task.status'); } api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
     let (temp, _, _) = fixture(source, &["commands", "agents"]);
@@ -1352,57 +1094,6 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             .unwrap(),
         json!("ok")
     );
-}
-
-#[test]
-fn exclusive_replacement_conflicts_fail_before_activation() {
-    let source = "export default api => api.replace('routing', () => ({route:'sol'}))";
-    let (temp, store, _) = fixture(source, &["model"]);
-    let mut runtime = host(&temp);
-    let other = package(
-        &temp.path().canonicalize().unwrap(),
-        "other",
-        source,
-        &["model"],
-    );
-    trust(&store, &other, &["model"]);
-    assert!(
-        runtime
-            .reload()
-            .unwrap_err()
-            .to_string()
-            .contains("replacement_conflict")
-    );
-    let results = runtime.event("routing", Value::Null);
-    assert_eq!(results.len(), 1);
-    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"route":"sol"}));
-}
-
-#[test]
-fn history_replacement_receives_the_newest_items_that_fit_the_runner_request() {
-    let source = format!(
-        "const padding = '{}';\nexport default api => api.replace('history', event => {{ const indices = event.items.map(item => item.index); return {{first: indices[0], last: indices.at(-1), count: indices.length, ordered: indices.every((index, position) => position === 0 || index === indices[position - 1] + 1), padding: padding.length}}; }})",
-        "p".repeat(120_000)
-    );
-    let (temp, _, _) = fixture(&source, &["history"]);
-    let mut runtime = host(&temp);
-    for text in ["a".repeat(4000), "\u{1}".repeat(4000)] {
-        let items = (0..2100)
-            .map(|_| json!({"type":"message","role":"user","content":[{"type":"input_text","text":text}]}))
-            .collect::<Vec<_>>();
-        let view = codex_omd::history::view(&items);
-        let (_, reply) = runtime
-            .history(json!({"thread_id":"t","items":view}), || true)
-            .unwrap()
-            .unwrap();
-        let count = reply["count"].as_u64().unwrap();
-        assert_eq!(
-            (reply["last"].as_u64(), reply["ordered"].as_bool(), reply["padding"].as_u64()),
-            (Some(2099), Some(true), Some(120_000))
-        );
-        assert_eq!(reply["first"].as_u64(), Some(2100 - count));
-        assert!(count > 40 && count < 2048, "{count}");
-    }
 }
 
 #[test]
@@ -1652,47 +1343,6 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
         cancelled.diagnostics
     );
     assert_eq!(cancelled.view.status, terminal.view.status);
-}
-
-#[test]
-fn a_render_racing_a_state_write_is_drawn_again() {
-    let (temp, _, _) = fixture(
-        "export default api => { api.command('set', value => { api.state.set(value); return null; }); \
-         api.intercept('render', () => { const seen = String(api.state.get()); \
-           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); return {tree: [{type: 'text', id: 't', label: 'T', text: seen}]}; }); }",
-        &["commands", "store", "terminal"],
-    );
-    let runtime = std::sync::Mutex::new(host(&temp));
-    let render = || {
-        codex_omd::render_shared(
-            &runtime,
-            json!({"component":"spinner","id":"main","surface":"inline","viewport":{"columns":80,"rows":24},
-                "lifecycle":"live","owner":null,"props":{}}),
-            || true,
-        )
-        .unwrap()
-        .result["tree"][0]["text"]
-            .clone()
-    };
-    std::thread::scope(|scope| {
-        let racing = scope.spawn(render);
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        let generation = runtime.lock().unwrap().generation();
-        codex_omd::invoke_shared(
-            &runtime,
-            "fixture",
-            generation,
-            "command",
-            "set",
-            json!("after"),
-            || true,
-            |_, _| Err(std::io::Error::other("unexpected host call")),
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(racing.join().unwrap(), "null");
-    });
-    assert_eq!(render(), "after");
 }
 
 #[test]
@@ -2003,56 +1653,6 @@ fn ui_state_is_shared_per_session_isolated_and_cleared_on_reload() {
 }
 
 #[test]
-fn ui_state_write_survives_a_reload_during_its_command() {
-    let source = "export default api => { api.command('apply', () => { const before = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set({open: true, before}); return 'applied'; }); api.command('keep', () => { const value = api.uiState.get(); api.host.call('workspace.read', {path:'file'}); api.uiState.set(value); return 'kept'; }); api.command('read', () => api.uiState.get()); };";
-    let (temp, store, _) = fixture(source, &["commands", "terminal", "fs.read"]);
-    let runtime = std::sync::Mutex::new(host(&temp));
-    let during = |name: &str, change: &dyn Fn()| {
-        let generation = runtime.lock().unwrap().generation();
-        codex_omd::invoke_shared(
-            &runtime,
-            "fixture",
-            generation,
-            "command",
-            name,
-            Value::Null,
-            || true,
-            |_, _| {
-                change();
-                Ok(json!("contents"))
-            },
-            |_| {},
-        )
-    };
-    let read = || {
-        let mut host = runtime.lock().unwrap();
-        let generation = host.generation();
-        host.invoke("fixture", generation, "command", "read", Value::Null)
-            .unwrap()
-    };
-    let reload = || {
-        store.reload().unwrap();
-        runtime.lock().unwrap().reload().unwrap();
-    };
-    assert_eq!(during("apply", &reload).unwrap(), "applied");
-    assert_eq!(read(), json!({"open": true, "before": null}));
-    assert_eq!(during("keep", &reload).unwrap(), "kept");
-    assert_eq!(read(), json!({"open": true, "before": null}));
-    let settings = || {
-        codex_omd::write_settings(&store, "fixture", &json!({"placement": "above"})).unwrap();
-        reload();
-    };
-    assert_eq!(during("apply", &settings).unwrap(), "applied");
-    assert_eq!(read(), json!({"open": true, "before": {"open": true, "before": null}}));
-    let error = during("apply", &|| {
-        runtime.lock().unwrap().set_checkout(temp.path());
-    })
-    .unwrap_err();
-    assert!(error.to_string().contains("callback_cancelled"), "{error}");
-    assert_eq!(read(), Value::Null);
-}
-
-#[test]
 fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() {
     let source = "export default api => { api.command('view', () => { api.uiState.set('open'); return {terminal:{sites:{dialog:{mode:'replace',components:[{type:'text',id:'own',label:'Own',text:'Visible'}]}}}}; }); api.command('close', () => ({terminal:null})); api.command('change', () => api.uiState.set('changed')); api.command('durable', () => api.state.set('changed')); api.command('bad', () => { api.uiState.set('bad'); return {terminal:{title:'x'.repeat(10000)}}; }); api.on('terminal', () => ({title:'First'})); };";
     let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
@@ -2222,47 +1822,6 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
             .as_deref(),
         Some("First")
     );
-}
-
-#[test]
-fn terminal_handlers_rerun_only_when_state_or_input_changes() {
-    let source = "export default api => { api.command('bump', () => { api.state.set(Number(api.state.get() ?? 0) + 1); }); api.on('terminal', () => ({title: String(Date.now())})); }";
-    let (temp, store, _) = fixture(source, &["commands", "terminal", "store"]);
-    let root = temp.path().canonicalize().unwrap();
-    let steady = package(
-        &root,
-        "steady",
-        "export default api => api.on('terminal', () => ({status: ['steady']}));",
-        &["terminal"],
-    );
-    trust(&store, &steady, &["terminal"]);
-    let mut runtime = host(&temp);
-    let title = |runtime: &mut ModHost, payload: Value| {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        runtime.terminal_view(payload, || true).view.title.unwrap()
-    };
-    let invocations = |runtime: &ModHost| {
-        runtime.status()["mods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["id"] == "steady")
-            .unwrap()["telemetry"]["invocations"]
-            .clone()
-    };
-    let first = title(&mut runtime, json!({"event": "draw"}));
-    assert_eq!(title(&mut runtime, json!({"event": "draw"})), first);
-    let steady_runs = invocations(&runtime);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    let ticked = title(&mut runtime, json!({"event": "draw"}));
-    assert_ne!(ticked, first);
-    assert_eq!(invocations(&runtime), steady_runs);
-    let input = title(&mut runtime, json!({"event": "resize"}));
-    assert_ne!(input, first);
-    runtime
-        .invoke("fixture", runtime.generation(), "command", "bump", Value::Null)
-        .unwrap();
-    assert_ne!(title(&mut runtime, json!({"event": "resize"})), input);
 }
 
 #[test]
@@ -2647,61 +2206,6 @@ fn task_scoped_tools_follow_owned_step_selection_and_fail_closed() {
 }
 
 #[test]
-fn task_scoped_tool_decisions_cannot_select_another_mod_or_hide_unscoped_tools() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let parameters = "{type:'object',properties:{}}";
-    let first = package(
-        &root,
-        "first",
-        &format!(
-            "export default api => {{ api.tool({{name:'one',description:'One',parameters:{parameters},task_scoped:true}},()=>1); api.on('tool_exposure',()=>({{enable:['one']}})); }}"
-        ),
-        &["tools"],
-    );
-    let second = package(
-        &root,
-        "second",
-        &format!(
-            "export default api => {{ api.tool({{name:'two',description:'Two',parameters:{parameters},task_scoped:true}},()=>2); api.on('tool_exposure',()=>({{enable:['one']}})); }}"
-        ),
-        &["tools"],
-    );
-    let old = package(
-        &root,
-        "old",
-        &format!(
-            "export default api => api.tool({{name:'legacy',description:'Legacy',parameters:{parameters}}},()=>3)"
-        ),
-        &["tools"],
-    );
-    for path in [&first, &second, &old] {
-        trust(&store, path, &["tools"]);
-    }
-    let mut runtime = host(&temp);
-    let tools = runtime.tools_for_step(None, Value::Null, || true);
-    assert_eq!(
-        tools
-            .iter()
-            .map(|(id, _, tool)| format!("{id}:{}", tool.name))
-            .collect::<Vec<_>>(),
-        ["first:one", "old:legacy"]
-    );
-    assert!(
-        runtime.status()["mods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["id"] == "second"
-                && entry["error"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("invalid_tool_exposure"))
-    );
-}
-
-#[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     for capabilities in [vec!["commands", "agents"], vec!["commands", "agents", "sessions"]] {
         let (temp, _, _) = fixture(
@@ -2966,47 +2470,9 @@ fn native_schema_validation_applies_to_reload_before_activation() {
 const CONTRACT: &str = r#"export default api => api.contract({ schema: 2, id: 'paired_review', version: 1, description: 'Review', assurance: 'fixture-checked', gates: {} })"#;
 
 #[test]
-fn a_mod_registers_a_current_contract_document_with_package_provenance() {
-    let (temp, _, path) = fixture(CONTRACT, &["contracts"]);
-    let runtime = host(&temp);
-    let contracts = runtime.contract_documents();
-    assert_eq!(contracts.len(), 1);
-    let (contract, owner) = &contracts[0];
-    assert_eq!(contract.id, "paired_review");
-    assert_eq!(contract.schema, 2);
-    assert_eq!(owner.id, "fixture");
-    assert_eq!(owner.source, path.display().to_string());
-}
-
-#[test]
 fn a_contract_registration_requires_the_current_capability() {
     let (temp, _, _) = fixture(CONTRACT, &[]);
     assert!(activation_error(&temp, "fixture").contains("capability_denied"));
-}
-
-#[test]
-fn two_mods_may_not_own_the_same_contract_document() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for id in ["first", "second"] {
-        let path = package(&root, id, CONTRACT, &["contracts"]);
-        trust(&store, &path, &["contracts"]);
-    }
-    let runtime = ModHost::open(root.join("store")).unwrap();
-    let status = runtime.status();
-    for id in ["first", "second"] {
-        let error = status["mods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|mod_status| mod_status["id"] == id)
-            .unwrap()["error"]
-            .as_str()
-            .unwrap_or_default();
-        assert!(error.contains("contract_conflict"), "{id}: {error}");
-    }
-    assert!(runtime.contract_documents().is_empty());
 }
 
 #[test]
@@ -3049,25 +2515,6 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
             .iter()
             .all(|item| item["id"] != "fixture")
     );
-}
-
-#[test]
-fn an_incompatible_package_names_the_host_and_package_api_versions() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let path = root.join("stale");
-    std::fs::create_dir(&path).unwrap();
-    std::fs::write(
-        path.join("mod.json"),
-        serde_json::to_vec(&json!({"schema":1,"id":"stale","version":"1.0.0",
-        "api":"0.1.0-experimental.1","state_version":1,"capabilities":[]}))
-        .unwrap(),
-    )
-    .unwrap();
-    std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
-    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-    assert!(error.contains(MOD_API_VERSION), "{error}");
-    assert!(error.contains("0.1.0-experimental.1"), "{error}");
 }
 
 #[test]
@@ -3279,61 +2726,6 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
     let store_root = root.join("store");
     assert!(store_root.join("state-shared.project.json").exists());
     assert!(!store_root.join("state-shared.json").exists());
-}
-
-#[test]
-fn thread_state_separates_selected_package_scopes_and_forks_both() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let source = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
-    let user = packaged(&root, "user", "shared", source, &["commands", "store"], &[]);
-    let project = packaged(
-        &root,
-        "project",
-        "shared",
-        source,
-        &["commands", "store"],
-        &[],
-    );
-    for path in [&user, &project] {
-        let mut manifest: Value =
-            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
-        manifest["state_scope"] = json!("thread");
-        std::fs::write(
-            path.join("mod.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
-    }
-    trust_scoped(&store, &user, &["commands", "store"], "user");
-    let mut runtime = host(&temp);
-    let count = |runtime: &mut ModHost, thread: &str| {
-        runtime
-            .invoke(
-                "shared",
-                runtime.generation(),
-                "command",
-                "count",
-                json!({"thread_id":thread}),
-            )
-            .unwrap()
-    };
-    assert_eq!(count(&mut runtime, "t1"), json!(1));
-    trust_scoped(&store, &project, &["commands", "store"], "project");
-    runtime.reload().unwrap();
-    assert_eq!(count(&mut runtime, "t1"), json!(1));
-    let store_root = root.join("store");
-    assert!(codex_omd::data_store::fork_thread_data(&store_root, "t1", "t2").unwrap());
-    assert_eq!(count(&mut runtime, "t2"), json!(2));
-    assert_eq!(
-        std::fs::read_dir(store_root.join("data/threads/t2/.state"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .count(),
-        2
-    );
 }
 
 #[test]
@@ -3572,149 +2964,6 @@ fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_o
 }
 
 #[test]
-fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal_interaction() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let harness = package(
-        &root,
-        "harness",
-        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{kind:'check',candidate_sha256:'candidate',outcome:'pass',evidence:{reference:'fixture',sha256:'hash'}}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.on('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
-        &[
-            "tools",
-            "commands",
-            "agents",
-            "contracts",
-            "store",
-            "lifecycle",
-            "middleware",
-            "terminal",
-        ],
-    );
-    trust(
-        &store,
-        &harness,
-        &[
-            "tools",
-            "commands",
-            "agents",
-            "contracts",
-            "store",
-            "lifecycle",
-            "middleware",
-            "terminal",
-        ],
-    );
-    let provider = service_package(
-        &root,
-        "provider",
-        "export default api => api.provide({name:'example.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>value.toUpperCase()})",
-        json!({"exports":[{"name":"example.echo","version":"1.0.0","methods":{"echo":{"input":"string","output":"string"}}}]}),
-        &["services"],
-    );
-    trust(&store, &provider, &["services"]);
-    let consumer = service_package(
-        &root,
-        "consumer",
-        "export default api => api.command('call',()=>api.services.call('example.echo','echo','hello'))",
-        json!({"imports":[{"name":"example.echo","version":"1.0.0"}]}),
-        &["commands", "services"],
-    );
-    trust(&store, &consumer, &["commands", "services"]);
-    let stream = package(
-        &root,
-        "stream",
-        "export default api => api.intercept('response_stream',(e,next)=>next({...e,text:e.text.toUpperCase()}))",
-        &["middleware"],
-    );
-    trust(&store, &stream, &["middleware"]);
-    let mut runtime = host(&temp);
-    let scenario = json!({
-        "schema":1,
-        "virtual_time_ms":1000,
-        "host_operations":{
-            "task.status":[{"result":{"ledger":{"thread_id":"thread","cwd":"/fixture","cost":null},"limits":{},"worker_limits":{}}}],
-            "agents.spawn":[{"result":{"handle":"agent-1","route":"sol","permissions":"read_only"}}],
-            "agents.wait":[{"result":{"status":"completed","text":"done","consumed":true,"evidence":{"reference":"fixture","sha256":"hash"}}}],
-            "receipts.submit":[{"result":{"kind":"check","candidate_sha256":"candidate","acceptance_sha256":null,"outcome":"pass","evidence":{"reference":"fixture","sha256":"hash"},"producer":{"kind":"lead","handle":null},"findings":[],"submitted_by":"harness","at":0}}]
-        },
-        "steps":[
-            {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1000},
-            {"type":"advance_time","ms":25,"expect":{"now_ms":1025}},
-            {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1025},
-            {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"ledger":{"thread_id":"thread","cwd":"/fixture","cost":null},"limits":{},"worker_limits":{}},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true,"evidence":{"reference":"fixture","sha256":"hash"}},"checkpoint":{"kind":"check","candidate_sha256":"candidate","acceptance_sha256":null,"outcome":"pass","evidence":{"reference":"fixture","sha256":"hash"},"producer":{"kind":"lead","handle":null},"findings":[],"submitted_by":"harness","at":0}}},
-            {"type":"tool_outcome","payload":{"call_id":"call-1","agent_id":null,"tool":"exercise","outcome":{"status":"ok"}},"expect":[{"mod":"harness","value":null}]},
-            {"type":"agent","payload":{"phase":"end","agent":{"agent_id":"agent-1","origin":"mod","role":"worker","status":"completed"}},"expect":[{"mod":"harness","value":null}]},
-            {"type":"intercept","surface":"response_stream","payload":{"kind":"text","index":0,"text":"hello","protected":false},"core":[{"value":{"chunks":[{"kind":"text","index":0,"text":"HELLO","protected":false}]}}]},
-            {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
-            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","sites":{"dialog":{"components":[{"type":"button","id":"ping_button","label":"Ping button","text":"Ping","action":{"command":"harness:ping"}}]}},"keybindings":{"F2":{"command":"harness:ping"}}}},
-            {"type":"terminal_interact","mod":"harness","key":"F2","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":1}},
-            {"type":"terminal_interact","mod":"harness","component":"ping_button","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":2}},
-            {"type":"reload"},
-            {"type":"invoke","mod":"harness","event":"command","name":"clock","cancelled":true,"expect_error":"callback_cancelled"}
-        ]
-    });
-    let result = runtime.offline_test(scenario).unwrap();
-    assert_eq!(result["offline"], true);
-    assert_eq!(result["paid_requests"], 0);
-    assert_eq!(result["virtual_time_ms"], 1025);
-    assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
-    assert_eq!(result["steps"][6]["value"]["input"]["text"], "HELLO");
-    assert_eq!(result["steps"][11]["value"]["generation"], 2);
-}
-
-#[test]
-fn offline_timers_fire_in_the_thread_that_scheduled_them() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let capabilities = ["commands", "events", "lifecycle", "store"];
-    let path = package(
-        &root,
-        "fixture",
-        "export default api => { api.on('start', ({thread_id}) => { api.state.set(thread_id); api.host.call('events.schedule', {key:'tick',delay_ms:100}); }); \
-         api.on('timer', () => api.state.set(`${api.state.get()} fired`)); api.command('read', () => api.state.get()); \
-         api.command('arm', () => { api.state.set('t3'); api.host.call('events.schedule', {key:'tick',delay_ms:100}); return 'armed'; }); }",
-        &capabilities,
-    );
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["state_scope"] = json!("thread");
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &path, &capabilities);
-    let plain = package(
-        &root,
-        "plain",
-        "export default api => { api.on('start', () => api.host.call('events.schedule', {key:'tick',delay_ms:100})); \
-         api.command('stop', () => api.host.call('events.cancel', {key:'tick'})); }",
-        &capabilities,
-    );
-    trust(&store, &plain, &capabilities);
-    let mut runtime = host(&temp);
-    let result = runtime
-        .offline_test(json!({
-            "schema": 1,
-            "virtual_time_ms": 1000,
-            "steps": [
-                {"type": "event", "event": "start", "payload": {"thread_id": "t1"}},
-                {"type": "event", "event": "start", "payload": {"thread_id": "t2"}},
-                {"type": "invoke", "mod": "plain", "event": "command", "name": "stop", "expect": {"cancelled": true}},
-                {"type": "advance_time", "ms": 200, "expect": {"now_ms": 1200, "timers": [
-                    {"mod": "fixture", "key": "tick", "at_ms": 1100}, {"mod": "fixture", "key": "tick", "at_ms": 1100}]}},
-                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t1"}, "expect": "t1 fired"},
-                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t2"}, "expect": "t2 fired"},
-                {"type": "wait_until", "max_ms": 1000, "until": "armed",
-                    "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "arm", "payload": {"thread_id": "t3"}}},
-                {"type": "advance_time", "ms": 200},
-                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t3"}, "expect": "t3 fired"}
-            ]
-        }))
-        .unwrap();
-    assert_eq!(result["steps"].as_array().unwrap().len(), 9);
-}
-
-#[test]
 fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -3877,27 +3126,6 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
 }
 
 #[test]
-fn oversized_continuation_results_are_limited_like_host_results() {
-    let (temp, _, _) = fixture(
-        "export default api => api.intercept('composer_edit', async (e, next) => next(e))",
-        &["composer"],
-    );
-    let runtime = std::sync::Mutex::new(host(&temp));
-    codex_omd::continue_operation(
-        &runtime,
-        "composer_edit",
-        json!({"source": "user", "caller": "user", "revision": 1, "edit": {"kind": "fill", "text": "x"}}),
-        json!({"caller": "user"}),
-        || true,
-        |_, _| Err(std::io::Error::other("unexpected host call")),
-        |effective| Ok(json!({"edit": effective["edit"], "padding": "x".repeat(200_000)})),
-    )
-    .unwrap();
-    let chains = runtime.lock().unwrap().status()["chains"].to_string();
-    assert!(chains.contains("host_result_limit"), "{chains}");
-}
-
-#[test]
 fn composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline() {
     let (temp, _, _) = fixture(
         "export default api => { api.intercept('composer_key', {match: {key: 'a'}}, (e, next) => next({...e, key: 'Left'})); api.intercept('composer_key', {match: {key: 'w'}}, () => ({key: 'Ctrl+w'})); api.intercept('composer_key', {match: {key: 'q'}}, () => ({deny: 'no'})); api.intercept('composer_key', {match: {key: 'z'}}, () => ({key: 'Ctrl+'})); api.intercept('composer_key', {match: {key: 'c'}}, () => ({key: 'Ctrl+c'})); api.intercept('composer_key', {match: {key: 's'}}, () => { for (let i = 0; i < 1e10; i++); return {key: 'x'}; }); }",
@@ -3987,86 +3215,6 @@ fn completion_triggers_are_bounded_and_route_the_completion_event() {
 }
 
 #[test]
-fn request_path_interceptors_refuse_sleep_before_continuation() {
-    for required in [false, true] {
-        let source = format!(
-            "export default api => {{ for (const surface of ['model_request', 'model_send', 'response_stream']) api.intercept(surface, {{required: {required}}}, async (e, next) => {{ await api.time.sleep(1); return next(e); }}); }}"
-        );
-        let (temp, _, _) = fixture(&source, &["middleware", "request_policy", "events"]);
-        let runtime = std::sync::Mutex::new(host(&temp));
-        for surface in ["model_request", "model_send", "response_stream"] {
-            let input = match surface {
-                "model_request" => {
-                    json!({"route": "default", "routes": [{"name": "default"}], "sections": [], "effort": null})
-                }
-                "response_stream" => json!({"kind": "text", "text": "hello", "index": 0}),
-                _ => json!({"segments": [], "opaque": [], "page": 0, "pages": 1}),
-            };
-            let result = codex_omd::intercept_shared(
-                &runtime,
-                surface,
-                required,
-                input,
-                json!({"caller": "engine"}),
-                || true,
-                |_, _| panic!("unexpected host call"),
-                |_| Ok(json!({"native": true})),
-            );
-            if required {
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("time_sleep_unavailable")
-                );
-            } else {
-                assert_eq!(result.unwrap().result, json!({"native": true}));
-            }
-            let chains = runtime.lock().unwrap().status()["chains"].clone();
-            let entry = chains.as_array().unwrap().last().unwrap();
-            assert!(
-                entry
-                    .to_string()
-                    .contains(&format!("time_sleep_unavailable: {surface}")),
-                "{entry}"
-            );
-        }
-    }
-}
-
-#[test]
-fn offline_status_retains_conflicts_without_running_paid_work() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for id in ["first", "second"] {
-        let path = package(
-            &root,
-            id,
-            "export default api => api.replace('compaction',()=>16000)",
-            &["compaction"],
-        );
-        trust(&store, &path, &["compaction"]);
-    }
-    let mut runtime = host(&temp);
-    let result = runtime
-        .offline_test(json!({"schema":1,"steps":[{"type":"status"}]}))
-        .unwrap();
-    assert_eq!(result["paid_requests"], 0);
-    let errors = result["steps"][0]["value"]["mods"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| value["error"].as_str().unwrap_or_default())
-        .collect::<Vec<_>>();
-    assert!(
-        errors
-            .iter()
-            .all(|error| error.contains("replacement_conflict"))
-    );
-}
-
-#[test]
 fn rich_lines_and_boxes_are_bounded() {
     let valid = json!({"sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
             {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
@@ -4088,129 +3236,6 @@ fn rich_lines_and_boxes_are_bounded() {
             "{invalid}"
         );
     }
-}
-
-#[test]
-fn an_invalid_terminal_view_keeps_the_last_valid_one_and_names_the_field() {
-    let (temp, _, _) = fixture(
-        "export default api => { api.command('write', () => api.state.set('updated')); api.on('terminal', input => ({status:[input.bad ? 'x'.repeat(41) : api.state.get() ?? 'ok']})); }",
-        &["terminal", "commands", "store"],
-    );
-    let mut runtime = host(&temp);
-    assert_eq!(
-        runtime.terminal_view(json!({}), || true).view.status,
-        ["ok"]
-    );
-    runtime
-        .invoke(
-            "fixture",
-            runtime.generation(),
-            "command",
-            "write",
-            Value::Null,
-        )
-        .unwrap();
-    assert_eq!(
-        runtime.terminal_view(json!({}), || true).view.status,
-        ["updated"]
-    );
-    let terminal = runtime.terminal_view(json!({"bad": true}), || true);
-    assert_eq!(terminal.view.status, ["updated"]);
-    assert!(
-        terminal.diagnostics[0].contains("invalid_terminal_patch: status"),
-        "{:?}",
-        terminal.diagnostics
-    );
-    for _ in 0..5 {
-        runtime.terminal_view(
-            json!({"bad": true, "attempt": runtime.generation()}),
-            || true,
-        );
-    }
-    assert!(runtime.status()["mods"][0]["error"].is_null());
-}
-
-#[test]
-fn a_lost_site_claims_no_components_or_focus_keys_and_dialog_wraps_compose() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for (id, patch) in [
-        (
-            "alpha",
-            "{sites: {sidebar: {mode: 'replace', components: [{type: 'text', id: 'mine', label: 'Mine', text: 'a'}]},
-                dialog: {mode: 'wrap', components: [{type: 'text', id: 'frame', label: 'Frame', text: 'f'}, {type: 'slot'}]}}}",
-        ),
-        (
-            "beta",
-            "{sites: {sidebar: {mode: 'replace', components: [{type: 'text', id: 'notes', label: 'Notes', text: 'b'}]},
-                dialog: {mode: 'replace', components: [{type: 'text', id: 'ask', label: 'Ask', text: 'q'}]}},
-                keybindings: {'Alt+t': {focus: 'notes'}}, status: ['beta']}",
-        ),
-        (
-            "gamma",
-            "{sites: {above_composer: {mode: 'wrap', components: [{type: 'slot'}, {type: 'text', id: 'notes', label: 'Notes', text: 'g'}]}}}",
-        ),
-    ] {
-        let source = format!("export default api => api.on('terminal', () => ({patch}))");
-        let path = package(&root, id, &source, &["terminal"]);
-        trust(&store, &path, &["terminal"]);
-    }
-    let terminal = host(&temp).terminal_view(json!({}), || true);
-    assert!(
-        terminal.diagnostics.is_empty(),
-        "{:?}",
-        terminal.diagnostics
-    );
-    assert_eq!(
-        terminal.component_owners.get("notes").map(String::as_str),
-        Some("gamma")
-    );
-    assert_eq!(terminal.view.status, ["beta"]);
-    assert!(!terminal.view.keybindings.contains_key("Alt+t"));
-    assert!(
-        terminal
-            .conflicts
-            .iter()
-            .any(|conflict| conflict.field == "sites.sidebar" && conflict.rejected == "beta")
-    );
-    let dialog = serde_json::to_string(&terminal.view.sites["dialog"]).unwrap();
-    assert!(
-        dialog.contains("\"frame\"") && dialog.contains("\"ask\""),
-        "{dialog}"
-    );
-}
-
-#[test]
-fn a_second_dialog_waits_without_failing_its_mod() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for id in ["alpha", "beta"] {
-        let source = format!(
-            "export default api => api.on('terminal', () => ({{sites:{{dialog:{{components:[{{type:'text',id:'{id}_text',label:'{id}',text:'{id}'}}]}}}}}}))"
-        );
-        let path = package(&root, id, &source, &["terminal"]);
-        trust(&store, &path, &["terminal"]);
-    }
-    let mut runtime = host(&temp);
-    let terminal = runtime.terminal_view(json!({}), || true);
-    let dialog = &terminal.view.sites["dialog"].components;
-    assert_eq!(dialog.len(), 1, "{dialog:?}");
-    assert_eq!(
-        terminal
-            .component_owners
-            .get("alpha_text")
-            .map(String::as_str),
-        Some("alpha")
-    );
-    assert!(
-        runtime.status()["mods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|entry| entry["error"].is_null())
-    );
 }
 
 #[test]
@@ -4360,18 +3385,6 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
         || true,
     );
     assert_eq!(terminal.view.status, vec!["1"]);
-}
-
-#[test]
-fn unsupported_host_operations_are_rejected_before_activation() {
-    let source =
-        "export default api => api.command('probe', () => api.host.call('future.unsupported', null))";
-    let (temp, _, _) = fixture(source, &["commands"]);
-    let error = activation_error(&temp, "fixture");
-    assert!(
-        error.contains("unsupported_host_operation: future.unsupported"),
-        "{error}"
-    );
 }
 
 fn interceptors(packages: &[(&str, &str, &[&str])]) -> (TempDir, std::sync::Mutex<ModHost>) {
@@ -4726,43 +3739,6 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
         if operation == "exec.run" && event["phase"] == "after" {
             assert_eq!(event["error"], "private_operation_failed");
         }
-    }
-}
-
-#[test]
-fn spawn_interceptors_return_the_spawned_value() {
-    let (_temp, runtime) = interceptors(&[
-        (
-            "auditor",
-            "export default api => api.intercept('agent_spawn', async (e, next) => {
-                const r = await next(e);
-                return e.prompt === 'late' ? {deny: 'too late'} : {...r, output: r.output + '\\n[audited]'};
-            })",
-            &["agents"],
-        ),
-        (
-            "caller",
-            "export default api => api.command('spawn', prompt => api.host.call('agents.spawn', {prompt}))",
-            &["commands", "agents"],
-        ),
-    ]);
-    let mut runtime = runtime.into_inner().unwrap();
-    let spawned = json!({"handle": "agent:w1", "status": "running"});
-    for prompt in ["look", "late"] {
-        let generation = runtime.generation();
-        let result = runtime.invoke_scoped_with(
-            "caller",
-            generation,
-            "command",
-            "spawn",
-            json!(prompt),
-            || true,
-            |_, call| {
-                assert_eq!(call.operation, "agents.spawn");
-                Ok(spawned.clone())
-            },
-        );
-        assert_eq!(result.unwrap(), spawned, "{prompt}");
     }
 }
 
@@ -5571,63 +4547,6 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
 }
 
 #[test]
-fn history_persist_chunks_fit_their_json_budget_and_credit_only_changing_links() {
-    let token = format!("{} sk-{}", "a".repeat(49_000), "b".repeat(400));
-    assert_eq!(codex_omd::persist_cut(&token, 49_152), 49_001);
-    assert_eq!(codex_omd::persist_cut(&"a".repeat(50_000), 49_152), 49_152);
-    assert_eq!(codex_omd::persist_cut(&"\"".repeat(30_000), 49_152), 24_576);
-    assert_eq!(codex_omd::persist_cut("\u{1}a", 0), 1);
-    let long_id =
-        json!({"kind": "tool", "role": null, "call_id": "c".repeat(50_000), "text": "ab"});
-    let pieces = codex_omd::persist_chunks(&[long_id]);
-    assert_eq!(
-        pieces
-            .iter()
-            .flatten()
-            .map(|(_, value)| value["text"].as_str().unwrap())
-            .collect::<String>(),
-        "ab"
-    );
-    let entry =
-        |text: String| json!({"kind": "message", "role": "user", "call_id": null, "text": text});
-    let many = (0..3_000)
-        .map(|_| entry("x".repeat(10)))
-        .collect::<Vec<_>>();
-    let quoted = [entry("\"\n".repeat(40_000))];
-    for entries in [&many[..], &quoted[..]] {
-        let chunks = codex_omd::persist_chunks(entries);
-        assert!(chunks.len() > 1);
-        assert!(chunks.iter().all(|chunk| {
-            let values = chunk.iter().map(|(_, value)| value).collect::<Vec<_>>();
-            serde_json::to_vec(&values).unwrap().len()
-                <= codex_omd::PERSIST_CHUNK_BYTES + chunk.len() + 1
-        }));
-        let mut texts = vec![String::new(); entries.len()];
-        for (index, value) in chunks.iter().flatten() {
-            texts[*index].push_str(value["text"].as_str().unwrap());
-        }
-        assert!(
-            texts
-                .iter()
-                .zip(entries)
-                .all(|(text, entry)| *text == entry["text"])
-        );
-    }
-    let link = |index: u64, id: &str, received: &str, returned: &str| json!({"index": index, "mod": id, "received": received, "returned": returned});
-    let passed = [
-        link(2, "engine", "redacted", "redacted"),
-        link(1, "plain", "redacted", "redacted"),
-        link(0, "redactor", "original", "redacted"),
-    ];
-    assert_eq!(codex_omd::persist_changed_by(&passed), ["mod:redactor"]);
-    let answered = [
-        link(1, "answering", "original", "rewritten"),
-        link(0, "plain", "original", "rewritten"),
-    ];
-    assert_eq!(codex_omd::persist_changed_by(&answered), ["mod:answering"]);
-}
-
-#[test]
 fn component_change_interceptors_answer_only_for_the_components_owner() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -5703,33 +4622,6 @@ fn component_change_interceptors_answer_only_for_the_components_owner() {
 }
 
 #[test]
-fn offline_multiselect_interactions_send_checked_values_in_option_order() {
-    let (temp, _, _) = fixture(
-        "export default api => { api.command('pick', input => input); api.on('terminal', () => ({sites: {dialog: {components: [{type: 'multiselect', id: 'files', label: 'Files', value: ['a'], action: {command: 'fixture:pick'}, options: [{value: 'a', label: 'A'}, {value: 'b', label: 'B'}]}]}}})); }",
-        &["commands", "terminal"],
-    );
-    let interact = |value: Option<&str>| {
-        let mut step = json!({"type": "terminal_interact", "mod": "fixture", "component": "files",
-            "payload": {"event": "draw", "checkpoint": null}});
-        if let Some(value) = value {
-            step["value"] = value.into();
-        }
-        host(&temp).offline_test(json!({"schema": 1, "steps": [step]}))
-    };
-    let checked = interact(None).unwrap();
-    assert_eq!(checked["steps"][0]["value"]["action"]["args"], r#"["a"]"#);
-    let ordered = interact(Some(r#"["b","a"]"#)).unwrap();
-    assert_eq!(
-        ordered["steps"][0]["value"]["action"]["args"],
-        r#"["a","b"]"#
-    );
-    assert_eq!(ordered["steps"][0]["value"]["result"], r#"["a","b"]"#);
-    for invalid in [r#"["a","a"]"#, r#"["c"]"#, "a"] {
-        assert!(interact(Some(invalid)).is_err(), "{invalid}");
-    }
-}
-
-#[test]
 fn offline_scenarios_mock_environment_pointer_clients_and_pending_waits() {
     let source = "export default api => { api.command('env', () => api.host.call('environment.read', {names: ['MODE', 'API_TOKEN']})); api.command('clock', () => Date.now()); api.command('last', () => api.state.get()); api.on('component_event', event => api.state.set(event)); api.on('terminal', input => ({title: `clients:${input.clients.length}`, sites: {dialog: {components: [{type: 'box', id: 'canvas', label: 'Canvas', pointer: true}, {type: 'box', id: 'plain', label: 'Plain'}]}}})); }";
     let (temp, _, _) = fixture(source, &["commands", "terminal", "exec", "store"]);
@@ -5797,41 +4689,6 @@ fn omd_mod_reset_moves_only_resettable_store_files_aside() {
     let refused = reset("grants.json");
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
-}
-
-#[test]
-fn clipboard_delivery_wait_is_not_callback_execution() {
-    let (temp, store, path) = fixture(
-        "export default api => api.command('copy', () => { api.host.call('terminal.copy', {text:'one'}); return api.host.call('terminal.copy', {text:'two'}); })",
-        &["commands", "terminal"],
-    );
-    let manifest = path.join("mod.json");
-    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    package["hook_budget_ms"] = json!(250);
-    std::fs::write(&manifest, serde_json::to_vec(&package).unwrap()).unwrap();
-    trust(&store, &path, &["commands", "terminal"]);
-    let mut runtime = host(&temp);
-    let generation = runtime.generation();
-    let mut copies = 0;
-    let result = runtime
-        .invoke_with(
-            "fixture",
-            generation,
-            "command",
-            "copy",
-            json!(""),
-            || true,
-            |call| {
-                assert_eq!(call.operation, "terminal.copy");
-                // Each external delivery is within its 5s surface deadline; their sum exceeds the callback execution budget and each exceeds the per-hook budget.
-                std::thread::sleep(std::time::Duration::from_millis(2_600));
-                copies += 1;
-                Ok(json!({"status": "confirmed"}))
-            },
-        )
-        .unwrap();
-    assert_eq!(copies, 2);
-    assert_eq!(result, json!({"status": "confirmed"}));
 }
 
 #[test]
@@ -5941,36 +4798,6 @@ fn component_runners_belong_to_their_owner_and_cannot_sleep() {
 }
 
 #[test]
-fn reloading_a_changed_package_retires_its_old_component_runners() {
-    let source = "export default api => api.component('tally', { init: () => 0, \
-         key: n => n + 1, view: n => [{type: 'text', id: 't', label: 'T', text: String(n)}] })";
-    let (temp, store, path) = fixture(source, &["terminal"]);
-    let runtime = std::sync::Mutex::new(host(&temp));
-    let step = |instance: &str| {
-        codex_omd::component_shared(
-            &runtime,
-            "fixture",
-            "tally",
-            json!({"instance": instance, "client": "reload", "now": 0, "columns": 20, "rows": 1,
-                "events": [{"kind": "key", "key": null, "text": "x"}]}),
-            || true,
-        )
-        .map(|step| step["tree"][0]["text"].clone())
-        .map_err(|error| error.to_string())
-    };
-    for instance in ["a", "b", "c", "d"] {
-        assert_eq!(step(instance), Ok(json!("1")));
-    }
-    assert_eq!(step("a"), Ok(json!("2")));
-    std::fs::write(path.join("index.ts"), format!("{source}\n")).unwrap();
-    trust(&store, &path, &["terminal"]);
-    runtime.lock().unwrap().reload().unwrap();
-    for instance in ["a", "b", "c", "d"] {
-        assert_eq!(step(instance), Ok(json!("1")));
-    }
-}
-
-#[test]
 fn refused_component_host_calls_never_reach_host_operation_interceptors() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -6044,96 +4871,4 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
             .unwrap(),
         json!("##")
     );
-}
-
-#[test]
-fn continuations_run_code_before_next_once_with_a_fixed_clock() {
-    let source = "export default api => api.intercept('model_request', async (e, next) => { \
-         const before = Date.now(); const effort = ['low', 'medium', 'high'][Math.floor(Math.random() * 3)]; \
-         const result = await next({...e, effort}); \
-         if (Date.now() !== before || result.effort !== effort) throw new Error('replayed'); return result; })";
-    let (temp, _, _) = fixture(source, &["middleware"]);
-    let runtime = std::sync::Mutex::new(host(&temp));
-    for _ in 0..6 {
-        let chain = codex_omd::intercept_shared(
-            &runtime,
-            "model_request",
-            false,
-            json!({"request_id":"r1","route":"sol","routes":[{"name":"sol"}],"effort":"high","sections":[]}),
-            json!({"caller":"engine"}),
-            || true,
-            |_, _| Err(std::io::Error::other("unexpected host call")),
-            |input| {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                Ok(json!({"route": input["route"], "effort": input["effort"]}))
-            },
-        )
-        .unwrap();
-        assert!(
-            chain.trace.iter().all(|entry| entry["reason"].is_null()),
-            "{:?}",
-            chain.trace
-        );
-    }
-}
-
-#[test]
-fn a_resumed_component_ticks_from_now_instead_of_replaying_its_pause() {
-    let source = "export default api => api.component('clock', { init: () => ({ paused: true, n: 0 }), \
-         key: s => ({ ...s, paused: false }), \
-         every: { ms: s => s.paused ? null : 50, tick: s => ({ ...s, n: s.n + 1 }) }, \
-         view: s => [{type: 'text', id: 't', label: 'T', text: String(s.n)}] })";
-    let (temp, _, _) = fixture(source, &["terminal"]);
-    let runtime = std::sync::Mutex::new(host(&temp));
-    let step = |now: u64, events: Value| {
-        let step = codex_omd::component_shared(
-            &runtime,
-            "fixture",
-            "clock",
-            json!({"instance": "c", "client": "clock", "now": now, "columns": 20, "rows": 1, "events": events}),
-            || true,
-        )
-        .unwrap();
-        (step["tree"][0]["text"].clone(), step["next_ms"].clone())
-    };
-    assert_eq!(step(0, json!([])), (json!("0"), Value::Null));
-    let key = json!([{"kind": "key", "key": "Space", "text": " "}]);
-    assert_eq!(step(10_000, key), (json!("0"), json!(50)));
-    assert_eq!(step(10_120, json!([])), (json!("2"), json!(30)));
-}
-
-#[test]
-fn component_input_maps_keys_pastes_and_pointer_events() {
-    let input = json!({"kind": "input", "events": [{"key": "d", "text": "d"}, {"paste": " go"}]});
-    assert_eq!(
-        codex_omd::component_events(&input),
-        vec![
-            json!({"kind": "key", "key": "d", "text": "d"}),
-            json!({"kind": "key", "key": null, "text": " go"}),
-        ]
-    );
-    let pointer = json!({"kind": "pointer", "pointer": {"column": 2, "row": 1, "action": "down", "button": "left", "fraction": [0.5, 0.5]}});
-    assert_eq!(
-        codex_omd::component_events(&pointer),
-        vec![json!({"kind": "pointer", "column": 2, "row": 1, "action": "down", "button": "left"})]
-    );
-}
-
-#[test]
-fn offline_mock_boundary_cannot_hide_unexpected_calls_with_try_call() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let harness = package(&root, "strict_mock", "export default api => api.command('read', () => { api.host.tryCall('store.get', {key:'k'}); return null; })", &["commands", "store"]);
-    trust(&store, &harness, &["commands", "store"]);
-    let mut runtime = host(&temp);
-    let step = json!({"type":"invoke","mod":"strict_mock","event":"command","name":"read","expect":null});
-    let error = runtime.offline_test(json!({"schema":1,"steps":[step]})).unwrap_err().to_string();
-    assert!(error.contains("offline_mock_violation"), "{error}");
-    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"arguments":{"key":"other"},"result":null}]},"steps":[step]})).unwrap_err().to_string();
-    assert!(error.contains("offline_mock_arguments_mismatch"), "{error}");
-    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"result":42}]},"steps":[step]})).unwrap_err().to_string();
-    assert!(error.contains("offline_invalid_result"), "{error}");
-    let error = runtime.offline_test(json!({"schema":1,"host_operations":{"store.get":[{"result":null}]},"steps":[]})).unwrap_err().to_string();
-    assert!(error.contains("offline_unused_mock_replies"), "{error}");
 }

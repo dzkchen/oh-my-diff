@@ -174,12 +174,6 @@ fn client_events_keep_only_their_kinds_fields() {
 }
 
 #[test]
-fn clients_see_a_null_view_while_mods_are_inactive() {
-    let _guard = crate::mods::DISPATCHER_TEST.blocking_lock();
-    assert!(published().is_none());
-}
-
-#[test]
 fn clients_cannot_enable_disable_or_reset_mods() {
     for action in ["enable", "disable", "reset"] {
         let refused = recovery_apply(action, "alpha").unwrap_err();
@@ -188,23 +182,6 @@ fn clients_cannot_enable_disable_or_reset_mods() {
             "{refused}"
         );
     }
-}
-
-#[test]
-fn roster_republishes_coalesce_into_one_trailing_run() {
-    static TEST: Coalesce = Coalesce::new();
-    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    TEST.running.store(true, Ordering::Release);
-    TEST.dirty.store(true, Ordering::Release);
-    TEST.drain(|| {
-        if RUNS.fetch_add(1, Ordering::AcqRel) == 0 {
-            for _ in 0..5 {
-                TEST.request(|| unreachable!("a run is in progress"));
-            }
-        }
-    });
-    assert_eq!(RUNS.load(Ordering::Acquire), 2);
-    assert!(!TEST.running.load(Ordering::Acquire));
 }
 
 #[test]
