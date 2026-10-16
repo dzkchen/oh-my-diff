@@ -428,6 +428,31 @@ impl Broker {
             *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
             return Ok(Value::String(nonce));
         }
+        // Store and anchor state is keyed by path, so only the path's owner may name it; a stream not
+        // written yet belongs to its directory's owner.
+        for (field, refused) in [("store", "authority_store_unowned"), ("stream", "authority_stream_unowned")] {
+            let Some(path) = request.arguments.get(field).and_then(Value::as_str).map(Path::new) else {
+                continue;
+            };
+            let metadata = fs::metadata(path).or_else(|error| match path.parent() {
+                Some(parent) if field == "stream" && error.kind() == io::ErrorKind::NotFound => {
+                    fs::metadata(parent)
+                }
+                _ => Err(error),
+            });
+            let uid = platform::peer_uid(peer);
+            if !metadata.is_ok_and(|metadata| Some(std::os::unix::fs::MetadataExt::uid(&metadata)) == uid) {
+                return Err(failure(refused));
+            }
+            // The first owner to name a path keeps its state, so a path deleted and recreated by another user is refused.
+            let directory = crate::workspace::private_path(&self.root, &["owners"], "authority_directory_invalid")?;
+            let record = directory.join(format!("{field}-{}.json", sha256(path.as_os_str().as_encoded_bytes())));
+            match read_json(&record, Value::Null)? {
+                Value::Null => write_private(&record, &json!(uid))?,
+                owner if owner != json!(uid) => return Err(failure(refused)),
+                _ => {}
+            }
+        }
         let right = self.right(&request.op, &request.arguments)?;
         if let Some(right) = right {
             let digest = request_digest(&request.op, &request.arguments)?;
@@ -785,6 +810,12 @@ mod platform {
         status != 0 || attributes & HAS_GRAPHIC_ACCESS != 0
     }
 
+    pub(super) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+        let (mut uid, mut gid) = (0, 0);
+        // SAFETY: both out-pointers are valid for the call.
+        (unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
+    }
+
     fn peer_user(stream: &UnixStream) -> Option<std::ffi::CString> {
         let (mut uid, mut gid) = (0, 0);
         if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } != 0 {
@@ -919,6 +950,10 @@ mod platform {
 
     pub(super) fn graphic_session() -> bool {
         true
+    }
+
+    pub(super) fn peer_uid(_stream: &UnixStream) -> Option<u32> {
+        None
     }
 
     pub(super) fn authorize(

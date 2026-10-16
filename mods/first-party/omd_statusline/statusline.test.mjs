@@ -124,6 +124,12 @@ test('narrow terminals drop trailing segments, ASCII glyphs replace symbols and 
   const wide = { ...state, git: { ...state.git, branch: '機能'.repeat(12) } };
   const cells = text => [...text].reduce((sum, char) => sum + (/[　-鿿]/.test(char) ? 2 : 1), 0);
   assert.ok(lines(view(wide, { preset: 'custom', layout: 'git' }, { client: { kind: 'terminal', columns: 30, rows: 20 } })).every(text => cells(text) <= 26), 'wide characters count two cells');
+  const long = { ...state, git: { ...state.git, branch: 'x'.repeat(300) } };
+  const bytes = text => new TextEncoder().encode(text).length;
+  for (const item of rows(view(long, { preset: 'custom', layout: 'model git' }, { client: { kind: 'terminal', columns: 400, rows: 20 } }))) {
+    assert.ok(item.spans.every(piece => bytes(piece.text) <= 256), 'merged spans stay within 256 bytes');
+    assert.ok(item.spans.reduce((total, piece) => total + bytes(piece.text), 0) > 256, 'a wide line is split, not cut');
+  }
   const above = view(state, { placement: 'above' });
   assert.deepEqual(Object.keys(above.sites), ['above_composer']);
   assert.equal(above.sites.above_composer.components[0].type, 'slot');

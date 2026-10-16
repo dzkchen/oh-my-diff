@@ -384,7 +384,8 @@ Discovery itself grants neither execution nor socket access.
 `api.assets.read(name)` returns a selected package's UTF-8 entrypoint or
 declared text asset with its SHA-256. It reads only the caller's hash-bound
 package. Installed package caches include declared assets. A package declares
-at most 16 assets; each package file is at most 128 KiB, and the entrypoint and
+at most 16 assets; `mod.json` is at most 8 KiB and each other package file at
+most 128 KiB (`file_limit` names the file), and the entrypoint and
 declared text together at most 256 KiB per callback (`package_text_input_limit`,
 refused by inspection, install and `omd-mod-author check`). A mod can supply its own
 source to a sandboxed `exec.run` process without relying on a workspace copy.
@@ -1234,12 +1235,16 @@ server's `enabled`, `enabled_tools` and `disabled_tools`.
 `env` or `query_params` table, `shell_environment_policy.set` and the `args` of
 anything with a `command` (MCP servers, also under profiles and plugins), every
 string whose key ends in a secret word (`*_token`, `*secret`, `password`, API
-keys; not `*_credentials_store`) and every line that looks like a credential
+keys; not `*_credentials_store`), a provider's `env_key` unless it is an
+upper-case variable name with an underscore (`OPENAI_API_KEY`), and every line that looks like a credential
 (bearer tokens, key prefixes, private keys, user information in URLs; the other
 lines of multi-line text stay), and reduce an MCP server `url` or provider
 `base_url` to scheme, host and port (user information becomes `<redacted>@`,
 anything after the host `/<redacted>`), in the effective config and in each
 layer. `hooks/list` applies the same line rule to hook `command` strings.
+Config writes, `config.set` included, refuse any Codex value containing
+`<redacted>` (`app_config_value_redacted`), so a read value cannot be written
+back masked; mod settings may hold the literal text.
 `command/exec`, `process/*`, `fs/*`, `thread/shellCommand`,
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
@@ -1361,8 +1366,9 @@ interceptors above it see only the final result.
 
 Ordinary interceptors wrap required ones. Within each tier the order is
 explicit `before`/`after`, then consumers outside their dependencies, then mod
-ID, then registration order; a cycle disables the mods involved with
-`interceptor_order_conflict`. Required interceptors therefore see the final
+ID, then registration order; a cycle disables the mods that declared its edges
+with `interceptor_order_conflict` (a mod it only names stays loaded), and naming
+one mod in both `before` and `after` is an invalid registration. Required interceptors therefore see the final
 effective input. A mod never intercepts its own host calls, and host calls made
 inside an interceptor are not intercepted. A tool call a mod starts with
 `tools.invoke` passes through every other mod's interceptors with that mod as
@@ -1402,7 +1408,10 @@ is true its `next` resolves to the recorded result. A failed required
 interceptor, a runtime still busy after 5 s, or a required interceptor of a
 faulted mod fails the operation closed with `intercept_required_failed`; disable
 or reload the mod in `/mods` to recover. Optional interceptors wait up to 2 s
-for a busy runtime and are then skipped with `mod_runtime_busy`. A reload during
+for a busy runtime and are then skipped with `mod_runtime_busy`; on a model
+request a mod makes itself, they are skipped at once with
+`mod_callback_in_flight` while the runtime is busy. A skipped model-request interceptor appends
+`{kind: "intercept_skipped", surface, reason}` to `mod-middleware.jsonl`. A reload during
 a chain lets running handlers finish; later operations use the new generation.
 
 Interceptors call host operations under their own grants with lifecycle-event
@@ -2071,7 +2080,7 @@ the code: besides those below, `mod_host_inactive`, `session_unavailable`,
 runtime or published view in this host), `command_unavailable` and
 `command_unavailable_during_turn` for the action's command,
 `render_slot_invalid` and `render_props_invalid`, `resource_not_in_view` and
-`resource_unavailable`, and `recovery_action_invalid`, `mod_not_found` and
+`resource_unavailable`, and `recovery_action_invalid` and
 `mod_store_unavailable` from recovery.
 
 | Request | Params | Result |
@@ -2762,7 +2771,8 @@ any it refuses.
 - Input and focus: a dialog focuses its first item when it opens; Esc, Ctrl+] or
   a click outside releases focus and hides the dialog until a mod command runs,
   and Esc reaches the focused component's owner as `component_event {kind:
-  'input', events: [{key: 'Esc'}]}`. Space on a focused `list` row activates it
+  'input', events: [{key: 'Esc'}]}`. A shown dialog is modal: keys it does not
+  bind never reach the composer behind it (Ctrl+C still interrupts). Space on a focused `list` row activates it
   like Enter. On a focused `multiselect`, Space toggles the current option and
   Enter runs its action with the checked values as a JSON array argument. A
   `hotkey` on a button, input, select, multiselect or list focuses it (a button
@@ -2833,9 +2843,9 @@ any it refuses.
   which runs with the session.
 - Settings: callbacks receive explicit settings over each `settings_schema`
   property's `default`; give every property a default.
-- Memory: each runner process has a 64 MiB V8 old-space limit; exceeding it
-  fails the callback with `mod_out_of_memory`. This is not a total process RSS
-  limit; compiled data and other runtime allocations also use memory.
+- Memory: each runner process has a 64 MiB V8 old-space limit, and the host
+  kills a runner whose physical memory (ArrayBuffers and other off-heap data
+  included) passes 512 MiB. Either fails the callback with `mod_out_of_memory`.
 
 ### Streaming providers
 
@@ -3319,9 +3329,9 @@ end does not. Direct mode never loads this mod.
 
 ## Workspace reads, transactions, and write observation
 
-The experimental `workspace` capability grants `workspace.read`,
-`workspace.transaction`, `workspace.request_rename`, and the `workspace_write`
-and `workspace_pre_rename` events. The host accepts only
+`fs.read` grants `workspace.read` and the `workspace_change` event; `fs.write`
+grants `workspace.transaction`, `workspace.request_rename` and the
+`workspace_pre_rename` event (see [Capabilities](#capabilities)). The host accepts only
 the current canonical local repository and checks the effective read and write
 permissions for every path. Reads return UTF-8 text and SHA256 for at most 128
 repository-relative paths and 4 MiB. A transaction requires an exact
@@ -3334,7 +3344,8 @@ during rollback causes a visible conflict that needs inspection. This is not
 a repository-wide filesystem transaction or a replacement for user approval.
 
 `workspace.request_rename` captures the source and absent destination, invokes
-selected `workspace_pre_rename` subscribers before the move, and accepts one
+selected `workspace_pre_rename` subscribers (`{repository, old, new, expected,
+thread_id}`, in the requesting thread's state scope) before the move, and accepts one
 `{status:"ready",expected,writes}` proposal. No proposal, an unsupported
 operation, or an unavailable server yields `{status:"fallback",reason}`.
 Conflicting proposals fail visibly. The host checks all expected hashes and
@@ -3345,16 +3356,14 @@ checked transaction. A subscriber can read additional companion files and use
 contract's restrictions) before returning its proposal. The [independent workspace example](examples/workspace)
 demonstrates this path without using a language server.
 
-`workspace_write` is delivered after an OMD tool call changes a source file,
-with the tool call ID, path, and before/after hashes. Only a selected mod that
-subscribes to the event triggers its index scan. The scan excludes `.git`,
-`.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`,
-`venv`, `build`, and `dist`, and is
-bounded to 20,000 files and 128 MiB. A failed scan reports `unavailable` rather
-than claiming write coverage; more than 128 changed paths or 16 KiB of path
-names also reports `unavailable`. The independent example also shows a direct
-transaction for a mod tool. A change outside the thread's effective read
-scope reports `unavailable` without exposing its path or hash.
+Write observation is the `workspace_change` event described under the
+workspace operations above, with each changed path's before and after hashes.
+Only a selected mod that subscribes to it triggers the index scan. The scan
+excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`,
+`node_modules`, `.venv`, `venv`, `build`, and `dist`. More than 128 changed
+paths or 16 KB of path names reports `unavailable`, and so does a change
+outside the thread's effective read scope, without exposing its path or hash.
+The independent example also shows a direct transaction for a mod tool.
 
 The experimental `process` capability grants `process.which`, `process.start`,
 `process.exchange`, `process.status`, and `process.stop`. The host resolves an
@@ -3397,8 +3406,9 @@ progress and diagnostics, the composer, approvals and scrollback remain, and
 the owned fullscreen viewport is unchanged. The `above_composer` and
 `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints
-and status row), with styles, links and focusable controls; `below_composer`
-is clipped to 6 rows and scrolls to the focused control. Both are hidden while
+and status row), with styles, links and focusable controls; `above_composer`
+is clipped to 8 rows and `below_composer` to 6, each scrolling to the focused
+control. Both are hidden while
 an approval or popup replaces the composer. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or

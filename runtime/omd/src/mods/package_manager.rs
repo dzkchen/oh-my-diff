@@ -2178,9 +2178,14 @@ fn repository_view(
     std::os::unix::fs::symlink(cached.join("objects"), view.path().join("objects"))?;
     if !offline {
         let fetched = fresh()?;
+        // A stalled transfer under the store lock gives up after 30 s below 1 byte/s.
         git(
             fetched.path(),
             &[
+                "-c",
+                "http.lowSpeedLimit=1",
+                "-c",
+                "http.lowSpeedTime=30",
                 "fetch",
                 "--force",
                 "--no-tags",
@@ -2218,7 +2223,9 @@ fn git_command(repository: &Path) -> Command {
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
     command
 }
 

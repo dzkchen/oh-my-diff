@@ -31,6 +31,7 @@ const script = steps => call => {
 };
 
 const observed = { key: 'lsp.observed_repository', scope: 'repository' };
+const sizes = (files, paths) => ({ files: Object.fromEntries(paths.map(path => [path, files[path] ? { kind: 'file', size: files[path].text.length, mtime_ms: 0, sha256: files[path].sha256 } : null])) });
 
 test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
   const repository = '/tmp/project';
@@ -59,6 +60,7 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
       case 'process.status': return { session: 'python', running, idle_ms: idleMs };
       case 'process.stop': running = false; return { stopped: true };
       case 'events.publish': return { delivered: 0, dropped: 0 };
+      case 'workspace.stat': return sizes(files, call.arguments.paths);
       case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
       case 'process.exchange': {
         const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
@@ -137,6 +139,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
     if (call.operation === 'process.start') { started.push(call.arguments); return { session: call.arguments.session, running: true }; }
     if (call.operation === 'process.stop') return { stopped: false };
     if (call.operation === 'events.publish') return { delivered: 0, dropped: 0 };
+    if (call.operation === 'workspace.stat') return sizes(files, call.arguments.paths);
     if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
     if (call.operation === 'process.exchange') {
       const request = call.arguments.send?.find(message => message.method === 'initialize');
@@ -315,6 +318,7 @@ function createHost({ files = {}, server = null, repository = '/repo', binary = 
       if (early !== undefined) return early;
       const read = name => host.files[name] ?? null;
       switch (operation) {
+        case 'session.info': return { thread_id: host.thread, root: host.repository, cwd: host.repository };
         case 'store.get': return host.store[args.key] ?? null;
         case 'store.put': {
           const current = host.store[args.key];
@@ -482,6 +486,41 @@ test('LSP budget failure after didChange restarts the server instead of rolling 
   const restarted = drive(host, 'workspace_change', change(host, ['a.py']), state).state.servers.python;
   assert.deepEqual([restarted.running, restarted.status, restarted.documents['a.py'].version], [true, 'synced', 1]);
   assert.equal(host.count('process.start'), 2);
+});
+
+test('LSP resync reads documents within the receipt room, reads an oversize file alone and skips files the host cannot return as text', () => {
+  const files = { 'bad.py': 'x', 'huge.py': 'h'.repeat(30_000) };
+  for (let index = 0; index < 2; index++) files[`doc${index}.py`] = `# ${index}\n`.padEnd(5_000, 'v');
+  const host = createHost({ files, server: diagnosticServer });
+  const batches = [];
+  host.intercept = ({ operation, arguments: args }) => {
+    if (operation !== 'workspace.read') return undefined;
+    batches.push(args.paths);
+    if (args.paths.includes('bad.py')) throw failure('workspace_text_not_utf8');
+    return undefined;
+  };
+  const synced = drive(host, 'workspace_change', change(host, Object.keys(files)), null);
+  const python = synced.state.servers.python;
+  assert.deepEqual(Object.keys(python.documents).sort(), ['doc0.py', 'doc1.py', 'huge.py']);
+  assert.equal(python.status, 'synced');
+  for (const batch of batches.filter(batch => !batch.includes('huge.py'))) assert.ok(batch.reduce((total, path) => total + files[path].length, 0) <= 24_000, batch.join());
+  assert.deepEqual(batches.filter(batch => batch.includes('bad.py')), [['bad.py', 'doc0.py', 'doc1.py'], ['bad.py']], 'a failing batch is split in halves');
+  assert.deepEqual(batches.filter(batch => batch.includes('huge.py')), [['huge.py']]);
+  const reads = batches.length;
+  drive(host, 'turn_start', {}, synced.state);
+  assert.equal(batches.length, reads, 'unchanged documents are not read again');
+  drive(host, 'workspace_change', change(host, ['bad.py']), synced.state);
+  assert.equal(batches.length, reads, 'a file that is not UTF-8 is not read again while its hash is unchanged');
+  const large = createHost({ files: { 'big.py': 'b'.repeat(50_000) }, server: diagnosticServer });
+  const refused = drive(large, 'workspace_change', change(large, ['big.py']), null).state.servers.python;
+  assert.deepEqual([refused.status, refused.reason], ['stale', 'document_too_large']);
+});
+
+test('LSP path mentions in a huge unbroken argument are scanned in linear time', () => {
+  const host = createHost({ files: {}, server: diagnosticServer });
+  const started = Date.now();
+  assert.equal(drive(host, 'tool_output', output('a'.repeat(100_000))).value, null);
+  assert.ok(Date.now() - started < 2000);
 });
 
 test('LSP post-edit feedback reports only introduced and resolved errors', () => {

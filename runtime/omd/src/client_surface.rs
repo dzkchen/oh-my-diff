@@ -107,7 +107,11 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 pub type Reply = SyncSender<Result<Value, String>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlitErrorKind { Retryable, Revoked, Fatal }
+pub enum BlitErrorKind {
+    Retryable,
+    Revoked,
+    Fatal,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlitError {
@@ -117,20 +121,33 @@ pub struct BlitError {
 
 impl BlitError {
     pub fn new(kind: BlitErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into() }
+        Self {
+            kind,
+            message: message.into(),
+        }
     }
-    pub fn retryable(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Retryable, message) }
-    pub fn fatal(message: impl Into<String>) -> Self { Self::new(BlitErrorKind::Fatal, message) }
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self::new(BlitErrorKind::Retryable, message)
+    }
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self::new(BlitErrorKind::Fatal, message)
+    }
 }
 
 impl From<String> for BlitError {
-    fn from(message: String) -> Self { Self::fatal(message) }
+    fn from(message: String) -> Self {
+        Self::fatal(message)
+    }
 }
 impl From<&str> for BlitError {
-    fn from(message: &str) -> Self { Self::fatal(message) }
+    fn from(message: &str) -> Self {
+        Self::fatal(message)
+    }
 }
 impl std::fmt::Display for BlitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.message.fmt(f) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
 }
 impl std::error::Error for BlitError {}
 
@@ -286,7 +303,9 @@ impl SurfaceCall {
         if !(self.validity.0)() {
             return Err(BlitError::retryable("callback_cancelled_or_expired"));
         }
-        self.lifetime.begin_execution().map_err(BlitError::retryable)?;
+        self.lifetime
+            .begin_execution()
+            .map_err(BlitError::retryable)?;
         let component = self.arguments["key"]
             .as_str()
             .ok_or("terminal_blit_invalid")?;
@@ -566,7 +585,8 @@ pub fn submit(
         thread,
         confirm,
         Arc::new(|| true),
-    ).map_err(|error| error.message)
+    )
+    .map_err(|error| error.message)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -581,10 +601,14 @@ fn submit_bound(
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<PendingReply, BlitError> {
     if !SURFACE_OPERATIONS.contains(&operation) {
-        return Err(BlitError::fatal(format!("unsupported_host_operation: {operation}")));
+        return Err(BlitError::fatal(format!(
+            "unsupported_host_operation: {operation}"
+        )));
     }
     if context != InvocationContext::User && USER_ONLY_OPERATIONS.contains(&operation) {
-        return Err(BlitError::fatal(format!("host_operation_user_only: {operation}")));
+        return Err(BlitError::fatal(format!(
+            "host_operation_user_only: {operation}"
+        )));
     }
     if remote && needs_terminal(operation, &arguments) {
         return Err(BlitError::fatal(needs_terminal_error(operation)));
@@ -593,7 +617,11 @@ fn submit_bound(
         .surface
         .as_ref()
         .map(|(_, surface)| surface.clone())
-        .ok_or_else(|| BlitError::retryable("client_surface_unavailable: no interactive client is attached to this host"))?;
+        .ok_or_else(|| {
+            BlitError::retryable(
+                "client_surface_unavailable: no interactive client is attached to this host",
+            )
+        })?;
     let (reply, receiver) = sync_channel(1);
     let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
     let lifetime = CallLifetime {
@@ -609,21 +637,23 @@ fn submit_bound(
             Some(Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     }
     let queued = lifetime.clone();
-    surface.submit(SurfaceCall {
-        validity: Validity(Arc::new(move || queued.active() && active())),
-        caller: caller.to_owned(),
-        operation: operation.to_owned(),
-        arguments,
-        context,
-        remote,
-        thread: thread.map(str::to_owned),
-        authority: (operation == "terminal.pty")
-            .then(|| AUTHORITY.with_borrow(Clone::clone))
-            .flatten(),
-        confirm,
-        reply,
-        lifetime: lifetime.clone(),
-    }).map_err(BlitError::retryable)?;
+    surface
+        .submit(SurfaceCall {
+            validity: Validity(Arc::new(move || queued.active() && active())),
+            caller: caller.to_owned(),
+            operation: operation.to_owned(),
+            arguments,
+            context,
+            remote,
+            thread: thread.map(str::to_owned),
+            authority: (operation == "terminal.pty")
+                .then(|| AUTHORITY.with_borrow(Clone::clone))
+                .flatten(),
+            confirm,
+            reply,
+            lifetime: lifetime.clone(),
+        })
+        .map_err(BlitError::retryable)?;
     Ok(PendingReply { receiver, lifetime })
 }
 
@@ -663,8 +693,19 @@ fn wait_classified(
             )));
         }
         match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
-            Ok(result) => return result.map_err(|message| BlitError::new(
-                receiver.lifetime.blit_error.get().copied().unwrap_or(BlitErrorKind::Fatal), message)),
+            Ok(result) => {
+                return result.map_err(|message| {
+                    BlitError::new(
+                        receiver
+                            .lifetime
+                            .blit_error
+                            .get()
+                            .copied()
+                            .unwrap_or(BlitErrorKind::Fatal),
+                        message,
+                    )
+                });
+            }
             Err(RecvTimeoutError::Timeout) => (),
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(BlitError::retryable("client_surface_closed"));
@@ -843,7 +884,8 @@ fn redact_config(config: &mut Value) {
     scrub_secrets(config, "");
 }
 
-/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines.
+/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines;
+/// `env_key` stays readable only while it looks like an upper-case variable name with an underscore.
 fn scrub_secrets(value: &mut Value, name: &str) {
     match value {
         Value::Object(map) => {
@@ -854,6 +896,18 @@ fn scrub_secrets(value: &mut Value, name: &str) {
                     || (launches && key == "args")
                 {
                     redact_all(value);
+                } else if key == "env_key" && value.is_string() {
+                    if !value.as_str().is_some_and(|name| {
+                        name.bytes()
+                            .next()
+                            .is_some_and(|byte| !byte.is_ascii_digit())
+                            && name.contains('_')
+                            && name.bytes().all(|byte| {
+                                byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                            })
+                    }) {
+                        *value = Value::from("<redacted>");
+                    }
                 } else {
                     scrub_secrets(value, key);
                 }
@@ -928,8 +982,10 @@ pub fn call(
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
-    call_classified(caller, operation, arguments, context, remote, thread, confirm, active)
-        .map_err(|error| error.message)
+    call_classified(
+        caller, operation, arguments, context, remote, thread, confirm, active,
+    )
+    .map_err(|error| error.message)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1016,7 +1072,6 @@ pub fn materialize(
     thread: Option<&str>,
     reference: &Value,
 ) -> Result<std::path::PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
     let host = resource_host(store, repository, caller, thread)?;
     let resources = host.resources();
     let reference: crate::resource_data::ResourceRef =
@@ -1031,10 +1086,9 @@ pub fn materialize(
     };
     let digest = record["blob"].as_str().ok_or("resource_not_binary")?;
     let bytes = resources.blob(digest).map_err(|error| error.to_string())?;
-    let directory = store.join("attachments");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| error.to_string())?;
+    let directory =
+        crate::workspace::private_path(store, &["attachments"], "attachment_directory_invalid")
+            .map_err(|error| error.to_string())?;
     let path = directory.join(format!("{digest}.{extension}"));
     if !path.exists() {
         let mut temporary =
@@ -1398,7 +1452,8 @@ pub fn blit_request(
     }
     let content = match (rect, image) {
         (Some((rect, cells)), _) => {
-            let (width, height) = size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
+            let (width, height) =
+                size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
             if rect.width == 0
                 || rect.height == 0
                 || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)

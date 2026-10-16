@@ -274,6 +274,20 @@ export function render(data: Data, config: Settings, input: { now: number; colum
 }
 
 const MAX_SPANS = 12;
+// The view refuses a span over 256 bytes, so merged spans are split there.
+const SPAN_BYTES = 256;
+const utf8 = new TextEncoder();
+const cut = (text: string) => text.slice(0, utf8.encodeInto(text, new Uint8Array(SPAN_BYTES)).read);
+const split = (item: TerminalSpan): TerminalSpan[] => {
+  const parts: TerminalSpan[] = [];
+  let rest = item.text;
+  while (utf8.encode(rest).length > SPAN_BYTES) {
+    const head = cut(rest);
+    parts.push({ ...item, text: head });
+    rest = rest.slice(head.length);
+  }
+  return [...parts, { ...item, text: rest }];
+};
 const style = (item: TerminalSpan) => JSON.stringify([item.tone ?? 'normal', item.bold, item.italic, item.underline, item.fg, item.bg, item.link]);
 export function pack(spans: TerminalSpan[]): TerminalSpan[] {
   const merged: TerminalSpan[] = [];
@@ -282,5 +296,6 @@ export function pack(spans: TerminalSpan[]): TerminalSpan[] {
     if (last && style(last) === style(item)) merged[merged.length - 1] = { ...last, text: last.text + item.text };
     else merged.push(item);
   }
-  return merged.length <= MAX_SPANS ? merged : [...merged.slice(0, MAX_SPANS - 1), { text: merged.slice(MAX_SPANS - 1).map(item => item.text).join(''), tone: 'muted' }];
+  const parts = merged.flatMap(split);
+  return parts.length <= MAX_SPANS ? parts : [...parts.slice(0, MAX_SPANS - 1), { text: cut(parts.slice(MAX_SPANS - 1).map(item => item.text).join('')), tone: 'muted' }];
 }

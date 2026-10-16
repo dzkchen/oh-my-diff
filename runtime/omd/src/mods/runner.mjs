@@ -10,6 +10,47 @@ if (nodeMajor !== 24 || nodeMinor < 18) {
 
 // A spare runner loads the TypeScript stripper before the host sends it a request.
 stripTypeScriptTypes('let ready: boolean;');
+// The host realm's intrinsics are frozen here rather than with --frozen-intrinsics: Node turns every prototype data
+// property into an accessor, which disables V8's array and iteration fast paths in every realm, mod contexts included.
+// Only the prototypes whose properties host code shadows by assignment (`error.name = ...`) get those accessors.
+{
+  const errors = [Error, AggregateError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];
+  const overridable = new Set([Object.prototype, ...errors.map(type => type.prototype)]);
+  const override = (object, key, { value, enumerable }) => Object.defineProperty(object, key, {
+    get() { return value; },
+    set(next) {
+      if (this === object) throw new TypeError(`Cannot assign to read only property '${String(key)}' of object`);
+      Object.defineProperty(this, key, { value: next, writable: true, enumerable: true, configurable: true });
+    },
+    enumerable,
+    configurable: false,
+  });
+  const seen = new Set();
+  const visit = value => {
+    if ((typeof value !== 'object' && typeof value !== 'function') || value === null || seen.has(value)) return;
+    seen.add(value);
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      visit(descriptor.value);
+      visit(descriptor.get);
+      visit(descriptor.set);
+    }
+    visit(Object.getPrototypeOf(value));
+    if (overridable.has(value)) {
+      for (const key of Reflect.ownKeys(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!('value' in descriptor) || !descriptor.configurable) continue;
+        override(value, key, descriptor);
+        const { get, set } = Object.getOwnPropertyDescriptor(value, key);
+        visit(get);
+        visit(set);
+      }
+    }
+    Object.freeze(value);
+  };
+  const names = ['AggregateError', 'Array', 'ArrayBuffer', 'Atomics', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean', 'DataView', 'Date', 'Error', 'EvalError', 'FinalizationRegistry', 'Float32Array', 'Float64Array', 'Function', 'Int8Array', 'Int16Array', 'Int32Array', 'Intl', 'Iterator', 'JSON', 'Map', 'Math', 'Number', 'Object', 'Promise', 'Proxy', 'RangeError', 'ReferenceError', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol', 'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'URIError', 'WeakMap', 'WeakRef', 'WeakSet', 'WebAssembly', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'unescape'];
+  for (const name of names) visit(globalThis[name]);
+  for (const value of [[][Symbol.iterator](), new Map().entries(), new Set().values(), ''[Symbol.iterator](), /./[Symbol.matchAll](''), function* () {}, async function () {}, async function* () {}]) visit(Object.getPrototypeOf(value));
+}
 const compiled = new Map();
 let compiledBytes = 0;
 function moduleFor(source, context, identifier, typescript = true) {
@@ -40,13 +81,13 @@ function readLine() {
   const chunk = Buffer.alloc(65536);
   let end;
   while ((end = input.indexOf(10)) < 0) {
+    if (input.length > 1048576) throw new Error('input_limit');
     const read = readSync(0, chunk);
     if (!read) {
       end = input.length;
       break;
     }
     input = Buffer.concat([input, chunk.subarray(0, read)]);
-    if (input.length > 1048576) throw new Error('input_limit');
   }
   const line = input.subarray(0, end).toString();
   input = input.subarray(end + 1);
@@ -59,10 +100,23 @@ request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
 let clockRead = false;
 if (Number.isSafeInteger(now)) {
-  globalThis.Date = class extends Date {
+  const Frozen = class extends Date {
     constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
     static now() { clockRead = true; return now; }
   };
+  globalThis.Date = new Proxy(Frozen, { apply: () => new Frozen().toString() });
+  Object.defineProperty(Frozen.prototype, 'constructor', { value: globalThis.Date, writable: true, configurable: true });
+  const Format = class extends Intl.DateTimeFormat {
+    get format() {
+      const format = super.format;
+      const frozen = date => format(date === undefined ? new Frozen() : date);
+      Object.defineProperty(this, 'format', { value: frozen });
+      return frozen;
+    }
+    formatToParts(date) { return super.formatToParts(date === undefined ? new Frozen() : date); }
+  };
+  Intl.DateTimeFormat = new Proxy(Format, { apply: (_, __, args) => new Format(...args) });
+  Object.defineProperty(Format.prototype, 'constructor', { value: Intl.DateTimeFormat, writable: true, configurable: true });
 }
 const handlers = new Map();
 const tools = new Map();
@@ -395,7 +449,7 @@ function requireCapability(name) {
 function writeState(value) {
   requireCapability(surface.state);
   if (rendering && !activating) throw new Error('render_side_effect_refused: state writes belong in events, commands or subscriptions');
-  state = structuredCloneFallback(value);
+  state = structuredCloneFallback(value ?? null);
 }
 function keyed() {
   requireCapability(surface.state);
@@ -539,7 +593,7 @@ function hook(name, options, handler) {
         const result = await run(envelope(hookName, native, input, CLASSIC[hookName][2](input), null, 'optional'));
         if (answer === null && result !== undefined && result !== null) answer = result;
       }
-      return kind === 'middleware' ? answer : undefined;
+      return native === 'approval' ? answer : undefined;
     };
     if (kind === 'middleware') api.middleware(native, dispatch);
     else api.on(native, dispatch);
@@ -1139,10 +1193,21 @@ try {
   process.exitCode = 1;
 }
 }
+// A reused runner's request omits the fields its package fixes once the host has sent them (`KEPT_FIELDS`).
+const keptFields = ['source', 'assets', 'surface', 'field_policies'];
+let kept = null;
 for (;;) {
-  const line = readLine();
+  let line = readLine();
   if (!line) break;
   const request = JSON.parse(line);
+  if (request.kept) {
+    if (!kept) break;
+    Object.assign(request, kept.fields);
+    line = line.slice(0, -1) + kept.text + '}';
+  } else if (request.reuse) {
+    const fields = Object.fromEntries(keptFields.filter(field => Object.hasOwn(request, field)).map(field => [field, request[field]]));
+    kept = { fields, text: Object.entries(fields).map(([field, value]) => `,${JSON.stringify(field)}:${JSON.stringify(value)}`).join('') };
+  }
   await evaluate(request, line);
   if (!request.reuse || process.exitCode) break;
   spare = prepare();

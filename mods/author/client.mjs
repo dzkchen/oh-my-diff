@@ -196,21 +196,38 @@ class Session {
   }
 
   async reconnect() {
+    // -32001 is the app server's transient overload refusal, retried like a dropped link.
+    const rejected = error => error instanceof Error && 'code' in error && Number.isInteger(error.code) && error.code !== -32001;
+    // The host refusing a replayed update or resume drops that request; only a refused initialize or attach ends the session.
+    const tolerate = async (call, drop) => {
+      try { await call(); } catch (error) {
+        if (!rejected(error)) throw error;
+        drop();
+      }
+    };
+    const fatal = async call => {
+      try { await call(); } catch (error) {
+        if (rejected(error)) this.closed = true;
+        throw error;
+      }
+    };
     this.connecting = true;
     const previousEpoch = this.epoch;
     for (let delay = 250; !this.closed; delay = Math.min(delay * 2, 8000)) {
       await new Promise(resolve => setTimeout(resolve, delay));
       if (this.closed) break;
       try {
-        await this.open();
+        await fatal(() => this.open());
         if (this.closed) {
           this.generation++;
           this.link.close();
           break;
         }
-        if (this.attached) await this.attach(this.attached);
-        if (this.attached && Object.keys(this.updated).length) await this.call('omd/client/update', this.updated);
-        for (const params of this.resumed.values()) await this.call('thread/resume', params);
+        if (this.attached) {
+          await fatal(() => this.attach(this.attached));
+          if (Object.keys(this.updated).length) await tolerate(() => this.call('omd/client/update', this.updated), () => { this.updated = {}; });
+        }
+        for (const [thread, params] of this.resumed) await tolerate(() => this.call('thread/resume', params), () => this.resumed.delete(thread));
         this.connecting = false;
         this.options.onReconnect?.({ epoch: this.epoch, previousEpoch });
         return;
@@ -218,7 +235,6 @@ class Session {
         this.generation++;
         this.link?.close();
         this.dropped();
-        if (error instanceof Error && 'code' in error && Number.isInteger(error.code)) this.closed = true;
       }
     }
     this.connecting = false;

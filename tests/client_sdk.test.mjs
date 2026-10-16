@@ -66,7 +66,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0 } = {}) {
+function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0, refuseResumes = false, overloadedResumes = 0, refuseInitialize = false } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -90,11 +90,14 @@ function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0 } =
   function handle(host, message) {
     seen.push({ epoch: host.epoch, ...message });
     const reply = result => host.send({ id: message.id, result });
-    if (message.method === 'initialize') reply({ userAgent: 'fake' });
+    if (message.method === 'initialize' && refuseInitialize && host.epoch !== '1') host.send({ id: message.id, error: { code: -32600, message: 'not_ready' } });
+    else if (message.method === 'initialize') reply({ userAgent: 'fake' });
     else if (message.method === 'omd/client/attach') {
       reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       if (pushes) host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
-    } else if (message.method === 'omd/action') {
+    } else if (message.method === 'thread/resume' && refuseResumes && host.epoch !== '1') host.send({ id: message.id, error: { code: -32600, message: 'thread_gone' } });
+    else if (message.method === 'thread/resume' && host.epoch !== '1' && overloadedResumes > 0 && overloadedResumes--) host.send({ id: message.id, error: { code: -32001, message: 'Server overloaded; retry later.' } });
+    else if (message.method === 'omd/action') {
       if (staleActions > 0 && staleActions--) host.send({ id: message.id, error: { code: -32600, message: 'action_stale' } });
       else if (message.params.actionToken !== host.token) host.send({ id: message.id, error: { code: -32600, message: 'action_replayed' } });
       else {
@@ -182,6 +185,60 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a resume the host refuses after a reconnect is dropped and the client keeps reconnecting', async () => {
+  const host = fakeHost({ refuseResumes: true });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected = 0;
+  let closed = false;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: () => { reconnected++; }, onClose: () => { closed = true; } });
+  try {
+    await session.request('thread/resume', { threadId: 'thread-1' });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected > 1);
+    assert.equal(closed, false);
+    assert.equal(host.seen.filter(message => message.method === 'thread/resume').length, 2, 'the refused resume is not replayed again');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a resume refused as overloaded after a reconnect is retried, not dropped', async () => {
+  const host = fakeHost({ overloadedResumes: 1 });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; } });
+  try {
+    await session.request('thread/resume', { threadId: 'thread-1' });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    assert.deepEqual(reconnected, { epoch: '3', previousEpoch: '1' });
+    assert.deepEqual(host.seen.filter(message => message.method === 'thread/resume').map(message => message.epoch), ['1', '2', '3']);
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a host that refuses initialize after a restart ends the session instead of retrying forever', async () => {
+  const host = fakeHost({ refuseInitialize: true });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let closed = false;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onClose: () => { closed = true; } });
+  try {
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => closed);
   } finally {
     session.close();
     host.server.close();

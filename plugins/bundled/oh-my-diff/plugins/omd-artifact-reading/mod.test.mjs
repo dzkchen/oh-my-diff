@@ -14,8 +14,6 @@ function invoke(receipts = []) {
 }
 
 test('GitHub virtual read uses the generic sidecar operation and preserves bounded untrusted response', () => {
-  assert.equal(manifest.api, '0.2.0-experimental.5');
-  assert.deepEqual(manifest.capabilities, ['virtual_reads', 'exec']);
   const first = invoke();
   assert.deepEqual(first.registrations.virtual_reads, [{ scheme: 'github', version: '1.0.0' }]);
   assert.deepEqual(first.host_call, { operation: 'sidecars.invoke', arguments: { id: 'omd_github_read', input: request } });

@@ -101,6 +101,31 @@ fn unverified_peers_get_nothing() {
 }
 
 #[test]
+fn a_store_owned_by_another_user_is_refused() {
+    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
+    let mut client = Client::at(&socket).unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": "/usr"}))),
+        "authority_store_unowned"
+    );
+}
+
+#[test]
+fn a_store_path_first_named_by_another_user_is_refused() {
+    let (temp, socket, store) = serve(Arc::new(TestGate::default()));
+    let mut client = Client::at(&socket).unwrap();
+    client.call("grants.get", json!({"store": store})).unwrap();
+    let owners = temp.path().canonicalize().unwrap().join("broker/owners");
+    let record = owners.join(format!("store-{}.json", sha256(store.as_os_str().as_encoded_bytes())));
+    assert_eq!(fs::read_to_string(&record).unwrap(), unsafe { libc::getuid() }.to_string());
+    fs::write(&record, "0").unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": store}))),
+        "authority_store_unowned"
+    );
+}
+
+#[test]
 fn protected_mutations_need_a_single_use_challenge_and_authorization() {
     let gate = Arc::new(TestGate::default());
     let (_temp, socket, store) = serve(gate.clone());
@@ -191,20 +216,22 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
 
 #[test]
 fn anchors_chain_every_appended_digest() {
-    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
+    let (_temp, socket, store) = serve(Arc::new(TestGate::default()));
     let mut client = Client::at(&socket).unwrap();
+    let (ledger, older) = (store.join("ledger"), store.join("older"));
+    let (ledger, older) = (ledger.to_str().unwrap(), older.to_str().unwrap());
     let (first, second) = (sha256(b"one"), sha256(b"two"));
     for entry in [&first, &second] {
         client
             .call(
                 "anchor.append",
-                json!({"stream": "/ledger", "sha256": entry}),
+                json!({"stream": ledger, "sha256": entry}),
             )
             .unwrap();
     }
     let anchor: Anchor = serde_json::from_value(
         client
-            .call("anchor.get", json!({"stream": "/ledger"}))
+            .call("anchor.get", json!({"stream": ledger}))
             .unwrap(),
     )
     .unwrap();
@@ -217,20 +244,24 @@ fn anchors_chain_every_appended_digest() {
         }
     );
     assert_eq!(
-        error(client.call("anchor.append", json!({"stream": "/ledger", "sha256": "x"}))),
+        error(client.call("anchor.append", json!({"stream": ledger, "sha256": "x"}))),
         "authority_request_invalid"
     );
     let seed = |stream: &str| json!({"stream": stream, "count": 2, "head": anchor.head, "last": anchor.last});
     assert_eq!(
-        error(client.call("anchor.seed", seed("/ledger"))),
+        error(client.call("anchor.seed", seed(ledger))),
         "authority_anchor_exists"
     );
-    client.call("anchor.seed", seed("/older")).unwrap();
+    client.call("anchor.seed", seed(older)).unwrap();
     assert_eq!(
         client
-            .call("anchor.get", json!({"stream": "/older"}))
+            .call("anchor.get", json!({"stream": older}))
             .unwrap()["head"],
         anchor.head
+    );
+    assert_eq!(
+        error(client.call("anchor.seed", seed("/usr/omd-ledger"))),
+        "authority_stream_unowned"
     );
 }
 

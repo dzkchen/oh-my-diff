@@ -88,6 +88,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.equal(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].children[0].text, 'No server running; /lsp open PATH starts one');
     state = invoke(state, 'command', 'servers', 'lsp').state;
     assert.equal(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value, null);
+    assert.equal(invoke(state, 'command', 'open tab.py:0', 'lsp').state.view.excerpt.line, 1, 'line 0 clamps to the first line');
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

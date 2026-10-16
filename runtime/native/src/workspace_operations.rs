@@ -363,7 +363,8 @@ impl WorkspaceAuthority {
         }
         let request: Input =
             serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-        let payload = self.rename_input(&request.old, &request.new, &active)?;
+        let mut payload = self.rename_input(&request.old, &request.new, &active)?;
+        payload["thread_id"] = json!(thread);
         if !runtime.has_event("workspace_pre_rename") {
             return Ok(json!({"status":"fallback","reason":"no_pre_rename_handler"}));
         }
@@ -372,6 +373,7 @@ impl WorkspaceAuthority {
             .into_iter()
             .filter_map(|id| runtime.grants(&id).map(|grants| (id, grants)))
             .collect();
+        let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
         let proposals = runtime.event_guarded_with(
             "workspace_pre_rename",
             payload.clone(),

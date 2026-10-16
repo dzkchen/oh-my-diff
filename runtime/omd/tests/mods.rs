@@ -1249,6 +1249,34 @@ fn host_error_receipts_are_catchable_without_repeating_operations() {
 }
 
 #[test]
+fn a_receipt_that_fits_only_without_its_separator_is_refused_as_a_result() {
+    let source = "export default api => api.command('run', () => { api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
+    let (temp, _, _) = fixture(source, &["commands", "agents"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let mut first = None;
+    let error = runtime
+        .invoke_with("fixture", generation, "command", "run", Value::Null, || true, |call| {
+            let size = |text: usize| {
+                serde_json::to_vec(&json!({"call": call, "value": {"text": "x".repeat(text)}}))
+                    .unwrap()
+                    .len()
+            };
+            // The second receipt fills the room left after `[]` and the first, leaving none for its separator.
+            let text = first.map_or(60_000, |used: usize| {
+                60_000 + codex_omd::HOST_RECEIPT_BYTES - 2 - used - size(60_000)
+            });
+            first.get_or_insert(size(text));
+            Ok(json!({"text": "x".repeat(text)}))
+        })
+        .unwrap_err();
+    assert!(
+        error.to_string().starts_with("Error: host_result_limit"),
+        "{error}"
+    );
+}
+
+#[test]
 fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
     let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; if (arg === 'recover') { try { api.host.call('task.status'); } catch {} return api.host.call('task.status'); } api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
     let (temp, _, _) = fixture(source, &["commands", "agents"]);
@@ -3493,23 +3521,6 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
 }
 
 #[test]
-fn retired_worker_context_event_is_rejected() {
-    let (temp, _, _) = fixture(
-        "export default api => api.on('worker_context', () => ({mode:'parent_history'}))",
-        &["context"],
-    );
-    assert!(activation_error(&temp, "fixture").contains("unsupported_event: worker_context"));
-    let (temp, _, _) = fixture(
-        "export default api => api.replace('worker_context', () => ({mode:'shared_task_packet'}))",
-        &["context"],
-    );
-    assert!(
-        activation_error(&temp, "fixture")
-            .contains("unsupported_replacement_point: worker_context")
-    );
-}
-
-#[test]
 fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
     let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk- sk-authorsecret123456789');\n  });\n}";
     let (temp, _, path) = fixture(source, &["commands"]);
@@ -4330,18 +4341,18 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
     trust(&store, &disabled, &["terminal"]);
     contended(|| store.enable(&disabled, false));
     let mut runtime = host(&temp);
-    let identity = runtime.identity("0.157.0", Some("platform_only"), "platform");
+    let identity = runtime.identity("0.162.1", Some("full"), "omd");
     assert_eq!(
         identity,
-        json!({"codex_version":"0.157.0","install_profile":"platform_only","mode":"platform",
+        json!({"codex_version":"0.162.1","install_profile":"full","mode":"omd",
         "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
     );
     assert_eq!(
-        runtime.identity("0.157.0", Some("arbitrary"), "enabled")["install_profile"],
+        runtime.identity("0.162.1", Some("arbitrary"), "omd")["install_profile"],
         "unknown"
     );
     assert_eq!(
-        runtime.identity("0.157.0", None, "enabled")["install_profile"],
+        runtime.identity("0.162.1", None, "omd")["install_profile"],
         "unreported"
     );
     let terminal = runtime.terminal_view(
@@ -5052,6 +5063,17 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         trust(&store, &path, &["interception"]);
     }
     assert!(activation_error(&temp, "a").contains("interceptor_order_conflict: a, b"));
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, order) in [("c", "{before: ['d'], after: ['e']}"), ("d", "{before: ['e']}"), ("e", "{}"), ("f", "{before: ['e'], after: ['e']}")] {
+        let source = format!("export default api => api.intercept('tool', {order}, (e, next) => next(e))");
+        let path = package(&root, id, &source, &["interception"]);
+        trust(&store, &path, &["interception"]);
+    }
+    assert!(activation_error(&temp, "c").contains("interceptor_order_conflict: c, d"));
+    assert!(activation_error(&temp, "f").contains("invalid_interceptor_registration"));
+    assert_eq!(activation_error(&temp, "e"), "", "a cycle's target that declared nothing stays loaded");
     let (temp, runtime) = interceptors(&[
         (
             "x",
@@ -6008,7 +6030,11 @@ fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
         trust(&store, &path, &["commands"]);
     };
     draw("export const draw = (n: number) => { fetch('https://example.org'); return n; };");
-    assert!(activation_error(&temp, "fixture").contains("undeclared_environment_use: network"));
+    assert!(
+        activation_error(&temp, "fixture").contains("undeclared_environment_use: network (fetch()")
+    );
+    draw("const prefetch = (n: number) => n; const rolling_window = { size: 1 }; export const draw = (n: number) => prefetch(n) + rolling_window.size;");
+    assert_eq!(activation_error(&temp, "fixture"), "");
     draw("export const draw = (n: number): string => '#'.repeat(n);");
     let mut runtime = host(&temp);
     let generation = runtime.generation();

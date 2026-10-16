@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
+import { HOST_RECEIPT_BYTES, callback, runnerSync, surface } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
@@ -16,6 +16,29 @@ test('UI state serialized boundaries agree with the native validator', () => {
       { capabilities: ['terminal', 'commands'], event: 'command', name: 'write', payload: encoded });
     assert.equal(!reply.error, entry.valid, `${entry.name}: ${reply.error}`);
   }
+});
+
+test('the test harness refuses the 129th host call like the host', () => {
+  const source = 'export default api => api.command("spin", () => { for (let index = 0; index < 129; index++) api.host.tryCall("store.get", { key: "k" }); })';
+  const request = { source, filename: 'fixture.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'store'], state: null, settings: {}, event: 'command', name: 'spin', payload: null };
+  let calls = 0;
+  assert.throws(() => callback(request, () => { calls++; return null; }), /host_call_limit/);
+  assert.equal(calls, 128);
+});
+
+test('the test harness counts the receipt separator when it sizes a result like the host', () => {
+  const source = 'export default api => api.command("two", () => { api.host.tryCall("store.get", { key: "a" }); return api.host.tryCall("store.get", { key: "b" }); })';
+  const request = { source, filename: 'fixture.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'store'], state: null, settings: {}, event: 'command', name: 'two', payload: null };
+  const size = (call, value) => Buffer.byteLength(JSON.stringify({ call, value }));
+  const outcome = extra => {
+    let spent = 2;
+    return callback(request, call => {
+      if (call.arguments.key === 'a') { spent += size(call, null); return null; }
+      return 'x'.repeat(HOST_RECEIPT_BYTES - spent - size(call, '') + extra);
+    }).value;
+  };
+  assert.equal(outcome(-1).ok, true);
+  assert.match(outcome(0).error, /^host_result_limit/);
 });
 
 test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
@@ -82,7 +105,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = result.stdout.trim().split('\n').map(JSON.parse);
@@ -103,6 +126,13 @@ test('a callback clock stands still except across its own sleeps', () => {
   const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, event: 'command', name: 'wait', virtual_time_ms: 1000 };
   const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {});
   assert.deepEqual(reply.value, [0, 40, 40]);
+});
+test('Date() and Intl date formatting read the callback clock', () => {
+  const source = `export default api => api.command("now", () => {
+    const format = new Intl.DateTimeFormat('en', { timeZone: 'UTC', dateStyle: 'full', timeStyle: 'long' });
+    return [Date() === new Date().toString(), format.format() === format.format(new Date()), Intl.DateTimeFormat('en', { timeZone: 'UTC', timeStyle: 'long' }).formatToParts().length > 0, new Date().getTime(), [new Date(0)].map(format.format)[0] === format.format(new Date(0)), (({ format: unbound }) => unbound())(format) === format.format(new Date()), format.format === format.format];
+  })`;
+  assert.deepEqual(run(source, { capabilities: ['commands'], event: 'command', name: 'now', virtual_time_ms: 1000 }).value, [true, true, true, 1000, true, true, true]);
 });
 test('the test harness kills an interactive callback that never returns', () => {
   const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 500 };
@@ -136,7 +166,7 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
@@ -153,7 +183,7 @@ test('a pinned component runner reads the state and UI state of the step it serv
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
     filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--frozen-intrinsics', '--input-type=module', '--eval', runner], {
+  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
@@ -332,6 +362,15 @@ test('classic hooks map onto native events and interceptors with glob and negate
   assert.match(run('export default api => api.hook("PostToolUse", { required: true }, () => {})', caps).error, /classic_hook_delivery_optional/);
   const negated = run('export default api => api.intercept("input", { match: { text: api.match.not(api.match.glob("/*")) } }, (e, next) => next(e))', { capabilities: ['input'] });
   assert.deepEqual(negated.registrations.interceptors[0].match, { text: { $not: { $glob: '/*' } } });
+});
+test('classic middleware hooks answer only PermissionRequest', () => {
+  const source = `export default api => {
+    api.hook('SessionStart', () => ({ ignored: true }));
+    api.hook('PermissionRequest', () => ({ decision: 'deny' }));
+  }`;
+  const caps = { capabilities: ['middleware', 'approvals'] };
+  assert.equal(run(source, { ...caps, event: 'session', payload: { phase: 'start', thread_id: 't' } }).value ?? null, null);
+  assert.deepEqual(run(source, { ...caps, event: 'approval', payload: { kind: 'exec', thread_id: 't' } }).value, { decision: 'deny' });
 });
 
 test('reactive atoms track reads, recompute derived values and run keyed subscriptions once per change', () => {

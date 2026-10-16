@@ -223,7 +223,10 @@ fn every_thread_addressed_route_has_a_scope() {
         .requests
         .iter()
         .filter(|(method, route)| {
-            route.fields.iter().any(|field| field.ends_with("ThreadId") || field == "threadId")
+            route
+                .fields
+                .iter()
+                .any(|field| field.ends_with("ThreadId") || field == "threadId")
                 && route.scope.is_none()
                 && !method.starts_with("app/")
                 && !matches!(
@@ -336,9 +339,15 @@ fn config_writes_refuse_authority_and_unknown_keys() {
         )
     };
     assert_eq!(write("features.goals"), "ok");
-    assert_eq!(table("features", json!({"goals": true})), "app_config_key_refused");
     assert_eq!(
-        table("agents", json!({"reviewer": {"config_file": "/tmp/role.toml"}})),
+        table("features", json!({"goals": true})),
+        "app_config_key_refused"
+    );
+    assert_eq!(
+        table(
+            "agents",
+            json!({"reviewer": {"config_file": "/tmp/role.toml"}})
+        ),
         "app_config_key_refused"
     );
     assert_eq!(table("agents", json!({"max_depth": 2})), "ok");
@@ -391,6 +400,22 @@ fn config_writes_refuse_authority_and_unknown_keys() {
     assert_eq!(
         f.code("config/value/write", json!({"value": 1}), User),
         "app_params_invalid"
+    );
+    assert_eq!(
+        f.code(
+            "config/value/write",
+            json!({"keyPath": "developer_instructions", "value": "Be brief.\n<redacted>\n"}),
+            User
+        ),
+        "app_config_value_redacted"
+    );
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "tui", "value": {"theme": "<redacted>"}}]}),
+            User
+        ),
+        "app_config_value_redacted"
     );
 }
 

@@ -14,7 +14,9 @@ function fit(steps: Step[], rows: number): { shown: Step[]; hidden: Step[] } {
   if (steps.length <= rows) return { shown: steps, hidden: [] };
   const room = Math.max(1, rows - 1);
   const dropped = new Set(steps.filter(step => step.status === 'completed').slice(0, steps.length - room));
-  const shown = steps.filter(step => !dropped.has(step)).slice(0, room);
+  const rest = steps.filter(step => !dropped.has(step));
+  const start = Math.max(0, rest.findIndex(step => step.status === 'inProgress') - room + 1);
+  const shown = rest.slice(start, start + room);
   return { shown, hidden: steps.filter(step => !shown.includes(step)) };
 }
 

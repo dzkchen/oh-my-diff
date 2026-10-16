@@ -381,9 +381,8 @@ Both profiles include the generic `omd` extension-command dispatcher, the
 `omd-contract` selection tool and `omd-mod`, all on `PATH` next to `codex`.
 `omd-package contract list|status|plan|select|clear` runs `omd-contract` against
 the installation's store and the current repository. The `codex` launcher runs
-Codex in embedded mode (`features.daemon_auto_start=false`) and exports
-`OMD_NODE`. Their launchers select the installation's mod
-store; only explicitly trusted and enabled command exports are available. For
+Codex in embedded mode (`features.daemon_auto_start=false`). Their launchers
+select the installation's mod store; only explicitly trusted and enabled command exports are available. For
 example, `omd COMMAND --repo /absolute/project` routes to the selected
 extension. No session-review or memory behavior is built into this binary.
 Package installation and activation remain separate. The current host exposes
