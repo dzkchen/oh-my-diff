@@ -392,6 +392,22 @@ fn config_writes_refuse_authority_and_unknown_keys() {
         f.code("config/value/write", json!({"value": 1}), User),
         "app_params_invalid"
     );
+    assert_eq!(
+        f.code(
+            "config/value/write",
+            json!({"keyPath": "developer_instructions", "value": "Be brief.\n<redacted>\n"}),
+            User
+        ),
+        "app_config_value_redacted"
+    );
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "tui", "value": {"theme": "<redacted>"}}]}),
+            User
+        ),
+        "app_config_value_redacted"
+    );
 }
 
 #[test]

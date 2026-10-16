@@ -202,6 +202,28 @@ fn render_heap_exhaustion_retains_the_memory_failure_diagnostic() {
 }
 
 #[test]
+fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let mut request = json!({"source":"export default api => api.command('fill', () => { const buffers = []; for (let i = 0; i < 1024; i++) buffers.push(new Uint8Array(1 << 20).fill(1)); return buffers.length; });",
+        "filename":"/fixture/memory/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
+    let run = |request: &serde_json::Value| {
+        evaluate_warm(&node, "memory-limit", request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
+    };
+    let error = run(&request).unwrap_err().to_string();
+    assert!(error.starts_with("mod_out_of_memory:"), "{error}");
+    request["reuse"] = json!(false);
+    let error = super::evaluate(&node, &request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("mod_out_of_memory:"), "{error}");
+    request["reuse"] = json!(true);
+    request["source"] = json!("export default api => api.command('fill', () => 1);");
+    assert_eq!(run(&request).unwrap()["value"], 1);
+}
+
+#[test]
 fn render_reuse_preserves_activation_state_across_continuations() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let input = json!({"component":"tool_call"});

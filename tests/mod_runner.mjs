@@ -30,7 +30,7 @@ let slots = 0;
 function boot() {
   const slot = join(directory, String(slots++));
   execFileSync('mkfifo', [`${slot}.in`, `${slot}.out`]);
-  const child = spawn('sh', ['-c', 'exec "$0" --no-warnings --experimental-vm-modules --disallow-code-generation-from-strings --frozen-intrinsics --input-type=module --eval "$1" < "$2" > "$3" 2> "$4"',
+  const child = spawn('sh', ['-c', 'exec "$0" --max-old-space-size=64 --no-compilation-cache --no-lazy --enable-source-maps --no-warnings --experimental-vm-modules --disallow-code-generation-from-strings --frozen-intrinsics --input-type=module --eval "$1" < "$2" > "$3" 2> "$4"',
     process.execPath, runner, `${slot}.in`, `${slot}.out`, `${slot}.err`], { stdio: 'ignore' });
   child.unref();
   return { child, input: openSync(`${slot}.in`, 'w'), output: openSync(`${slot}.out`, 'r'), stderr: `${slot}.err`, buffer: Buffer.alloc(0) };
@@ -96,6 +96,7 @@ export function runnerSync(request) {
 }
 
 export const HOST_RECEIPT_BYTES = 131_072;
+export const MAX_HOST_CALLS = 128;
 
 export function callback(request, host, receipts = [], { capture = error => !error.crash && !(error instanceof AssertionError) } = {}) {
   const worker = take(request);
@@ -105,6 +106,7 @@ export function callback(request, host, receipts = [], { capture = error => !err
     for (;;) {
       const output = frame(worker);
       if (!('call' in output)) return output;
+      if (receipts.length >= MAX_HOST_CALLS) throw new Error('host_call_limit');
       let receipt;
       try {
         receipt = { value: host(output.call) };
@@ -113,11 +115,12 @@ export function callback(request, host, receipts = [], { capture = error => !err
         receipt = { error: error.message };
       }
       let bytes = Buffer.byteLength(JSON.stringify({ call: output.call, ...receipt }));
-      if (bytes > HOST_RECEIPT_BYTES - spent) {
-        receipt = { error: `host_result_limit: the ${bytes}-byte result exceeds the ${HOST_RECEIPT_BYTES - spent} bytes left in this callback; the operation ran, request a smaller page or an artifact` };
+      const separator = receipts.length ? 1 : 0;
+      if (bytes > HOST_RECEIPT_BYTES - spent - separator) {
+        receipt = { error: `host_result_limit: the ${bytes}-byte result exceeds the ${HOST_RECEIPT_BYTES - spent - separator} bytes left in this callback; the operation ran, request a smaller page or an artifact` };
         bytes = Buffer.byteLength(JSON.stringify({ call: output.call, ...receipt }));
       }
-      spent += bytes + (receipts.length ? 1 : 0);
+      spent += bytes + separator;
       receipts.push({ call: output.call, ...receipt });
       if (spent > HOST_RECEIPT_BYTES) throw new Error('host_receipt_limit');
       writeSync(worker.input, JSON.stringify(receipt) + '\n');

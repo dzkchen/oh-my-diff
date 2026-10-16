@@ -512,6 +512,7 @@ def rollback(args, root, bin_dir, current):
         raise
     (root / "update/journal.json").unlink()
     settled(root, receipt(previous)["version"], held={"version": receipt(current)["version"]})
+    (root / "update/ready.json").unlink(missing_ok=True)
     pinned = repin(previous, current, upstream, bin_dir)
     print(json.dumps({"restored": str(previous), "version": receipt(previous).get("version"), "profile": target["profile"],
                       "profile_label": PROFILE_LABELS[target["profile"]],

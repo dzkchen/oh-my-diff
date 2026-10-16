@@ -12,6 +12,7 @@ export type State = {
   capabilities: Json;
   documents: Record<string, Document>;
   diagnostics: Record<string, Diagnostic>;
+  skipped: Record<string, string>;
   preview: { path: string; source_sha256: string; source_version: number; thread_id: string; range: Json; actions: string[] } | null;
   status: 'idle' | 'synced' | 'fallback' | 'stale';
   reason: string;
@@ -182,6 +183,8 @@ export function state(value: Json, adapter: Adapter): State {
     const data = object(entry);
     if (data && number(data.count) !== null) diagnostics[path] = { count: Number(data.count), version: number(data.version), errors: Array.isArray(data.errors) ? data.errors.filter(item => typeof item === 'string').slice(0, 50) as string[] : [] };
   }
+  const skipped: Record<string, string> = {};
+  for (const [path, hash] of Object.entries(object(saved.skipped ?? null) ?? {})) if (typeof hash === 'string') skipped[path] = hash;
   const savedPreview = object(saved.preview ?? null);
   const previewActions = savedPreview?.actions;
   const preview = string(savedPreview?.path ?? null) && string(savedPreview?.source_sha256 ?? null) && number(savedPreview?.source_version ?? null) !== null && string(savedPreview?.thread_id ?? null) && object(savedPreview?.range ?? null) && Array.isArray(previewActions) && previewActions.length <= 32 && previewActions.every(item => typeof item === 'string') && serializedBytes(previewActions) <= 16_384
@@ -196,6 +199,7 @@ export function state(value: Json, adapter: Adapter): State {
     capabilities: saved.capabilities ?? null,
     documents,
     diagnostics,
+    skipped,
     preview,
     status: saved.status === 'synced' || saved.status === 'stale' || saved.status === 'fallback' ? saved.status : 'idle',
     reason: string(saved.reason ?? null) ?? '',

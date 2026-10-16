@@ -184,6 +184,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
             || interceptor.pattern.len() > 64
             || serde_json::to_vec(&interceptor.matcher)?.len() > 4096
             || interceptor.before.len() + interceptor.after.len() > 16
+            || interceptor.before.iter().any(|id| interceptor.after.contains(id))
             || !ordered.into_iter().all(|id| identifier(id))
             || interceptor.location.len() > 256
         {
@@ -194,6 +195,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
 }
 
 /// Outermost first: explicit `before`/`after`, then consumers outside their dependencies, then ID.
+/// A cycle fails only the mods that declared its edges, never one that is merely their target.
 pub(super) fn order(
     loaded: &BTreeMap<String, Loaded>,
 ) -> std::result::Result<Vec<String>, Vec<String>> {
@@ -221,10 +223,10 @@ pub(super) fn order(
                 .iter()
                 .filter(|other| ids.contains(other))
             {
-                edges.insert((id.clone(), other.clone()));
+                edges.insert((id.clone(), other.clone(), id.clone()));
             }
             for other in interceptor.after.iter().filter(|other| ids.contains(other)) {
-                edges.insert((other.clone(), id.clone()));
+                edges.insert((other.clone(), id.clone(), id.clone()));
             }
         }
     }
@@ -236,12 +238,33 @@ pub(super) fn order(
             .filter(|id| {
                 !edges
                     .iter()
-                    .any(|(from, to)| to == *id && remaining.contains(from))
+                    .any(|(from, to, _)| to == *id && remaining.contains(from))
             })
             .min_by_key(|id| (std::cmp::Reverse(height(loaded, id, 0)), (*id).clone()))
             .cloned();
         let Some(next) = next else {
-            return Err(remaining);
+            let reaches = |start: &String, goal: &String| {
+                let (mut seen, mut queue) = (BTreeSet::from([start]), vec![start]);
+                while let Some(node) = queue.pop() {
+                    for (_, to, _) in edges.iter().filter(|(from, to, _)| {
+                        from == node && remaining.contains(to)
+                    }) {
+                        if to == goal {
+                            return true;
+                        }
+                        if seen.insert(to) {
+                            queue.push(to);
+                        }
+                    }
+                }
+                false
+            };
+            let declarers = edges
+                .iter()
+                .filter(|(from, to, _)| remaining.contains(from) && reaches(to, from))
+                .map(|(_, _, declarer)| declarer.clone())
+                .collect::<BTreeSet<_>>();
+            return Err(declarers.into_iter().collect());
         };
         remaining.retain(|id| *id != next);
         sorted.push(next);

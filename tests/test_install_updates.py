@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -311,6 +313,20 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(staged, ["0.2.0"])
         self.module.launch(args, self.root, self.current)
         self.assertEqual(applied, [])
+        self.assertFalse((self.root / "update/ready.json").exists())
+
+    def test_rollback_discards_a_queued_manual_update(self):
+        previous = self.root / "releases" / ("1" * 32)
+        previous.mkdir()
+        (self.root / "update").mkdir(exist_ok=True)
+        (self.root / "update/ready.json").write_text(json.dumps({"version": "0.2.0", "automatic": False}))
+        versions = {self.current: "0.2.0", previous: "0.1.0"}
+        module = self.module
+        stubs = dict(pointer=lambda root, name: previous, receipt=lambda path: {"version": versions[path]}, status=lambda *a: {"profile": "platform"},
+                     check_links=lambda *a: None, journaled=lambda root, *a: (root / "update/journal.json").write_text("{}"), atomic_symlink=lambda *a: None,
+                     set_links=lambda *a: None, restore_store=lambda *a: None, repin=lambda *a: None)
+        with patch.multiple(module, **stubs), contextlib.redirect_stdout(io.StringIO()):
+            module.rollback(types.SimpleNamespace(session=None), self.root, self.root / "bin", self.current)
         self.assertFalse((self.root / "update/ready.json").exists())
 
     def test_recovery_removes_only_a_store_the_interrupted_install_created(self):

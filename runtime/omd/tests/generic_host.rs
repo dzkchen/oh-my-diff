@@ -1738,6 +1738,14 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         &[],
     );
     trust(&store, &old_event);
+    let old_point = package(
+        &root,
+        "old_point",
+        json!({"capabilities":["lifecycle"]}),
+        "export default api => api.replace('retired_point', () => null)",
+        &[],
+    );
+    trust(&store, &old_point);
     let adapter = package(
         &root,
         "adapter",
@@ -1765,6 +1773,11 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         error_of(&runtime, "old_event").contains("unsupported_event"),
         "{}",
         error_of(&runtime, "old_event")
+    );
+    assert!(
+        error_of(&runtime, "old_point").contains("unsupported_replacement_point: retired_point"),
+        "{}",
+        error_of(&runtime, "old_point")
     );
     assert_eq!(error_of(&runtime, "modern"), "");
     assert_eq!(error_of(&runtime, "adapted"), "");

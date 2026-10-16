@@ -40,13 +40,13 @@ function readLine() {
   const chunk = Buffer.alloc(65536);
   let end;
   while ((end = input.indexOf(10)) < 0) {
+    if (input.length > 1048576) throw new Error('input_limit');
     const read = readSync(0, chunk);
     if (!read) {
       end = input.length;
       break;
     }
     input = Buffer.concat([input, chunk.subarray(0, read)]);
-    if (input.length > 1048576) throw new Error('input_limit');
   }
   const line = input.subarray(0, end).toString();
   input = input.subarray(end + 1);
@@ -59,10 +59,23 @@ request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
 let clockRead = false;
 if (Number.isSafeInteger(now)) {
-  globalThis.Date = class extends Date {
+  const Frozen = class extends Date {
     constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
     static now() { clockRead = true; return now; }
   };
+  globalThis.Date = new Proxy(Frozen, { apply: () => new Frozen().toString() });
+  Object.defineProperty(Frozen.prototype, 'constructor', { value: globalThis.Date, writable: true, configurable: true });
+  const Format = class extends Intl.DateTimeFormat {
+    get format() {
+      const format = super.format;
+      const frozen = date => format(date === undefined ? new Frozen() : date);
+      Object.defineProperty(this, 'format', { value: frozen });
+      return frozen;
+    }
+    formatToParts(date) { return super.formatToParts(date === undefined ? new Frozen() : date); }
+  };
+  Intl.DateTimeFormat = new Proxy(Format, { apply: (_, __, args) => new Format(...args) });
+  Object.defineProperty(Format.prototype, 'constructor', { value: Intl.DateTimeFormat, writable: true, configurable: true });
 }
 const handlers = new Map();
 const tools = new Map();
@@ -395,7 +408,7 @@ function requireCapability(name) {
 function writeState(value) {
   requireCapability(surface.state);
   if (rendering && !activating) throw new Error('render_side_effect_refused: state writes belong in events, commands or subscriptions');
-  state = structuredCloneFallback(value);
+  state = structuredCloneFallback(value ?? null);
 }
 function keyed() {
   requireCapability(surface.state);
@@ -539,7 +552,7 @@ function hook(name, options, handler) {
         const result = await run(envelope(hookName, native, input, CLASSIC[hookName][2](input), null, 'optional'));
         if (answer === null && result !== undefined && result !== null) answer = result;
       }
-      return kind === 'middleware' ? answer : undefined;
+      return native === 'approval' ? answer : undefined;
     };
     if (kind === 'middleware') api.middleware(native, dispatch);
     else api.on(native, dispatch);

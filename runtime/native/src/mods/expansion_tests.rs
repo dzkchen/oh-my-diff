@@ -844,6 +844,53 @@ async fn scoped_environment_pre_rename_children_keep_mod_and_thread_scope() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn pre_rename_subscribers_with_thread_state_run_in_the_requesting_thread() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["fs.read", "fs.write", "store"],
+        manifest: json!({"state_scope": "thread"}),
+        source: r#"export default api => api.on('workspace_pre_rename', event => {
+          api.state.set({ thread: event.thread_id });
+          return { status: 'fallback', reason: 'fixture' };
+        });"#,
+    }]) else {
+        return;
+    };
+    let _manager = attach_thread(&mut fixture).await;
+    std::fs::write(fixture.lead.host.repository.join("old.ts"), "export {};\n").unwrap();
+    let authority = crate::workspace_operations::WorkspaceAuthority::for_platform(
+        &fixture.lead.host.repository,
+        PermissionProfile::from_runtime_permissions(
+            &codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
+            codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+        ),
+    )
+    .unwrap();
+    let runtime = fixture.core.input_runtime.clone();
+    let lead = fixture.lead.clone();
+    let environment = fixture.core.environment.clone();
+    let thread = lead.thread.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut runtime = runtime.lock().unwrap();
+        let generation = runtime.generation();
+        authority.request_rename(
+            json!({"old": "old.ts", "new": "new.ts"}),
+            &mut runtime,
+            &lead,
+            &[],
+            generation,
+            &thread,
+            &environment,
+            || true,
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(result, json!({"status": "fallback", "reason": "fixture"}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn scoped_environment_survives_observer_reload_and_stop_callbacks() {
     let Some(mut fixture) = fixture(&[Package {
         id: "control",

@@ -10,6 +10,7 @@ const LOCAL_PROVIDERS = new Set(['ollama', 'lmstudio', 'oss']);
 const FIRE_AT = 0.9;
 const MAX_DELAY_MS = 24 * 3_600_000;
 const RETRY_MS = 15_000;
+const RETRYABLE = /^client_context_changed/;
 const NOTICE = 'Compacted while idle, before the prompt cache expired';
 const CANCELLED = { approval: 'The pending approval was cancelled.', question: 'The unanswered question was cancelled.' };
 
@@ -54,8 +55,8 @@ export default function activate(api: ModAPI) {
     const waiting = Object.values(state.pending);
     if (state.running && !waiting.length) return;
     const started = api.host.tryCall('app.request', { method: 'thread/compact/start', params: { threadId: api.session().thread_id } });
-    // Fails while another thread is displayed; retry until the cache expires.
-    if (!started.ok) return void api.host.tryCall('events.schedule', { key: 'idle', delay_ms: RETRY_MS });
+    // Fails while another thread is displayed; retry until the cache expires. Other failures are final.
+    if (!started.ok) return void (RETRYABLE.test(started.error) && api.host.tryCall('events.schedule', { key: 'idle', delay_ms: RETRY_MS }));
     save({ requested: waiting.includes('question') ? 'question' : waiting[0] ?? 'idle' });
   });
 

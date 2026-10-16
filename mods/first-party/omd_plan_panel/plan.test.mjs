@@ -34,6 +34,12 @@ test('the panel shows only its session plan, drops completed steps first and sur
   assert.equal(panel(notify(state, 'turn/started', 'lead')), undefined);
 });
 
+test('an active step below the row limit stays visible', () => {
+  const steps = [...Array(12).fill('pending'), 'inProgress', 'pending'].map((status, index) => ({ step: `step ${index + 1}`, status }));
+  const lines = panel(notify(null, 'turn/plan/updated', 'lead', steps));
+  assert.deepEqual(lines.slice(1), ['├─ ○ step 9', '├─ ○ step 10', '├─ ○ step 11', '├─ ○ step 12', '├─ ◐ step 13', '└─ +9 more (0 completed, 9 pending)']);
+});
+
 test('long steps are clipped on code points, never inside an emoji', () => {
   const step = `${'x'.repeat(119)}🙂 tail`;
   const state = notify(null, 'turn/plan/updated', 'lead', [{ step, status: 'pending' }]);

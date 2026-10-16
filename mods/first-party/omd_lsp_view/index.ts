@@ -9,7 +9,7 @@ type Saved = { view: View | null; servers: Server[]; open: boolean; asked: numbe
 const object = (value: Json | undefined): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 const target = (value: string) => {
   const match = /^(.*?)(?::(\d+))?(?::(\d+))?$/.exec(value.trim());
-  return { path: match?.[1] ?? '', line: Number(match?.[2] ?? 1), character: Number(match?.[3] ?? 1) };
+  return { path: match?.[1] ?? '', line: Math.max(1, Number(match?.[2] ?? 1)), character: Math.max(1, Number(match?.[3] ?? 1)) };
 };
 
 const utf8 = new TextEncoder();

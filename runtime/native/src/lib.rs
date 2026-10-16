@@ -567,11 +567,20 @@ impl Session {
         use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        let mut file = std::fs::OpenOptions::new()
+        let mut file = match std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&path)
-            .map_err(|e| e.to_string())?;
+        {
+            Ok(file) => file,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && std::fs::read(&path).is_ok_and(|existing| existing == bytes) =>
+            {
+                return Ok(json!({"path": path, "sha256": execution::hash(&bytes)}));
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;

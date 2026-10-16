@@ -126,8 +126,8 @@ async function createProject(directory, name) {
 }
 
 async function copyExample(directory, name) {
-  if (!publicExamples.includes(name)) fail(`unknown_example: ${name}`);
   const source = join(sdkRoot, 'examples', name);
+  if (!publicExamples.includes(name) || !existsSync(source)) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
   const { id } = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));

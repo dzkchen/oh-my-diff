@@ -693,6 +693,7 @@ impl ModHost {
                     || active,
                     |caller, call| host.call(caller, call),
                 )?;
+                ModViewPatch::parse(view.clone())?;
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
                     return Ok(view);

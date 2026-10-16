@@ -1027,21 +1027,26 @@ fn source_use(
         ),
         ("dom", &["document.", "window."][..]),
     ] {
-        if needles.iter().any(|needle| {
-            if name == "filesystem" {
-                source.contains(needle)
-            } else {
-                visible.contains(needle)
-            }
+        let text = if name == "filesystem" { source } else { visible.as_str() };
+        // A needle counts only at an identifier boundary, so `prefetch(` is not `fetch(`.
+        if let Some(needle) = needles.iter().find(|needle| {
+            text.match_indices(*needle).any(|(offset, _)| {
+                !text[..offset]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            })
         }) {
-            environment.push(name.to_owned());
+            environment.push((name, *needle));
         }
     }
-    for name in &environment {
-        if !package.environment.contains(name) {
-            return Err(failure(format!("undeclared_environment_use: {name}")));
-        }
+    if let Some((name, needle)) = environment
+        .iter()
+        .find(|(name, _)| !package.environment.iter().any(|declared| declared == name))
+    {
+        return Err(failure(format!("undeclared_environment_use: {name} ({needle})")));
     }
+    let environment: Vec<String> = environment.into_iter().map(|(name, _)| name.to_owned()).collect();
     let used_capabilities = |operation: &String| -> Result<Vec<String>> {
         let used = if operation == "app.request" {
             let named = crate::app_routes::classes_named_in(source);

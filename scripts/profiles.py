@@ -167,8 +167,7 @@ def selected_text(record):
     if selection == "direct":
         lines.append("export OMD_MODE=upstream_direct")
     else:
-        lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}",
-                      f"export OMD_NODE={shlex.quote(record['author']['node'])}"])
+        lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
     # Oh My Diff runs Codex in embedded mode, so the launcher keeps the shared background server from starting.
     flags = ["-c", "features.daemon_auto_start=false"] if selection != "direct" else []
     for provider in record.get("providers", {}).values() if selection != "direct" else ():

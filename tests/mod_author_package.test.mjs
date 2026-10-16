@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -25,6 +25,20 @@ test('author packaging preserves custom entrypoints, assets and lifecycle script
     for (const path of [manifest.entrypoint, ...manifest.assets, ...Object.values(manifest.lifecycle)]) assert.equal(readFileSync(join(report.package, path), 'utf8'), readFileSync(join(root, path), 'utf8'));
     if (!process.env.OMD_MOD_BIN) assert.ok(readFileSync(join(root, 'inspections'), 'utf8').trim().split('\n').includes(report.package));
     assert.equal(JSON.parse(readFileSync(join(report.package, 'package-report.json'))).sha256, report.sha256);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('author example refuses an unknown or listed-but-missing example cleanly', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-example-'));
+  try {
+    mkdirSync(join(root, 'sdk/author'), { recursive: true });
+    copyFileSync(new URL('../mods/author/cli.mjs', import.meta.url), join(root, 'sdk/author/cli.mjs'));
+    writeFileSync(join(root, 'sdk/package.json'), JSON.stringify({ version: '1', files: ['examples/ghost'] }));
+    for (const name of ['ghost', 'nope']) {
+      const result = spawnSync(process.execPath, [join(root, 'sdk/author/cli.mjs'), 'example', join(root, name), name], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`unknown_example: ${name}`));
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

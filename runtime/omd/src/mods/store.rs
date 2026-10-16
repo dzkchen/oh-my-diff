@@ -142,7 +142,8 @@ fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileStamp)> {
     let mut bytes = Vec::with_capacity(metadata.len().saturating_add(1).min(limit + 1) as usize);
     file.take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
-        return Err(failure("file_limit"));
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        return Err(failure(format!("file_limit: {name} exceeds {limit} bytes")));
     }
     Ok((bytes, file_stamp(&metadata)))
 }

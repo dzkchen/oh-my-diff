@@ -8,7 +8,7 @@ const IDLE_STOP_MS = 15 * 60_000;
 const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
 const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
-const MENTION = /[\w@+.\/-]+\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
+const MENTION = /[\w@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const errorText = (entry: string) => entry.slice(entry.indexOf(' ') + 1);

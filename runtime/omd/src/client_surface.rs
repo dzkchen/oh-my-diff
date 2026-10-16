@@ -843,7 +843,8 @@ fn redact_config(config: &mut Value) {
     scrub_secrets(config, "");
 }
 
-/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines.
+/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines;
+/// `env_key` stays readable while it is a variable name.
 fn scrub_secrets(value: &mut Value, name: &str) {
     match value {
         Value::Object(map) => {
@@ -854,7 +855,11 @@ fn scrub_secrets(value: &mut Value, name: &str) {
                     || (launches && key == "args")
                 {
                     redact_all(value);
-                } else {
+                } else if !(key == "env_key"
+                    && value.as_str().is_some_and(|name| {
+                        name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                    }))
+                {
                     scrub_secrets(value, key);
                 }
             }
@@ -1016,7 +1021,6 @@ pub fn materialize(
     thread: Option<&str>,
     reference: &Value,
 ) -> Result<std::path::PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
     let host = resource_host(store, repository, caller, thread)?;
     let resources = host.resources();
     let reference: crate::resource_data::ResourceRef =
@@ -1031,10 +1035,9 @@ pub fn materialize(
     };
     let digest = record["blob"].as_str().ok_or("resource_not_binary")?;
     let bytes = resources.blob(digest).map_err(|error| error.to_string())?;
-    let directory = store.join("attachments");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| error.to_string())?;
+    let directory =
+        crate::workspace::private_path(store, &["attachments"], "attachment_directory_invalid")
+            .map_err(|error| error.to_string())?;
     let path = directory.join(format!("{digest}.{extension}"));
     if !path.exists() {
         let mut temporary =

@@ -576,7 +576,7 @@ fn config_reads_redact_secret_values() {
     let mut config = json!({
         "model": "m",
         "mcp_servers": {"plain": {"command": "plain"}, "web": {"url": "https://user:s8@web.example:8443/mcp?token=s9&mode=full#s10"}, "local": {"url": "http://127.0.0.1:3920/mcp"}, "docs": {"command": "docs", "env": {"TOKEN": "s1"}, "http_headers": {"Authorization": "s2"}, "bearer_token": "s3", "oauth": {"client_id": "id", "client_secret": "s4"}}},
-        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}},
+        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7", "env_key": "OPENAI_API_KEY"}, "q": {"env_key": "sk-proj-s20"}},
         "otel": {"exporter": {"otlp-http": {"endpoint": "https://otel.example", "headers": {"x-api": "s12"}}}},
         "shell_environment_policy": {"inherit": "core", "set": {"DEPLOY": "s13"}},
         "profiles": {"w": {"mcp_servers": {"x": {"command": "x", "args": ["--auth", "s14"], "env": {"K": "s15"}}}}},
@@ -590,7 +590,7 @@ fn config_reads_redact_secret_values() {
     });
     redact_config(&mut config);
     let text = config.to_string();
-    assert!((1..=19).all(|index| !text.contains(&format!("s{index}"))), "{text}");
+    assert!((1..=20).all(|index| !text.contains(&format!("s{index}"))), "{text}");
     assert_eq!(
         config["developer_instructions"],
         "Be brief.\n<redacted>\nRun tests."
@@ -602,6 +602,7 @@ fn config_reads_redact_secret_values() {
     assert_eq!(config["notify"][0], "notify");
     assert_eq!(config["mcp_servers"]["docs"]["env"]["TOKEN"], "<redacted>");
     assert_eq!(config["mcp_servers"]["docs"]["oauth"]["client_id"], "id");
+    assert_eq!(config["model_providers"]["p"]["env_key"], "OPENAI_API_KEY");
     assert_eq!(
         config["model_providers"]["p"]["base_url"],
         "https://p/<redacted>"

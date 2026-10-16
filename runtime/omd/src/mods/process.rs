@@ -48,9 +48,89 @@ static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
 const BUSY_RUNNERS: usize = 3;
 const IDLE_AFTER: Duration = Duration::from_secs(5);
 
-fn stop(mut child: Child) {
+/// Stops a runner, reporting whether the memory watchdog had already killed it.
+fn stop(mut child: Child) -> bool {
+    let exceeded = untrack(child.id());
     let _ = child.kill();
     let _ = child.wait();
+    exceeded
+}
+
+const MEMORY_LIMIT: u64 = 512 << 20;
+const MEMORY_POLL: Duration = Duration::from_millis(50);
+/// Live runner processes: `(exceeded, reaped)`. The watchdog signals only under this lock and never a reaped
+/// pid, and every reap marks or untracks its pid under it, so a reused pid is never killed.
+static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
+
+fn untrack(pid: u32) -> bool {
+    TRACKED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&pid)
+        .is_some_and(|(exceeded, _)| exceeded)
+}
+
+/// `try_wait` under the watchdog's lock: whether the runner has exited (or cannot be polled).
+fn exited(child: &mut Child) -> bool {
+    let mut tracked = TRACKED.lock().unwrap_or_else(PoisonError::into_inner);
+    let exited = !matches!(child.try_wait(), Ok(None));
+    if exited && let Some((_, reaped)) = tracked.get_mut(&child.id()) {
+        *reaped = true;
+    }
+    exited
+}
+
+fn memory_failure() -> std::io::Error {
+    failure(format!(
+        "mod_out_of_memory: the mod's runner exceeded {} MiB of memory",
+        MEMORY_LIMIT >> 20
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn footprint(pid: u32) -> Option<u64> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
+    // SAFETY: `info` is a writable `rusage_info_v0`, the size `RUSAGE_INFO_V0` asks for.
+    let status = unsafe {
+        libc::proc_pid_rusage(pid as libc::c_int, libc::RUSAGE_INFO_V0, info.as_mut_ptr().cast())
+    };
+    // SAFETY: a zero status filled `info`.
+    (status == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn footprint(pid: u32) -> Option<u64> {
+    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: `sysconf` reads a constant.
+    Some(pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64)
+}
+
+/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose physical footprint passes `MEMORY_LIMIT`.
+fn track(child: &Child) {
+    static WATCHDOG: std::sync::Once = std::sync::Once::new();
+    TRACKED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(child.id(), (false, false));
+    WATCHDOG.call_once(|| {
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(MEMORY_POLL);
+                let mut tracked = TRACKED.lock().unwrap_or_else(PoisonError::into_inner);
+                for (pid, (exceeded, _)) in tracked
+                    .iter_mut()
+                    .filter(|(_, (exceeded, reaped))| !*exceeded && !*reaped)
+                {
+                    if footprint(*pid).is_some_and(|bytes| bytes > MEMORY_LIMIT) {
+                        // SAFETY: an unreaped child's pid cannot be reused, and reaping waits for this lock.
+                        unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
+                        *exceeded = true;
+                    }
+                }
+            }
+        });
+    });
 }
 
 /// Trims the warm pool to one runner after five idle seconds and stops render runners unused for a minute.
@@ -87,7 +167,7 @@ fn reap() {
 
 fn spawn(node: &Path) -> Result<Child> {
     let _profile = super::Profile::new("runner_spawn");
-    command(node)?
+    let child = command(node)?
         .args([
             "--max-old-space-size=64",
             "--no-compilation-cache",
@@ -104,7 +184,9 @@ fn spawn(node: &Path) -> Result<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn()?;
+    track(&child);
+    Ok(child)
 }
 
 fn runner(node: &Path) -> Result<Child> {
@@ -113,7 +195,7 @@ fn runner(node: &Path) -> Result<Child> {
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
     for (_, child) in spares.0.extract_if(.., |(path, child)| {
-        path != node || !matches!(child.try_wait(), Ok(None))
+        path != node || exited(child)
     }) {
         stop(child);
     }
@@ -221,14 +303,26 @@ struct Warm {
 
 impl Warm {
     fn stop(self) -> Vec<u8> {
+        self.halt().0
+    }
+
+    fn halt(self) -> (Vec<u8>, bool) {
         if let Some(owner) = &self.pinned
             && let Ok(mut mounted) = MOUNTED.lock()
         {
             mounted.remove(&(owner.clone(), self.key.clone()));
         }
-        stop(self.child);
+        let exceeded = stop(self.child);
         let _ = self.reader.join();
-        self.errors.join().unwrap_or_default()
+        (self.errors.join().unwrap_or_default(), exceeded)
+    }
+
+    /// Stops a failed runner; a watchdog kill outranks the failure it caused.
+    fn fail(self, error: Option<std::io::Error>) -> std::io::Error {
+        match self.halt() {
+            (_, true) => memory_failure(),
+            (errors, false) => error.unwrap_or_else(|| process_failure(&errors)),
+        }
     }
 }
 
@@ -416,8 +510,10 @@ where
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
     });
-    if let Some(dead) = reused.take_if(|warm| !matches!(warm.child.try_wait(), Ok(None))) {
-        dead.stop();
+    if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child))
+        && dead.halt().1
+    {
+        return Err(memory_failure());
     }
     let (mut warm, bytes) = match reused {
         Some(warm) => {
@@ -454,22 +550,18 @@ where
         }
     };
     let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => {
-            warm.stop();
-            return Err(error);
+    let error = match output {
+        Ok(Some(value)) if value.get("error").is_none() => {
+            pool(warm);
+            return Ok(value);
         }
+        Ok(Some(value)) => Some(failure(
+            value["error"].as_str().unwrap_or("mod_process_failed"),
+        )),
+        Ok(None) => None,
+        Err(error) => Some(error),
     };
-    let Some(value) = output else {
-        return Err(process_failure(&warm.stop()));
-    };
-    if let Some(error) = value.get("error") {
-        warm.stop();
-        return Err(failure(error.as_str().unwrap_or("mod_process_failed")));
-    }
-    pool(warm);
-    Ok(value)
+    Err(warm.fail(error))
 }
 
 /// Keeps one warm callback runner per active package with a `terminal` handler; every host in the process shares the pool, so it fits the host with the most handlers (`None` forgets a host).
@@ -587,14 +679,18 @@ pub(super) fn evaluate(
     let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
     drop(stdin);
     if output.is_ok() {
-        while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+        while !exited(&mut child) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
+    let exceeded = untrack(child.id());
     let _ = child.kill();
     let status = child.wait();
     let _ = reader.join();
     let errors = errors.join().unwrap_or_default();
+    if exceeded {
+        return Err(memory_failure());
+    }
     let output = output?;
     let status = status?;
     let value = output.ok_or_else(|| process_failure(&errors))?;
