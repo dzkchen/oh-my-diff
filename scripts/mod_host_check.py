@@ -12,18 +12,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples", ROOT / "mods/ports"]
-TUI_OPERATIONS = {
-    "exec.run", "exec.output_page", "workspace.read", "workspace.list", "workspace.stat",
-    "workspace.check_access", "workspace.transaction", "workspace.backup", "workspace.restore",
-    "store.get", "store.put", "store.delete", "store.list", "store.export", "store.reset",
-    "app.request", "app.respond", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
-    "commands.describe", "commands.invoke", "config.describe", "config.set", "environment.read", "environment.set",
-    "sessions.ports", "terminal.import_file", "terminal.image_sample", "composer.read", "composer.write",
-    "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.panes",
-    "terminal.notice", "terminal.selection", "terminal.copy", "terminal.blit", "terminal.pty",
-    "app.routes", "turns.activity", "turns.abort", "events.publish", "credentials.list", "settings.write",
-    "packages.list", "packages.index", "packages.preview", "packages.reload", "session.info",
-}
+TUI_SURFACE = json.loads((ROOT / "mods/conformance/tui-surface.json").read_text())
+TUI_OPERATIONS = set(TUI_SURFACE["operations"])
+BUILTIN_SLASH = set(TUI_SURFACE["slash_commands"])
 MOCKS = {
     "store.get": None, "store.put": {"revision": 1}, "store.delete": {"deleted": True},
     "store.list": {"keys": [], "cursor": None, "generation": 0},
@@ -36,20 +27,12 @@ MOCKS = {
     "workspace.read": {"files": {}}, "workspace.list": {"entries": [], "truncated": False},
     "workspace.stat": {"files": {}}, "workspace.check_access": {"paths": [], "write": False},
 }
-BUILTIN_SLASH = {
-    "model", "ide", "permissions", "keymap", "vim", "setup-default-sandbox", "experimental", "approve",
-    "memories", "skills", "import", "hooks", "review", "rename", "new", "archive", "delete", "resume",
-    "fork", "worktree", "app", "init", "compact", "recap", "plan", "voice", "goal", "agents", "side",
-    "btw", "copy", "export", "raw", "tui", "diff", "mention", "status", "daemon", "warnings", "cd",
-    "pwd", "cwd", "usage", "debug-config", "title", "statusline", "theme", "pets", "pet", "mcp", "apps",
-    "plugins", "logout", "quit", "exit", "feedback", "rollout", "ps", "stop", "clean", "clear",
-    "test-approval", "subagents", "debug-m-drop", "debug-m-update", "omd",
-}
 EVENTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 SOURCE_REPORTS = {}
+NODE = None
 
 
 def manifest(path):
@@ -205,11 +188,16 @@ def source_files(path):
             and "node_modules" not in source.parts]
 
 
+def node():
+    global NODE
+    NODE = NODE or subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    return NODE
+
+
 def inspect_sources(paths):
     files = [str(source.resolve()) for path in paths for source in source_files(path)]
     if files:
-        node = subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-        result = subprocess.run([node, str(ROOT / "scripts/mod_source_check.mjs")], input=json.dumps(files),
+        result = subprocess.run([node(), str(ROOT / "scripts/mod_source_check.mjs")], input=json.dumps(files),
                                 cwd=ROOT, capture_output=True, text=True, check=True)
         SOURCE_REPORTS.update(json.loads(result.stdout))
 
@@ -318,19 +306,20 @@ def main():
     parser.add_argument("--static", action="store_true", help="only the source checks; needs no omd-mod")
     parser.add_argument("packages", nargs="*", help="limit to these package directory names or mod IDs")
     args = parser.parse_args()
+    global NODE
+    NODE = args.node
     inspect_sources(packages(args.packages))
     if args.static:
         report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages) if (found := static_problems(path))}
     else:
         if not args.omd_mod:
             parser.error("omd-mod not found; pass --omd-mod")
-        node = args.node or subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
         every = packages([])
         providers = {manifest(path)["id"]: path for path in every}
         providers |= {service["name"]: path for path in every
                       for service in manifest(path).get("services", {}).get("exports", [])}
         with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
-            report = check(Host(Path(args.omd_mod).resolve(), node, Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
+            report = check(Host(Path(args.omd_mod).resolve(), node(), Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
