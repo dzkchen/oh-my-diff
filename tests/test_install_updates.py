@@ -393,6 +393,12 @@ class UpdateSelection(unittest.TestCase):
         self.assertTrue(self.module.managed(self.root, bin_dir / "codex", "codex"))
         self.assertEqual((self.current / "prefix/stray.txt").read_text(), "stray")
 
+    def test_install_requires_asset_url_and_sha256_together(self):
+        self.module.download = lambda *arguments: self.fail("downloaded without a pinned pair")
+        for url, sha256 in (("https://example.invalid/x", None), (None, "a" * 64)):
+            with self.assertRaisesRegex(ValueError, "together"):
+                self.module.install(types.SimpleNamespace(asset_url=url, asset_sha256=sha256), self.root, self.current)
+
     def test_installer_ignores_modules_in_the_working_directory(self):
         planted = self.root / "planted.txt"
         (self.root / "argparse.py").write_text(f"open({str(planted)!r}, 'w').close()\n")
