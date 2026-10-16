@@ -29294,7 +29294,7 @@ index 1d328eae5..201f2e0f0 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 2979e0a9a..5b0dab841 100644
+index 2979e0a9a..6a7d9bce5 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -104,6 +104,7 @@ impl App {
@@ -29305,7 +29305,7 @@ index 2979e0a9a..5b0dab841 100644
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -409,6 +410,90 @@ impl App {
+@@ -409,6 +410,91 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -29322,6 +29322,7 @@ index 2979e0a9a..5b0dab841 100644
 +                path,
 +                managed,
 +                enabled,
++                all_mods,
 +            } => {
 +                let root = crate::omd::store_root();
 +                let tx = self.app_event_tx.clone();
@@ -29343,18 +29344,18 @@ index 2979e0a9a..5b0dab841 100644
 +                            if enabled { "enabled" } else { "disabled" }
 +                        ))
 +                    })();
-+                    tx.send(AppEvent::OmdModToggled { result });
++                    tx.send(AppEvent::OmdModToggled { result, all_mods });
 +                });
 +            }
-+            AppEvent::OmdModToggled { result } => {
-+                match result {
-+                    Ok(message) => self.chat_widget.add_info_message(message, None),
-+                    Err(error) => self
-+                        .chat_widget
-+                        .add_error_message(format!("Mod selection failed: {error}")),
-+                }
-+                self.chat_widget.open_omd_extensions();
++            AppEvent::OmdModToggled { result, all_mods } => {
++                self.chat_widget.finish_omd_mod_toggle(result, all_mods);
 +            }
++            AppEvent::OmdStateReset { result } => match result {
++                Ok(message) => self.chat_widget.add_info_message(message, None),
++                Err(error) => self
++                    .chat_widget
++                    .add_error_message(format!("OMD state reset failed: {error}")),
++            },
 +            AppEvent::ModCommandFinished {
 +                invocation,
 +                token,
@@ -29396,7 +29397,7 @@ index 2979e0a9a..5b0dab841 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -849,6 +934,10 @@ impl App {
+@@ -849,6 +935,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -29407,7 +29408,7 @@ index 2979e0a9a..5b0dab841 100644
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1705,8 +1794,18 @@ impl App {
+@@ -1705,8 +1795,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -29426,7 +29427,7 @@ index 2979e0a9a..5b0dab841 100644
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2964,6 +3063,14 @@ impl App {
+@@ -2964,6 +3064,14 @@ impl App {
                  self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                      .await?;
              }
@@ -31174,7 +31175,7 @@ index f55b75c1b..21c998a28 100644
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 4c6ede335..356675543 100644
+index 4c6ede335..698377462 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -406,6 +406,10 @@ pub(crate) enum AppEvent {
@@ -31188,7 +31189,7 @@ index 4c6ede335..356675543 100644
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -502,6 +506,34 @@ pub(crate) enum AppEvent {
+@@ -502,6 +506,40 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -31201,8 +31202,14 @@ index 4c6ede335..356675543 100644
 +        path: PathBuf,
 +        managed: bool,
 +        enabled: bool,
++        /// Chosen from "All mods…", which reopens instead of the top-level /omd menu.
++        all_mods: bool,
 +    },
 +    OmdModToggled {
++        result: Result<String, String>,
++        all_mods: bool,
++    },
++    OmdStateReset {
 +        result: Result<String, String>,
 +    },
 +    ModCommandFinished {
@@ -31223,7 +31230,7 @@ index 4c6ede335..356675543 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -653,6 +685,10 @@ pub(crate) enum AppEvent {
+@@ -653,6 +691,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -31234,7 +31241,7 @@ index 4c6ede335..356675543 100644
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -699,6 +735,14 @@ pub(crate) enum AppEvent {
+@@ -699,6 +741,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -36576,10 +36583,35 @@ index ea37b0fe2..d748e54a9 100644
      .await?;
      Ok(
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index d9ba053eb..966489185 100644
+index d9ba053eb..8caac642d 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
-@@ -67,6 +67,7 @@ pub enum SlashCommand {
+@@ -1,12 +1,23 @@
+ use strum::IntoEnumIterator;
+ use strum_macros::AsRefStr;
+ use strum_macros::EnumIter;
++use strum_macros::EnumMessage;
+ use strum_macros::EnumString;
+ use strum_macros::IntoStaticStr;
+
+ /// Commands that can be invoked by starting a message with a leading slash.
+ #[derive(
+-    Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, EnumIter, AsRefStr, IntoStaticStr,
++    Debug,
++    Clone,
++    Copy,
++    PartialEq,
++    Eq,
++    Hash,
++    EnumString,
++    EnumIter,
++    AsRefStr,
++    IntoStaticStr,
++    EnumMessage,
+ )]
+ #[strum(serialize_all = "kebab-case")]
+ pub enum SlashCommand {
+@@ -67,6 +78,7 @@ pub enum SlashCommand {
      Mcp,
      Apps,
      Plugins,
@@ -36587,7 +36619,7 @@ index d9ba053eb..966489185 100644
      Logout,
      Quit,
      Exit,
-@@ -152,6 +153,7 @@ impl SlashCommand {
+@@ -152,6 +164,7 @@ impl SlashCommand {
              SlashCommand::Mcp => "list MCP tools; use /mcp verbose or /mcp login <name>",
              SlashCommand::Apps => "manage apps",
              SlashCommand::Plugins => "browse plugins",
@@ -36595,7 +36627,7 @@ index d9ba053eb..966489185 100644
              SlashCommand::Logout => "log out of Codex",
              SlashCommand::Rollout => "print the rollout file path",
              SlashCommand::TestApproval => "test approval request",
-@@ -288,6 +290,7 @@ impl SlashCommand {
+@@ -288,6 +301,7 @@ impl SlashCommand {
              | SlashCommand::Mcp
              | SlashCommand::Apps
              | SlashCommand::Plugins
@@ -140943,10 +140975,10 @@ index 000000000..ff0f0dc8f
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..537ee5366
+index 000000000..ee0dca97f
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,262 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -141019,7 +141051,7 @@ index 000000000..537ee5366
 +        .collect())
 +}
 +
-+fn toggle_item(entry: ModEntry) -> SelectionItem {
++fn toggle_item(entry: ModEntry, all_mods: bool) -> SelectionItem {
 +    let state = if entry.enabled { "on" } else { "off" };
 +    let mut description = format!("{state} · {} scope", entry.scope);
 +    if let Some(reason) = entry.failure.as_ref().or(entry.blocked.as_ref()) {
@@ -141042,6 +141074,7 @@ index 000000000..537ee5366
 +                path: entry.path.clone(),
 +                managed: entry.managed,
 +                enabled: !entry.enabled,
++                all_mods,
 +            });
 +        })],
 +        dismiss_on_select: true,
@@ -141125,7 +141158,7 @@ index 000000000..537ee5366
 +                                        )
 +                                    })
 +                                    .map_err(|error| error.to_string());
-+                                tx.send(AppEvent::OmdModToggled { result });
++                                tx.send(AppEvent::OmdStateReset { result });
 +                            });
 +                        })],
 +                        dismiss_on_select: true,
@@ -141139,7 +141172,7 @@ index 000000000..537ee5366
 +                        entries
 +                            .into_iter()
 +                            .filter(|entry| entry.enabled && entry.failure.is_some())
-+                            .map(toggle_item),
++                            .map(|entry| toggle_item(entry, false)),
 +                    );
 +                    items.push(SelectionItem {
 +                        name: "All mods…".to_string(),
@@ -141172,7 +141205,10 @@ index 000000000..537ee5366
 +        };
 +        let (items, header) = match mod_entries(root) {
 +            Ok(entries) => (
-+                entries.into_iter().map(toggle_item).collect(),
++                entries
++                    .into_iter()
++                    .map(|entry| toggle_item(entry, true))
++                    .collect(),
 +                "Changes apply at the next turn.".to_string(),
 +            ),
 +            Err(error) => (Vec::new(), format!("Mods are unavailable: {error}")),
@@ -141188,6 +141224,69 @@ index 000000000..537ee5366
 +        });
 +        self.request_redraw();
 +    }
++
++    pub(crate) fn finish_omd_mod_toggle(&mut self, result: Result<String, String>, all_mods: bool) {
++        match result {
++            Ok(message) => self.add_info_message(message, None),
++            Err(error) => self.add_error_message(format!("Mod selection failed: {error}")),
++        }
++        if all_mods {
++            self.open_omd_all_mods();
++        } else {
++            self.open_omd_extensions();
++        }
++    }
++}
++
++#[cfg(test)]
++#[path = "omd_extensions_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
+new file mode 100644
+index 000000000..df3a2cbc8
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
+@@ -0,0 +1,41 @@
++use super::*;
++use crossterm::event::KeyCode;
++use crossterm::event::KeyEvent;
++use crossterm::event::KeyModifiers;
++use pretty_assertions::assert_eq;
++
++#[tokio::test]
++#[serial_test::serial]
++async fn toggling_from_all_mods_reopens_all_mods() {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let package = root.join("package");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "toggle_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": []})).unwrap()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
++    let store = ModStore::create(
++        root.join("store"),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap();
++    let source = ModStore::inspect_package(&package).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store.trust(package.clone(), &source, Vec::new(), "user").unwrap();
++    store.enable(&package, true).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&root.join("store"));
++    let (mut chat, _tx, mut rx, _op_rx) =
++        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
++
++    chat.open_omd_all_mods();
++    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++    let all_mods = std::iter::from_fn(|| rx.try_recv().ok())
++        .find_map(|event| match event {
++            AppEvent::OmdModToggle { all_mods, .. } => Some(all_mods),
++            _ => None,
++        })
++        .expect("toggle event");
++    chat.finish_omd_mod_toggle(Ok("Mod toggle_fixture disabled.".into()), all_mods);
++    assert_eq!(chat.bottom_pane.active_view_id(), Some("omd-all-mods"));
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
@@ -150119,10 +150218,10 @@ index 000000000..cdf77f1bd
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..df378f03c
+index 000000000..653ef0f89
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,821 @@
+@@ -0,0 +1,872 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -150943,6 +151042,57 @@ index 000000000..df378f03c
 +    assert_eq!(answer.recv().unwrap(), Err("client_context_changed".into()));
 +    assert!(with(|state| state.clipboard.is_none()));
 +    *STATE.locked() = previous;
++}
++
++fn conformance_list(key: &str) -> std::collections::BTreeSet<String> {
++    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++        .join("../../mods/conformance/tui-surface.json");
++    let surface: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
++    serde_json::from_value(surface[key].clone()).unwrap()
++}
++
++#[test]
++fn slash_commands_match_conformance_list() {
++    use strum::EnumMessage;
++    use strum::IntoEnumIterator;
++    let names: std::collections::BTreeSet<String> = crate::slash_command::SlashCommand::iter()
++        .flat_map(|command| {
++            std::iter::once(command.command())
++                .chain(command.get_serializations().iter().copied())
++        })
++        .map(str::to_owned)
++        .collect();
++    assert_eq!(
++        conformance_list("slash_commands"),
++        names,
++        "update mods/conformance/tui-surface.json"
++    );
++}
++
++#[test]
++#[serial_test::serial]
++fn slash_command_operations_match_conformance_list() {
++    let root = tempfile::tempdir().unwrap();
++    let paths = paths(root.path());
++    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
++    let listed = conformance_list("operations");
++    let served: std::collections::BTreeSet<String> = codex_omd::MOD_HOST_OPERATIONS
++        .iter()
++        .map(|operation| (*operation).to_owned())
++        .chain(listed.iter().cloned())
++        .filter(|operation| {
++            let call = codex_omd::ModHostCall {
++                operation: operation.clone(),
++                arguments: Value::Null,
++            };
++            let unsupported = format!("unsupported_host_operation: {operation}");
++            !matches!(
++                host_call(&paths, &policy, None, "probe", call, &scope(InvocationContext::User)),
++                Err(error) if error.to_string() == unsupported
++            )
++        })
++        .collect();
++    assert_eq!(listed, served, "update mods/conformance/tui-surface.json");
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644

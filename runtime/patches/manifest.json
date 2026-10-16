@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.162.1.patch",
-    "sha256": "4dd2f638d4fb78844cbf8d0315df388eaf992c599cf5832ce1ee2ab71c28412e"
+    "sha256": "cef93386c88874687d09f4b08540b91b2d6fd75e009c373d19c628a180c23d1b"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1523,7 +1523,7 @@
     },
     "codex-rs/tui/src/app/event_dispatch.rs": {
       "before": "96b4e4d805fbc2d8f18a77849194eccd071f0425809c9e2f4b88b0dcc487bad4",
-      "after": "eedab29f829bb556e433a0cc62f2c84bdfa06bc19533083d58a3751bf5757519"
+      "after": "85b27cfccba8848bf6afa03da49e039cc1efc0c2b3683ab9e75f43330a3aa16a"
     },
     "codex-rs/tui/src/app/input.rs": {
       "before": "4a8f35b3fbe53d79952f1a739fcab1ce290393a8ab6153cb63dce524fc979c1d",
@@ -1679,7 +1679,7 @@
     },
     "codex-rs/tui/src/app_event.rs": {
       "before": "4ed64062e195156e6d2bdfae7437f9c802d9b33bb7b118fb617a8e1e4ddfa599",
-      "after": "d37e6b2e4e9709a66789e2c0cb3ca61dd75dc8fd7ac0e9eaf69748ed4db6ca53"
+      "after": "ea8fde41c1cdb5a48bccb685a1b3c5e8ae3552844611c2f3e48a54092d7a5676"
     },
     "codex-rs/tui/src/app_server_session.rs": {
       "before": "2f061f53fe78a03cfdc160f5e376c3d83030b169d8653126bbb892646dc9823a",
@@ -1811,7 +1811,11 @@
     },
     "codex-rs/tui/src/chatwidget/omd_extensions.rs": {
       "before": null,
-      "after": "7b13fb815d91cff90afc03bd4c1fe558d2478d1011e7cf9ab95aaa0a8738de33"
+      "after": "c0620f42e58a61500d9b0290fa313aeab18d67207718f79ad21f8335952c3a66"
+    },
+    "codex-rs/tui/src/chatwidget/omd_extensions_tests.rs": {
+      "before": null,
+      "after": "414a7f721e196e968da11ff38422d8509ea9f237013aecad73b117b6e5713fb9"
     },
     "codex-rs/tui/src/chatwidget/protocol.rs": {
       "before": "46809d852877902c958f47d7f266ece94d59b0f863e3e9dd2673954ca0673a6e",
@@ -2127,7 +2131,7 @@
     },
     "codex-rs/tui/src/mod_surface_tests.rs": {
       "before": null,
-      "after": "6a7e5f4f93ebf079f88b2152b14fae4d699347248dd928bdc9d548d6b3442417"
+      "after": "ec89167ff693e9af9edf0274feaac32f01e0292fab3243f4fef9c84808102ab0"
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
@@ -2175,7 +2179,7 @@
     },
     "codex-rs/tui/src/slash_command.rs": {
       "before": "43ab51f82ea1ce9aec67b8e563fc9f8c750c0ea7c2119e009aede8ee2e5e7d79",
-      "after": "37499e5d9909fc0b87fb0ef45f17355a92fc6613788d7cda754591d17d0ed058"
+      "after": "c08edc09339a22d8fc74b0abd2d6e5bf1b956c71e6fc86d5aff5c0c97ea0c5fa"
     },
     "codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap": {
       "before": null,

@@ -39,7 +39,7 @@ UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
-RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
+RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 UPSTREAM_MINOR = "0.162"
@@ -308,6 +308,8 @@ def status(generation, upstream, bin_dir):
 
 
 def install(args, root, current):
+    if bool(args.asset_url) != bool(args.asset_sha256):
+        fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("This release candidate supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
