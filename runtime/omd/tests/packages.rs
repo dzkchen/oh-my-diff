@@ -2254,7 +2254,6 @@ fn thread_state_version_updates_require_a_migrate_handler() {
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .unwrap();
-    // The preview never runs the updated source but announces the check that runs once it is confirmed.
     let plan = store.package_plan(install.clone()).unwrap();
     assert_eq!(
         plan.changes["packages"][0]["state_version"]["handler_required"],
@@ -2276,7 +2275,6 @@ fn thread_state_version_updates_require_a_migrate_handler() {
     assert_eq!(plan.action, "update");
     store.package_apply(install, &plan.confirmation).unwrap();
 
-    // Without `store` a thread-scoped package has no state to migrate.
     let stateless = mod_package(&root, "stateless", "1.0.0", &["commands"], json!([]));
     let manifest_path = stateless.join("mod.json");
     let mut manifest: serde_json::Value =

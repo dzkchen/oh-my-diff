@@ -590,8 +590,7 @@ impl ModStore {
                         .root
                         .join(ModStore::state_name(&resolved.package.id, &request.scope))
                         .exists();
-                // Thread and checkout state migrates at its next callback; an adapter-wrapped
-                // package cannot be inspected outside the host.
+                // An adapter-wrapped package cannot be inspected outside the host.
                 if state_version_changed
                     && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
                     && resolved.package.adapter.is_none()
@@ -2748,8 +2747,6 @@ fn selected_settings(
         )
 }
 
-/// Runs the packages the confirmed plan marks `handler_required` to check that they register
-/// `migrate`; the new source runs only once the preview is confirmed.
 fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
     let changes = plan.changes["packages"].as_array().map_or(&[][..], Vec::as_slice);
     for (locked, change) in plan.packages.iter().zip(changes) {

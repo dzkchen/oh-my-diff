@@ -254,8 +254,7 @@ function viewServer() {
 }
 
 // A real language server over stdio: Content-Length framing through FIFOs, read without blocking so `exchange` can wait up to `wait_ms`.
-// Until `patience` after each request was sent, a wait lasts until a message arrives, so a server slowed by a parallel suite still
-// answers inside the mod's request loop and a request that is never answered stops stretching later waits.
+// Within `patience` of a request, waits block until a message arrives so a slow server still answers in the mod's loop.
 function spawnServer(command, cwd, patience = 30_000) {
   const directory = mkdtempSync(join(tmpdir(), 'omd-lsp-'));
   const [input, output] = [join(directory, 'in'), join(directory, 'out')];

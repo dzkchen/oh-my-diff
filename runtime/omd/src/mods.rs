@@ -2583,8 +2583,7 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
-/// Reads `mods.json` stamped `stamp` beforehand: the stamp (`None` if the file changed during
-/// the read), the digest and the bytes.
+/// The returned stamp is `None` if the file changed during the read.
 fn read_configuration(
     path: &Path,
     stamp: Option<FileStamp>,
@@ -4628,8 +4627,6 @@ impl ModHost {
         Ok(())
     }
 
-    /// The digest and parse of `mods.json` for callback checks, re-read when its stamp changes or
-    /// the resolved node binary is gone.
     fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
