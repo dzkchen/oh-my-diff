@@ -1,6 +1,6 @@
 # Hosted nightly
 
-`nightly.yml` runs daily at 07:17 UTC and through **Run workflow**. It validates the selected checkout on standard
+`nightly.yml` runs through **Run workflow**; the daily schedule is enabled once the repository is public. It validates the selected checkout on standard
 `macos-15` (Apple Silicon) and `ubuntu-24.04`. Only successful runs on this repository's `main` publish or report
 to GitHub; branch dispatches validate without publication. Stable tag-triggered publishing is a separate workflow.
 
