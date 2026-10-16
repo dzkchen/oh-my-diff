@@ -1,6 +1,6 @@
 # omd_lsp_view
 
-Opt-in first-party mod (`0.2.0-preview.1`, API `0.2.0-experimental.5`): a
+Opt-in first-party mod: a
 code-intelligence view over the language servers that
 [`omd_lsp_sync`](../omd_lsp_sync/README.md) already runs. It adds no second
 client; enable both.
@@ -17,7 +17,9 @@ client; enable both.
 Lines and columns are 1-based. Slash commands cannot call framed processes or
 services, so `/lsp` shows "Asking the language server…", publishes the request
 on `omd_lsp_view/request`, and the mod's own channel callback calls
-`omd.lsp`'s `query` method and republishes the view. Results open in a popup;
+`omd.lsp`'s `query` method and republishes the view. Each request carries a
+number the view is waiting for; a request still queued after `/lsp close`,
+Back or a newer request is dropped without querying the server. Results open in a popup;
 Pin (`/lsp pane`) moves them to a Code intelligence card above the prompt.
 Its controls remain clickable and keyboard-focusable; focused controls scroll
 into view when the available height is limited. Enter on a location
@@ -35,8 +37,8 @@ or failed server side by side, its open documents and up to three current
 errors from `omd_lsp_sync/status`. Neither card opens a sidebar.
 
 Capabilities: `commands`, `terminal`, `store`, `events` (the request hop),
-`exec` (`pwd` and `awk` for excerpts) and `services` (imports `omd.lsp`
-1.0.0).
+`exec` (`awk` for excerpts), `services` (imports `omd.lsp` 1.0.0) and
+`inventory` (the repository root for `/lsp editor`).
 
 Ported from [neoism](https://github.com/parkers0405/neoism)'s editor code
 intelligence (Parker Settle and the Neoism contributors, MIT; see

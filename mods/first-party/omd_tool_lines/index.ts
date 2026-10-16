@@ -2,14 +2,8 @@ import type { Json, ModAPI, RenderEvent, RenderExecCall, RenderParsedCommand, Re
 
 type Row = { name: string; args: string; marker: (string | null)[]; failed: boolean; running: boolean };
 
-const bytes = (text: string) => {
-  let total = 0;
-  for (const char of text) {
-    const point = char.codePointAt(0)!;
-    total += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
-  }
-  return total;
-};
+const utf8 = new TextEncoder();
+const bytes = (text: string) => utf8.encode(text).length;
 
 const WIDE = /[ᄀ-ᅟ\u17A4⺀-꓏ꥠ-꥿가-퟿豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3ffff}]|\p{Extended_Pictographic}|\p{Emoji_Presentation}/u;
 const ZERO = /[\u1160-\u11ff\uD7B0-\uD7FF\p{Grapheme_Extend}\p{Default_Ignorable_Code_Point}]/u;
@@ -19,7 +13,6 @@ const segments = new Intl.Segmenter();
 const widthOf = (text: string) => [...segments.segment(text)].reduce((sum, { segment }) => sum + (EMOJI.test(segment) ? 2
   : [...segment.replace(/([‘’“”])\uFE01/gu, '$1$1')].reduce((width, char) => width + (char !== '\u115F' && ZERO.test(char) ? 0 : char === '\u17D8' ? 3 : WIDE.test(char) ? 2 : 1), 0)), 0);
 
-// Keeps `cells` display columns, `chars` characters and `limit` UTF-8 bytes, ending in `…` when cut.
 const fit = (text: string, cells: number, chars = cells, limit = 240) => {
   if (cells < 1 || chars < 1 || limit < 3) return '';
   const flat = text.replace(/\s+/g, ' ').trim();

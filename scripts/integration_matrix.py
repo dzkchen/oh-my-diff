@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Check the maintained integration coverage matrix against the shipped sources and its evidence."""
+"""Check the integration source inventory; optionally require release execution receipts."""
+import argparse
 import json
 import re
 import sys
 from pathlib import Path
 
-try:
-    from scripts import lean_profiles, install_support
-except ModuleNotFoundError:
-    import lean_profiles
-    import install_support
+from scripts import profiles, install_support, execution_evidence
+from scripts.execution_evidence import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
@@ -37,23 +35,23 @@ def sources():
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    packages = {**preview["packages"], **json.loads((ROOT / "runtime/full-mods.lock.json").read_text())["packages"]}
     plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
+    mods = install_support.mods_lock()
+    packages = mods["packages"]
     view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
     site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
-        "preview": preview,
+        "mods": mods,
         "plugin": plugin,
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
-        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[(.*?)\]\.contains\(&name\)', site_validation).group(1)),
+        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[([^\]]*)\]\s*\.contains\(&name\)', site_validation).group(1)),
         "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
                     for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
                                       ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),
@@ -61,12 +59,12 @@ def sources():
         "terminal_operations": [name for name in re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))
                                 if name.startswith(("terminal.", "composer.", "builtins."))],
         "first_party_packages": {name: {key: packages[name][key] for key in ("version", "source")}
-                                 for name in lean_profiles.PACKAGES},
-        "profiles": {name: {"label": label, "first_party_installed": list(lean_profiles.profile_packages(name)),
-                            "first_party_default_active": sorted(set(lean_profiles.profile_packages(name))
-                                                                 & set(lean_profiles.DEFAULT_ACTIVE)),
+                                 for name in profiles.PACKAGES},
+        "profiles": {name: {"label": label, "first_party_installed": list(profiles.profile_packages(name)),
+                            "first_party_default_active": sorted(set(profiles.profile_packages(name))
+                                                                 & set(profiles.DEFAULT_ACTIVE)),
                             "plugin_sources": plugins if name == "full" else []}
-                     for name, label in lean_profiles.PROFILE_LABELS.items()},
+                     for name, label in profiles.PROFILE_LABELS.items()},
         "apis": [
             api if row == "MOD_API_VERSION" else row.strip('"')
             for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
@@ -76,22 +74,9 @@ def sources():
     }
 
 
-def resolve(reference):
-    kind, _, name = reference.partition(":")
-    if kind == "rust":
-        path, _, function = name.partition("::")
-        source = ROOT / "runtime" / path
-        return source.exists() and re.search(rf"fn {re.escape(function)}\(", source.read_text()) is not None
-    if kind == "patch":
-        patch = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
-        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", patch.read_text(), re.M) is not None
-    if kind == "node":
-        return f"test('{name}'" in (ROOT / "mods/runner.test.mjs").read_text()
-    if kind == "python":
-        return any(f"def {name}(" in path.read_text() for path in (ROOT / "tests").glob("test_*.py"))
-    if kind == "script":
-        return (ROOT / name).exists()
-    return False
+def release_evidence(matrix):
+    return {reference for entry in matrix["combinations"] + matrix["regression"]
+            for reference in entry["evidence"]}
 
 
 def check(matrix):
@@ -108,7 +93,7 @@ def check(matrix):
         "upstream_tag": source["upstream"]["tag"],
         "upstream_commit": source["upstream"]["commit"],
         "target": source["upstream"]["verified_target"],
-        "node": source["preview"]["node"],
+        "node": source["mods"]["node"],
     }
     for key, value in expected.items():
         if release.get(key) != value:
@@ -153,10 +138,11 @@ def check(matrix):
         component = plugin_id.replace("-", "_")
         claim(component, "version", plugin["version"])
         claim(component, "extension_type", plugin["extension_types"])
-    for name, package in source["preview"]["packages"].items():
-        claim(name, "version", package["version"])
-        claim(name, "extension_type", package["extension_type"])
-        claim(name, "capabilities", sorted(package["capabilities"]))
+    for name, package in source["mods"]["packages"].items():
+        if name in components:
+            claim(name, "version", package["version"])
+            claim(name, "extension_type", package["extension_type"])
+            claim(name, "capabilities", sorted(package["capabilities"]))
         if not set(package["capabilities"]) <= source["capabilities"]:
             problems.append(f"{name}: capabilities outside the published API")
     for language, servers in source["languages"].items():
@@ -200,7 +186,7 @@ def check(matrix):
         if not entry.get("retained_for") or not entry.get("evidence"):
             problems.append(f"regression case {entry['id']}: missing retained versions or evidence")
         for version in entry.get("retained_for", []):
-            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["preview"]["node"]]
+            known = source["apis"] + [source["compatibility"]["host"]["codex"], source["compatibility"]["host"]["omd"], source["mods"]["node"]]
             if version not in known:
                 problems.append(f"regression case {entry['id']}: {version} is not a supported version row")
 
@@ -209,7 +195,7 @@ def check(matrix):
             if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
 
-    problems += launch_problems(matrix.get("launch_cut"), source)
+    problems += launch_problems(matrix.get("launch"), source)
 
     untested = set()
     for entry in matrix["untested"]:
@@ -224,49 +210,37 @@ def check(matrix):
 
 
 LAUNCH_TIERS = ("default-active", "opt-in", "staged")
-DISPOSITIONS = ("launch", "wave_1", "wave_2")
 
 
-def launch_problems(cut, source):
-    if not cut:
-        return ["launch_cut is missing"]
+def launch_problems(entries, source):
+    if not entries:
+        return ["launch is missing"]
     problems = []
     seen = set()
     launched = {"mod": set(), "plugin": set()}
     active = set()
-    for entry in cut.get("entries", []):
+    for entry in entries:
         name = entry.get("id")
         if not entry.get("path"):
-            problems.append(f"launch_cut {name}: missing path")
+            problems.append(f"launch {name}: missing path")
             continue
         if name in seen:
-            problems.append(f"launch_cut: duplicate entry {name}")
+            problems.append(f"launch: duplicate entry {name}")
         seen.add(name)
-        disposition = entry.get("disposition")
-        if disposition not in DISPOSITIONS:
-            problems.append(f"launch_cut {name}: unknown disposition {disposition!r}")
-        elif disposition == "launch":
-            if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(lean_profiles.PROFILE_LABELS) or not entry.get("profiles"):
-                problems.append(f"launch_cut {name}: needs a launch tier and profiles")
-            if not (ROOT / entry["path"]).exists():
-                problems.append(f"launch_cut {name}: launch path {entry['path']} is missing")
-            if entry.get("kind") in launched:
-                launched[entry["kind"]].add(name)
-            if entry.get("tier") == "default-active":
-                active.add(name)
-        elif (ROOT / entry["path"]).exists():
-            problems.append(f"launch_cut {name}: deferred path {entry['path']} still exists")
-    for path in cut.get("not_restored", []):
-        if (ROOT / path).exists():
-            problems.append(f"launch_cut: {path} should stay deleted")
-    if not cut.get("tag") or "<path>" not in cut.get("restore", ""):
-        problems.append("launch_cut: needs the restore tag and a restore command")
-    if launched["mod"] != set(lean_profiles.PACKAGES):
-        problems.append("launch_cut mods differ from the selected package source inventory")
-    if active != set(lean_profiles.DEFAULT_ACTIVE):
-        problems.append("launch_cut default-active mods differ from the fresh-install default selection")
+        if entry.get("tier") not in LAUNCH_TIERS or not set(entry.get("profiles", [])) <= set(profiles.PROFILE_LABELS) or not entry.get("profiles"):
+            problems.append(f"launch {name}: needs a launch tier and profiles")
+        if not (ROOT / entry["path"]).exists():
+            problems.append(f"launch {name}: path {entry['path']} is missing")
+        if entry.get("kind") in launched:
+            launched[entry["kind"]].add(name)
+        if entry.get("tier") == "default-active":
+            active.add(name)
+    if launched["mod"] != set(profiles.PACKAGES):
+        problems.append("launch mods differ from the selected package source inventory")
+    if active != set(profiles.DEFAULT_ACTIVE):
+        problems.append("launch default-active mods differ from the fresh-install default selection")
     if launched["plugin"] != set(source["plugin"]["plugins"]):
-        problems.append("launch_cut plugins differ from the plugin lock")
+        problems.append("launch plugins differ from the plugin lock")
     return problems
 
 
@@ -301,12 +275,15 @@ def render(matrix):
     out = [
         "# Integration coverage",
         "",
-        "<!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->",
+        "<!-- Generated from integration/matrix.json by python3 -m scripts.integration_matrix --write. -->",
         "",
         f"Accumulated integration coverage for the {release['upstream_tag']} pinned runtime as of",
         f"{matrix['as_of']}. Each component names its owner, version, retained fixtures, limits,",
         "and removal path. Fixture references are cumulative; this source check does not rerun",
-        "them or qualify the full release candidate. The matrix is checked against the",
+        "them or verify test discovery, execution, assertions, or the full release candidate.",
+        "Release qualification requires `--release --executed-evidence RECEIPT` for all",
+        "combination and regression evidence at the clean validated revision; see `integration/EVIDENCE.md`.",
+        "The matrix is checked against the",
         "shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language",
         "or evidence reference that disagrees with the runtime fails the check.",
         "",
@@ -335,25 +312,11 @@ def render(matrix):
         table([(f"`{name}`", package["version"], f"`{package['source']}`")
                for name, package in matrix["first_party_packages"].items()], ["Selected mod", "Version", "Source"]), "",
     ]
-    cut = matrix["launch_cut"]
-    stage = {"launch": 2, "wave_1": 3, "wave_2": 4}
-    rows = []
-    for entry in cut["entries"]:
-        row = [f"`{entry['id']}`", entry["kind"], "—", "—", "—", f"`{entry['path']}`"]
-        if entry["disposition"] == "launch":
-            where = " + ".join(lean_profiles.PROFILE_LABELS[profile] for profile in entry["profiles"])
-            row[2] = f"{entry['tier']} ({where})"
-        else:
-            row[stage[entry["disposition"]]] = "restore"
-        rows.append(tuple(row))
     out += [
-        "## Launch cut inventory", "",
-        f"Deferred packages are preserved at the `{cut['tag']}` tag unless a different revision is noted below;",
-        f"they are not shipped, selected or tested here. Restore a tagged path with `{cut['restore']}`.",
-        "Launch entries exist on disk; wave entries are deleted until their wave restores them.",
-        *[f"{note}" for note in cut["notes"]],
-        f"Deleted and not restored: {', '.join(f'`{path}/`' for path in cut['not_restored'])}.", "",
-        table(rows, ["Package", "Kind", "Launch", "Wave 1", "Wave 2", "Path"]), "",
+        "## Launch collection", "",
+        table([(f"`{entry['id']}`", entry["kind"], entry["tier"],
+                " + ".join(profiles.PROFILE_LABELS[profile] for profile in entry["profiles"]), f"`{entry['path']}`")
+               for entry in matrix["launch"]], ["Package", "Kind", "Tier", "Profiles", "Path"]), "",
     ]
     for area, title in AREAS.items():
         rows = [
@@ -383,7 +346,7 @@ def render(matrix):
             ["Boundary", "What it covers", "Shared resource or event"],
         ),
         "",
-        "## Exercised combinations",
+        "## Combination evidence inventory",
         "",
         table(
             [
@@ -396,7 +359,7 @@ def render(matrix):
                 )
                 for entry in matrix["combinations"]
             ],
-            ["Combination", "Components", "Boundaries", "Result", "Executable evidence"],
+            ["Combination", "Components", "Boundaries", "Recorded result (not verified here)", "Source evidence inventory"],
         ),
         "",
         "## Retained regression cases",
@@ -411,12 +374,12 @@ def render(matrix):
                 )
                 for entry in matrix["regression"]
             ],
-            ["Case", "Retained for", "What stays covered", "Executable evidence"],
+            ["Case", "Retained for", "Claimed behavior", "Source evidence inventory"],
         ),
         "",
-        "## Tested versus untested",
+        "## Inventoried versus untested",
         "",
-        f"Tested: {len(matrix['combinations'])} combinations across {len(matrix['boundaries'])} shared boundaries and "
+        f"Inventoried: {len(matrix['combinations'])} combinations across {len(matrix['boundaries'])} shared boundaries and "
         f"{len(matrix['components'])} maintained components, plus {len(matrix['regression'])} regression cases "
         "retained across versions.",
         "",
@@ -436,26 +399,28 @@ def render(matrix):
     return "\n".join(out)
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true")
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    args = parser.parse_args(argv)
     matrix = json.loads(MATRIX.read_text())
     problems = check(matrix)
+    if args.release or args.executed_evidence:
+        problems += execution_evidence.verify(release_evidence(matrix), args.executed_evidence)
     if problems:
         raise SystemExit("\n".join(problems))
-    rendered = render(matrix)
-    if "--write" in sys.argv[1:]:
-        DOCUMENT.write_text(rendered)
-        print(f"wrote {DOCUMENT.relative_to(ROOT)}")
-    elif DOCUMENT.read_text() != rendered:
-        problems.append("INTEGRATION.md is stale; rerun scripts/integration_matrix.py --write")
-    if problems:
-        raise SystemExit("\n".join(problems))
+    install_support.check_or_write(DOCUMENT, render(matrix), args.write,
+                                   "INTEGRATION.md is stale; rerun python3 -m scripts.integration_matrix --write")
     print(
         f"integration matrix {matrix['as_of']}: {len(matrix['components'])} maintained components, "
-        f"{len(matrix['combinations'])} exercised combinations over {len(matrix['boundaries'])} shared "
+        f"{len(matrix['combinations'])} inventoried combinations over {len(matrix['boundaries'])} shared "
         f"boundaries, {len(matrix['regression'])} retained regression cases, "
-        f"{len(matrix['untested'])} recorded untested combinations"
+        f"{len(matrix['untested'])} recorded untested combinations; "
+        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

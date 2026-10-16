@@ -1,23 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const surface = { events: { start: 'lifecycle', resume: 'lifecycle', terminal: 'terminal', component_event: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const settings = { checks: 'on', auto: 'off', channel: 'stable', cadence: 'daily', pin: '' };
 const DAY = 86_400_000;
 
 function run(input, host) {
-  const receipts = [];
-  for (;;) {
-    const request = { source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'exec', 'lifecycle', 'store', 'terminal'],
-      settings, state: null, surface, hook_budget_ms: 2000, receipts, virtual_time_ms: 1_000_000, ...input };
-    const output = JSON.parse(runnerSync(request).stdout);
-    if (output.error) throw new Error(output.error);
-    if (!output.host_call) return output;
-    receipts.push({ call: output.host_call, value: host(output.host_call) });
-  }
+  const output = callback({ source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'exec', 'lifecycle', 'store', 'terminal'],
+    settings, state: null, hook_budget_ms: 2000, virtual_time_ms: 1_000_000, ...input }, host);
+  if (output.error) throw new Error(output.error);
+  return output;
 }
 
 const release = { version: '0.2.0', prerelease: false, notes: 'Faster startup.\nNew /update screen.', page: 'https://github.com/dzkchen/oh-my-diff/releases/tag/v0.2.0',
@@ -34,7 +28,7 @@ function session(info, state, calls = [], time = 1_000_000, event = 'start') {
   return run({ event, payload: null, state, virtual_time_ms: time }, host).state;
 }
 const show = (state, surface = 'fullscreen') => {
-  const output = run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'fresh', surface } } }, () => { throw new Error('no host'); });
+  const output = run({ event: 'terminal', state, payload: { event: 'startup', ledger: null, presentation: { thread_id: null, phase: 'fresh', surface } } }, () => assert.fail('no host'));
   return [output.value?.sites?.welcome?.components.slice(1).map(component => component.text) ?? [], output.state ?? state];
 };
 const welcome = state => show(state)[0];
@@ -51,7 +45,7 @@ test('a fresh session announces a newer release once a day until it is snoozed o
   state = session(info, state, [], 1_000_000 + DAY + 1);
   assert.equal(welcome(state).length, 1);
 
-  const command = (payload, current, host = () => { throw new Error('no host'); }) => run({ event: 'command', name: 'update', payload, state: current }, host).state;
+  const command = (payload, current, host = () => assert.fail('no host')) => run({ event: 'command', name: 'update', payload, state: current }, host).state;
   state = command('later', state);
   assert.equal(state.snoozed.version, '0.2.0');
   assert.deepEqual(welcome(session(info, state, [], 1_000_000 + 3 * DAY)), []);

@@ -2,8 +2,7 @@ use super::*;
 use codex_extension_api::PersistedTextInput;
 use codex_extension_api::PersistedTextRewrite;
 
-/// Runs `history_persist` interceptors off the async runtime; when the persist runtime itself
-/// fails, a required interceptor withholds every entry.
+/// Runs `history_persist` interceptors off the async runtime; a required one withholds every entry if the persist runtime fails.
 pub(super) async fn rewrite(
     runtime: Arc<Mutex<ModHost>>,
     required: Arc<Mutex<Vec<&'static str>>>,
@@ -18,8 +17,10 @@ pub(super) async fn rewrite(
         })
         .collect::<Vec<_>>();
     let count = entries.len();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancellation = Cancellation(cancelled.clone());
     let rewritten =
-        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries))
+        tokio::task::spawn_blocking(move || codex_omd::persist_texts(&runtime, &thread, &entries, || !cancelled.load(Ordering::Acquire)))
             .await;
     match rewritten {
         Ok(Ok(rewrite)) => rewrite.map(|rewrite| PersistedTextRewrite {

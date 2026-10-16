@@ -17,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::io::Write;
 use std::io::{self};
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Component;
@@ -363,13 +364,7 @@ impl WorkspaceTransaction {
                 {
                     return Err(invalid("workspace changed before rename"));
                 }
-                renameat_with(
-                    &old_parent,
-                    &old_name,
-                    &new_parent,
-                    &new_name,
-                    RenameFlags::NOREPLACE,
-                )?;
+                rename_exclusive(&old_parent, &old_name, &new_parent, &new_name)?;
                 applied.insert(rename.old.clone(), None);
                 applied.insert(rename.new.clone(), expected_old);
             }
@@ -624,6 +619,27 @@ pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     safe_path(root, name)
 }
 
+pub(crate) fn private_path(
+    root: &Path,
+    components: &[&str],
+    invalid: &'static str,
+) -> io::Result<PathBuf> {
+    let mut path = root.to_path_buf();
+    for component in components {
+        path.push(component);
+        match fs::DirBuilder::new().mode(0o700).create(&path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error),
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(io::Error::other(invalid));
+        }
+    }
+    Ok(path)
+}
+
 pub(crate) fn open_contained(root: &Path, name: &str) -> io::Result<fs::File> {
     open_source(&open_directory(&root.canonicalize()?)?, name)
 }
@@ -637,6 +653,21 @@ fn open_directory(path: &Path) -> io::Result<fs::File> {
         }
     }
     Ok(directory)
+}
+
+/// Renames onto an absent target; where the filesystem has no exclusive rename, the caller's absence check stands in.
+pub(crate) fn rename_exclusive<D: std::os::fd::AsFd + Copy, P: rustix::path::Arg + Copy>(
+    old_dir: D,
+    old: P,
+    new_dir: D,
+    new: P,
+) -> io::Result<()> {
+    match renameat_with(old_dir, old, new_dir, new, RenameFlags::NOREPLACE) {
+        Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOTSUP | rustix::io::Errno::NOSYS) => {
+            Ok(rustix::fs::renameat(old_dir, old, new_dir, new)?)
+        }
+        result => Ok(result?),
+    }
 }
 
 fn open_parent(root: &Path, name: &str) -> io::Result<(fs::File, std::ffi::OsString)> {
@@ -709,7 +740,6 @@ impl Snapshot {
             if !metadata.is_file() {
                 return Err(invalid("snapshot requires regular files"));
             }
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
                 if metadata.nlink() != 1 {
@@ -731,13 +761,10 @@ impl Snapshot {
             if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
                 return Err(invalid("source changed during snapshot"));
             }
-            #[cfg(unix)]
             let executable = {
                 use std::os::unix::fs::PermissionsExt;
                 metadata.permissions().mode() & 0o111 != 0
             };
-            #[cfg(not(unix))]
-            let executable = false;
             files.insert(name.clone(), File { bytes, executable });
             observed.insert(name.clone(), Some(metadata));
         }
@@ -832,7 +859,6 @@ impl Snapshot {
             let mut output = parent;
             output.write_all(&file.bytes)?;
             output.sync_all()?;
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 output.set_permissions(fs::Permissions::from_mode(if file.executable {
@@ -956,7 +982,7 @@ pub fn create_worktree(
     let worker = directory.join("worker");
     for arguments in [
         vec!["init", "--quiet"],
-        vec!["add", "--all"],
+        vec!["add", "--all", "--force"],
         vec![
             "-c",
             "user.name=Oh My Diff",

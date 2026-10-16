@@ -39,7 +39,7 @@ class HostedNightlyTests(unittest.TestCase):
                 "if args.command == 'install':\n    prefix.mkdir()\n    (prefix / 'installer').write_text(__file__)\n"
                 "else:\n    (prefix / 'installer').unlink()\n    prefix.rmdir()\n"
             ).encode()
-            files = {"scripts/lean_package.py": script, "scripts/lean_profiles.py": script}
+            files = {"scripts/package.py": script, "scripts/profiles.py": script}
             manifest = {"schema": 1, "files": {name: {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
                                                for name, data in files.items()}}
             files["package-manifest.json"] = json.dumps(manifest).encode()
@@ -53,7 +53,7 @@ class HostedNightlyTests(unittest.TestCase):
 
             def child(argv, **kwargs):
                 payload = Path(kwargs["cwd"])
-                self.assertEqual((payload / "scripts/lean_package.py").read_bytes(), script)
+                self.assertEqual((payload / "scripts/package.py").read_bytes(), script)
                 if "install" in argv:
                     self.assertTrue(Path(argv[argv.index("--archive") + 1]).is_absolute())
                     self.assertTrue(Path(argv[argv.index("--upstream") + 1]).is_absolute())
@@ -64,7 +64,7 @@ class HostedNightlyTests(unittest.TestCase):
                         self.assertTrue(Path(argv[argv.index("--previous") + 1]).exists())
                         self.assertIn("--attach-store", argv)
                     run(argv, **kwargs)
-                    self.assertEqual((prefix / "installer").read_text(), str(payload / "scripts/lean_package.py"))
+                    self.assertEqual((prefix / "installer").read_text(), str(payload / "scripts/package.py"))
                     installed.append(prefix)
                 else:
                     self.assertTrue(prefix.exists())

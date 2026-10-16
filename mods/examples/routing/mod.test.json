@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "settings": {
+    "routing": {
+      "route": "sol"
+    }
+  },
+  "steps": [
+    {
+      "type": "event",
+      "event": "routing",
+      "payload": {
+        "routes": [
+          {
+            "name": "sol",
+            "model": "m1",
+            "provider": "p",
+            "available": true,
+            "billing": "included_subscription"
+          },
+          {
+            "name": "astra",
+            "model": "m2",
+            "provider": "p",
+            "available": true,
+            "billing": "included_subscription"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "mod": "routing",
+          "value": {
+            "route": "sol"
+          }
+        }
+      ]
+    }
+  ]
+}

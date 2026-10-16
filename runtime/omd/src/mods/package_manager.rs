@@ -38,7 +38,6 @@ pub enum ModPackageSource {
     },
 }
 
-/// The registry and token settings npm and pnpm read from the user's `.npmrc`.
 #[derive(Default)]
 struct NpmConfig {
     registry: Option<String>,
@@ -58,16 +57,7 @@ impl NpmConfig {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default();
         let expand = |value: &str| {
-            let mut expanded = value.trim().trim_matches('"').to_owned();
-            while let Some(start) = expanded.find("${") {
-                let Some(length) = expanded[start..].find('}') else {
-                    break;
-                };
-                let name = expanded[start + 2..start + length].to_owned();
-                let replacement = std::env::var(&name).unwrap_or_default();
-                expanded.replace_range(start..=start + length, &replacement);
-            }
-            expanded
+            interpolate(value.trim().trim_matches('"'), |name| std::env::var(name).ok())
         };
         let mut config = Self::default();
         for line in text.lines().map(str::trim) {
@@ -118,8 +108,20 @@ impl NpmConfig {
     }
 }
 
+fn interpolate(value: &str, resolve: impl Fn(&str) -> Option<String>) -> String {
+    let (mut expanded, mut rest) = (String::new(), value);
+    while let Some(start) = rest.find("${") {
+        let Some(length) = rest[start..].find('}') else {
+            break;
+        };
+        expanded.push_str(&rest[..start]);
+        expanded.push_str(&resolve(&rest[start + 2..start + length]).unwrap_or_default());
+        rest = &rest[start + length + 1..];
+    }
+    expanded + rest
+}
+
 impl ModPackageSource {
-    /// Parses `npm:NAME[@VERSION]`, `git+URL[#REF[:SUBDIRECTORY]]`, an absolute folder, or `ID[@VERSION]` from `index`.
     pub fn parse(reference: &str, index: Option<PathBuf>) -> Result<Self> {
         let reference = reference.trim();
         let versioned = |value: &str| match value.get(1..).and_then(|rest| rest.rfind('@')) {
@@ -167,7 +169,6 @@ impl ModPackageSource {
         })
     }
 
-    /// Replaces the requested version of a package or npm source.
     pub fn with_version(self, requested: &str) -> Result<Self> {
         match self {
             Self::Package { index, id, .. } => Ok(Self::Package {
@@ -404,13 +405,11 @@ impl ModStore {
         }
     }
 
-    /// The curated index the installer places in the store, if any.
     pub fn package_index(&self) -> Option<PathBuf> {
         let path = self.root.join("package-index.json");
         path.is_file().then_some(path)
     }
 
-    /// Lists index packages whose id or description contains `query`, newest unblocked release first.
     pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
         let lock = self.package_lock()?;
         let query = query.trim().to_lowercase();
@@ -500,6 +499,7 @@ impl ModStore {
         };
         let mut resolved = BTreeMap::new();
         let mut visiting = Vec::new();
+        let mut handlers = BTreeSet::new();
         let cached = deployment.map(|entry| {
             self.root
                 .join("package-cache")
@@ -578,13 +578,21 @@ impl ModStore {
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
-                let state_migration_required = previous.is_some_and(|locked| {
-                    locked.state_version != resolved.package.state_version
-                        && self
-                            .root
-                            .join(ModStore::state_name(&resolved.package.id, &request.scope))
-                            .exists()
-                });
+                let state_version_changed = previous
+                    .is_some_and(|locked| locked.state_version != resolved.package.state_version);
+                let state_migration_required = state_version_changed
+                    && self
+                        .root
+                        .join(ModStore::state_name(&resolved.package.id, &request.scope))
+                        .exists();
+                // An adapter-wrapped package cannot be inspected outside the host.
+                if state_version_changed
+                    && matches!(resolved.package.state_scope.as_str(), "thread" | "checkout")
+                    && resolved.package.adapter.is_none()
+                    && resolved.package.capabilities.iter().any(|c| c == "store")
+                {
+                    handlers.insert(resolved.package.id.clone());
+                }
                 resolved.locked.enabled = previous.is_some_and(|locked| {
                     locked.enabled && same_approval(locked, &resolved.locked)
                 }) && !state_migration_required;
@@ -604,7 +612,7 @@ impl ModStore {
                 "package_plan_action_mismatch: {requested} requested, {action} computed"
             )));
         }
-        let changes = package_changes(&existing, &packages);
+        let changes = package_changes(&existing, &packages, &handlers);
         let mut plan = ModPackagePlan {
             schema: PACKAGE_LOCK_SCHEMA,
             action: action.to_owned(),
@@ -641,12 +649,14 @@ impl ModStore {
         confirmation: &str,
     ) -> Result<ModPackageLock> {
         let online = !request.offline;
+        let scope = request.scope.clone();
         let plan = self.package_plan_locked(request, false, None)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
+        require_migration_handlers(&plan, &scope, &config.node)?;
         let mut selection_ids = config
             .mods
             .iter()
@@ -1139,7 +1149,6 @@ impl ModStore {
         self.commit_package_transaction(lock, config, &[], "rollback", event, &[])
     }
 
-    /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
     pub(super) fn commit_package_transaction(
         &self,
         lock: ModPackageLock,
@@ -1217,8 +1226,7 @@ impl ModStore {
         std::fs::File::open(&self.root)?.sync_all()
     }
 
-    /// Installs every package administrator policy assigns to this account and records a new
-    /// deployment generation only when all of them verify; otherwise the active generation stays.
+    /// Installs every package administrator policy assigns to this account and records a new deployment generation only when all verify; otherwise the active generation stays.
     pub fn package_sync(&self, offline: bool) -> Result<Value> {
         let managed = self
             .managed()?
@@ -1267,7 +1275,6 @@ impl ModStore {
         self.deploy_generation(current, managed.sha256, deployed)
     }
 
-    /// Makes the previous deployment generation active again; policy still decides what loads.
     pub fn package_sync_rollback(&self) -> Result<Value> {
         let _guard = self.lock()?;
         let current = self.managed_deployment()?;
@@ -1306,8 +1313,6 @@ impl ModStore {
         Ok(json!({"generation": next.generation, "changed": true, "packages": next.packages}))
     }
 
-    /// The pinned content from the cache, else from the source or the first mirror that verifies,
-    /// with its dependencies, which only the resolver finds.
     fn deploy(
         &self,
         entry: &policy::ManagedPackage,
@@ -1594,10 +1599,16 @@ impl ModStore {
             state_version: package.state_version,
             dependencies: package.dependencies.clone(),
             capabilities: package.capabilities.clone(),
-            authority: json!({"exposure":authority_exposure(&package.capabilities),
-                "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
-                "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
-                "peer_access":package.peer_access,"autonomy":package.autonomy}),
+            authority: {
+                let mut authority = json!({"exposure":authority_exposure(&package.capabilities),
+                    "os_access":package.os_access,"approves":package.approves,"http_access":package.http_access,
+                    "fs_access":package.fs_access,"mcp_servers":package.mcp_servers,"policy":package.policy,
+                    "peer_access":package.peer_access,"autonomy":package.autonomy});
+                if !package.codex_config.is_empty() {
+                    authority["codex_config"] = json!(package.codex_config);
+                }
+                authority
+            },
             exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: digest(
                 &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
@@ -1739,9 +1750,10 @@ impl ModStore {
                     } else {
                         format!("{subdirectory}/")
                     };
-                    let manifest = git_bytes(
+                    let manifest = git_blob(
                         &repository_path,
-                        &["show", &format!("{revision}:{prefix}mod.json")],
+                        &format!("{revision}:{prefix}mod.json"),
+                        8192,
                     )?;
                     std::fs::write(staging.join("mod.json"), &manifest)?;
                     let package: ModPackage = serde_json::from_slice(&manifest)?;
@@ -1750,9 +1762,10 @@ impl ModStore {
                         .chain(package.lifecycle.values())
                         .chain(package.assets.iter())
                     {
-                        let bytes = git_bytes(
+                        let bytes = git_blob(
                             &repository_path,
-                            &["show", &format!("{revision}:{prefix}{path}")],
+                            &format!("{revision}:{prefix}{path}"),
+                            store::PACKAGE_FILE_LIMIT as usize,
                         )?;
                         let target = staging.join(path);
                         if let Some(parent) = target.parent() {
@@ -2165,9 +2178,14 @@ fn repository_view(
     std::os::unix::fs::symlink(cached.join("objects"), view.path().join("objects"))?;
     if !offline {
         let fetched = fresh()?;
+        // A stalled transfer under the store lock gives up after 30 s below 1 byte/s.
         git(
             fetched.path(),
             &[
+                "-c",
+                "http.lowSpeedLimit=1",
+                "-c",
+                "http.lowSpeedTime=30",
                 "fetch",
                 "--force",
                 "--no-tags",
@@ -2196,17 +2214,32 @@ fn git(repository: &Path, arguments: &[&str]) -> Result<String> {
     String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
 }
 
-fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+fn git_command(repository: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("--no-replace-objects")
         .arg("-C")
         .arg(repository)
-        .args(arguments)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()?;
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
+    command
+}
+
+fn git_blob(repository: &Path, object: &str, limit: usize) -> Result<Vec<u8>> {
+    bounded_output(
+        git_command(repository).args(["show", object]),
+        None,
+        limit,
+        "repository_read_failed",
+    )
+}
+
+fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
+    let output = git_command(repository).args(arguments).output()?;
     if !output.status.success() {
         return Err(failure(format!(
             "repository_read_failed: {}",
@@ -2383,7 +2416,6 @@ fn npm_integrity(bytes: &[u8]) -> String {
     )
 }
 
-/// Runs `command` with `input` on stdin and returns at most `limit` bytes of its standard output.
 fn bounded_output(
     command: &mut Command,
     input: Option<String>,
@@ -2399,19 +2431,22 @@ fn bounded_output(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        std::io::Write::write_all(&mut stdin, input.as_bytes())?;
-    }
     let mut bytes = Vec::new();
-    child
-        .stdout
-        .take()
-        .ok_or_else(|| failure(code))?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > limit {
+    let read = (|| {
+        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            std::io::Write::write_all(&mut stdin, input.as_bytes())?;
+        }
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| failure(code))?
+            .take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+    })();
+    if read.is_err() || bytes.len() > limit {
         let _ = child.kill();
         let _ = child.wait();
+        read?;
         return Err(failure(format!("{code}: larger than {limit} bytes")));
     }
     let output = child.wait_with_output()?;
@@ -2481,7 +2516,6 @@ fn npm_fetch(url: &str, limit: usize, accept: &str, token: Option<&str>) -> Resu
     )
 }
 
-/// Reads the regular files of an npm tarball, stripping its top-level directory.
 fn npm_archive_files(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     let tar = bounded_output(
         Command::new("/usr/bin/gzip")
@@ -2643,7 +2677,11 @@ fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Resul
     }
 }
 
-fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> Value {
+fn package_changes(
+    existing: &ModPackageLock,
+    packages: &[ModLockedPackage],
+    handlers: &BTreeSet<String>,
+) -> Value {
     let mut changes = Vec::new();
     for package in packages {
         let previous = existing.packages.get(&package.id);
@@ -2657,7 +2695,8 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
             "entrypoint":{"from":previous.map(|value|&value.entrypoint),"to":package.entrypoint},
             "api":{"from":previous.map(|value|&value.api),"to":package.api},
             "state_version":{"from":previous.map(|value|value.state_version),"to":package.state_version,
-                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled},
+                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled,
+                "handler_required":handlers.contains(&package.id)},
             "dependencies":{"from":previous.map(|value|&value.dependencies),"to":package.dependencies},
             "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
             "authority":{"from":previous.map(|value|&value.authority),"to":package.authority},
@@ -2703,9 +2742,64 @@ fn selected_settings(
         )
 }
 
+fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
+    let changes = plan.changes["packages"].as_array().map_or(&[][..], Vec::as_slice);
+    for (locked, change) in plan.packages.iter().zip(changes) {
+        if change["state_version"]["handler_required"] != true {
+            continue;
+        }
+        let (package, source, _, assets) = store::package_with_assets(&locked.path)?;
+        let state_scope = package.state_scope.clone();
+        let selection = ModSelection {
+            path: locked.path.clone(),
+            sha256: locked.integrity.clone(),
+            enabled: false,
+            capabilities: package.capabilities.clone(),
+            settings: locked.settings.clone(),
+            scope: scope.to_owned(),
+            secret_environment: Vec::new(),
+            expires_at: None,
+            tier: None,
+        };
+        let loaded = packages::detached(package, source, assets, selection, Value::Null);
+        packages::migration_registrations(node, &loaded).map_err(|error| {
+            if error.to_string() != "explicit_migration_handler_required" {
+                return error;
+            }
+            failure(format!(
+                "migration_handler_required: {} changes its {state_scope} state_version without a migrate handler",
+                locked.id
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod repository_tests {
     use super::*;
+
+    #[test]
+    fn npmrc_interpolation_expands_only_original_references_once() {
+        let environment = BTreeMap::from([
+            ("LITERAL", "${TOKEN}"),
+            ("TOKEN", "secret"),
+            ("SELF", "${SELF}"),
+            ("A", "${B}"),
+            ("B", "${A}"),
+        ]);
+        let resolve = |name: &str| environment.get(name).map(|value| value.to_string());
+        for (value, expected) in [
+            ("${LITERAL}", "${TOKEN}"),
+            ("${TOKEN}-${LITERAL}", "secret-${TOKEN}"),
+            ("${MISSING}x${TOKEN}", "xsecret"),
+            ("${SELF}", "${SELF}"),
+            ("${A}:${B}", "${B}:${A}"),
+            ("a${TOKEN}${unclosed", "asecret${unclosed"),
+        ] {
+            assert_eq!(interpolate(value, resolve), expected, "{value}");
+        }
+    }
 
     #[test]
     fn online_repository_content_does_not_trust_cached_objects_or_origins() {

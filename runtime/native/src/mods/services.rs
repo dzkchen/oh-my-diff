@@ -36,7 +36,6 @@ pub(crate) struct Grant {
 }
 
 impl Grant {
-    /// The rates of this grant's provider-billed route for `provider`, when it declares one.
     pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
         self.route
             .as_ref()

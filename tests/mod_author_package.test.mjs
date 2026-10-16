@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -25,6 +25,20 @@ test('author packaging preserves custom entrypoints, assets and lifecycle script
     for (const path of [manifest.entrypoint, ...manifest.assets, ...Object.values(manifest.lifecycle)]) assert.equal(readFileSync(join(report.package, path), 'utf8'), readFileSync(join(root, path), 'utf8'));
     if (!process.env.OMD_MOD_BIN) assert.ok(readFileSync(join(root, 'inspections'), 'utf8').trim().split('\n').includes(report.package));
     assert.equal(JSON.parse(readFileSync(join(report.package, 'package-report.json'))).sha256, report.sha256);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('author example refuses an unknown or listed-but-missing example cleanly', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-example-'));
+  try {
+    mkdirSync(join(root, 'sdk/author'), { recursive: true });
+    copyFileSync(new URL('../mods/author/cli.mjs', import.meta.url), join(root, 'sdk/author/cli.mjs'));
+    writeFileSync(join(root, 'sdk/package.json'), JSON.stringify({ version: '1', files: ['examples/ghost'] }));
+    for (const name of ['ghost', 'nope']) {
+      const result = spawnSync(process.execPath, [join(root, 'sdk/author/cli.mjs'), 'example', join(root, name), name], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`unknown_example: ${name}`));
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -213,7 +227,7 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     engine('init', store, process.execPath);
     const trust = { packages: { fixture: { capabilities: manifest.capabilities, dependencies: true }, dependency: { capabilities: [] } } };
     install({ source: { kind: 'local', path: project }, scope: 'user', index, trust });
-    // Seed inconsistent dependency scopes directly: installing a second scope now fails before watch runs.
+    // Seed inconsistent dependency scopes directly: installing a second scope fails before watch runs.
     const mixedScopes = engine('package-lock', store);
     mixedScopes.packages.dependency.scope = 'project';
     writeFileSync(join(store, 'packages.lock.json'), JSON.stringify(mixedScopes));
@@ -284,7 +298,7 @@ test('fixture-rendered scaffold, typed tool, UI, guard and policy tier work offl
     mkdirSync(join(project, 'node_modules/@oh-my-diff'));
     symlinkSync(mods, join(project, 'node_modules/@oh-my-diff/mod-api'));
     symlinkSync(join(mods, 'node_modules/typescript'), join(project, 'node_modules/typescript'));
-    symlinkSync(join(mods, 'node_modules/.bin/tsc'), join(project, 'node_modules/.bin/tsc'));
+    symlinkSync(join(mods, 'node_modules/typescript/bin/tsc'), join(project, 'node_modules/.bin/tsc'));
     const manifest = JSON.parse(readFileSync(join(project, 'mod.json'), 'utf8'));
     writeFileSync(join(project, 'mod.json'), JSON.stringify({ ...manifest, capabilities: ['commands', 'interception', 'terminal', 'store', 'exec'], exec_environment: ['MODE'] }));
     const policy = join(root, 'policy');

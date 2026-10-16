@@ -78,31 +78,12 @@
     {
       "type": "terminal_interact",
       "mod": "omd_preview",
-      "component": "omd_preview_open_0"
+      "component": "omd_preview_open_0",
+      "expect": { "action": { "command": "omd_preview:preview", "args": "image 1" }, "result": null }
     },
     {
       "type": "terminal_mount",
       "mod": "omd_preview"
-    },
-    {
-      "type": "intercept",
-      "surface": "render",
-      "payload": {
-        "component": "assistant_message",
-        "id": "fixture",
-        "surface": "fullscreen",
-        "viewport": {
-          "columns": 100,
-          "rows": 40
-        },
-        "lifecycle": "final",
-        "owner": null,
-        "props": {
-          "text": "Flow:\n\n```mermaid\nstateDiagram-v2\n  [*] --> Idle\n  Idle --> Busy : start\n  Busy --> [*]\n```\n",
-          "first": true,
-          "truncated": false
-        }
-      }
     }
   ]
 }

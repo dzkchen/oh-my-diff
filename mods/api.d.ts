@@ -45,7 +45,6 @@ export type FinalRequestPage = {
   segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[]; opaque_total: number;
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
-/** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
 /** `turns_started` counts turns this process started in the thread. */
 export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
@@ -180,17 +179,12 @@ export type TerminalComponent =
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
   | { type: 'native'; style?: TerminalStyle };
 export type TerminalRange = { start: number; end: number };
-export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
+export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'below_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
   | { content: 'transcript' | 'composer' }
   | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle }
   | { split: 'horizontal' | 'vertical'; ratio?: number[]; gap?: number; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
-export type BackdropTransform = { position?: 'center' | 'fill' | 'fit' | 'tile'; dim?: number; scale?: number; tint?: ThemeColor; opacity?: number; offset?: { x: number; y: number } };
-export type AsciiBackdrop = BackdropTransform & { text: string };
-export type TerminalBackdrop =
-  | { ascii: AsciiBackdrop }
-  | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
 export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
 /** An overlay draws a `owner/name` site above the layout at its anchor's top-left plus `offset`; higher `z` draws later. */
 export type TerminalOverlay = {
@@ -223,7 +217,7 @@ export interface TerminalView {
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   placeholder?: string;
-  layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
+  layout?: LayoutNode; surface_styles?: { composer?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
   inline_sites?: 'hidden';
 }
 /** One mod's contribution to the composed view; exclusive fields go to the first mod in composition order. */
@@ -288,7 +282,7 @@ export type ExecResult = { exit_code: number | null; signal: string | null; stdo
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
 export type Fingerprint = string | { size: number; mtime_ms: number } | null;
 export type FileStat = { kind: 'file' | 'dir' | 'symlink'; size: number; mtime_ms: number; sha256?: string };
-export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: string };
+export type StoreProvenance = { mod: string; source_sha256: string; thread_id: string | null; origin: 'user_command' | 'tool' | 'event' | 'cli'; at: number };
 export type StoreScope = 'repository' | 'user' | 'thread';
 
 export type ContractRequirement = { receipt: string; producer?: 'any' | 'lead' | 'separate_agent' | 'host' | 'integration'; bind?: ('candidate' | 'acceptance')[]; blocking_findings?: 'reject' | 'allow' };
@@ -313,7 +307,7 @@ export type CompactionResult = { summary: string | null; history: HistoryItem[];
 export type ComposerEdit = { kind: 'fill' | 'insert' | 'append'; text: string } | { kind: 'splice'; text: string; start: number; end: number };
 export type ComposerDraft = { text: string; cursor: number; selection: { start: number; end: number } | null; revision: number;
   /** `label` is the text placeholder; image resources keep mod/source/repository binding across config changes and forks; unsupported media is null. */
-  attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null }[];
+  attachments: { id: string; kind: 'image'; label: string; owner: string; resource: ResourceRef | null; width?: number; height?: number }[];
   suggestion: { owner: string; id: string } | null };
 export type ClassicHook = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'PermissionRequest' | 'PermissionDenied'
   | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Setup' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop'
@@ -351,6 +345,7 @@ export interface HostOperations {
   'workspace.transaction': { arguments: { expected: Record<string, Fingerprint>; writes?: Record<string, string>; deletes?: string[]; renames?: { old: string; new: string }[]; backup?: boolean; root?: string }; result: { files: Record<string, string | null>; backup: ResourceRef | null } };
   'http.request': { arguments: HttpRequest & { max_bytes?: number }; result: HttpResponse & { truncated: boolean; bytes: number; body?: string; body_base64?: string } };
   'http.open': { arguments: HttpRequest; result: HttpResponse & { handle: number } };
+  /** Dropping an in-flight read closes the stream and releases its quota slot. */
   'http.read': { arguments: { handle: number; max_bytes?: number; wait_ms?: number }; result: { done: boolean; bytes: number; data?: string; data_base64?: string } };
   'http.close': { arguments: { handle: number }; result: { closed: true } };
   'mcp.connect': { arguments: { server: string }; result: { server: string; connected: true; tool_prefix: string } };
@@ -406,9 +401,12 @@ export interface HostOperations {
   'sidecars.status': { arguments: { id: string }; result: Json };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
+  /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
+  'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
+  /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */
   'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
@@ -448,7 +446,8 @@ export interface HostOperations {
   'prompts.status': { arguments: { consent: string }; result: { state: 'pending' | 'missing' } | { state: 'delivered'; client_id: string; turn_id: string } | { state: 'unconfirmed'; client_id: string } };
   'prompts.revoke': { arguments: { consent: string }; result: { revoked: number } };
   'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
-  'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
+  /** `fields` keeps only those keys of each package. */
+  'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.index': { arguments: { index?: string; query?: string }; result: { index: string; packages: PackageCatalogEntry[] } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
@@ -466,7 +465,9 @@ export interface HostOperations {
   'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
+  /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
   'model.complete': { arguments: ModelCallOptions & { route: string }; result: ModelCallResult };
+  /** Requires agents, sessions and sessions_tools because the snapshot includes tool payloads. */
   'model.fork': { arguments: ModelCallOptions & { route?: string; tools?: string[] }; result: ModelCallResult };
   'session.info': { arguments: null; result: SessionInfo };
   'ledger.settle': { arguments: { request_id: string; microusd: number; source: string }; result: Json };
@@ -485,7 +486,7 @@ export interface Events {
   stop: { input: Json; output: void };
   tool_result: { input: { call_id: string; agent_id: string | null; thread_id: string | null; tool: string; outcome: 'succeeded' | 'unsuccessful' | 'blocked' | 'failed' | 'failed_before_handler' | 'aborted'; answered_by: string | null; call_sha256: string | null; result_sha256: string | null; result_complete: boolean }; output: void };
   workspace_change: { input: { repository: string; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external'; call_id: string | null; watch_id?: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
-  workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
+  workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null>; thread_id: string }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
   turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: AgentFailure; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
@@ -509,6 +510,7 @@ export interface Events {
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
+  /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
   component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
@@ -587,7 +589,8 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+/** Callback completion rejects cancelled or stale authority before committing state; see REFERENCE.md. */
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
@@ -623,11 +626,10 @@ export interface ModAPI {
   completion(options: { trigger: string }, handler: (input: { kind: 'token'; trigger: string; query: string; line: string }) => { items: { insert: string }[] } | null | Promise<{ items: { insert: string }[] } | null>): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
-  /** Experimental, terminal capability: 64 KiB session state; only commands and component events write. */
+  /** Experimental, terminal capability: 65,536 UTF-8 bytes of JSON.stringify output, no lone surrogates; only commands and component events write. Unchanged authority polling preserves it; explicit reload resets it. */
   readonly uiState: { get(): Json; set(value: Json): void };
   /** A top-level key of an object `api.state`; reads are tracked so renders redraw only when it changes. */
   atom<T extends Json>(key: string, fallback: T): Atom<Widen<T>>;
-  /** One member of a map-valued atom. */
   member<T extends Json>(key: string, id: string, fallback: T): Atom<Widen<T>>;
   /** A memoised selector recomputed when an atom it read changes. */
   derive<T extends Json>(compute: () => T): Derived<T>;

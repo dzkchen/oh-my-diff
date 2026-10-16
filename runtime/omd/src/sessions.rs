@@ -1,15 +1,38 @@
+use crate::mods::{FileStamp, file_stamp};
 use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use serde_json::{Map, Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, BufRead, Read};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 const SOURCE_BYTES: usize = 32 * 1024 * 1024;
 const HEAD_BYTES: u64 = 1024 * 1024;
 const SCAN_FILES: usize = 4096;
 const SCAN_BYTES: u64 = 128 * 1024 * 1024;
+const META_FIELDS: [&str; 11] = [
+    "id",
+    "session_id",
+    "parent_thread_id",
+    "cwd",
+    "timestamp",
+    "memory_mode",
+    "session_review",
+    "history_mode",
+    "history_base",
+    "forked_from_id",
+    "subagent_history_start_ordinal",
+];
+
+/// Rollout heads by path, valid while the file keeps its stamp; `None` marks a file that is not a session.
+static PARSED: Mutex<BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>> =
+    Mutex::new(BTreeMap::new());
+static PROJECTIONS: Mutex<Vec<Arc<Projection>>> = Mutex::new(Vec::new());
+const PROJECTIONS_KEPT: usize = 4;
+#[cfg(test)]
+static READS: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
 
 pub struct SessionIndex<'a> {
     pub root: &'a Path,
@@ -32,10 +55,29 @@ pub struct SessionSummary {
     pub incomplete_tail: bool,
 }
 
+struct Parsed {
+    head: Value,
+    meta: Value,
+    revision: String,
+    incomplete_tail: bool,
+}
+
 struct Session {
     summary: SessionSummary,
     meta: Value,
-    bytes: Vec<u8>,
+    stamp: FileStamp,
+    bytes: Option<Vec<u8>>,
+}
+
+type Records = Arc<(Vec<Value>, bool)>;
+
+struct Projection {
+    path: PathBuf,
+    stamp: FileStamp,
+    repository: PathBuf,
+    tools: bool,
+    scopes: BTreeMap<String, bool>,
+    records: Records,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +181,18 @@ impl SessionIndex<'_> {
             }
         }
         paths.sort();
+        let listed = |path: &Path| {
+            !path.starts_with(self.root)
+                || paths
+                    .binary_search_by(|listed| listed.as_path().cmp(path))
+                    .is_ok()
+        };
+        if let Ok(mut parsed) = PARSED.lock() {
+            parsed.retain(|path, _| listed(path));
+        }
+        if let Ok(mut projections) = PROJECTIONS.lock() {
+            projections.retain(|projection| listed(&projection.path));
+        }
         Ok((paths, truncated))
     }
 
@@ -169,7 +223,6 @@ impl SessionIndex<'_> {
         Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
     }
 
-    /// The database's current segment and the segments its `history_base` chain continues.
     fn lineage(&self, current: &Path, paths: &[PathBuf]) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         let mut next = segment(current);
@@ -195,25 +248,33 @@ impl SessionIndex<'_> {
         names
     }
 
-    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
-        if !active() {
-            return Err(cancelled());
-        }
+    fn read(&self, path: &Path) -> io::Result<(Vec<u8>, bool)> {
         let name = self.name(path)?;
-        let snapshot =
+        #[cfg(test)]
+        if let Ok(mut reads) = READS.lock() {
+            *reads.entry(path.to_path_buf()).or_default() += 1;
+        }
+        let mut snapshot =
             crate::Snapshot::capture(self.root, &BTreeSet::from([name.to_owned()]), SOURCE_BYTES)?;
         let mut bytes = snapshot
             .files
-            .get(name)
+            .remove(name)
             .ok_or_else(|| io::Error::other("session_missing"))?
-            .bytes
-            .clone();
+            .bytes;
         let complete = bytes
             .iter()
             .rposition(|byte| *byte == b'\n')
             .map_or(0, |index| index + 1);
         let incomplete_tail = complete != bytes.len();
         bytes.truncate(complete);
+        Ok((bytes, incomplete_tail))
+    }
+
+    fn parse(
+        bytes: &[u8],
+        incomplete_tail: bool,
+        active: &dyn Fn() -> bool,
+    ) -> io::Result<Option<Parsed>> {
         let mut lines = bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty());
@@ -243,7 +304,52 @@ impl SessionIndex<'_> {
                 meta = record["payload"].clone();
             }
         }
-        if !self.scoped(&meta)
+        let meta = META_FIELDS
+            .iter()
+            .filter_map(|field| Some(((*field).to_owned(), meta.get(field)?.clone())))
+            .collect::<Map<_, _>>();
+        Ok(Some(Parsed {
+            head: json!({"cwd": initial["cwd"], "timestamp": initial["timestamp"]}),
+            meta: Value::Object(meta),
+            revision: hash(bytes),
+            incomplete_tail,
+        }))
+    }
+
+    fn cached(path: &Path, stamp: &FileStamp) -> Option<Option<Arc<Parsed>>> {
+        PARSED
+            .lock()
+            .ok()?
+            .get(path)
+            .filter(|(seen, _)| seen == stamp)
+            .map(|(_, parsed)| parsed.clone())
+    }
+
+    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
+        if !active() {
+            return Err(cancelled());
+        }
+        let name = self.name(path)?;
+        let stamp = file_stamp(&fs::symlink_metadata(path)?);
+        let (parsed, bytes) = match Self::cached(path, &stamp) {
+            Some(parsed) => (parsed, None),
+            None => {
+                let (bytes, incomplete_tail) = self.read(path)?;
+                let parsed = Self::parse(&bytes, incomplete_tail, active)?.map(Arc::new);
+                if let Ok(mut cache) = PARSED.lock() {
+                    if cache.len() >= SCAN_FILES && !cache.contains_key(path) {
+                        cache.pop_first();
+                    }
+                    cache.insert(path.to_path_buf(), (stamp, parsed.clone()));
+                }
+                (parsed, Some(bytes))
+            }
+        };
+        let Some(parsed) = parsed else {
+            return Ok(None);
+        };
+        let meta = &parsed.meta;
+        if !self.scoped(meta)
             || meta["memory_mode"]
                 .as_str()
                 .is_some_and(|mode| mode != "enabled")
@@ -271,30 +377,88 @@ impl SessionIndex<'_> {
                 .filter(|id| token(id))
                 .map(str::to_owned),
             timestamp: timestamp.to_owned(),
-            revision: hash(&bytes),
+            revision: parsed.revision.clone(),
             handle: hash(name.as_bytes()),
             history_mode: meta["history_mode"].as_str().unwrap_or("legacy").to_owned(),
             inherited_history: !meta["history_base"].is_null() || !meta["forked_from_id"].is_null(),
-            incomplete_tail,
+            incomplete_tail: parsed.incomplete_tail,
         };
         Ok(Some(Session {
             summary,
-            meta,
+            meta: parsed.meta.clone(),
+            stamp,
             bytes,
         }))
+    }
+
+    fn projection(
+        &self,
+        path: &Path,
+        session: Session,
+        active: &dyn Fn() -> bool,
+    ) -> io::Result<Records> {
+        let recent = PROJECTIONS.lock().ok().and_then(|mut projections| {
+            let index = projections.iter().position(|projection| {
+                projection.path == path
+                    && projection.stamp == session.stamp
+                    && projection.repository == self.repository
+                    && projection.tools == self.tools
+            })?;
+            let projection = projections.remove(index);
+            projections.insert(0, projection.clone());
+            Some(projection)
+        });
+        if let Some(projection) = recent.filter(|projection| {
+            projection
+                .scopes
+                .iter()
+                .all(|(cwd, scoped)| self.scoped(&json!({ "cwd": cwd })) == *scoped)
+        }) {
+            return Ok(projection.records.clone());
+        }
+        let reread;
+        let bytes = match &session.bytes {
+            Some(bytes) => bytes,
+            None => {
+                reread = self.read(path)?.0;
+                if hash(&reread) != session.summary.revision {
+                    return Err(io::Error::other("session_revision_changed"));
+                }
+                &reread
+            }
+        };
+        let mut scopes = BTreeMap::new();
+        let records = Arc::new(self.records(&session, bytes, &mut scopes, active)?);
+        if let Ok(mut projections) = PROJECTIONS.lock() {
+            projections.retain(|projection| projection.path != path);
+            projections.insert(
+                0,
+                Arc::new(Projection {
+                    path: path.to_path_buf(),
+                    stamp: session.stamp,
+                    repository: self.repository.to_path_buf(),
+                    tools: self.tools,
+                    scopes,
+                    records: records.clone(),
+                }),
+            );
+            projections.truncate(PROJECTIONS_KEPT);
+        }
+        Ok(records)
     }
 
     fn records(
         &self,
         session: &Session,
+        bytes: &[u8],
+        scopes: &mut BTreeMap<String, bool>,
         active: &dyn Fn() -> bool,
     ) -> io::Result<(Vec<Value>, bool)> {
         let id = &session.summary.session_id;
         let mut records = Vec::new();
         let mut turn = String::new();
         let mut in_scope = false;
-        let lines = session
-            .bytes
+        let lines = bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
             .skip(1);
@@ -312,6 +476,9 @@ impl SessionIndex<'_> {
             }
             if value["type"] == "turn_context" {
                 in_scope = self.scoped(payload);
+                if let Some(cwd) = payload["cwd"].as_str() {
+                    scopes.insert(cwd.to_owned(), in_scope);
+                }
                 turn = payload["turn_id"]
                     .as_str()
                     .filter(|id| token(id))
@@ -443,7 +610,15 @@ impl SessionIndex<'_> {
                 let mut rows = Vec::new();
                 let mut ids = BTreeSet::new();
                 for path in paths.iter().rev() {
-                    let head = match self.head(path) {
+                    let metadata = fs::symlink_metadata(path).ok();
+                    let head = match metadata
+                        .as_ref()
+                        .and_then(|metadata| Self::cached(path, &file_stamp(metadata)))
+                    {
+                        Some(parsed) => Ok(parsed.map(|parsed| parsed.head.clone())),
+                        None => self.head(path),
+                    };
+                    let head = match head {
                         Ok(Some(head)) => head,
                         Ok(None) => continue,
                         Err(_) if !active() => return Err(cancelled()),
@@ -455,8 +630,7 @@ impl SessionIndex<'_> {
                     if !self.scoped(&head) || !in_range(head["timestamp"].as_str(), since, until) {
                         continue;
                     }
-                    scanned = scanned
-                        .saturating_add(fs::symlink_metadata(path).map_or(0, |meta| meta.len()));
+                    scanned = scanned.saturating_add(metadata.map_or(0, |meta| meta.len()));
                     if scanned > SCAN_BYTES {
                         truncated = true;
                         break;
@@ -535,7 +709,9 @@ impl SessionIndex<'_> {
                 if input.revision != session.summary.revision {
                     return Err(io::Error::other("session_revision_changed"));
                 }
-                let (records, projection_truncated) = self.records(&session, &active)?;
+                let summary = session.summary.clone();
+                let projection = self.projection(path, session, &active)?;
+                let (records, projection_truncated) = (&projection.0, projection.1);
                 let start = input.cursor.unwrap_or(0);
                 if start > records.len() {
                     return Err(io::Error::other("session_cursor_invalid"));
@@ -554,7 +730,7 @@ impl SessionIndex<'_> {
                     return Err(io::Error::other("session_record_exceeds_page"));
                 }
                 Ok(
-                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
+                    json!({"session":summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_records","projection_truncated":projection_truncated}),
                 )
             }
             _ => Err(io::Error::other("session_operation_unavailable")),
@@ -568,5 +744,74 @@ impl SessionIndex<'_> {
             return Err(io::Error::other("session_policy_changed"));
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paging_large_rollouts_in_turn_reads_each_once_after_listing() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let (repo, root) = (base.join("repo"), base.join("sessions"));
+        fs::create_dir(&repo).unwrap();
+        fs::create_dir(&root).unwrap();
+        let text = "x".repeat(2000);
+        let paths = ["large", "other"].map(|id| {
+            let mut rows = vec![
+                json!({"type":"session_meta","payload":{"id":id,"cwd":repo,"timestamp":"2026-09-26T12:00:00Z"}}),
+                json!({"type":"turn_context","payload":{"turn_id":"turn","cwd":repo}}),
+            ];
+            rows.extend((0..2048).map(|_| json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}})));
+            let path = root.join(format!("{id}.jsonl"));
+            fs::write(
+                &path,
+                rows.iter()
+                    .map(|row| row.to_string() + "\n")
+                    .collect::<String>(),
+            )
+            .unwrap();
+            assert!(fs::metadata(&path).unwrap().len() > 4 * 1024 * 1024);
+            path
+        });
+        let index = SessionIndex {
+            root: &root,
+            database: None,
+            repository: &repo,
+            enabled: true,
+            tools: false,
+        };
+        let reads = || {
+            paths
+                .each_ref()
+                .map(|path| READS.lock().unwrap().get(path).copied())
+        };
+        let sessions = index.call("sessions.list", json!({}), || true).unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(reads(), [Some(1); 2]);
+        let (mut cursors, mut pages, mut records) = ([Some(0); 2], 0, 0);
+        while cursors.iter().any(Option::is_some) {
+            for (summary, cursor) in sessions.iter().zip(&mut cursors) {
+                let Some(start) = *cursor else { continue };
+                let page = index
+                    .call(
+                        "sessions.read",
+                        json!({"session_id":summary["session_id"],"revision":summary["revision"],"handle":summary["handle"],"cursor":start}),
+                        || true,
+                    )
+                    .unwrap();
+                records += page["records"].as_array().unwrap().len();
+                *cursor = page["cursor"].as_u64().map(|cursor| cursor as usize);
+                pages += 1;
+            }
+        }
+        assert!(pages > 200);
+        assert_eq!(records, 4096);
+        assert_eq!(reads(), [Some(2); 2]);
     }
 }

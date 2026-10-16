@@ -46,14 +46,14 @@ def hosted_steps():
         ("native ownership", ["mise", "run", "native:ownership"]),
         ("host binaries", ["python3", ".github/scripts/build.py", "artifacts", BATCH, "--release"]),
         ("locks", ["python3", ".github/scripts/build.py", "locks"]),
-        ("locks match checkout", drift(".", ":(exclude)runtime/lean-release.lock.json")),
+        ("locks match checkout", drift(".", ":(exclude)runtime/release.lock.json")),
         ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
         ("mods typecheck", ["mise", "run", "mods:check"]),
         ("mods tests", ["env", f"OMD_MOD_BIN={artifact_dir / 'omd-mod'}", "mise", "run", "mods:test"]),
         ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
         ("CI helper tests", ["python3", "-m", "unittest", "discover", "-s", ".github/tests", "-p", "test_*.py"]),
         ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod", str(artifact_dir / "omd-mod"), "--scenarios"]),
-        ("client acceptance", ["python3", "scripts/client_acceptance.py", "--binaries", str(artifact_dir)]),
+        ("client acceptance", ["python3", "-m", "scripts.client_acceptance", "--binaries", str(artifact_dir)]),
     ]
 
 

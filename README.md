@@ -18,9 +18,8 @@ one intended benefit of bundled policies, not an established performance claim
 or the entire product promise.
 
 The initial audience is Codex CLI power users who have hit a concrete
-customization limit. Development starts with signature workflows and a small
-private preview for user and author feedback. The public release will still
-include the curated first-party bundle, polished setup, and mod controls.
+customization limit. The public release includes the curated first-party
+bundle, polished setup, and mod controls.
 
 The two install choices are **OMD Core**, the modding ecosystem with user-selected
 extensions, and **OMD+**, the selected first-party collection. Installed packages
@@ -28,4 +27,4 @@ and active behavior are separate; opt-in packages stay inactive until selected.
 
 [Maintained integration coverage for this release](INTEGRATION.md)
 
-[Local OMD Core and OMD+ candidate profiles](LEAN_PROFILES.md)
+[Installing OMD Core and OMD+](INSTALL.md)

@@ -12,6 +12,7 @@ export type State = {
   capabilities: Json;
   documents: Record<string, Document>;
   diagnostics: Record<string, Diagnostic>;
+  skipped: Record<string, string>;
   preview: { path: string; source_sha256: string; source_version: number; thread_id: string; range: Json; actions: string[] } | null;
   status: 'idle' | 'synced' | 'fallback' | 'stale';
   reason: string;
@@ -39,7 +40,6 @@ export const languageId = (path: string) => /\.(?:js|jsx|mjs|cjs)$/.test(path) ?
 export const object = (value: Json): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 export const string = (value: Json): string | null => typeof value === 'string' ? value : null;
 export const number = (value: Json): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-export const message = (value: Json): Message | null => object(value);
 export const linesOf = (text: string): number[] => {
   const lines = [0];
   for (let index = text.indexOf('\n'); index >= 0; index = text.indexOf('\n', index + 1)) lines.push(index + 1);
@@ -99,8 +99,9 @@ export function checkedRange(text: string, value: Json): { start: { line: number
   const range = object(value);
   const start = object(range?.start ?? null);
   const end = object(range?.end ?? null);
-  const first = offset(text, linesOf(text), start);
-  const last = offset(text, linesOf(text), end);
+  const lines = linesOf(text);
+  const first = offset(text, lines, start);
+  const last = offset(text, lines, end);
   if (first === null || last === null || first > last) return null;
   return { start: { line: Number(start?.line), character: Number(start?.character) }, end: { line: Number(end?.line), character: Number(end?.character) } };
 }
@@ -171,7 +172,7 @@ export function textWorkspaceEdit(repository: string, response: Json): Result<Re
 
 export function state(value: Json, adapter: Adapter): State {
   const root = object(value) ?? {};
-  const saved = object(object(root.servers ?? null)?.[adapter] ?? null) ?? (adapter === 'python' ? root : {});
+  const saved = object(object(root.servers ?? null)?.[adapter] ?? null) ?? {};
   const documents: Record<string, Document> = {};
   for (const [path, entry] of Object.entries(object(saved.documents ?? null) ?? {})) {
     const data = object(entry);
@@ -182,6 +183,8 @@ export function state(value: Json, adapter: Adapter): State {
     const data = object(entry);
     if (data && number(data.count) !== null) diagnostics[path] = { count: Number(data.count), version: number(data.version), errors: Array.isArray(data.errors) ? data.errors.filter(item => typeof item === 'string').slice(0, 50) as string[] : [] };
   }
+  const skipped: Record<string, string> = {};
+  for (const [path, hash] of Object.entries(object(saved.skipped ?? null) ?? {})) if (typeof hash === 'string') skipped[path] = hash;
   const savedPreview = object(saved.preview ?? null);
   const previewActions = savedPreview?.actions;
   const preview = string(savedPreview?.path ?? null) && string(savedPreview?.source_sha256 ?? null) && number(savedPreview?.source_version ?? null) !== null && string(savedPreview?.thread_id ?? null) && object(savedPreview?.range ?? null) && Array.isArray(previewActions) && previewActions.length <= 32 && previewActions.every(item => typeof item === 'string') && serializedBytes(previewActions) <= 16_384
@@ -189,13 +192,14 @@ export function state(value: Json, adapter: Adapter): State {
     : null;
   return {
     adapter,
-    server: string(saved.server ?? null) ?? (adapter === 'python' && saved.running === true ? 'pylsp' : null),
+    server: string(saved.server ?? null),
     repository: string(saved.repository ?? null) ?? '',
     running: saved.running === true,
     next_id: number(saved.next_id ?? null) ?? 1,
     capabilities: saved.capabilities ?? null,
     documents,
     diagnostics,
+    skipped,
     preview,
     status: saved.status === 'synced' || saved.status === 'stale' || saved.status === 'fallback' ? saved.status : 'idle',
     reason: string(saved.reason ?? null) ?? '',
@@ -204,20 +208,9 @@ export function state(value: Json, adapter: Adapter): State {
 
 export function failure(s: State, reason: string, stale = false): void {
   s.status = stale ? 'stale' : 'fallback';
-  s.reason = reason.slice(0, 256);
+  s.reason = [...reason].slice(0, 256).join('');
 }
 
 export const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';
-export const serializedBytes = (value: unknown) => {
-  const text = JSON.stringify(value) ?? '';
-  let bytes = 0;
-  for (let index = 0; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    if (code < 0x80) bytes++;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) { bytes += 4; index++; }
-    else bytes += 3;
-  }
-  return bytes;
-};
+export const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 export const size = (value: unknown) => serializedBytes(value) + 96;

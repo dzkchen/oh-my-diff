@@ -1,28 +1,28 @@
 # Extension types
 
-<!-- Generated from mods/extension-types.json by scripts/mod_extension_types.py --write. -->
+<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->
 
 Use a skill for instructed procedures, a hook for lifecycle reactions, a plugin for tools or services, and a mod only for live engine or terminal replacement.
 
 A conformance fixture is retained source and executable coverage, not a package offered
-to users. The author SDK packs only author examples. The current private-preview bundle
-contains only the packages labeled `bundled` below.
+to users. The author SDK packs only author examples. The first-party mod lock
+(`runtime/mods.lock.json`) pins only the packages labeled `bundled` below.
 
 ## Bundled packages
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
 | `omd_workflow@0.2.0-preview.2` | `mod` | `mods/first-party/omd_workflow` | Owns live workflow selection, contract gates, candidate checks, and task decisions through generic host services and bounded receipts. |
-
-## Unqualified first-party candidates
-
-| Package | Extension type | Source | Why a mod is required for this behavior |
-| --- | --- | --- | --- |
 | `omd_claude_cli@0.2.0-preview.3` | `mod` | `mods/first-party/omd_claude_cli` | Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation. |
 | `omd_inspector@0.2.0-preview.1` | `mod` | `mods/first-party/omd_inspector` | Replaces the live terminal inspector dialog and refresh actions while reading generic task, contract, ledger, and install identity state. |
 | `omd_logo@0.2.0-preview.1` | `mod` | `mods/first-party/omd_logo` | Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity. |
 | `omd_model_picker@0.3.0-preview.2` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
+| `omd_auto_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_auto_continue` | Times pending approvals and questions from public app_server_request events and answers expired ones through the generic app.respond operation, which can only decline, deny or answer; active by default in OMD+. |
+| `omd_idle_compact@0.1.0-preview.1` | `mod` | `mods/first-party/omd_idle_compact` | Arms a timer from public model_response telemetry and starts compaction through the routed thread/compact/start app-server method when the prompt cache is about to expire; active by default in OMD+. |
+| `omd_statusline@0.1.0-preview.1` | `mod` | `mods/first-party/omd_statusline` | Draws a configurable status line in the generic below- or above-composer site from public telemetry, exec and HTTP grants; it turns off the native status row through built-in controls only while active; active by default in OMD+. |
 | `omd_tool_lines@0.1.0-preview.1` | `mod` | `mods/first-party/omd_tool_lines` | Owns a render hook on the generic tool_call site that draws one line per agent tool call; the host keeps the native row, its expansion and copy; active by default in OMD+. |
+| `omd_plan_panel@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_panel` | Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool. |
+| `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | A user-typed /continue command that submits a resume instruction with the host-recorded turn activity. |
 | `omd_lsp_sync@0.5.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view. |
 | `omd_advisor@0.4.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns on-demand, triggered and completed-turn advice, the opt-in important-output observer, independent review prompts, typed result and citation validation, deduplication and selected-context presentation through public accounted review primitives. |
 | `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); enabled by default in OMD+. |
@@ -32,7 +32,7 @@ contains only the packages labeled `bundled` below.
 | `omd_privacy@0.1.0-preview.1` | `mod` | `mods/first-party/omd_privacy` | Owns secret and PII detection, sensitive-path rules, reviewed exemptions and salted placeholders as a required model_send policy and approval middleware over the generic final-request stage; installed inactive in OMD+. |
 | `omd_usage@0.1.0-preview.1` | `mod` | `mods/first-party/omd_usage` | Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+. |
 | `omd_lsp_view@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_view` | Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the on-demand language-server pane; installed inactive in OMD+. |
-| `omd_frecency@0.1.0-preview.2` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+. |
+| `omd_frecency@0.1.0-preview.2` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage; installed inactive in OMD+. |
 | `omd_profiles@0.1.0-preview.2` | `mod` | `mods/first-party/omd_profiles` | Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+. |
 
 ## Author examples
@@ -41,7 +41,7 @@ contains only the packages labeled `bundled` below.
 | --- | --- | --- | --- |
 | `coordination@2.0.0` | `mod` | `mods/examples/coordination` | Drives live native agent spawning, waiting, result consumption, and lifecycle state inside the active task. |
 | `kernel@2.0.0` | `mod` | `mods/examples/kernel` | Alters admitted model requests and the live response stream, which hooks and plugins cannot replace. |
-| `recovery@2.0.0` | `mod` | `mods/examples/recovery` | Replaces live compaction and context recovery policy while reading host-owned checkpoint state. |
+| `recovery@2.0.0` | `mod` | `mods/examples/recovery` | Replaces live compaction and context recovery policy. |
 | `routing@2.0.0` | `mod` | `mods/examples/routing` | Replaces the model, provider, and reasoning preset selected at the live request boundary. |
 | `terminal@2.0.0` | `mod` | `mods/examples/terminal` | Replaces live terminal layout, theme, render templates, and key handling. |
 | `workflow@2.0.0` | `mod` | `mods/examples/workflow` | Registers and restricts a host-enforced workflow contract during a live task without owning native guarantees. |
@@ -66,13 +66,8 @@ contains only the packages labeled `bundled` below.
 | `interception@2.0.0` | `mod` | `mods/examples/interception` | Exercises simple tool interception conformance only; user-facing tool policy belongs in a hook or plugin. |
 | `service_consumer@2.0.0` | `mod` | `mods/examples/service-consumer` | Exercises a host-routed service import only; a user-facing service consumer belongs in a plugin. |
 | `service_provider@2.0.0` | `mod` | `mods/examples/service-provider` | Exercises a host-routed service export only; a user-facing service belongs in a plugin. |
-| `approval_guard@1.0.0` | `mod` | `mods/examples/approval_guard` | Tightens live native approval decisions before hooks and automatic review, which hooks cannot force. |
 | `ghost_history@1.0.0` | `mod` | `mods/examples/ghost_history` | Suggests the rest of a recent prompt as revision-bound ghost text from draft change events, which skills and hooks cannot draw. |
 | `paste_tidy@1.0.0` | `mod` | `mods/examples/paste_tidy` | Rewrites or refuses pasted draft text through the composer_edit interceptor chain before it reaches the draft. |
-| `key_remap@1.0.0` | `mod` | `mods/examples/key_remap` | Rewrites matched keystrokes through the composer_key interceptor chain before the prompt box applies them. |
-| `input_guard@1.0.0` | `mod` | `mods/examples/input_guard` | Drops matched keystrokes through the composer_key interceptor chain before the prompt box applies them. |
-| `shortcodes@1.0.0` | `mod` | `mods/examples/shortcodes` | Supplies composer completion rows for its own token triggers, which skills and hooks cannot add to the prompt box. |
-| `mention_guard@1.0.0` | `mod` | `mods/examples/mention_guard` | Redirects or refuses the host's read of @-mentioned files through the mention interceptor chain. |
 | `approval_delegate@1.0.0` | `mod` | `mods/examples/approval_delegate` | Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold. |
 | `admission_guard@1.0.0` | `mod` | `mods/examples/admission_guard` | Refuses or restricts other mods at load and guards host requests under a user-granted policy, which hooks and skills cannot do. |
 | `command_curator@1.0.0` | `mod` | `mods/examples/command_curator` | Rewrites slash-command and settings metadata, arguments and writes through host continuations that hooks and skills cannot reach. |
@@ -84,22 +79,15 @@ contains only the packages labeled `bundled` below.
 | `goal_store@1.0.0` | `mod` | `mods/examples/goal_store` | Keeps thread-scoped state that forks and deletes with the live thread. |
 | `command_help@1.0.0` | `mod` | `mods/examples/command_help` | Lists the session's built-in and mod slash commands from the live terminal inventory. |
 | `port_list@1.0.0` | `mod` | `mods/examples/port_list` | Lists the TCP listeners of the current session's background terminals from the live host. |
-| `checkout_board@1.0.0` | `mod` | `mods/examples/checkout_board` | Keeps one state per Git checkout that every OMD session working there shares. |
-| `readme_answers@1.0.0` | `mod` | `mods/examples/readme_answers` | Answers questions from the README through one-shot completions whose README prefix is marked for the provider's prompt cache. |
 | `quiet_inline@1.0.0` | `mod` | `mods/examples/quiet_inline` | Keeps inline scrollback free of every mod sidebar and header for screen readers and plain terminals. |
 | `image_preview@1.0.0` | `mod` | `mods/examples/image_preview` | Renders an imported image inside a live terminal render site and opens links after native confirmation. |
 | `history_redact@1.0.0` | `mod` | `mods/examples/history_redact` | Redacts credentials from history text in the host's persistence path before the rollout is written. |
 | `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
-| `frame_stream@1.0.0` | `mod` | `mods/examples/frame_stream` | Streams managed-process raw or PNG frames into a full-pane raster and demonstrates optional child-owned mouse look. |
-| `raster_canvas@1.0.0` | `mod` | `mods/examples/raster_canvas` | Draws an animated raster with pointer hover, drag and an anchored overlay. |
-| `game_input@1.0.0` | `mod` | `mods/examples/game_input` | Runs a keyboard and pointer game in a component module on the frame clock and posts scores to its hooks. |
 | `client_tag@1.0.0` | `mod` | `mods/examples/client_tag` | Ports Claude Code's Tag Client example to a component module that posts pointer clicks to its hooks. |
 | `box_model@1.0.0` | `mod` | `mods/examples/box_model` | Draws bordered cards, flat filled panels, flex rows, hover and focus accents and a gapped split layout with the box model. |
 | `external_client@1.0.0` | `mod` | `mods/examples/external_client` | Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol. |
-| `live_output@1.0.0` | `mod` | `mods/examples/live_output` | Streams a sandboxed command's raw stdout and stderr above the composer as they are written. |
 | `approval_desk@1.0.0` | `mod` | `mods/examples/approval_desk` | Keeps a filterable approval desk beside other sidebars, with a client adapter that answers approvals over the client protocol. |
 | `notification_bridge@1.0.0` | `mod` | `mods/examples/notification_bridge` | Turns live app-server notifications into terminal notifications with focus state. |
-| `output_budget@1.0.0` | `mod` | `mods/examples/output_budget` | Replaces model-visible tool output at the live tool boundary while the host keeps the original. |
 | `package_panel@1.0.0` | `mod` | `mods/examples/package_panel` | Drives package controls behind native confirmation from a live terminal panel. |
 | `profile_switcher@1.0.0` | `mod` | `mods/examples/profile_switcher` | Selects credential-bound routes at the live request boundary. |
 | `read_batcher@1.0.0` | `mod` | `mods/examples/read_batcher` | Merges parallel-safe tool calls of one live response into a single call. |
@@ -124,4 +112,4 @@ contains only the packages labeled `bundled` below.
 
 The small context, counter, guard, interception, service, reader, and tool cases remain
 available to repository conformance checks. They are not copied by `omd-mod-author examples`,
-not packed as SDK examples, and not part of the private-preview bundle.
+not packed as SDK examples, and not part of the first-party mod lock.

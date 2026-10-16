@@ -213,3 +213,62 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
             .is_err()
     );
 }
+
+#[test]
+fn credential_files_are_replaced_privately_and_atomically() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, profiles) = profiles();
+    let secret = profiles
+        .create_secret("site", "https://example.com", "vault")
+        .unwrap();
+    let key = profiles
+        .create("key", "provider", Some("p"), Some("https://api.example.com"))
+        .unwrap();
+    let tokens = ["a".repeat(64), "b".repeat(4000)];
+    for (id, origin, owner, file) in [
+        (&secret.id, "https://example.com", Some("vault"), "secret"),
+        (&key.id, "https://api.example.com", None, "auth.json"),
+    ] {
+        let store = |token: &str| {
+            if file == "secret" {
+                profiles.store_secret(id, token)
+            } else {
+                profiles.store_auth(id, &serde_json::json!({"OPENAI_API_KEY": token}).to_string())
+            }
+        };
+        let read = || profiles.secret(id, origin, owner).unwrap().token;
+        let home = profiles.root.join(id);
+        store(&tokens[0]).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o500)).unwrap();
+        let staged = store(&tokens[1]);
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(staged.is_err());
+        assert_eq!(read(), tokens[0]);
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let reader = scope.spawn(|| {
+                let mut reads = 0;
+                while !done.load(std::sync::atomic::Ordering::Acquire) {
+                    assert!(tokens.contains(&read()));
+                    reads += 1;
+                }
+                reads
+            });
+            for round in 0..200 {
+                store(&tokens[round % 2]).unwrap();
+            }
+            done.store(true, std::sync::atomic::Ordering::Release);
+            assert!(reader.join().unwrap() > 0);
+        });
+        let path = home.join(file);
+        assert_eq!(
+            fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(home.join("elsewhere"), &path).unwrap();
+        assert!(store(&tokens[0]).is_err());
+        assert!(fs::symlink_metadata(home.join("elsewhere")).is_err());
+    }
+}

@@ -14,7 +14,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
 import nightly
-from scripts import lean_package, lean_profile_acceptance, lean_release_lock
+from scripts import package as release_package, profile_acceptance, release_lock
 
 
 def command(*args):
@@ -93,14 +93,14 @@ def package():
     shutil.rmtree(batch / "target")
     artifact_dir = batch / "artifacts"
     command(sys.executable, ".github/scripts/build.py", "artifacts", nightly.BATCH, "--release")
-    frozen = json.loads(lean_release_lock.OUTPUT.read_text())
+    frozen = json.loads(release_lock.OUTPUT.read_text())
     base = frozen["version"].split("-", 1)[0]
     version = f"{base}-nightly.{datetime.datetime.now(datetime.UTC):%Y%m%d%H%M%S}.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
-    command(sys.executable, "scripts/lean_release_lock.py", "--artifact-dir", artifact_dir, "--write", "--version", version)
+    command(sys.executable, "-m", "scripts.release_lock", "--artifact-dir", artifact_dir, "--write", "--version", version)
     output = nightly.WORK / "release"
     output.mkdir(parents=True, exist_ok=True)
     archive = output / f"oh-my-diff-{version}-aarch64-apple-darwin.tar.xz"
-    command(sys.executable, "-m", "scripts.lean_package", "pack", "--artifact-dir", artifact_dir, "--output", archive)
+    command(sys.executable, "-m", "scripts.package", "pack", "--artifact-dir", artifact_dir, "--output", archive)
     if archive.stat().st_size > 150_000_000:
         raise ValueError("nightly archive exceeds the curl installer download limit")
     upstream = batch / "upstream-bin/codex"
@@ -111,7 +111,7 @@ def package():
             "--output", upstream.with_suffix(".tar.gz"))
     command("tar", "-xzf", upstream.with_suffix(".tar.gz"), "-C", upstream.parent)
     (upstream.parent / "codex-aarch64-apple-darwin").rename(upstream)
-    command(sys.executable, "scripts/lean_profile_acceptance.py", "--artifact-dir", artifact_dir,
+    command(sys.executable, "-m", "scripts.profile_acceptance", "--artifact-dir", artifact_dir,
             "--upstream", upstream, "--output", nightly.WORK / "profile-acceptance.json")
     archive_acceptance(archive, upstream)
     provenance = {"schema": 1, "version": version, "commit": command("git", "rev-parse", "HEAD"),
@@ -131,13 +131,13 @@ def archive_acceptance(archive, upstream):
         home.mkdir()
         sentinel = home / "config.toml"
         sentinel.write_text('model = "preserve-user-choice"\n')
-        environment = lean_profile_acceptance.isolated_environment(base, home, upstream)
+        environment = profile_acceptance.isolated_environment(base, home, upstream)
         node = command("mise", "which", "node")
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        payload = lean_package.checked_extract(archive, digest, base)
+        payload = release_package.checked_extract(archive, digest, base)
         for profile in ("platform", "full"):
             prefix, bin_dir = base / f"{profile}-prefix", base / f"{profile}-bin"
-            install = [sys.executable, "-m", "scripts.lean_package", "install", "--archive", archive,
+            install = [sys.executable, "-m", "scripts.package", "install", "--archive", archive,
                        "--sha256", digest, "--profile", profile, "--prefix", prefix, "--bin-dir", bin_dir,
                        "--store", base / f"{profile}-store", "--node", node, "--upstream", upstream]
             subprocess.run(list(map(str, install)), cwd=payload, env=environment, check=True)
@@ -147,7 +147,7 @@ def archive_acceptance(archive, upstream):
             reinstall[reinstall.index("--bin-dir") + 1] = next_bin
             subprocess.run(list(map(str, [*reinstall, "--attach-store", "--previous", prefix])), cwd=payload, env=environment, check=True)
             for installed, launchers in ((next_prefix, next_bin), (prefix, bin_dir)):
-                subprocess.run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", str(installed),
+                subprocess.run([sys.executable, "-m", "scripts.profiles", "--prefix", str(installed),
                                 "--bin-dir", str(launchers), "uninstall"], cwd=payload, env=environment, check=True)
             if sentinel.read_text() != 'model = "preserve-user-choice"\n':
                 raise ValueError("archive installation changed shared Codex configuration")

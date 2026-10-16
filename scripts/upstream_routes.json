@@ -255,7 +255,8 @@
    "route": "app.notification"
   },
   "app_notification:thread/rewritten": {
-   "route": "app.notification"
+   "route": "app.notification",
+   "omd": true
   },
   "app_notification:thread/settings/updated": {
    "route": "app.notification"
@@ -777,6 +778,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "_meta",
     "arguments",
@@ -808,6 +810,7 @@
     "event"
    ],
    "note": "untrusted external content",
+   "scope": "root",
    "fields": [
     "connectorId",
     "originCallId",
@@ -1712,6 +1715,7 @@
   },
   "app_request:thread/rewrite": {
    "route": "app.request",
+   "omd": true,
    "class": "history_write",
    "contexts": [
     "user",
@@ -1750,6 +1754,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "cursor",
     "limit",
@@ -1764,6 +1769,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "beforeThreadId",
     "sectionId",

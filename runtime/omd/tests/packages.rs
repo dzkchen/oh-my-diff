@@ -199,7 +199,6 @@ fn selection_status_explains_precedence_and_changed_source() {
             .unwrap();
         store.enable(path, true).unwrap();
     }
-    // Exercise ordered parallel inspection alongside the conflicting selections.
     for index in 0..4 {
         let path = mod_package(&user, &format!("extra{index}"), "1.2.0", &[], json!([]));
         let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
@@ -214,6 +213,8 @@ fn selection_status_explains_precedence_and_changed_source() {
         "shadowed_by_project_scope"
     );
     assert_eq!(status["selections"][1]["effective"], true);
+    let listed = codex_omd::package_controls::list(&store, None).unwrap();
+    assert!(listed["packages"].as_array().unwrap().iter().all(|item| item["failed"].is_null()));
     std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
@@ -970,6 +971,49 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
 }
 
 #[test]
+fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repository = root.join("repository");
+    std::fs::create_dir(&repository).unwrap();
+    let package = mod_package(&repository, "large", "1.0.0", &[], json!([]));
+    edit_manifest(&package, |manifest| {
+        manifest["provenance"]["source"] = json!(repository.display().to_string())
+    });
+    git(&repository, &["init"]);
+    git(
+        &repository,
+        &["config", "user.email", "fixture@example.com"],
+    );
+    git(&repository, &["config", "user.name", "Fixture"]);
+    let store = store(&temp);
+    let mut refusals = Vec::new();
+    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+        let path = package.join(file);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.resize(4 << 20, b'\n');
+        std::fs::write(&path, bytes).unwrap();
+        git(&repository, &["add", "."]);
+        git(&repository, &["commit", "-m", file]);
+        let install = ModInstallRequest {
+            source: ModPackageSource::Repository {
+                repository: repository.display().to_string(),
+                revision: git_output(&repository, &["rev-parse", "HEAD"]),
+                subdirectory: "large".into(),
+            },
+            ..request(&package, &[])
+        };
+        refusals.push((refusal(&store, install), limit));
+    }
+    for (refusal, limit) in refusals {
+        assert!(
+            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
+            "{refusal}"
+        );
+    }
+}
+
+#[test]
 fn lifecycle_scripts_are_exactly_trusted_and_host_sandboxed() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -1411,7 +1455,6 @@ fn npm_mod(version: &str, capabilities: &[&str]) -> Vec<(String, Vec<u8>)> {
     ]
 }
 
-/// Publishes `versions` of `@fixture/omd-npm` with `latest` as the newest.
 fn publish(origin: &str, routes: &Routes, versions: &[(&str, Vec<u8>)]) {
     let mut metadata = json!({"name":"@fixture/omd-npm","dist-tags":{},"versions":{}});
     let mut routes = routes.lock().unwrap();
@@ -1707,7 +1750,7 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
-    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit"));
+    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit: big.ts exceeds 131072 bytes"));
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();
     assert!(refusal(&store, request(&package, &["commands"])).contains("regular_file_required"));
@@ -2180,4 +2223,72 @@ fn the_package_lock_can_outgrow_the_state_write_limit() {
         .len();
     assert!(size > 65_536 && size <= 524_288);
     assert_eq!(store.package_lock().unwrap().packages.len(), 80);
+}
+
+#[test]
+fn thread_state_version_updates_require_a_migrate_handler() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["commands", "store"], json!([]));
+    let store = store_with_node(&temp);
+    let manifest_path = package.join("mod.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let install = request(&package, &["commands", "store"]);
+    let plan = store.package_plan(install.clone()).unwrap();
+    store
+        .package_apply(install.clone(), &plan.confirmation)
+        .unwrap();
+    manifest["version"] = json!("1.1.0");
+    manifest["state_version"] = json!(2);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(
+        plan.changes["packages"][0]["state_version"]["handler_required"],
+        true
+    );
+    assert!(
+        store
+            .package_apply(install.clone(), &plan.confirmation)
+            .unwrap_err()
+            .to_string()
+            .contains("migration_handler_required: fixture changes its thread state_version")
+    );
+    std::fs::write(
+        package.join("main.ts"),
+        "export default api => api.on('migrate', () => api.state.set(null))\n",
+    )
+    .unwrap();
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(plan.action, "update");
+    store.package_apply(install, &plan.confirmation).unwrap();
+
+    let stateless = mod_package(&root, "stateless", "1.0.0", &["commands"], json!([]));
+    let manifest_path = stateless.join("mod.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let install = request(&stateless, &["commands"]);
+    let plan = store.package_plan(install.clone()).unwrap();
+    store.package_apply(install.clone(), &plan.confirmation).unwrap();
+    manifest["version"] = json!("1.1.0");
+    manifest["state_version"] = json!(2);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    let plan = store.package_plan(install.clone()).unwrap();
+    assert_eq!(
+        plan.changes["packages"][0]["state_version"]["handler_required"],
+        false
+    );
+    store.package_apply(install, &plan.confirmation).unwrap();
 }

@@ -48,6 +48,7 @@ pub fn current_generation() -> Option<u64> {
 
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
+    "app.respond",
     "credentials.request",
     "terminal.notify",
     "terminal.show_thread",
@@ -105,6 +106,51 @@ pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 
 pub type Reply = SyncSender<Result<Value, String>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlitErrorKind {
+    Retryable,
+    Revoked,
+    Fatal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlitError {
+    pub kind: BlitErrorKind,
+    pub message: String,
+}
+
+impl BlitError {
+    pub fn new(kind: BlitErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self::new(BlitErrorKind::Retryable, message)
+    }
+    pub fn fatal(message: impl Into<String>) -> Self {
+        Self::new(BlitErrorKind::Fatal, message)
+    }
+}
+
+impl From<String> for BlitError {
+    fn from(message: String) -> Self {
+        Self::fatal(message)
+    }
+}
+impl From<&str> for BlitError {
+    fn from(message: &str) -> Self {
+        Self::fatal(message)
+    }
+}
+impl std::fmt::Display for BlitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(f)
+    }
+}
+impl std::error::Error for BlitError {}
+
 #[derive(Clone)]
 pub struct Validity(pub Arc<dyn Fn() -> bool + Send + Sync>);
 
@@ -116,6 +162,7 @@ impl std::fmt::Debug for Validity {
 
 #[derive(Clone, Debug, Default)]
 pub struct CallLifetime {
+    blit_error: Arc<std::sync::OnceLock<BlitErrorKind>>,
     pub admission: Option<Value>,
     pub pixels: Arc<std::sync::OnceLock<Arc<crate::process_raster::PixelFrame>>>,
     upstream_cancelled: Option<Arc<AtomicBool>>,
@@ -241,15 +288,24 @@ pub struct SurfaceCall {
 }
 
 impl SurfaceCall {
+    pub fn reply_blit(&self, result: Result<Value, BlitError>) {
+        if let Err(error) = &result {
+            let _ = self.lifetime.blit_error.set(error.kind);
+        }
+        let _ = self.reply.send(result.map_err(|error| error.message));
+    }
+
     pub fn snapshot_pixels(
         &self,
         source: &crate::process_raster::PixelSource,
         next: std::time::Instant,
-    ) -> Result<Arc<crate::process_raster::PixelFrame>, String> {
+    ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError> {
         if !(self.validity.0)() {
-            return Err("callback_cancelled_or_expired".into());
+            return Err(BlitError::retryable("callback_cancelled_or_expired"));
         }
-        self.lifetime.begin_execution()?;
+        self.lifetime
+            .begin_execution()
+            .map_err(BlitError::retryable)?;
         let component = self.arguments["key"]
             .as_str()
             .ok_or("terminal_blit_invalid")?;
@@ -267,7 +323,7 @@ impl SurfaceCall {
                 admission["source"].as_str().unwrap_or_default(),
                 admission["generation"]
                     .as_u64()
-                    .ok_or("client_surface_admission_changed")?,
+                    .ok_or_else(|| BlitError::retryable("client_surface_admission_changed"))?,
                 None,
                 snapshot,
             )?
@@ -342,7 +398,6 @@ struct Hub {
 
 static SCREEN: Mutex<Option<&'static str>> = Mutex::new(None);
 
-/// Records whether the terminal client draws on the alternate screen (`fullscreen`) or `inline`.
 pub fn set_screen(screen: &'static str) {
     *SCREEN
         .lock()
@@ -531,6 +586,7 @@ pub fn submit(
         confirm,
         Arc::new(|| true),
     )
+    .map_err(|error| error.message)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -543,21 +599,29 @@ fn submit_bound(
     thread: Option<&str>,
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Result<PendingReply, String> {
+) -> Result<PendingReply, BlitError> {
     if !SURFACE_OPERATIONS.contains(&operation) {
-        return Err(format!("unsupported_host_operation: {operation}"));
+        return Err(BlitError::fatal(format!(
+            "unsupported_host_operation: {operation}"
+        )));
     }
     if context != InvocationContext::User && USER_ONLY_OPERATIONS.contains(&operation) {
-        return Err(format!("host_operation_user_only: {operation}"));
+        return Err(BlitError::fatal(format!(
+            "host_operation_user_only: {operation}"
+        )));
     }
     if remote && needs_terminal(operation, &arguments) {
-        return Err(needs_terminal_error(operation));
+        return Err(BlitError::fatal(needs_terminal_error(operation)));
     }
     let surface = hub()
         .surface
         .as_ref()
         .map(|(_, surface)| surface.clone())
-        .ok_or("client_surface_unavailable: no interactive client is attached to this host")?;
+        .ok_or_else(|| {
+            BlitError::retryable(
+                "client_surface_unavailable: no interactive client is attached to this host",
+            )
+        })?;
     let (reply, receiver) = sync_channel(1);
     let admission = CALL_ADMISSION.with(|value| value.borrow().clone());
     let lifetime = CallLifetime {
@@ -573,21 +637,23 @@ fn submit_bound(
             Some(Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     }
     let queued = lifetime.clone();
-    surface.submit(SurfaceCall {
-        validity: Validity(Arc::new(move || queued.active() && active())),
-        caller: caller.to_owned(),
-        operation: operation.to_owned(),
-        arguments,
-        context,
-        remote,
-        thread: thread.map(str::to_owned),
-        authority: (operation == "terminal.pty")
-            .then(|| AUTHORITY.with_borrow(Clone::clone))
-            .flatten(),
-        confirm,
-        reply,
-        lifetime: lifetime.clone(),
-    })?;
+    surface
+        .submit(SurfaceCall {
+            validity: Validity(Arc::new(move || queued.active() && active())),
+            caller: caller.to_owned(),
+            operation: operation.to_owned(),
+            arguments,
+            context,
+            remote,
+            thread: thread.map(str::to_owned),
+            authority: (operation == "terminal.pty")
+                .then(|| AUTHORITY.with_borrow(Clone::clone))
+                .flatten(),
+            confirm,
+            reply,
+            lifetime: lifetime.clone(),
+        })
+        .map_err(BlitError::retryable)?;
     Ok(PendingReply { receiver, lifetime })
 }
 
@@ -596,6 +662,14 @@ pub fn wait(
     active: &dyn Fn() -> bool,
     deadline: Option<Instant>,
 ) -> Result<Value, String> {
+    wait_classified(receiver, active, deadline).map_err(|error| error.message)
+}
+
+fn wait_classified(
+    receiver: PendingReply,
+    active: &dyn Fn() -> bool,
+    deadline: Option<Instant>,
+) -> Result<Value, BlitError> {
     if let Some(deadline) = deadline {
         *receiver
             .lifetime
@@ -608,21 +682,33 @@ pub fn wait(
             && !active()
             && receiver.lifetime.cancel_queued()
         {
-            return Err("callback_cancelled".into());
+            return Err(BlitError::retryable("callback_cancelled"));
         }
         if deadline.is_some_and(|deadline| Instant::now() >= deadline)
             && receiver.lifetime.cancel_queued()
         {
-            return Err(format!(
+            return Err(BlitError::retryable(format!(
                 "callback_execution_budget: the client did not answer within {} ms",
                 crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
-            ));
+            )));
         }
         match receiver.receiver.recv_timeout(Duration::from_millis(20)) {
-            Ok(result) => return result,
+            Ok(result) => {
+                return result.map_err(|message| {
+                    BlitError::new(
+                        receiver
+                            .lifetime
+                            .blit_error
+                            .get()
+                            .copied()
+                            .unwrap_or(BlitErrorKind::Fatal),
+                        message,
+                    )
+                });
+            }
             Err(RecvTimeoutError::Timeout) => (),
             Err(RecvTimeoutError::Disconnected) => {
-                return Err("client_surface_closed".into());
+                return Err(BlitError::retryable("client_surface_closed"));
             }
         }
     }
@@ -693,21 +779,7 @@ pub fn app_request(
         confirm,
         active,
     )?;
-    if method == "config/read" {
-        if let Some(config) = value.get_mut("config") {
-            redact_config(config);
-        }
-        for layer in value
-            .get_mut("layers")
-            .and_then(Value::as_array_mut)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(config) = layer.get_mut("config") {
-                redact_config(config);
-            }
-        }
-    }
+    redact_result(&method, &mut value);
     if matches!(method.as_str(), "thread/start" | "thread/fork")
         && let Some(created) = value["thread"]["id"].as_str()
         && let Ok(mut visible) = VISIBLE.lock()
@@ -729,8 +801,6 @@ const MANAGED_SOURCES: &[&str] = &[
     "legacyManagedConfigTomlFromMdm",
 ];
 
-/// Config rows for `config.describe`: host-writable Codex keys from a `config/read` result plus mod settings.
-/// `packages` is a `packages.list` result; its enabled mods' settings become `mods.<id>.<name>` rows.
 pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
     let mut rows = Vec::new();
     for package in packages["packages"].as_array().into_iter().flatten() {
@@ -772,48 +842,102 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
     rows
 }
 
+fn redact_result(method: &str, value: &mut Value) {
+    match method {
+        "config/read" => {
+            if let Some(config) = value.get_mut("config") {
+                redact_config(config);
+            }
+            for layer in value
+                .get_mut("layers")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(config) = layer.get_mut("config") {
+                    redact_config(config);
+                }
+            }
+        }
+        "hooks/list" => scrub_secrets(value, ""),
+        _ => {}
+    }
+}
+
 fn redact_config(config: &mut Value) {
-    for (table, maps, values, url) in [
-        (
-            "mcp_servers",
-            &["env", "http_headers"][..],
-            &["/bearer_token", "/oauth/client_secret"][..],
-            "url",
-        ),
-        (
-            "model_providers",
-            &["http_headers", "query_params"][..],
-            &["/experimental_bearer_token"][..],
-            "base_url",
-        ),
-    ] {
-        for entry in config
+    for (table, url) in [("mcp_servers", "url"), ("model_providers", "base_url")] {
+        for value in config
             .get_mut(table)
             .and_then(Value::as_object_mut)
             .into_iter()
             .flat_map(|entries| entries.values_mut())
+            .filter_map(|entry| entry.get_mut(url))
         {
-            for map in maps {
-                for value in entry
-                    .get_mut(*map)
-                    .and_then(Value::as_object_mut)
-                    .into_iter()
-                    .flat_map(|map| map.values_mut())
-                {
-                    *value = Value::from("<redacted>");
-                }
-            }
-            for pointer in values {
-                if let Some(value) = entry.pointer_mut(pointer).filter(|value| !value.is_null()) {
-                    *value = Value::from("<redacted>");
-                }
-            }
-            if let Some(value) = entry.get_mut(url)
-                && let Some(redacted) = value.as_str().map(redact_url)
-            {
+            if let Some(redacted) = value.as_str().map(redact_url) {
                 *value = Value::from(redacted);
             }
         }
+    }
+    if let Some(set) = config.pointer_mut("/shell_environment_policy/set") {
+        redact_all(set);
+    }
+    scrub_secrets(config, "");
+}
+
+/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines;
+/// `env_key` stays readable only while it looks like an upper-case variable name with an underscore.
+fn scrub_secrets(value: &mut Value, name: &str) {
+    match value {
+        Value::Object(map) => {
+            let launches = map.contains_key("command");
+            for (key, value) in map.iter_mut() {
+                if key.ends_with("headers")
+                    || matches!(key.as_str(), "env" | "query_params")
+                    || (launches && key == "args")
+                {
+                    redact_all(value);
+                } else if key == "env_key" && value.is_string() {
+                    if !value.as_str().is_some_and(|name| {
+                        name.bytes()
+                            .next()
+                            .is_some_and(|byte| !byte.is_ascii_digit())
+                            && name.contains('_')
+                            && name.bytes().all(|byte| {
+                                byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                            })
+                    }) {
+                        *value = Value::from("<redacted>");
+                    }
+                } else {
+                    scrub_secrets(value, key);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|item| scrub_secrets(item, name)),
+        Value::String(text) => {
+            let mut segments = name.rsplit(['_', '-']);
+            let last = segments.next().unwrap_or_default();
+            let named = match segments.next() {
+                Some(previous) if last == "key" => format!("{previous}_key"),
+                _ => last.to_owned(),
+            };
+            let redacted = crate::resource_data::redact(text);
+            if crate::resource_data::contains_secret(&format!("{named}=x")) {
+                *value = Value::from("<redacted>");
+            } else if redacted != *text {
+                *value = Value::from(redacted.replace("[redacted]", "<redacted>"));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_all(value: &mut Value) {
+    match value {
+        Value::Object(map) => map.values_mut().for_each(redact_all),
+        Value::Array(items) => items.iter_mut().for_each(redact_all),
+        Value::Null => {}
+        _ => *value = Value::from("<redacted>"),
     }
 }
 
@@ -858,8 +982,25 @@ pub fn call(
     confirm: Option<String>,
     active: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Value, String> {
+    call_classified(
+        caller, operation, arguments, context, remote, thread, confirm, active,
+    )
+    .map_err(|error| error.message)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn call_classified(
+    caller: &str,
+    operation: &str,
+    arguments: Value,
+    context: InvocationContext,
+    remote: bool,
+    thread: Option<&str>,
+    confirm: Option<String>,
+    active: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<Value, BlitError> {
     if !active() {
-        return Err("callback_cancelled".into());
+        return Err(BlitError::retryable("callback_cancelled"));
     }
     let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
         .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
@@ -876,7 +1017,7 @@ pub fn call(
         active.clone(),
     )?;
     let pixels = pending.lifetime.pixels.clone();
-    let answer = wait(pending, active.as_ref(), deadline)?;
+    let answer = wait_classified(pending, active.as_ref(), deadline)?;
     if let Some(arguments) = mirrored.filter(|_| answer["status"] != "backpressure") {
         notify(Observed::Mirrored {
             caller: caller.to_owned(),
@@ -888,7 +1029,6 @@ pub fn call(
     Ok(answer)
 }
 
-/// The caller's scoped resource store, bound to its active package from `mod-status.json`.
 pub fn resource_host(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -925,7 +1065,6 @@ pub fn resource_host(
     .map_err(|error| error.to_string())
 }
 
-/// Writes a referenced image resource under `<store>/attachments` and returns its path.
 pub fn materialize(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -933,7 +1072,6 @@ pub fn materialize(
     thread: Option<&str>,
     reference: &Value,
 ) -> Result<std::path::PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
     let host = resource_host(store, repository, caller, thread)?;
     let resources = host.resources();
     let reference: crate::resource_data::ResourceRef =
@@ -948,10 +1086,9 @@ pub fn materialize(
     };
     let digest = record["blob"].as_str().ok_or("resource_not_binary")?;
     let bytes = resources.blob(digest).map_err(|error| error.to_string())?;
-    let directory = store.join("attachments");
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| error.to_string())?;
+    let directory =
+        crate::workspace::private_path(store, &["attachments"], "attachment_directory_invalid")
+            .map_err(|error| error.to_string())?;
     let path = directory.join(format!("{digest}.{extension}"));
     if !path.exists() {
         let mut temporary =
@@ -964,7 +1101,6 @@ pub fn materialize(
     Ok(path)
 }
 
-/// Rewrites `app.request` params: `localImage` resource references become materialized paths.
 pub fn translate_images(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -1028,7 +1164,6 @@ pub enum NoticeRequest<'a> {
     },
 }
 
-/// `terminal.notice` arguments as every surface must accept them.
 pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
     let invalid = || "terminal_notice_invalid".to_owned();
     let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
@@ -1178,11 +1313,11 @@ pub const IMAGE_PIXELS: u32 = 4096;
 pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let _stage = crate::frame_metrics::stage("decode");
     if bytes.len() > 8 * 1024 * 1024 {
-        return Err("backdrop_image_too_large".into());
+        return Err("image_too_large".into());
     }
-    let format = image::guess_format(bytes).map_err(|_| "backdrop_format_unsupported")?;
+    let format = image::guess_format(bytes).map_err(|_| "image_format_unsupported")?;
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
-        return Err("backdrop_format_unsupported".into());
+        return Err("image_format_unsupported".into());
     }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
@@ -1192,10 +1327,9 @@ pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     reader.limits(limits);
     reader
         .decode()
-        .map_err(|_| "backdrop_image_invalid_or_too_large".into())
+        .map_err(|_| "image_invalid_or_too_large".into())
 }
 
-/// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
 pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<Vec<BlitCell>> {
     let _stage = crate::frame_metrics::stage("half_block");
     let pixels = image
@@ -1224,7 +1358,6 @@ pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<V
         .collect()
 }
 
-/// The image frame of mirrored `terminal.blit` arguments as a cells blit over the whole `size` raster.
 pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
     let image = arguments.get("image")?;
     let bytes = STANDARD.decode(image["base64"].as_str()?).ok()?;
@@ -1259,8 +1392,8 @@ impl Blit {
         mut self,
         snapshot: impl FnOnce(
             &crate::process_raster::PixelSource,
-        ) -> Result<Arc<crate::process_raster::PixelFrame>, String>,
-    ) -> Result<Self, String> {
+        ) -> Result<Arc<crate::process_raster::PixelFrame>, BlitError>,
+    ) -> Result<Self, BlitError> {
         if let BlitContent::Source(source) = &self.content {
             let pixels = snapshot(source)?;
             self.bytes = pixels.source.byte_len()?;
@@ -1293,21 +1426,13 @@ impl Blit {
     }
 }
 
-pub fn blit_retryable(error: &str) -> bool {
-    matches!(
-        error,
-        "terminal_blit_unknown" | "terminal_blit_not_owned" | "terminal_blit_limit"
-    ) || error.starts_with("callback_")
-        || error.starts_with("client_surface_")
-}
-
 /// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 pub fn blit_request(
     caller: &str,
     owner: Option<&str>,
     size: Option<(u16, u16)>,
     arguments: &Value,
-) -> Result<Blit, String> {
+) -> Result<Blit, BlitError> {
     let bytes = arguments.to_string().len();
     if bytes > BLIT_QUEUE_BYTES {
         return Err("terminal_blit_too_large".into());
@@ -1322,12 +1447,13 @@ pub fn blit_request(
     };
     match owner {
         Some(owner) if owner == caller => {}
-        Some(_) => return Err("terminal_blit_not_owned".into()),
-        None => return Err("terminal_blit_unknown".into()),
+        Some(_) => return Err(BlitError::retryable("terminal_blit_not_owned")),
+        None => return Err(BlitError::retryable("terminal_blit_unknown")),
     }
     let content = match (rect, image) {
         (Some((rect, cells)), _) => {
-            let (width, height) = size.ok_or("terminal_blit_unknown")?;
+            let (width, height) =
+                size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
             if rect.width == 0
                 || rect.height == 0
                 || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)

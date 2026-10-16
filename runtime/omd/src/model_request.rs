@@ -37,7 +37,6 @@ const SECTION_FIELDS: &[&str] = &[
 
 const TRACE_VALUE_BYTES: usize = 2048;
 
-/// The value itself when small, else its digest and size.
 pub fn bounded(value: &Value) -> Value {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     if bytes.len() <= TRACE_VALUE_BYTES {
@@ -152,15 +151,6 @@ fn walk(request: &Value) -> Vec<Raw<'_>> {
     raw
 }
 
-fn cut(text: &str, limit: usize) -> &str {
-    let mut end = limit.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
-/// The classified prompt items of a Responses request with bounded text previews, in request order.
 pub fn sections(request: &Value) -> Vec<Value> {
     let mut room = SECTIONS_PREVIEW_BYTES;
     walk(request)
@@ -169,7 +159,7 @@ pub fn sections(request: &Value) -> Vec<Value> {
             let bytes = raw.text.map_or(0, str::len);
             let text = raw
                 .text
-                .map(|text| cut(text, SECTION_PREVIEW_BYTES))
+                .map(|text| &text[..text.floor_char_boundary(SECTION_PREVIEW_BYTES)])
                 .filter(|preview| preview.len() <= room);
             room -= text.map_or(0, str::len);
             json!({"id": raw.id, "kind": raw.kind, "role": raw.role, "group": raw.group,
@@ -179,7 +169,6 @@ pub fn sections(request: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// Section ids with digests of their full text, tools first, for cache-prefix comparison.
 pub fn fingerprints(request: &Value) -> Vec<(String, String)> {
     let digest = |bytes: &[u8]| crate::mods::digest(bytes);
     std::iter::once((
@@ -194,7 +183,6 @@ pub fn fingerprints(request: &Value) -> Vec<(String, String)> {
     .collect()
 }
 
-/// The first id whose content differs from the previous request's, or `None` when the prefix is unchanged.
 pub fn changed_from(previous: &[(String, String)], current: &[(String, String)]) -> Option<String> {
     current
         .iter()
@@ -347,7 +335,6 @@ fn changed(section: &Value, original: &Value) -> Option<String> {
         .flatten()
 }
 
-/// Applies validated effective sections to the request; returns whether anything changed.
 pub fn apply_sections(request: &mut Value, given: &[Value], effective: &[Value]) -> bool {
     if given == effective {
         return false;
@@ -612,7 +599,6 @@ pub fn valid_answer(result: &Value) -> bool {
         })
 }
 
-/// One raw output item for an injected or synthetic message or tool call.
 pub fn output_item(item: &Value, id: &str) -> Value {
     match item["kind"].as_str().or(item["type"].as_str()) {
         Some("message") => {
@@ -750,7 +736,6 @@ fn leaves<'a>(
     }
 }
 
-/// One provider-bound text leaf, borrowing its text from the request.
 #[derive(Debug, PartialEq)]
 pub struct SendSegment<'a> {
     pub id: String,
@@ -768,8 +753,6 @@ impl SendSegment<'_> {
     }
 }
 
-/// Every provider-bound text leaf of a Responses request in request order, the opaque values it carries
-/// (unscanned media before encrypted content, capped) and their total count.
 pub fn send_segments(request: &Value) -> (Vec<Value>, Vec<Value>, usize) {
     let (segments, opaque, total) = send_segment_refs(request);
     (
@@ -865,7 +848,6 @@ fn encoded(character: char) -> usize {
     }
 }
 
-/// The longest prefix whose JSON-encoded size fits `limit`, cut on a character boundary.
 fn encoded_cut(text: &str, limit: usize) -> &str {
     let mut size = 0;
     for (at, character) in text.char_indices() {
@@ -888,8 +870,8 @@ pub fn send_pages(segments: Vec<Value>) -> Vec<Vec<Value>> {
             let mut offset = 0;
             while offset < text.len() {
                 let end = offset + encoded_cut(&text[offset..], SEND_PIECE_BYTES).len();
-                let start = offset - cut_back(&text[..offset], SEND_CONTEXT_BYTES).len();
-                let after = end + cut(&text[end..], SEND_CONTEXT_BYTES).len();
+                let start = text.ceil_char_boundary(offset.saturating_sub(SEND_CONTEXT_BYTES));
+                let after = end + text[end..].floor_char_boundary(SEND_CONTEXT_BYTES);
                 let mut piece = segment.clone();
                 piece["text"] = text[offset..end].into();
                 piece["offset"] = text[..offset].encode_utf16().count().into();
@@ -911,14 +893,6 @@ pub fn send_pages(segments: Vec<Value>) -> Vec<Vec<Value>> {
         }
     }
     pages
-}
-
-fn cut_back(text: &str, limit: usize) -> &str {
-    let mut start = text.len().saturating_sub(limit);
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    &text[start..]
 }
 
 /// The byte offset of a JavaScript string index (UTF-16 code units) on a character boundary.
@@ -992,7 +966,6 @@ pub fn valid_send_result(result: &Value, last: &Value, input: &Value) -> bool {
         })
 }
 
-/// Byte ranges in the whole segment text for a validated page result, without edits that change nothing.
 pub fn page_edits(
     result: &Value,
     page: &[Value],
@@ -1076,7 +1049,6 @@ struct Queue {
 
 static QUEUED: std::sync::Mutex<BTreeMap<String, Queue>> = std::sync::Mutex::new(BTreeMap::new());
 
-/// Queues mod text for the thread's next model request as an inserted section.
 pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String> {
     let mut queued = QUEUED
         .lock()
@@ -1094,9 +1066,7 @@ pub fn queue_section(thread: &str, owner: &str, text: &str) -> Result<(), String
     Ok(())
 }
 
-/// Adds the thread's queued sections to an outgoing request without taking them: the last sent batch while no
-/// response to it has completed or when retrying it, then pending sections, within the room `inserted` sections leave.
-/// Returns whether the request changed and the sections it carries.
+/// Adds the thread's queued sections without taking them: the last sent batch while no response to it has completed or when retrying it, then pending sections, within the room `inserted` sections leave; returns whether the request changed and the sections carried.
 pub fn apply_queued_sections(
     request: &mut Value,
     thread: &str,
@@ -1159,7 +1129,6 @@ pub fn commit_queued_sections(thread: &str, request_id: &str, carried: &[Value])
     queue.delivered = false;
 }
 
-/// A response to `request_id` completed, so the batch it carried reached the model.
 pub fn queued_sections_delivered(thread: &str, request_id: &str) {
     let mut queued = QUEUED
         .lock()

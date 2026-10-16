@@ -1,0 +1,6 @@
+{
+  "optional": {
+    "mods/first-party/omd_claude_cli/claude_cli.live.test.mjs": "Needs a logged-in Claude CLI and a Codex built from the pinned patch: OMD_TEST_CLAUDE=/path/to/claude OMD_TEST_CODEX=/path/to/codex node --test mods/first-party/omd_claude_cli/claude_cli.live.test.mjs",
+    "mods/examples/coordination/debug.test.json": "Intentional-failure scenario for the copied example's pnpm run debug; scripts/mod_author_acceptance.py runs it"
+  }
+}

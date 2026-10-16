@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "host_operations": {
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
     "store.get": [
       {"result": null}
     ],
@@ -12,7 +13,7 @@
     ]
   },
   "steps": [
-    {"type": "event", "event": "workspace_change", "payload": {"repository": "/repo", "call_id": "write-1", "source": "tool", "status": "observed", "changes": [{"path": "sample.py", "before": null, "after": "abc"}]}},
-    {"type": "invoke", "mod": "omd_lsp_sync", "event": "tool", "name": "status", "payload": {}, "expect": {"adapters": {"python": {"status": "fallback", "reason": "python_server_absent", "repository": "/repo", "documents": 0, "diagnostics": {}, "server": null}, "typescript": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "rust": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "java": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}}}}
+    {"type": "event", "event": "workspace_change", "payload": {"thread_id": "lsp-fixture", "repository": "/repo", "call_id": "write-1", "source": "tool", "status": "observed", "changes": [{"path": "sample.py", "before": null, "after": "abc"}]}},
+    {"type": "invoke", "mod": "omd_lsp_sync", "event": "tool", "name": "status", "payload": {"thread_id": "lsp-fixture"}, "expect": {"adapters": {"python": {"status": "fallback", "reason": "python_server_absent", "repository": "/repo", "documents": 0, "diagnostics": {}, "server": null}, "typescript": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "rust": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "java": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}}}}
   ]
 }

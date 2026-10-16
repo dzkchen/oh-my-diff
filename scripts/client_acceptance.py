@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from pty_session import ROOT, Session, call, environment, fresh, git, provider
+from scripts.pty_session import ROOT, Session, call, environment, fresh, git, provider
 
 BROKEN_MANIFEST = {"schema": 1, "id": "broken_fixture", "version": "1.0.0", "api": "0.2.0-experimental.5", "state_version": 1,
                    "license": "Apache-2.0", "description": "Throws on every render.", "capabilities": ["terminal"],

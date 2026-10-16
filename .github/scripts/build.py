@@ -20,8 +20,7 @@ SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
 GENERATED = ("mods/COVERAGE.md", "mods/EXTENSION_TYPES.md", "INTEGRATION.md")
-GENERATORS = ("plugin_lock.py", "preview_lock.py", "full_mods_lock.py", "mod_conformance.py", "mod_extension_types.py",
-              "integration_matrix.py")
+GENERATORS = ("plugin_lock", "mods_lock", "mod_conformance", "mod_extension_types", "integration_matrix")
 
 
 def pin():
@@ -212,12 +211,22 @@ def pack_sdk(output):
 
 def artifacts(args):
     batch = batch_dir(args.batch)
-    if args.release and cargo_run(batch, "build-artifacts", [*BUILD, "--release"]):
-        raise SystemExit(1)
     sys.path.insert(0, str(ROOT))
-    from scripts import lean_release_lock
+    from scripts import build_provenance, release_lock
     built = batch / "target/release"
     output = batch / "artifacts"
+    provenance = args.release and sys.platform == "darwin"
+    if provenance:
+        arguments = [*BUILD, "--release"]
+        tree, environment = batch / "codex", cargo_env(batch)
+        before = build_provenance.inputs(tree, arguments, environment)
+        (built / build_provenance.RECORD).unlink(missing_ok=True)
+        if cargo_run(batch, "build-artifacts", arguments):
+            raise SystemExit(1)
+        build_provenance.record_build(built, before, build_provenance.inputs(tree, arguments, environment))
+        unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
+    elif args.release and cargo_run(batch, "build-artifacts", [*BUILD, "--release"]):
+        raise SystemExit(1)
     missing = [name for name in BINARIES if not (built / name).is_file()]
     if missing:
         raise SystemExit(f"missing {', '.join(missing)} in {built}; rerun with --release")
@@ -226,8 +235,12 @@ def artifacts(args):
     for name in BINARIES:
         shutil.copy2(built / name, output / name)
     if sys.platform == "darwin":
-        for name in lean_release_lock.HARDENED:
-            lean_release_lock.sign(output / name)
+        for name in release_lock.HARDENED:
+            release_lock.sign(output / name)
+    if provenance:
+        if build_provenance.hashes(output) != unsigned["unsigned"]:
+            raise SystemExit("release artifacts changed during copying")
+        build_provenance.record_signing(output, unsigned)
     pack_sdk(output)
     print(output)
 
@@ -238,14 +251,14 @@ def locks(args):
     steps = [[script, "--write"] for script in GENERATORS]
     output = batch_dir(args.batch) / "artifacts" if args.batch else None
     if output and output.is_dir():
-        steps.append(["lean_release_lock.py", "--artifact-dir", output, "--write"])
+        steps.append(["release_lock", "--artifact-dir", output, "--write"])
     else:
-        print("lean_release_lock.py: skipped; pass a batch with artifacts (.github/scripts/build.py artifacts)")
+        print("release_lock: skipped; pass a batch with artifacts (.github/scripts/build.py artifacts)")
     failed = False
     for script, *options in steps:
-        if script == "lean_release_lock.py":
+        if script == "release_lock":
             pack_sdk(output)
-        result = subprocess.run([sys.executable, ROOT / "scripts" / script, *map(str, options)], cwd=ROOT,
+        result = subprocess.run([sys.executable, "-m", f"scripts.{script}", *map(str, options)], cwd=ROOT,
                                 capture_output=True, text=True)
         failed |= result.returncode != 0
         print(f"{script}: {((result.stdout + result.stderr).strip().splitlines() or ['ok'])[-1]}")
@@ -269,12 +282,12 @@ def main():
     command.add_argument("batch")
     command.add_argument("--evidence", type=Path, help="directory for replay.json")
     command.set_defaults(handler=sync)
-    command = commands.add_parser("artifacts", help="copy, sign and pack lean-release lock inputs")
+    command = commands.add_parser("artifacts", help="copy, sign and pack release lock inputs")
     command.add_argument("batch")
     command.add_argument("--release", action="store_true", help="build the release binaries first")
     command.set_defaults(handler=artifacts)
     command = commands.add_parser("locks", help="rewrite every generated lock and document in dependency order")
-    command.add_argument("batch", nargs="?", help="batch whose artifacts feed the lean-release lock")
+    command.add_argument("batch", nargs="?", help="batch whose artifacts feed the release lock")
     command.set_defaults(handler=locks)
     args = parser.parse_args()
     args.handler(args)

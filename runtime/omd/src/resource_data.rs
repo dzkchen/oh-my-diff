@@ -181,20 +181,13 @@ impl ResourceStore<'_> {
         if self.root.canonicalize()? != self.root || !fs::symlink_metadata(self.root)?.is_dir() {
             return Err(io::Error::other("resource_root_invalid"));
         }
-        let mut path = self.root.to_owned();
-        for component in ["resources", &self.binding.repository, &self.binding.owner] {
-            path.push(component);
-            match fs::DirBuilder::new().create(&path) {
-                Ok(()) => {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error),
-            }
-            if path.canonicalize()? != path || !fs::symlink_metadata(&path)?.is_dir() {
-                return Err(io::Error::other("resource_directory_invalid"));
-            }
+        let path = crate::workspace::private_path(
+            self.root,
+            &["resources", &self.binding.repository, &self.binding.owner],
+            "resource_directory_invalid",
+        )?;
+        if path.canonicalize()? != path {
+            return Err(io::Error::other("resource_directory_invalid"));
         }
         Ok(path)
     }
@@ -345,10 +338,7 @@ impl ResourceStore<'_> {
         if cursor > payload.len() || !payload.is_char_boundary(cursor) {
             return Err(io::Error::other("resource_cursor_invalid"));
         }
-        let mut end = cursor.saturating_add(max_bytes).min(payload.len());
-        while !payload.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = payload.floor_char_boundary(cursor.saturating_add(max_bytes));
         if end == cursor && end < payload.len() {
             return Err(io::Error::other("resource_page_too_small"));
         }

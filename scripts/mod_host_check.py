@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import functools
 import json
 import os
 import re
@@ -12,24 +11,30 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples"]
+SOURCES = [ROOT / "mods/first-party", ROOT / "mods/examples", ROOT / "mods/ports"]
 TUI_OPERATIONS = {
     "exec.run", "exec.output_page", "workspace.read", "workspace.list", "workspace.stat",
     "workspace.check_access", "workspace.transaction", "workspace.backup", "workspace.restore",
     "store.get", "store.put", "store.delete", "store.list", "store.export", "store.reset",
-    "app.request", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
+    "app.request", "app.respond", "credentials.request", "terminal.notify", "terminal.show_thread", "commands.list",
     "commands.describe", "commands.invoke", "config.describe", "config.set", "environment.read", "environment.set",
     "sessions.ports", "terminal.import_file", "terminal.image_sample", "composer.read", "composer.write",
     "builtins.invoke", "packages.apply", "contract.select", "terminal.open", "terminal.prompt", "terminal.pane", "terminal.panes",
     "terminal.notice", "terminal.selection", "terminal.copy", "terminal.blit", "terminal.pty",
     "app.routes", "turns.activity", "turns.abort", "events.publish", "credentials.list", "settings.write",
-    "packages.list", "packages.index", "packages.preview", "packages.reload",
+    "packages.list", "packages.index", "packages.preview", "packages.reload", "session.info",
 }
 MOCKS = {
-    "store.get": None, "store.put": {"stored": True}, "store.delete": {"deleted": True},
-    "store.list": {"keys": []}, "exec.run": {"exit_code": 0, "stdout": "", "stderr": ""},
-    "workspace.read": {"text": ""}, "workspace.list": {"entries": []},
-    "workspace.stat": {"exists": False}, "workspace.check_access": {"allowed": True},
+    "store.get": None, "store.put": {"revision": 1}, "store.delete": {"deleted": True},
+    "store.list": {"keys": [], "cursor": None, "generation": 0},
+    "exec.run": {"exit_code": 0, "signal": None, "stdout": "", "stderr": "",
+                 "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                 "stdout_bytes": 0, "output_artifact": None, "stdout_truncated": False,
+                 "stdout_preview_truncated": False, "stderr_truncated": False,
+                 "stderr_preview_truncated": False, "timed_out": False, "duration_ms": 0,
+                 "program": {"path": "/bin/sh", "sha256": "0" * 64}, "guards_verified": 0},
+    "workspace.read": {"files": {}}, "workspace.list": {"entries": [], "truncated": False},
+    "workspace.stat": {"files": {}}, "workspace.check_access": {"paths": [], "write": False},
 }
 BUILTIN_SLASH = {
     "model", "ide", "permissions", "keymap", "vim", "setup-default-sandbox", "experimental", "approve",
@@ -44,9 +49,7 @@ EVENTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
-REGISTRATIONS = {"tool": "tools", "command": "commands", "middleware": "middleware", "provide": "services", "contract": "contracts"}
-NATIVE_KEY = re.compile(r"""['"`](alt\+[bdfrvx]|ctrl\+shift\+f|f8)['"`]""", re.IGNORECASE)
-RELATIVE_IMPORT = re.compile(r"""^\s*(?:import|export)(?!\s+type\b)\b[^;]*?\bfrom\s*['"]\.\.?/""", re.MULTILINE)
+SOURCE_REPORTS = {}
 
 
 def manifest(path):
@@ -127,11 +130,24 @@ class Host:
     def offline_command(self, location, mod, name):
         scenario = self.work / "scenario.json"
         scenario.write_text(json.dumps({
-            "schema": 1, "host_operations": {operation: [{"result": reply}] * 32 for operation, reply in MOCKS.items()},
+            "schema": 1, "host_operations": {operation: [{"result": reply, "optional": True}] * 32 for operation, reply in MOCKS.items()},
             "steps": [{"type": "invoke", "mod": mod, "event": "command", "name": name, "payload": ""}]}))
         output, error = self.run("test", location, scenario, check=False, timeout=60)
-        steps = json.dumps(output["steps"]) if output else error or ""
-        return set(re.findall(r"offline_unmocked_host_operation: ([\w.]+)", steps))
+        steps = output.get("steps") if isinstance(output, dict) else None
+        if error:
+            failures = [error]
+        elif not isinstance(steps, list) or len(steps) != 1 or not isinstance(steps[0], dict):
+            failures = ["missing offline scenario result"]
+        else:
+            failures = [json.dumps(step["error"]) for step in steps if "error" in step]
+        refused = set()
+        unexpected = []
+        for failure in failures:
+            operations = re.findall(r"offline_unmocked_host_operation: ([\w.]+)", failure)
+            refused.update(operations)
+            if not operations:
+                unexpected.append(failure[:400])
+        return refused, unexpected
 
     def scenario(self, path, providers):
         file = path / "mod.test.json"
@@ -151,12 +167,51 @@ class Host:
                         for index, step in enumerate(output["steps"]) if "error" in step and "expect_error" not in scenario["steps"][index]]
 
 
-@functools.cache
-def registered(path):
-    source = "\n".join(file.read_text() for file in path.rglob("*.ts") if "node_modules" not in file.parts)
-    found = {EVENTS[name] for name in re.findall(r"api\.(?:on|replace)\(\s*'([a-z_]+)'", source) if name in EVENTS}
-    found |= {INTERCEPTS[name] for name in re.findall(r"api\.intercept\(\s*'([a-z_]+)'", source) if name in INTERCEPTS}
-    return found | {capability for call, capability in REGISTRATIONS.items() if f"api.{call}(" in source}
+def registered(item, path=None):
+    registrations = item.get("registrations", {})
+    found = {EVENTS[name] for kind in ("events", "replacements")
+             for name in registrations.get(kind, []) if name in EVENTS}
+    interceptors = list(registrations.get("interceptors", []))
+    if path is not None:
+        if any(str(source.resolve()) not in SOURCE_REPORTS for source in source_files(path)):
+            inspect_sources([path])
+        for source in source_files(path):
+            for call in SOURCE_REPORTS[str(source.resolve())]["registrations"]:
+                if call["method"] in ("on", "replace"):
+                    found.update(EVENTS[name] for name in call["names"] if name in EVENTS)
+                elif call["method"] == "intercept":
+                    interceptors.extend({"pattern": name} for name in call["names"])
+                else:
+                    capability = {"tool": "tools", "command": "commands", "middleware": "middleware",
+                                  "provide": "services", "contract": "contracts"}.get(call["method"])
+                    if capability:
+                        found.add(capability)
+    for entry in interceptors:
+        pattern = entry.get("pattern", "")
+        for surface, capability in INTERCEPTS.items():
+            negated = pattern.startswith("!")
+            selector = pattern[1:] if negated else pattern
+            matches = bool(re.fullmatch(re.escape(selector).replace(r"\*", ".*"), surface))
+            if pattern != "!*" and matches != negated and capability in item.get("capabilities", []):
+                found.add(capability)
+    if "tool_result" in registrations.get("events", []) and "middleware" in item.get("capabilities", []):
+        found.add("middleware")
+    return found | {kind for kind in ("tools", "commands", "services", "contracts") if registrations.get(kind)}
+
+
+def source_files(path):
+    return [source for source in sorted(path.rglob("*"))
+            if source.suffix in (".ts", ".tsx") and not source.name.endswith(".d.ts")
+            and "node_modules" not in source.parts]
+
+
+def inspect_sources(paths):
+    files = [str(source.resolve()) for path in paths for source in source_files(path)]
+    if files:
+        node = subprocess.run(["mise", "which", "node"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        result = subprocess.run([node, str(ROOT / "scripts/mod_source_check.mjs")], input=json.dumps(files),
+                                cwd=ROOT, capture_output=True, text=True, check=True)
+        SOURCE_REPORTS.update(json.loads(result.stdout))
 
 
 def problems_from_status(status, label, paths):
@@ -164,7 +219,8 @@ def problems_from_status(status, label, paths):
     for item in status.get("mods", []):
         if item.get("error"):
             found.append(f"{item['id']}: {item['error']}")
-        unused = [grant for grant in item.get("unused_grants") or [] if item["id"] not in paths or grant not in registered(paths[item["id"]])]
+        registered_capabilities = registered(item, paths.get(item["id"]))
+        unused = [grant for grant in item.get("unused_grants") or [] if grant not in registered_capabilities]
         if unused:
             found.append(f"{item['id']}: unused capabilities {', '.join(unused)}")
     for item in status.get("rejected") or []:
@@ -181,18 +237,20 @@ def static_problems(path):
     found += [f"setting {key} has no default" for key, value in schema.items() if "default" not in value]
     needed = {"package_text_assets_v1"} if package.get("assets") else set()
     commands, tools = [], 0
-    for source in path.rglob("*.ts"):
-        if "node_modules" in source.parts or source.name.endswith(".d.ts"):
-            continue
+    if any(str(source.resolve()) not in SOURCE_REPORTS for source in source_files(path)):
+        inspect_sources([path])
+    for source in source_files(path):
         text = source.read_text()
-        found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(NATIVE_KEY.findall(text)))]
+        report = SOURCE_REPORTS[str(source.resolve())]
+        found += [f"{source.name}: {error}" for error in report["errors"]]
+        found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(report["keys"]))]
         if (size := len(text.encode())) > 131_072:
             found.append(f"{source.name}: {size} bytes exceeds the 131072-byte package file limit")
-        commands += re.findall(r"api\.command\(\s*'([^']+)'", text)
-        tools += len(re.findall(r"api\.tool\(", text))
-        if RELATIVE_IMPORT.search(text):
+        commands += report["commands"]
+        tools += report["tools"]
+        if report["imports"]:
             needed.add("package_imports_v1")
-        if re.search(r"api\.component\s*[<(]", text):
+        if report["component"]:
             needed.add("component_modules_v1")
     required = set(package.get("compatibility", {}).get("required_features", []))
     found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
@@ -235,9 +293,10 @@ def check(host, paths, providers, commands, scenarios):
         names = [command["name"] for command in (item or {}).get("registrations", {}).get("commands", [])
                  if not command.get("cli")]
         for name in names if commands else []:
-            refused_operations = host.offline_command(location, mod, name) - TUI_OPERATIONS
+            refused_operations, probe_errors = host.offline_command(location, mod, name)
             found += [f"/{mod}:{name} calls {operation}, which slash commands cannot use"
-                      for operation in sorted(refused_operations)]
+                      for operation in sorted(refused_operations - TUI_OPERATIONS)]
+            found += [f"/{mod}:{name} offline probe failed: {error}" for error in probe_errors]
             _, error = host.run("command", location, mod, name, '""', check=False, timeout=60)
             if error and ("Error" in error or error == "timeout") and not any(
                     reason in error for reason in ("host_operation_unavailable", "client_surface_unavailable")):
@@ -259,6 +318,7 @@ def main():
     parser.add_argument("--static", action="store_true", help="only the source checks; needs no omd-mod")
     parser.add_argument("packages", nargs="*", help="limit to these package directory names or mod IDs")
     args = parser.parse_args()
+    inspect_sources(packages(args.packages))
     if args.static:
         report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages) if (found := static_problems(path))}
     else:

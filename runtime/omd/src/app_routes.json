@@ -346,6 +346,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "_meta",
     "arguments",
@@ -371,6 +372,7 @@
     "user",
     "event"
    ],
+   "scope": "root",
    "fields": [
     "connectorId",
     "originCallId",
@@ -1134,6 +1136,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "cursor",
     "limit",
@@ -1147,6 +1150,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "beforeThreadId",
     "sectionId",

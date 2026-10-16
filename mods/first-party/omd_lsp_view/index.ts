@@ -2,21 +2,22 @@ import type { Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 type Item = { label: string; value: string };
 type View = { title: string; status: 'working' | 'ready' | 'error'; message: string; items: Item[]; action: 'open' | 'apply'; text: string | null;
-  excerpt: { path: string; line: number; start: number; lines: string[]; errors?: Item[] } | null; pane: boolean; revision: number };
+  excerpt: { path: string; line: number; start: number; lines: string[]; errors?: Item[] } | null; pane: boolean; revision: number; request: number };
 type Server = { adapter: string; server: string | null; status: string; reason: string; documents: number; count?: number; errors: string[] };
-type Saved = { view: View | null; servers: Server[]; open: boolean };
+type Saved = { view: View | null; servers: Server[]; open: boolean; asked: number };
 
 const object = (value: Json | undefined): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 const target = (value: string) => {
   const match = /^(.*?)(?::(\d+))?(?::(\d+))?$/.exec(value.trim());
-  return { path: match?.[1] ?? '', line: Number(match?.[2] ?? 1), character: Number(match?.[3] ?? 1) };
+  return { path: match?.[1] ?? '', line: Math.max(1, Number(match?.[2] ?? 1)), character: Math.max(1, Number(match?.[3] ?? 1)) };
 };
 
+const utf8 = new TextEncoder();
 const clip = (text: string, limit: number, json = false) => {
+  if (!json) return text.slice(0, utf8.encodeInto(text, new Uint8Array(limit)).read);
   let end = 0;
   for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    limit -= code < 0x80 ? (json ? JSON.stringify(char).length - 2 : 1) : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    limit -= utf8.encode(JSON.stringify(char)).length - 2;
     if (limit < 0) break;
     end += char.length;
   }
@@ -29,12 +30,20 @@ const rows = (items: Item[], tone?: 'failure') => items.filter((item, index) => 
 });
 
 export default function activate(api: ModAPI) {
-  const saved = (): Saved => ({ view: null, servers: [], open: false, ...api.state.get() as unknown as Saved | null });
+  const saved = (): Saved => ({ view: null, servers: [], open: false, asked: 0, ...api.state.get() as unknown as Saved | null });
   const view = () => saved().view;
   const show = (patch: Partial<View> | null) => {
     const { view: current, ...rest } = saved();
-    api.state.set({ ...rest, view: patch === null ? null : { title: 'Code intelligence', status: 'ready', message: '', items: [], action: 'open', text: null, excerpt: null, pane: false,
+    api.state.set({ ...rest, view: patch === null ? null : { title: 'Code intelligence', status: 'ready', message: '', items: [], action: 'open', text: null, excerpt: null, pane: false, request: 0,
       ...current, ...patch, revision: (current?.revision ?? 0) + 1 } } as unknown as Json);
+  };
+  // Each request carries a number the view must still be waiting for, so closed or superseded answers are dropped.
+  const ask = (patch: Partial<View>, data: Record<string, Json>) => {
+    const request = saved().asked + 1;
+    api.state.set({ ...saved(), asked: request } as unknown as Json);
+    show({ ...patch, request });
+    const published = api.host.tryCall('events.publish', { channel: 'request', data: { ...data, request } });
+    if (!published.ok) show({ status: 'error', message: published.error, request: 0 });
   };
   const USAGE = 'usage: /lsp hover|definition|references|actions PATH:LINE[:COL] | open PATH[:LINE] | symbols|diagnostics|format PATH | diagnostics | workspace QUERY | servers | pane | close';
   api.command('lsp', value => {
@@ -50,31 +59,27 @@ export default function activate(api: ModAPI) {
       return null;
     }
     if (op === 'pane' || op === 'back') {
-      show(op === 'pane' ? { pane: !view()?.pane } : { excerpt: null });
+      show(op === 'pane' ? { pane: !view()?.pane } : { excerpt: null, status: 'ready', message: '', request: 0 });
       return null;
     }
     if (op === 'open' || op === 'editor') {
       const { path, line } = target(argument);
       if (!path || /^\/|(^|\/)\.\.?(\/|$)/.test(path)) return { display: USAGE };
       if (op === 'editor') {
-        const root = api.host.tryCall('exec.run', { program: 'pwd', timeout_ms: 5_000 });
-        const opened = root.ok ? api.host.tryCall('terminal.open', { path: `${root.value.stdout.trim()}/${path}`, line, editor: true }) : root;
+        const session = api.host.tryCall('session.info', null);
+        const opened = session.ok ? api.host.tryCall('terminal.open', { path: `${session.value.root}/${path}`, line, editor: true }) : session;
         return opened.ok ? null : { display: opened.error };
       }
       const start = Math.max(1, line - 12);
       const read = api.host.tryCall('exec.run', { program: 'awk', argv: ['-v', `s=${start}`, '-v', `e=${line + 12}`, 'NR>=s && NR<=e { print substr($0, 1, 400) }', `./${path}`], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return { display: `Cannot read ${path}` };
-      show({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1), errors: [] }, status: 'working', message: '' });
-      const asked = api.host.tryCall('events.publish', { channel: 'request', data: { op: 'diagnostics', path } });
-      if (!asked.ok) show({ status: 'error', message: asked.error });
+      ask({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1), errors: [] }, status: 'working', message: '' }, { op: 'diagnostics', path });
       return null;
     }
     const [index, applyPath] = op === 'apply' ? [Number(argument.split(':')[0]), argument.slice(argument.indexOf(':') + 1)] : [0, ''];
     const request: Record<string, Json> = op === 'workspace' ? { op, query: argument } : op === 'apply' ? { op, index, path: applyPath } : { op, ...target(argument) };
     if (!['hover', 'definition', 'references', 'symbols', 'workspace', 'diagnostics', 'actions', 'format', 'apply'].includes(op) || (op !== 'workspace' && op !== 'diagnostics' && !request.path)) return { display: USAGE };
-    show({ title: op === 'apply' ? 'Apply code action' : `${op} ${argument}`.trim(), status: 'working', message: 'Asking the language server…', items: [], text: null, excerpt: null, action: 'open' });
-    const published = api.host.tryCall('events.publish', { channel: 'request', data: request });
-    if (!published.ok) show({ status: 'error', message: published.error });
+    ask({ title: op === 'apply' ? 'Apply code action' : `${op} ${argument}`.trim(), status: 'working', message: 'Asking the language server…', items: [], text: null, excerpt: null, action: 'open' }, request);
     return null;
   }, { description: 'Code intelligence from omd_lsp_sync language servers: hover, definition, references, symbols, diagnostics, code actions and formatting' });
   api.on('channel', event => {
@@ -82,20 +87,20 @@ export default function activate(api: ModAPI) {
       api.state.set({ ...saved(), servers: Array.isArray(event.data) ? event.data.slice(0, 4) : [] } as unknown as Json);
       return;
     }
-    const data = object(event.data);
-    if (!event.channel.endsWith('/request') || !data) return;
+    const { request, ...data } = object(event.data) ?? {};
+    if (!event.channel.endsWith('/request') || !request || request !== view()?.request) return;
     try {
       const result = api.services.call('omd.lsp', 'query', data) as unknown as Partial<View>;
       const excerpt = view()?.excerpt;
       // A diagnostics answer for an open excerpt fills its error list and keeps the earlier results for Back.
-      show(data.op === 'diagnostics' && excerpt && data.path === excerpt.path ? { status: result.status, message: result.message, excerpt: { ...excerpt, errors: (result.items ?? []).filter(item => item.value.startsWith(`${excerpt.path}:`)) } } : result);
+      show({ ...data.op === 'diagnostics' && excerpt && data.path === excerpt.path ? { status: result.status, message: result.message, excerpt: { ...excerpt, errors: (result.items ?? []).filter(item => item.value.startsWith(`${excerpt.path}:`)) } } : result, request: 0 });
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      show({ status: 'error', message: /service_provider_missing/.test(error.message) ? 'enable omd_lsp_sync, which runs the language servers' : error.message });
+      show({ status: 'error', message: /service_provider_missing/.test(error.message) ? 'enable omd_lsp_sync, which runs the language servers' : error.message, request: 0 });
     }
   });
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_lsp_view_') && event.events?.some(input => 'key' in input && input.key === 'Esc') && !view()?.pane) show(null);
+    if (event.component.startsWith('omd_lsp_view_') && event.kind === 'close' && !view()?.pane) show(null);
   });
   api.on('terminal', input => {
     if (input.event === 'startup' && view() && !view()?.pane) show(null);

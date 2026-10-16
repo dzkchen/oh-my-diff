@@ -207,7 +207,6 @@ pub fn install(
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
-/// Leaves mods inactive and records why, so clients can report it and offer a state reset.
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
     let status = serde_json::json!({"activation_error": error, "mods": [], "rejected": []});
     persist_view(root, "mod-status.json", status.to_string().as_bytes())
@@ -271,14 +270,12 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
     }
 }
 
-/// A lead route a request may switch to: the thread's provider, or another one with its own credential.
 fn lead_candidate(route: &Route, provider: &str) -> bool {
     route.roles.contains(&config::RouteRole::Lead)
         && (route.provider == provider || route.credential.is_some())
 }
 
 impl Host {
-    /// The same host serving a linked worktree of the launch repository as its own checkout.
     fn for_worktree(&self, repository: PathBuf) -> Host {
         self.route_config();
         let routes = self
@@ -320,7 +317,6 @@ impl Host {
         (table.config.clone(), table.error.clone())
     }
 
-    /// Applies an edited host.json to a running session's ledger limits and captured routes.
     fn refresh_session(&self, session: &Session) -> Result<(), String> {
         let config = self.route_config().0;
         let limits = session
@@ -329,7 +325,7 @@ impl Host {
             .map_err(|error| format!("host_limits_not_applied: {error}"));
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         for account in accounts
@@ -536,7 +532,7 @@ impl Host {
         };
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         if accounts.insert(thread.to_string(), account).is_some() {
@@ -571,11 +567,20 @@ impl Session {
         use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        let mut file = std::fs::OpenOptions::new()
+        let mut file = match std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&path)
-            .map_err(|e| e.to_string())?;
+        {
+            Ok(file) => file,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && std::fs::read(&path).is_ok_and(|existing| existing == bytes) =>
+            {
+                return Ok(json!({"path": path, "sha256": execution::hash(&bytes)}));
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;

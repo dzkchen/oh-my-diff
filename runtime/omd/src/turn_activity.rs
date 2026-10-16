@@ -347,7 +347,6 @@ impl Drop for ReaderRegistration {
     }
 }
 
-/// Lets in-process clients read the ledger through the session host that records it.
 pub fn register_reader(read: Reader) -> ReaderRegistration {
     let mut slot = reader();
     slot.0 += 1;

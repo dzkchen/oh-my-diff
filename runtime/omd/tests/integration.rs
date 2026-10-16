@@ -161,7 +161,7 @@ fn colliding_tool_slots_and_contested_replacements_disable_only_the_claimants() 
 }
 
 #[test]
-fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
+fn composed_key_bindings_run_only_their_owners_commands() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let ui = written(
@@ -213,6 +213,15 @@ fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
         .map(|(id, command)| (id, command.name))
         .collect();
     assert_eq!(commands, [("helper".to_string(), "ping".to_string())]);
+    let composed = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
+    assert!(!composed.view.keybindings.contains_key("F6"));
+    assert_eq!(
+        composed.view.keybindings["F7"],
+        codex_omd::ModKeyAction::Command {
+            command: "ui:ping".into(),
+            args: String::new()
+        }
+    );
     assert_eq!(
         runtime
             .invoke(
@@ -349,7 +358,7 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
 }
 
 #[test]
-fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one() {
+fn reloading_during_streamed_work_rejects_changed_sources_and_swaps_the_next_generation() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let middleware =
@@ -412,7 +421,7 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         .unwrap();
     assert_eq!(value, json!({"task":"running"}));
     assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
-    assert_eq!(text(&mut runtime), json!("HELLO"));
+    assert!(runtime.event("context", json!({})).into_iter().find(|(id, _)| id == "stream").unwrap().1.is_err());
 
     assert!(runtime.reload().unwrap());
     assert_ne!(runtime.generation(), generation);
@@ -503,23 +512,4 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     assert_eq!(stored, json!({"schema":1,"version":1,"value":1}));
     assert!(!state("beta").exists());
     assert!(!state("gamma").exists());
-}
-
-#[test]
-fn retired_pi_host_operations_are_rejected_before_activation() {
-    let temp = TempDir::new().unwrap();
-    let (root, store) = workspace(&temp);
-    let reader = written(
-        &root,
-        "reader",
-        "export default api => api.command('resources', () => api.host.call('pi.discover', null))",
-        &["commands"],
-        json!({}),
-    );
-    trust(&store, &reader, &["commands"]);
-    let error = error_of(&host(&temp), "reader");
-    assert!(
-        error.contains("unsupported_host_operation: pi.discover"),
-        "{error}"
-    );
 }

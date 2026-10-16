@@ -1,7 +1,6 @@
 use super::*;
 use codex_core::CodexThread;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
 use codex_protocol::turn_input::TurnInputRequest;
 use codex_protocol::user_input::UserInput;
 use std::collections::BTreeSet;
@@ -182,7 +181,7 @@ fn integration_receipt(
         findings: Vec::new(),
         resolves: Vec::new(),
         submitted_by: submitted_by.to_owned(),
-        at: operations::now(),
+        at: u128::from(codex_omd::peers::now_ms()),
     }
 }
 
@@ -565,6 +564,7 @@ struct Agent {
     result: Arc<Mutex<Option<Result<String, String>>>>,
     failure: Arc<Mutex<Option<Value>>>,
     job: Option<tokio::task::JoinHandle<()>>,
+    runtime: tokio::runtime::Handle,
     consumed: bool,
     task: Arc<Task>,
     worker: String,
@@ -758,13 +758,7 @@ impl Agent {
             job.abort();
             let _ = job.await;
         }
-        let _ = self.thread.submit(Op::Interrupt).await;
-        let _ = self.thread.submit(Op::CleanBackgroundTerminals).await;
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.thread.shutdown_and_wait()).await;
-        let _ = self.task.finish_worker(&self.worker);
-        if !self.consumed {
-            let _ = self.task.discard_worker_result(&self.worker);
-        }
+        execution::stop_worker(&self.thread, &self.task, &self.worker, !self.consumed).await;
         self.workspace.take();
     }
 }
@@ -773,19 +767,15 @@ impl Drop for Agent {
     fn drop(&mut self) {
         if let Some(job) = self.job.take() {
             job.abort();
-            let task = self.task.clone();
-            let worker = self.worker.clone();
-            let thread = self.thread.clone();
-            let workspace = self.workspace.take();
-            tokio::spawn(async move {
-                let _ = job.await;
-                let _ = thread.submit(Op::Interrupt).await;
-                let _ = thread.submit(Op::CleanBackgroundTerminals).await;
-                let _ =
-                    tokio::time::timeout(Duration::from_secs(5), thread.shutdown_and_wait()).await;
-                let _ = task.discard_worker_result(&worker);
-                drop(workspace);
-            });
+            execution::stop_dropped(
+                &self.runtime,
+                self.thread.clone(),
+                self.task.clone(),
+                self.worker.clone(),
+                !self.consumed,
+                Some(job),
+                self.workspace.take(),
+            );
         } else if !self.consumed {
             let _ = self.task.discard_worker_result(&self.worker);
         }
@@ -852,7 +842,6 @@ struct CompleteCache {
     through: Value,
 }
 
-/// Completion and fork options layered on an ordinary worker spawn.
 #[derive(Default)]
 struct Shape {
     system: Option<String>,
@@ -1383,7 +1372,6 @@ impl Agents {
         }
     }
 
-    /// Ends the inventory record of a worker stopped before its job reported.
     fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
         if let (Some(core), Some(thread)) = (
             self.notifier.core.upgrade(),
@@ -1526,10 +1514,7 @@ impl Agents {
             &format!(
                 "integration-{}-{}.json",
                 execution::hash(handle.as_bytes()),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|elapsed| elapsed.as_millis())
-                    .unwrap_or_default()
+                codex_omd::peers::now_ms()
             ),
             &json!({"schema":2,"agent":handle,"candidate_sha256":candidate_sha256,
                 "changed_paths":changed,"apply":applied}),
@@ -1738,7 +1723,7 @@ impl Agents {
         if request.route == LEAD_ROUTE_ALIAS {
             let name = host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_err(|_| "account lock poisoned")?
                 .get(&lead.thread.to_string())
@@ -1843,6 +1828,13 @@ impl Agents {
             return Err("model_tools_require_fork".into());
         }
         let history = if fork {
+            for capability in ["sessions", "sessions_tools"] {
+                if !caller.grants.as_ref().is_some_and(|grants| {
+                    grants.capabilities.iter().any(|granted| granted == capability)
+                }) {
+                    return Err(format!("capability_denied: {capability}"));
+                }
+            }
             let manager = lead
                 .host
                 .manager
@@ -2384,7 +2376,7 @@ impl Agents {
             .claim_worker_objective(&id, &execution::hash(request.prompt.as_bytes()))
             .map_err(|e| e.to_string())?;
         host.enroll(thread_id, session, &id, Some(&route), None)?;
-        if let Ok(mut accounts) = host.accounts.0.lock()
+        if let Ok(mut accounts) = host.accounts.by_thread.lock()
             && let Some(account) = accounts.get_mut(&thread_id.to_string())
         {
             account.capture_tools = shape.capture_tools;
@@ -2427,7 +2419,7 @@ impl Agents {
         let spawned = match manager.spawn_isolated_subagent(lead.thread, options).await {
             Ok(spawned) => spawned,
             Err(error) => {
-                if let Ok(mut accounts) = host.accounts.0.lock() {
+                if let Ok(mut accounts) = host.accounts.by_thread.lock() {
                     accounts.remove(&thread_id.to_string());
                 }
                 return Err(error.to_string());
@@ -2438,6 +2430,7 @@ impl Agents {
             task: session.task.clone(),
             owner: id.clone(),
             active: true,
+            runtime: tokio::runtime::Handle::current(),
         };
         let result = Arc::new(Mutex::new(None));
         let failure = Arc::new(Mutex::new(None));
@@ -2520,11 +2513,8 @@ impl Agents {
             .await
             .map_err(|_| "native_agent_deadline".to_owned())
             .and_then(|r| r);
-            let _ = child.thread.submit(Op::CleanBackgroundTerminals).await;
-            let cleanup =
-                tokio::time::timeout(Duration::from_secs(5), child.thread.shutdown_and_wait())
-                    .await;
-            if let Ok(mut accounts) = accounts.0.lock() {
+            let cleanup = execution::shutdown(&child.thread).await;
+            if let Ok(mut accounts) = accounts.by_thread.lock() {
                 accounts.remove(&thread_id.to_string());
             }
             let completed = completed.and_then(|text| {
@@ -2583,6 +2573,7 @@ impl Agents {
                 result,
                 failure,
                 job: Some(job),
+                runtime: tokio::runtime::Handle::current(),
                 consumed: false,
                 task: session.task.clone(),
                 worker: id.clone(),

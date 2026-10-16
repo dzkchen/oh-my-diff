@@ -1,4 +1,5 @@
 mod author;
+mod operation_validation;
 mod bridge;
 mod chain;
 mod persisted;
@@ -18,6 +19,7 @@ pub use persisted::persist_chunks;
 pub use persisted::persist_cut;
 pub use persisted::persist_texts;
 pub use render::MOD_RENDER_COMPONENTS;
+pub use render::client_component_unmount;
 pub use render::component_detach;
 pub use render::component_events;
 pub use render::component_shared;
@@ -29,9 +31,6 @@ pub use view::MOD_KEY_LIMIT;
 pub use view::MOD_TEXT_BYTES;
 pub use view::ModActivity;
 pub use view::ModAnchor;
-pub use view::ModAsciiBackdrop;
-pub use view::ModBackdrop;
-pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModBoxAccent;
 pub use view::ModBoxBorder;
@@ -44,13 +43,13 @@ pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
-pub use view::ModImageBackdrop;
 pub use view::ModKeyAction;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
 pub use view::ModLayoutTabs;
 pub use view::ModListRow;
+pub use view::ModOffset;
 pub use view::ModOverlay;
 pub use view::ModOverlayClip;
 pub use view::ModPaint;
@@ -77,6 +76,7 @@ pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
+pub use view::owned_command;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
@@ -118,15 +118,12 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 fn profiling() -> bool {
     static PROFILING: OnceLock<bool> = OnceLock::new();
     *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
 }
 
-/// Records the time since `started` under `name` when `OMD_PROFILE_STARTUP` is set.
 pub fn profile(name: &str, started: Instant) {
     if !profiling() {
         return;
@@ -183,7 +180,6 @@ thread_local! {
     static STATE_THREAD: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// Binds `state_scope: "thread"` mod state to a session thread for invocations on this OS thread.
 pub struct StateThread(Option<String>);
 
 impl StateThread {
@@ -358,6 +354,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_lists_v1",
     "adapters_v1",
     "app_v1",
+    "app_respond_v1",
     "approval_v1",
     "unrestricted_process_v1",
     "delegated_approval_v1",
@@ -375,7 +372,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_feedback_v1",
     "terminal_media_v1",
     "terminal_surface_paint_v1",
-    "terminal_backdrop_transform_v1",
+    "codex_config_v1",
     "terminal_image_sample_v1",
     "terminal_import_lifetime_v1",
     "secrets_v1",
@@ -471,6 +468,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "sidecars.status",
     "sidecars.stop",
     "app.request",
+    "app.respond",
     "app.routes",
     "workspace.watch",
     "workspace.unwatch",
@@ -605,7 +603,6 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "history_persist",
 ];
 
-/// What a user accepts by granting the authority capabilities, shown before trust and in status.
 pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
@@ -639,6 +636,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     if granted("middleware") {
         exposure.push("middleware: this mod sees and may change prompts, tool calls and results, model requests and response streams, and through host_operation interceptors the arguments and results of other mods' host operations, including store, environment, credential, http and exec calls; its host_operation events hide the arguments and results of store, environment, credential, http, exec, sessions and evidence calls, and sessions and evidence calls are never intercepted.");
     }
+    if granted("request_policy") {
+        exposure.push("request_policy: every model request must pass this mod's final-request check; whenever the mod is not loaded, faults or fails to serve, OMD refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused.");
+    }
     if granted("history_write") {
         exposure.push("history_write: this mod may durably insert, edit, reorder and delete messages and tool rows in this session's transcript and in sessions it started, which changes what resume, search and export show and what the model sees next; replaced transcripts are kept and undo restores them, and rewritten rows are marked and never count as proof that a tool ran.");
     }
@@ -646,6 +646,15 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
         exposure.push("history_persist: this mod sees every text OMD stores for your sessions (prompts, instructions, replies, reasoning, tool arguments and results, command output, file changes and prompt recall) and may replace any of it before it is written, which changes what resume, fork, search and export show and what the model sees next; the live session keeps the original, and rewritten rows are marked.");
     }
     exposure
+}
+
+pub fn install_profile(value: &str) -> &'static str {
+    match value {
+        "full" => "full",
+        "platform_only" => "platform_only",
+        "private" => "private",
+        _ => "unknown",
+    }
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -1018,21 +1027,26 @@ fn source_use(
         ),
         ("dom", &["document.", "window."][..]),
     ] {
-        if needles.iter().any(|needle| {
-            if name == "filesystem" {
-                source.contains(needle)
-            } else {
-                visible.contains(needle)
-            }
+        let text = if name == "filesystem" { source } else { visible.as_str() };
+        // A needle counts only at an identifier boundary, so `prefetch(` is not `fetch(`.
+        if let Some(needle) = needles.iter().find(|needle| {
+            text.match_indices(*needle).any(|(offset, _)| {
+                !text[..offset]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            })
         }) {
-            environment.push(name.to_owned());
+            environment.push((name, *needle));
         }
     }
-    for name in &environment {
-        if !package.environment.contains(name) {
-            return Err(failure(format!("undeclared_environment_use: {name}")));
-        }
+    if let Some((name, needle)) = environment
+        .iter()
+        .find(|(name, _)| !package.environment.iter().any(|declared| declared == name))
+    {
+        return Err(failure(format!("undeclared_environment_use: {name} ({needle})")));
     }
+    let environment: Vec<String> = environment.into_iter().map(|(name, _)| name.to_owned()).collect();
     let used_capabilities = |operation: &String| -> Result<Vec<String>> {
         let used = if operation == "app.request" {
             let named = crate::app_routes::classes_named_in(source);
@@ -1046,15 +1060,19 @@ fn source_use(
                 .cloned()
                 .collect()
         } else {
-            let capability = ModHostCall {
+            let required = ModHostCall {
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
-            .capability()?;
+            .capabilities()?;
+            if operation == "model.fork"
+                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
+                return Err(failure(format!("undeclared_operation_use: {operation}")));
+            }
             let mut used = package
                 .capabilities
                 .iter()
-                .filter(|declared| *declared == capability)
+                .filter(|declared| required.contains(&declared.as_str()))
                 .cloned()
                 .collect::<Vec<_>>();
             let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
@@ -1179,7 +1197,6 @@ fn source_use(
     {
         capabilities.insert("store".to_owned());
     }
-    // SDK helpers call host operations on the mod's behalf.
     for (call, capability) in [
         (".time.", "events"),
         (".session(", "inventory"),
@@ -1307,7 +1324,12 @@ pub struct ModPackage {
     pub hook_budget_ms: u64,
     #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
     pub subscriptions: ModSubscriptions,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codex_config: BTreeMap<String, Value>,
 }
+
+pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1433,7 +1455,6 @@ pub struct ModAgent {
     pub offer: bool,
 }
 
-/// A registered agent definition with the package source that registered it.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct ModAgentDefinition {
     pub owner: String,
@@ -1457,7 +1478,6 @@ pub fn host_namespace(operation: &str, arguments: &Value) -> String {
     }
 }
 
-/// `*` matches any run of characters in a namespace pattern.
 pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == namespace,
@@ -1650,6 +1670,20 @@ impl ModPackage {
             text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
         }) {
             return Err(failure("invalid_description: 1-160 printable characters"));
+        }
+        if !self.codex_config.is_empty()
+            && (!self
+                .compatibility
+                .required_features
+                .iter()
+                .any(|feature| feature == "codex_config_v1")
+                || self.codex_config.iter().any(|(key, value)| {
+                    !CODEX_CONFIG_KEYS.contains(&key.as_str()) || *value != Value::Bool(true)
+                }))
+        {
+            return Err(failure(
+                "invalid_codex_config: keys from the host allowlist set to true, with codex_config_v1 required",
+            ));
         }
         if let Some(adapter) = self.adapter.as_deref()
             && (adapter == self.id
@@ -2122,7 +2156,6 @@ fn setting_value(value: &Value, definition: &serde_json::Map<String, Value>) -> 
             .is_none_or(|values| values.contains(value))
 }
 
-/// Explicit settings over the schema's `default` values.
 pub fn effective_settings(
     schema: Option<&Value>,
     settings: &BTreeMap<String, Value>,
@@ -2137,7 +2170,6 @@ pub fn effective_settings(
     effective
 }
 
-/// Merges `values` into a mod's stored settings (`null` removes one) and saves them schema-checked.
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
     let values = values
         .as_object()
@@ -2241,7 +2273,6 @@ impl ModPackage {
     }
 }
 
-/// Refuses secret-like `exec_environment` names the user did not trust by name.
 pub(crate) fn check_secret_environment(package: &ModPackage, trusted: &[String]) -> Result<()> {
     match package
         .secret_environment()
@@ -2294,7 +2325,6 @@ impl ModConfiguration {
     }
 }
 
-/// Active and failed mod counts from a host status: failed covers erroring and rejected mods.
 pub fn mod_counts(status: &Value) -> (usize, usize) {
     let mods = status["mods"].as_array().map_or(&[][..], Vec::as_slice);
     let failed = mods.iter().filter(|item| !item["error"].is_null()).count();
@@ -2431,9 +2461,13 @@ struct Reply {
     registrations: Registrations,
     state: Value,
     #[serde(default)]
-    ui_state: Value,
+    ui_state: Option<String>,
     #[serde(default)]
     ui_read: bool,
+    #[serde(default)]
+    ui_written: bool,
+    #[serde(default)]
+    clock_read: bool,
     value: Value,
     #[serde(default)]
     calls: Vec<ModHostCall>,
@@ -2464,6 +2498,7 @@ struct Loaded {
     ui: Option<(String, Arc<Mutex<UiState>>)>,
     ui_state: Value,
     ui_revision: u64,
+    ui_clears: u64,
     command_view: Option<AcceptedCommandView>,
     registrations: Registrations,
     source_use: ModSourceUse,
@@ -2478,14 +2513,13 @@ struct Loaded {
 struct UiState {
     value: Value,
     revision: u64,
+    clears: u64,
 }
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
-/// Clears a store's UI states once per explicit reload, whether this process made it or a host
-/// noticed another process's.
 fn reset_ui_states(root: &Path, revision: u64) {
     if UI_RESETS.lock().map_or(true, |mut resets| {
         resets.insert(root.to_path_buf(), revision) == Some(revision)
@@ -2500,6 +2534,7 @@ fn reset_ui_states(root: &Path, revision: u64) {
             {
                 state.value = Value::Null;
                 state.revision = state.revision.wrapping_add(1);
+                state.clears = state.clears.wrapping_add(1);
             }
         }
     }
@@ -2540,6 +2575,20 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
+/// The returned stamp is `None` if the file changed during the read.
+fn read_configuration(
+    path: &Path,
+    stamp: Option<FileStamp>,
+) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
+    let bytes = store::read(path, 65_536);
+    let sha256 = digest(bytes.as_deref().unwrap_or_default());
+    (
+        stamp.filter(|_| configuration_stamp(path) == stamp),
+        sha256,
+        bytes,
+    )
+}
+
 type Brokered = Option<(u64, BTreeSet<String>)>;
 
 #[cfg(test)]
@@ -2558,23 +2607,23 @@ mod reload_tests {
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
-            assert!(!host.reload().unwrap());
+            assert!(!host.refresh_authority().unwrap());
         }
         assert_eq!(store::READS.get(), reads);
         host.brokered.as_mut().unwrap().0 -= BROKER_REFRESH;
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         assert!(store::READS.get() > reads);
         let path = root.join("mods.json");
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"invalid").unwrap();
-        assert!(host.reload().is_err());
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
+        assert!(host.refresh_authority().is_err());
         std::fs::write(&path, original).unwrap();
-        assert!(!host.reload().unwrap());
+        assert!(!host.refresh_authority().unwrap());
         let moved = root.join("moved.json");
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
-        assert!(host.reload().is_err());
+        assert!(host.refresh_authority().is_err());
     }
 }
 type Authority = (
@@ -2591,6 +2640,7 @@ impl Loaded {
         {
             state.value = Value::Null;
             state.revision = state.revision.wrapping_add(1);
+            state.clears = state.clears.wrapping_add(1);
         }
     }
 
@@ -2649,22 +2699,33 @@ pub struct ModHost {
     service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
     virtual_time_ms: Option<u64>,
+    tier_selections: BTreeMap<String, ModSelection>,
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
-    renders: BTreeMap<String, (String, Value, Instant)>,
+    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
+    clock_reads: BTreeSet<String>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
+    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
+    codex_config: Arc<Mutex<BTreeSet<String>>>,
     environment: Arc<crate::host::Environment>,
     policies: Vec<PathBuf>,
     managed: Option<Managed>,
     unserved: Vec<(String, Vec<String>, String)>,
     project: Option<PathBuf>,
+    pool: u64,
+}
+
+impl Drop for ModHost {
+    fn drop(&mut self) {
+        process::size_reused_pool(self.pool, None);
+    }
 }
 
 enum Access<'a> {
@@ -2716,13 +2777,15 @@ type NextFn<'n> = dyn FnMut(
     + 'n;
 
 struct Invocation {
+    authority_current: bool,
     location: store::StateLocation,
+    thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
-    previous_state: Value,
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
+    migrate: bool,
 }
 
 fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
@@ -2761,7 +2824,6 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
 
 const SLEEP_LIMIT_MS: u64 = 60_000;
 
-/// Callbacks documented to run without host operations.
 fn hostless(event: &str, payload: &Value) -> bool {
     matches!(event, "terminal" | "component")
         || event == "intercept"
@@ -2844,14 +2906,20 @@ fn invoke(
     let thread = state_thread(&payload);
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+    let now_ms = crate::peers::now_ms();
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
-        let invocation =
+        let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        if invocation.migrate {
+            invocation.loaded.state = packages::migrate_state(
+                &invocation.node,
+                &invocation.loaded,
+                &invocation.location,
+                active,
+            )?;
+        }
         let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
         bridge::run(
             &invocation.node,
@@ -3010,6 +3078,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
                     .as_str()
                     .is_none_or(|network| network == "none")
                 && arguments["unix_sockets"].is_null()
+                && arguments["sandbox"].is_null()
         }
         _ => false,
     }
@@ -3082,7 +3151,6 @@ impl ModHost {
         Self::open_with(root, tool_validator, None, &|| true)
     }
 
-    /// Opens the host for a session repository so checkout-scoped state is known at registration.
     pub fn open_in(
         root: PathBuf,
         tool_validator: fn(&Value) -> Result<()>,
@@ -3123,22 +3191,30 @@ impl ModHost {
             service_calls: Vec::new(),
             tool_validator,
             virtual_time_ms: None,
+            tier_selections: BTreeMap::new(),
             dynamic_tools: BTreeMap::new(),
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            clock_reads: BTreeSet::new(),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
             admissions: BTreeMap::new(),
             brokered: None,
+            callback_configuration: Mutex::default(),
             required_surfaces: Arc::default(),
             intercepted_surfaces: Arc::default(),
+            codex_config: Arc::default(),
             environment: Arc::default(),
             policies: Vec::new(),
             managed: None,
             unserved: Vec::new(),
             project: None,
+            pool: {
+                static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -3209,6 +3285,10 @@ impl ModHost {
         for loaded in self.loaded.values_mut() {
             loaded.clear_ui();
         }
+        self.refresh_authority()
+    }
+
+    pub fn refresh_authority(&mut self) -> Result<bool> {
         self.reload_guarded(&|| true)
     }
 
@@ -3244,6 +3324,19 @@ impl ModHost {
         self.configuration_sha256.clear();
     }
 
+    fn current(&self, stamp: Option<FileStamp>) -> bool {
+        stamp.is_some()
+            && stamp == self.configuration_stamp
+            && self
+                .brokered
+                .as_ref()
+                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+    }
+
+    pub fn refresh_due(&self) -> bool {
+        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
+    }
+
     fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
         if !active() {
             return Err(failure("callback_cancelled"));
@@ -3252,18 +3345,11 @@ impl ModHost {
         let config_profile = Profile::new("configuration_read_hash");
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
-        if stamp.is_some()
-            && stamp == self.configuration_stamp
-            && self
-                .brokered
-                .as_ref()
-                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
-        {
+        if self.current(stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
-        let bytes = store::read(&path, 65_536);
-        let sha256 = digest(bytes.as_deref().unwrap_or_default());
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
         drop(config_profile);
         let (brokered, managed, deployment) = match self.authority(&sha256) {
             Ok(authority) => authority,
@@ -3362,7 +3448,6 @@ impl ModHost {
             let keep = selections.iter().enumerate().any(|(index, m)| {
                 m.enabled
                     && m.path == loaded.selection.path
-                    && m.sha256 == loaded.selection.sha256
                     && m.scope == loaded.selection.scope
                     && loaded
                         .package
@@ -3394,6 +3479,7 @@ impl ModHost {
             brokered.as_ref().map(|(_, grants)| grants),
             self.managed.as_ref().map(|managed| &managed.policy),
             &mut rejected,
+            store::package,
         )?;
         drop(selection_profile);
         let adapters = Self::adapters(&selected);
@@ -3427,13 +3513,7 @@ impl ModHost {
                         package.id
                     )));
                 }
-                Ok(files
-                    .into_iter()
-                    .map(|(name, text)| {
-                        let sha256 = digest(text.as_bytes());
-                        (name, json!({"text": text, "sha256": sha256}))
-                    })
-                    .collect())
+                Ok(store::asset_map(files))
             })();
             let assets = match assets {
                 Ok(assets) => assets,
@@ -3467,6 +3547,7 @@ impl ModHost {
                 ui: None,
                 ui_state: Value::Null,
                 ui_revision: 0,
+                ui_clears: 0,
                 command_view: None,
                 registrations: Registrations::default(),
                 source_use: ModSourceUse::default(),
@@ -3485,9 +3566,19 @@ impl ModHost {
                     &loaded.selection.scope,
                     bound_thread().as_deref(),
                 );
-                loaded.state = self
+                loaded.state = match self
                     .store
-                    .scoped_state(&location, loaded.package.state_version)?;
+                    .scoped_state(&location, loaded.package.state_version)
+                {
+                    // Older thread or checkout state migrates at the mod's first callback there.
+                    Err(error)
+                        if matches!(location, store::StateLocation::Directory(..))
+                            && error.to_string().starts_with("state_migration_required") =>
+                    {
+                        Value::Null
+                    }
+                    state => state?,
+                };
                 let inspection_profile = Profile::new("inspection_callback");
                 let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
                 drop(inspection_profile);
@@ -3528,7 +3619,6 @@ impl ModHost {
                     loaded.unused_grants = unused_grants;
                     loaded.unused_environment = unused_environment;
                 }
-                // A mod without a working previous version fails alone instead of blocking the reload.
                 Err(error) => fail(
                     initial
                         || self
@@ -3632,6 +3722,11 @@ impl ModHost {
         self.environment.clone()
     }
 
+    /// Codex config keys the active packages turn on, readable while another caller holds the runtime.
+    pub fn codex_config(&self) -> Arc<Mutex<BTreeSet<String>>> {
+        self.codex_config.clone()
+    }
+
     fn retain_environment(&self) {
         self.environment.retain(
             &self
@@ -3643,6 +3738,15 @@ impl ModHost {
     }
 
     fn publish_surfaces(&self) {
+        process::size_reused_pool(
+            self.pool,
+            Some(
+                self.loaded
+                    .keys()
+                    .filter(|id| self.registered(id, "terminal"))
+                    .count(),
+            ),
+        );
         let surfaces = MOD_INTERCEPT_SURFACES
             .iter()
             .map(|(surface, _)| *surface)
@@ -3662,9 +3766,14 @@ impl ModHost {
         if let Ok(mut published) = self.intercepted_surfaces.lock() {
             *published = intercepted;
         }
+        if let Ok(mut published) = self.codex_config.lock() {
+            *published = self
+                .active()
+                .flat_map(|(_, loaded)| loaded.package.codex_config.keys().cloned())
+                .collect();
+        }
     }
 
-    /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
     fn unserved_targets(&self, user: &str) -> Vec<(String, Vec<String>, String)> {
         let Some(managed) = &self.managed else {
             return Vec::new();
@@ -3700,8 +3809,7 @@ impl ModHost {
             .collect()
     }
 
-    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json`
-    /// changes or the last answer is older than `BROKER_REFRESH`.
+    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
     fn authority(&mut self, digest: &str) -> Result<Authority> {
         let _profile = Profile::new("authority");
         if let Some((at, cached, authority)) = &self.brokered
@@ -3725,7 +3833,6 @@ impl ModHost {
         Ok(authority)
     }
 
-    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated hosts.
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
         self.store.set_managed_policy(file, owner, user);
         self.brokered = None;
@@ -3762,8 +3869,7 @@ impl ModHost {
             .collect()
     }
 
-    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence;
-    /// the first `administered` selections come from the policy.
+    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence; the first `administered` selections come from the policy.
     fn select(
         selections: &[ModSelection],
         administered: usize,
@@ -3771,6 +3877,7 @@ impl ModHost {
         grants: Option<&BTreeSet<String>>,
         managed: Option<&ManagedPolicy>,
         rejected: &mut Vec<ModRejection>,
+        inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
         let rank = |scope: &str| match scope {
             MANAGED_SCOPE => 2,
@@ -3798,7 +3905,7 @@ impl ModHost {
                         selection.path.display()
                     )));
                 }
-                let (package, source, hash) = store::package(&selection.path)?;
+                let (package, source, hash) = inspect(&selection.path)?;
                 if hash != selection.sha256 {
                     return Err(failure(if administered {
                         format!(
@@ -4053,7 +4160,6 @@ impl ModHost {
         dependencies
     }
 
-    /// Resolves declared dependencies and returns the activation order.
     fn resolve_dependencies(
         next: &mut BTreeMap<String, Loaded>,
         lenient: &dyn Fn(&str) -> bool,
@@ -4445,6 +4551,86 @@ impl ModHost {
         )
     }
 
+    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
+        let managed = self.store.managed()?;
+        let brokered = store::brokered_grants(&self.store.root)?;
+        let deployment = if managed.is_some() {
+            self.store.managed_deployment()?
+        } else {
+            policy::ManagedDeployment::default()
+        };
+        let mut selections = match &managed {
+            Some(managed) => managed.selections(
+                &deployment,
+                &self.store.managed_user(),
+                self.project.as_deref(),
+            ).0,
+            None => Vec::new(),
+        };
+        let mut administered = selections.len();
+        let configured = self.tier_selections.get(&loaded.package.id).unwrap_or(&loaded.selection);
+        let (configuration_sha256, configuration) = self.callback_configuration();
+        let hash = format!("{}:{}:{}:{}:{}",
+            configuration_sha256,
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
+            deployment.generation,
+            self.project.as_deref().unwrap_or(Path::new("")).display());
+        // An unchanged authority inventory cannot introduce a different precedence winner.
+        let unchanged = hash == self.configuration_sha256;
+        match configuration {
+            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
+                config.mods.iter().filter(|selection| !unchanged || selection.path == loaded.selection.path).cloned(),
+            ),
+            _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
+            _ => return Err(failure("callback_authority_changed")),
+        }
+        if unchanged {
+            administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
+            selections.retain(|selection| selection.path == loaded.selection.path);
+        }
+        let selected = Self::select(
+            &selections, administered, false,
+            brokered.as_ref().map(|(_, grants)| grants),
+            managed.as_ref().map(|managed| &managed.policy),
+            &mut Vec::new(),
+            |path| store::verified_package(path).map(|(package, hash)| (package, String::new(), hash)),
+        )?;
+        let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
+            return Err(failure("callback_authority_changed"));
+        };
+        if selection.path != configured.path
+            || selection.scope != configured.scope
+            || store::grant(&json!(selection)) != store::grant(&json!(configured))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
+        Ok(())
+    }
+
+    fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
+        let path = self.store.root.join("mods.json");
+        let stamp = configuration_stamp(&path);
+        let mut cached = self
+            .callback_configuration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
+            && stamp == *cached_stamp
+            && configuration.node.is_file()
+        {
+            return (sha256.clone(), Ok(configuration.clone()));
+        }
+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let configuration = bytes
+            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
+            .map(Arc::new);
+        *cached = stamp
+            .zip(configuration.as_ref().ok())
+            .map(|(stamp, configuration)| (stamp, sha256.clone(), configuration.clone()));
+        (sha256, configuration)
+    }
+
     fn begin(
         &mut self,
         id: &str,
@@ -4468,10 +4654,19 @@ impl ModHost {
                 "mod_failed: {error}; explicitly reload to recover"
             )));
         }
+        self.check_callback_authority(&loaded)?;
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
-        loaded.state = self
+        let mut migrate = false;
+        loaded.state = match self
             .store
-            .scoped_state(&location, loaded.package.state_version)?;
+            .scoped_state(&location, loaded.package.state_version)
+        {
+            Err(error) if packages::migratable(&loaded, &location, &error) => {
+                migrate = true;
+                Value::Null
+            }
+            state => state?,
+        };
         let key = self.ui_key(&loaded, thread);
         if loaded
             .ui
@@ -4494,9 +4689,12 @@ impl ModHost {
             let state = state.lock().map_err(|_| failure("ui_state_unavailable"))?;
             loaded.ui_state = state.value.clone();
             loaded.ui_revision = state.revision;
+            loaded.ui_clears = state.clears;
         }
         Ok(Invocation {
+            authority_current: loaded.selection.authority_current(),
             location,
+            thread: thread.map(str::to_owned),
             dynamic: self
                 .dynamic_tools
                 .get(id)
@@ -4504,11 +4702,11 @@ impl ModHost {
                 .flatten()
                 .map(|tool| tool.name.clone())
                 .collect(),
-            previous_state: loaded.state.clone(),
             loaded,
             node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
             started: Instant::now(),
+            migrate,
         })
     }
 
@@ -4516,10 +4714,12 @@ impl ModHost {
         &mut self,
         loaded: &Loaded,
         location: &store::StateLocation,
+        thread: Option<&str>,
         event: &str,
         reply: Reply,
         active: &dyn Fn() -> bool,
     ) -> Result<(Value, Value)> {
+        let ui_state = validate_ui_state(reply.ui_state.as_deref().unwrap_or("null"))?;
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -4532,13 +4732,20 @@ impl ModHost {
             .map(|(_, state)| state.lock())
             .transpose()
             .map_err(|_| failure("ui_state_unavailable"))?;
+        let current = self.loaded.get(&loaded.package.id);
+        let rebind = loaded
+            .ui
+            .as_ref()
+            .zip(current)
+            .is_some_and(|((key, _), current)| {
+                current.ui.is_none() && key == &self.ui_key(current, thread)
+            });
         if reply.ui_read {
-            if self
-                .loaded
-                .get(&loaded.package.id)
-                .and_then(|current| current.ui.as_ref())
-                .zip(loaded.ui.as_ref())
-                .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
+            if !rebind
+                && current
+                    .and_then(|current| current.ui.as_ref())
+                    .zip(loaded.ui.as_ref())
+                    .is_none_or(|((_, current), (_, prior))| !Arc::ptr_eq(current, prior))
             {
                 return Err(failure("callback_cancelled"));
             }
@@ -4550,19 +4757,16 @@ impl ModHost {
             {
                 return Err(failure("ui_state_capability_denied"));
             }
-            if ui
-                .as_ref()
-                .is_none_or(|state| state.revision != loaded.ui_revision)
-            {
+            if ui.as_ref().is_none_or(|state| {
+                state.revision.wrapping_sub(loaded.ui_revision)
+                    != state.clears.wrapping_sub(loaded.ui_clears)
+            }) {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
-        if reply.ui_state != loaded.ui_state {
+        if ui_state != loaded.ui_state {
             if !reply.ui_read || !matches!(event, "command" | "component_event") {
                 return Err(failure("ui_state_write_unavailable"));
-            }
-            if serde_json::to_vec(&reply.ui_state)?.len() > 65_536 {
-                return Err(failure("ui_state_limit"));
             }
         }
         let mut parsed_command = None;
@@ -4631,11 +4835,17 @@ impl ModHost {
                 &reply.state,
             )?;
         }
-        if reply.ui_state != loaded.ui_state
-            && let Some(state) = ui.as_mut()
+        if let Some(state) = ui.as_mut()
+            && (ui_state != loaded.ui_state || reply.ui_written && ui_state != state.value)
         {
-            state.value = reply.ui_state;
+            state.value = ui_state;
             state.revision = state.revision.wrapping_add(1);
+        }
+        if rebind
+            && reply.ui_read
+            && let Some(current) = self.loaded.get_mut(&loaded.package.id)
+        {
+            current.ui = loaded.ui.clone();
         }
         if event == "command"
             && let Some(patch) = reply.value.get("terminal")
@@ -4643,7 +4853,11 @@ impl ModHost {
             let stamp = Self::terminal_stamp(
                 loaded,
                 &reply.state,
-                ui.as_ref().map(|state| state.revision),
+                loaded
+                    .ui
+                    .as_ref()
+                    .map(|(scope, _)| scope.as_str())
+                    .zip(ui.as_ref().map(|state| &state.value)),
             );
             if let Some(current) = self.loaded.get_mut(&loaded.package.id) {
                 current.command_view = Some(AcceptedCommandView {
@@ -4651,6 +4865,13 @@ impl ModHost {
                     stamp,
                     parsed: parsed_command,
                 });
+            }
+        }
+        if event == "terminal" {
+            if reply.clock_read {
+                self.clock_reads.insert(loaded.package.id.clone());
+            } else {
+                self.clock_reads.remove(&loaded.package.id);
             }
         }
         Ok((reply.value, reply.state))
@@ -4667,19 +4888,35 @@ impl ModHost {
         reply: Result<Reply>,
         active: &dyn Fn() -> bool,
     ) -> Result<Value> {
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
+        // A reload that keeps this package binding (such as the callback's own `packages.apply`) must not discard a result whose host calls already ran.
+        let thread = invocation.thread.as_deref();
+        if generation != self.generation
+            && self.loaded.get(id).is_none_or(|current| {
+                self.ui_key(current, thread) != self.ui_key(&invocation.loaded, thread)
+            })
+        {
+            return Err(failure("stale_mod_generation: retry on the next turn"));
+        }
+        self.check_callback_authority(&invocation.loaded)?;
+        if invocation.authority_current && !invocation.loaded.selection.authority_current()
+            && invocation.loaded.package.capabilities.iter().any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
+        {
+            return Err(failure("callback_authority_changed"));
+        }
         let result = reply.and_then(|reply| {
             self.accept(
                 &invocation.loaded,
                 &invocation.location,
+                invocation.thread.as_deref(),
                 event,
                 reply,
                 active,
             )
         });
-        if generation != self.generation {
-            return result.map(|(value, _)| value);
-        }
-        let (started, previous_state) = (invocation.started, invocation.previous_state);
+        let (started, previous_state) = (invocation.started, invocation.loaded.state);
         let current = self
             .loaded
             .get_mut(id)
@@ -4968,25 +5205,29 @@ impl ModHost {
     }
 
     fn ui_key(&self, loaded: &Loaded, thread: Option<&str>) -> String {
+        let mut selection = json!(loaded.selection);
+        if let Some(selection) = selection.as_object_mut() {
+            selection.remove("settings");
+        }
         format!(
             "{}:{}",
             self.store.root.display(),
             digest(
-                json!([self.project, thread, loaded.selection, loaded.adapter])
+                json!([self.project, thread, selection, loaded.adapter])
                     .to_string()
                     .as_bytes()
             )
         )
     }
 
-    fn terminal_stamp(loaded: &Loaded, state: &Value, revision: Option<u64>) -> String {
+    fn terminal_stamp(loaded: &Loaded, state: &Value, ui: Option<(&str, &Value)>) -> String {
         digest(
             json!([
                 loaded.selection.sha256,
                 loaded.selection.settings,
                 state,
-                loaded.ui.as_ref().map(|(scope, _)| scope),
-                revision
+                ui.map(|(scope, _)| scope),
+                ui.map(|(_, value)| value)
             ])
             .to_string()
             .as_bytes(),
@@ -4995,23 +5236,25 @@ impl ModHost {
 
     fn terminal_state_key(&self, id: &str, thread: Option<&str>) -> Option<String> {
         let loaded = self.loaded.get(id)?;
-        if loaded
-            .ui
-            .as_ref()
-            .is_none_or(|(scope, _)| scope != &self.ui_key(loaded, thread))
-        {
-            return None;
-        }
+        let scope = self.ui_key(loaded, thread);
+        let ui = match &loaded.ui {
+            Some((current, state)) if current == &scope => Some(state.clone()),
+            _ => UI_STATES
+                .lock()
+                .ok()?
+                .get(&scope)
+                .and_then(std::sync::Weak::upgrade),
+        };
+        let ui = match ui {
+            Some(state) => state.lock().ok()?.value.clone(),
+            None => Value::Null,
+        };
         let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
         let state = self
             .store
             .scoped_state(&location, loaded.package.state_version)
             .ok()?;
-        let revision = match &loaded.ui {
-            Some((_, state)) => Some(state.lock().ok()?.revision),
-            None => None,
-        };
-        Some(Self::terminal_stamp(loaded, &state, revision))
+        Some(Self::terminal_stamp(loaded, &state, Some((&scope, &ui))))
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -5024,10 +5267,10 @@ impl ModHost {
                 let key = self
                     .terminal_state_key(&id, thread.as_deref())
                     .map(|stamp| format!("{stamp}:{payload_hash}"));
-                // Renders may read the clock, so a cached one lives for a second.
-                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
+                // A handler that read the clock is rerun once its result is a second old.
+                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
                     && key == cached
-                    && at.elapsed() < Duration::from_secs(1)
+                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
                 {
                     return (id, Ok(value.clone()));
                 }
@@ -5041,8 +5284,8 @@ impl ModHost {
                 );
                 match (&result, key) {
                     (Ok(value), Some(key)) => {
-                        self.renders
-                            .insert(id.clone(), (key, value.clone(), Instant::now()));
+                        let clock = self.clock_reads.contains(&id).then(Instant::now);
+                        self.renders.insert(id.clone(), (key, value.clone(), clock));
                     }
                     _ => {
                         self.renders.remove(&id);
@@ -5095,10 +5338,11 @@ impl ModHost {
             Some((id, parsed))
         };
         self.renders.remove(id);
+        // A command's result stands in for the `terminal` handler for a second, like a clock read.
         if matched && let Some(stamp) = stamp {
             let key = format!("{stamp}:{}", digest(payload.to_string().as_bytes()));
             self.renders
-                .insert(id.to_owned(), (key, patch, Instant::now()));
+                .insert(id.to_owned(), (key, patch, Some(Instant::now())));
         }
         let results = self
             .active()
@@ -5191,6 +5435,10 @@ impl ModHost {
 
     pub fn turn_boundary(&mut self) {
         self.turn_boundary_guarded(&|| true);
+    }
+
+    pub fn refresh_guarded(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
+        self.reload_guarded(active)
     }
 
     pub fn turn_boundary_guarded(&mut self, active: &dyn Fn() -> bool) {
@@ -5418,7 +5666,6 @@ impl ModHost {
         Ok((root, files))
     }
 
-    /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
     pub fn record_access(&mut self, receipt: Value) {
         self.access.push(receipt);
         if self.access.len() > 32 {
@@ -5461,7 +5708,6 @@ impl ModHost {
         })
     }
 
-    /// Agent definitions registered by active mods, in load order.
     pub fn agent_definitions(&self) -> Vec<ModAgentDefinition> {
         self.active()
             .flat_map(|(id, m)| {
@@ -5477,7 +5723,6 @@ impl ModHost {
             .collect()
     }
 
-    /// The mod holding the exclusive replacement slot for a decision point.
     pub fn replacement_owner(&self, point: &str) -> Option<String> {
         self.active()
             .find(|(_, m)| m.registrations.replacements.iter().any(|p| p == point))
@@ -5526,18 +5771,13 @@ impl ModHost {
         })
     }
 
-    /// Read-only launch identity for `Events.terminal.input.identity`.
     pub fn identity(
         &self,
         codex_version: &str,
         install_profile: Option<&str>,
         mode: &str,
     ) -> Value {
-        let install_profile = match install_profile {
-            Some(profile @ ("full" | "platform_only" | "private")) => profile,
-            Some(_) => "unknown",
-            None => "unreported",
-        };
+        let install_profile = install_profile.map_or("unreported", self::install_profile);
         json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
             "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
                 "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
@@ -5737,10 +5977,12 @@ impl ModHost {
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,
-                    "autonomy": m.package.autonomy, "withheld": m.withheld,
+                    "autonomy": m.package.autonomy, "codex_config": m.package.codex_config, "withheld": m.withheld,
                     "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
-                    "exposure": authority_exposure(&m.package.capabilities)});
+                    "exposure": authority_exposure(&m.selection.capabilities)});
                 status }).collect::<Vec<_>>()});
+        status["request_policy_unavailable"] =
+            json!(self.send_policy().and_then(|policy| policy.unavailable));
         status["access"] = json!(self.access);
         status["tool_types"] = json!(crate::tool_schema::types_path(&self.store.root));
         status["managed"] = json!(self.managed.as_ref().map(|managed| json!({
@@ -5748,6 +5990,36 @@ impl ModHost {
             "unserved": self.unserved.iter().map(|(id, _, reason)| json!({"id": id, "reason": reason}))
                 .collect::<Vec<_>>()})));
         status
+    }
+}
+
+fn validate_ui_state(encoded: &str) -> Result<Value> {
+    if encoded.len() > 65_536 {
+        return Err(failure("ui_state_limit"));
+    }
+    serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
+}
+
+#[cfg(test)]
+#[test]
+fn ui_state_serialized_boundaries() {
+    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let encoded = format!(
+            "{}{}{}",
+            case["prefix"].as_str().unwrap(),
+            case["unit"]
+                .as_str()
+                .unwrap()
+                .repeat(case["repeat"].as_u64().unwrap() as usize),
+            case["suffix"].as_str().unwrap()
+        );
+        assert_eq!(
+            validate_ui_state(&encoded).is_ok(),
+            case["valid"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
     }
 }
 

@@ -1,10 +1,14 @@
-import type { Json, ModAPI } from '../../api.d.ts';
-import { ADAPTERS, ORDER, adapterFor, doc, fail, fileUri, languageId, message, number, object, ok, OBSERVED_REPOSITORY_KEY, pathFromUri, serializedBytes, size, state, string, uri } from './protocol.ts';
+import type { FileStat, Json, ModAPI } from '../../api.d.ts';
+import { ADAPTERS, ORDER, adapterFor, doc, fail, fileUri, languageId, number, object, ok, OBSERVED_REPOSITORY_KEY, pathFromUri, serializedBytes, size, state, string, uri } from './protocol.ts';
 import type { Message, Result, State } from './protocol.ts';
 
 const CALL_BUDGET = 28;
 const BYTE_BUDGET = 96_000;
 const SILENT_WAITS = 10;
+const READ_BYTES = 24_000;
+const SKIPPED_LIMIT = 32;
+
+type Source = { text: string; sha256: string } | null;
 
 export function createClient(api: ModAPI) {
   let calls = 0;
@@ -17,13 +21,57 @@ export function createClient(api: ModAPI) {
     spent += cost + size(result);
     return result;
   };
-  const stopServer = (s: State) => budget({ session: s.adapter }, a => api.host.tryCall('process.stop', a));
+  const stopServer = (s: State) => api.host.tryCall('process.stop', { session: s.adapter });
   const readFiles = (paths: string[]) => budget({ paths }, a => api.host.tryCall('workspace.read', a));
+  // Reads only documents whose hash differs from the tracked one, in batches that fit the receipt room twice (read, then sent to the server).
+  // A file over the batch size is read alone, or refused with a reason when it cannot fit. A file that is not UTF-8 reads as absent and is
+  // remembered by hash, so it is not read again until it changes.
+  const readDocuments = (paths: string[], stats: Record<string, FileStat | null>, s: State): Result<Record<string, Source>> => {
+    const files: Record<string, Source> = {};
+    const total = (list: string[]) => list.reduce((sum, path) => sum + (stats[path]?.size ?? 0), 0);
+    const read = (batch: string[]): Result<true> => {
+      if (spent + 2 * total(batch) > BYTE_BUDGET) return fail('callback_budget');
+      const result = readFiles(batch);
+      if (result.ok) { Object.assign(files, result.value.files); return ok(true); }
+      if (!result.error.includes('workspace_text_not_utf8')) return result;
+      if (batch.length === 1) {
+        files[batch[0]] = null;
+        const hash = stats[batch[0]]?.sha256;
+        if (hash) s.skipped = Object.fromEntries([...Object.entries(s.skipped), [batch[0], hash]].slice(-SKIPPED_LIMIT));
+        return ok(true);
+      }
+      const half = batch.length >> 1;
+      const first = read(batch.slice(0, half));
+      return first.ok ? read(batch.slice(half)) : first;
+    };
+    let batch: string[] = [];
+    let bytes = 0;
+    for (const path of paths) {
+      const stat = stats[path];
+      if (stat?.kind !== 'file') files[path] = null;
+      else if (stat.sha256 && stat.sha256 === s.documents[path]?.sha256) files[path] = { text: '', sha256: stat.sha256 };
+      else if (stat.sha256 && stat.sha256 === s.skipped[path]) files[path] = null;
+      else if (stat.size > READ_BYTES) {
+        if (spent + 2 * stat.size > BYTE_BUDGET) return fail('document_too_large');
+        const done = read([path]);
+        if (!done.ok) return done;
+      } else {
+        if (bytes + stat.size > READ_BYTES) {
+          const done = read(batch);
+          if (!done.ok) return done;
+          batch = [];
+          bytes = 0;
+        }
+        batch.push(path);
+        bytes += stat.size;
+      }
+    }
+    const last = batch.length ? read(batch) : ok(true);
+    return last.ok ? ok(files) : last;
+  };
   let dirty = false;
   const save = (s: State) => {
-    const root = object(api.state.get()) ?? {};
-    const existing = object(root.servers ?? null);
-    const prior = existing ?? (string(root.repository ?? null) ? { python: state(api.state.get(), 'python') as unknown as Json } : {});
+    const prior = object(object(api.state.get())?.servers ?? null) ?? {};
     const stored = { ...s, diagnostics: { ...s.diagnostics } };
     const body = () => ({ servers: { ...prior, [s.adapter]: stored } }) as unknown as Json;
     for (const path in stored.diagnostics) {
@@ -44,7 +92,7 @@ export function createClient(api: ModAPI) {
   const exchange = (s: State, outgoing: Json[], wait_ms: number): Result<Message[]> => {
     const result = budget({ session: s.adapter, send: outgoing, wait_ms }, a => api.host.tryCall('process.exchange', a));
     if (!result.ok) return result;
-    const messages = result.value.messages.map(message);
+    const messages = result.value.messages.map(object);
     return messages.every(Boolean) ? ok(messages as Message[]) : fail('invalid_server_message');
   };
   const replies = (messages: Message[]): Message[] => messages.flatMap(item => {
@@ -71,7 +119,7 @@ export function createClient(api: ModAPI) {
         const start = object(object(item?.range ?? null)?.start ?? null);
         const text = string(item?.message ?? null);
         if ((item?.severity ?? 1) === 1) count++;
-        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${[...text.replace(/\s+/g, ' ')].slice(0, 200).join('')}`);
       }
       s.diagnostics[path] = { count, version, errors: [...errors] };
     }
@@ -101,7 +149,7 @@ export function createClient(api: ModAPI) {
       if (found) {
         const settled = settle(s, outgoing);
         if (!settled.ok) return settled;
-        return 'error' in found ? fail(`server_error:${JSON.stringify(found.error).slice(0, 160)}`) : ok(found.result ?? null);
+        return 'error' in found ? fail(`server_error:${[...JSON.stringify(found.error)].slice(0, 160).join('')}`) : ok(found.result ?? null);
       }
     }
     return fail('server_request_timeout');
@@ -168,19 +216,22 @@ export function createClient(api: ModAPI) {
     }
     return ok(true);
   };
-  const synchronize = (s: State, paths: string[]): Result<boolean> => {
+  const synchronize = (s: State, paths: string[], known?: Record<string, FileStat | null>): Result<boolean> => {
     const selected = [...new Set(paths)].filter(path => adapterFor(path) === s.adapter);
     if (!selected.length) return ok(false);
     if (selected.length > 128) return fail('document_batch_limit');
+    const stat = known && selected.every(path => path in known) ? ok({ files: known })
+      : budget({ paths: selected, hash: true }, a => api.host.tryCall('workspace.stat', a));
+    if (!stat.ok) return stat;
     let changed = false;
     for (let index = 0; index < selected.length; index += 16) {
       const chunk = selected.slice(index, index + 16);
       if (spent > BYTE_BUDGET / 2) return fail('callback_budget');
-      const read = readFiles(chunk);
+      const read = readDocuments(chunk, stat.value.files, s);
       if (!read.ok) return read;
       const tracked = new Set(Object.keys(s.documents));
       for (const path of chunk) {
-        if (read.value.files[path]) tracked.add(path);
+        if (read.value[path]) tracked.add(path);
         else tracked.delete(path);
       }
       const priorDocuments = { ...s.documents };
@@ -195,7 +246,7 @@ export function createClient(api: ModAPI) {
         delete s.diagnostics[path];
       }
       for (const path of chunk) {
-        const file = read.value.files[path];
+        const file = read.value[path];
         const previous = s.documents[path];
         if (!file) {
           if (previous) outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: doc(s, path) });
@@ -213,14 +264,15 @@ export function createClient(api: ModAPI) {
       }
       if (!outbound.length) continue;
       const batch = exchange(s, outbound, 150);
-      const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
-      if (!settled.ok) {
+      if (!batch.ok && batch.error === 'callback_budget') {
         s.documents = priorDocuments;
         s.diagnostics = priorDiagnostics;
-        if (settled.error !== 'callback_budget') {
-          stopServer(s);
-          s.running = false;
-        }
+        return batch;
+      }
+      const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+      if (!settled.ok) {
+        stopServer(s);
+        s.running = false;
         return settled;
       }
       changed = true;
@@ -237,15 +289,9 @@ export function createClient(api: ModAPI) {
     return saved.ok ? ok(true) : saved;
   };
   const currentThread = (): Result<string> => {
-    const key = 'lsp.thread_probe';
-    const before = budget({ key, scope: 'repository' as const }, a => api.host.tryCall('store.get', a));
-    if (!before.ok) return before;
-    const put = budget({ key, scope: 'repository' as const, expected_revision: before.value?.revision ?? null, value: { revision: (before.value?.revision ?? 0) + 1 } }, a => api.host.tryCall('store.put', a));
-    if (!put.ok) return put;
-    const after = budget({ key, scope: 'repository' as const }, a => api.host.tryCall('store.get', a));
-    if (!after.ok) return after;
-    const thread = after.value?.provenance.thread_id;
-    return after.value?.revision === put.value.revision && thread ? ok(thread) : fail('thread_identity_unavailable');
+    const info = budget(null, a => api.host.tryCall('session.info', a));
+    if (!info.ok) return info;
+    return info.value.thread_id ? ok(info.value.thread_id) : fail('thread_identity_unavailable');
   };
   return { budget, stopServer, readFiles, save, announce, exchange, settle, handle, request, initialize, synchronize, observedRepository, currentThread };
 }

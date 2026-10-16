@@ -184,6 +184,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
             || interceptor.pattern.len() > 64
             || serde_json::to_vec(&interceptor.matcher)?.len() > 4096
             || interceptor.before.len() + interceptor.after.len() > 16
+            || interceptor.before.iter().any(|id| interceptor.after.contains(id))
             || !ordered.into_iter().all(|id| identifier(id))
             || interceptor.location.len() > 256
         {
@@ -194,6 +195,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
 }
 
 /// Outermost first: explicit `before`/`after`, then consumers outside their dependencies, then ID.
+/// A cycle fails only the mods that declared its edges, never one that is merely their target.
 pub(super) fn order(
     loaded: &BTreeMap<String, Loaded>,
 ) -> std::result::Result<Vec<String>, Vec<String>> {
@@ -221,10 +223,10 @@ pub(super) fn order(
                 .iter()
                 .filter(|other| ids.contains(other))
             {
-                edges.insert((id.clone(), other.clone()));
+                edges.insert((id.clone(), other.clone(), id.clone()));
             }
             for other in interceptor.after.iter().filter(|other| ids.contains(other)) {
-                edges.insert((other.clone(), id.clone()));
+                edges.insert((other.clone(), id.clone(), id.clone()));
             }
         }
     }
@@ -236,12 +238,33 @@ pub(super) fn order(
             .filter(|id| {
                 !edges
                     .iter()
-                    .any(|(from, to)| to == *id && remaining.contains(from))
+                    .any(|(from, to, _)| to == *id && remaining.contains(from))
             })
             .min_by_key(|id| (std::cmp::Reverse(height(loaded, id, 0)), (*id).clone()))
             .cloned();
         let Some(next) = next else {
-            return Err(remaining);
+            let reaches = |start: &String, goal: &String| {
+                let (mut seen, mut queue) = (BTreeSet::from([start]), vec![start]);
+                while let Some(node) = queue.pop() {
+                    for (_, to, _) in edges.iter().filter(|(from, to, _)| {
+                        from == node && remaining.contains(to)
+                    }) {
+                        if to == goal {
+                            return true;
+                        }
+                        if seen.insert(to) {
+                            queue.push(to);
+                        }
+                    }
+                }
+                false
+            };
+            let declarers = edges
+                .iter()
+                .filter(|(from, to, _)| remaining.contains(from) && reaches(to, from))
+                .map(|(_, _, declarer)| declarer.clone())
+                .collect::<BTreeSet<_>>();
+            return Err(declarers.into_iter().collect());
         };
         remaining.retain(|id| *id != next);
         sorted.push(next);
@@ -355,7 +378,6 @@ fn component_change(kind: &Value, to: &Value) -> bool {
     }
 }
 
-/// One printable character typed as is, or a key name such as `Left`, `F5` or `Ctrl+w`.
 fn composer_key(key: &Value) -> bool {
     key.as_str().is_some_and(|key| {
         let mut chars = key.chars();
@@ -736,8 +758,7 @@ fn validate_result(
 
 use crate::model_request::bounded;
 
-/// Final-request pages and persisted history carry private text, so their records keep only
-/// digests (of the entry texts alone for history, so a link's input and result compare).
+/// Final-request pages and persisted history carry private text, so records keep only digests (of the entry texts alone for history, so a link's input and result compare).
 fn recorded(surface: &str, value: &Value) -> Value {
     if surface == "model_send" {
         let bytes = serde_json::to_vec(value).unwrap_or_default();
@@ -1171,10 +1192,7 @@ pub fn access_receipt(
     result: std::result::Result<&Value, String>,
 ) -> Option<Value> {
     let arguments = &call.arguments;
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default();
+    let at = crate::peers::now_ms();
     let mut receipt = json!({"mod": caller, "operation": call.operation, "at": at});
     match call.operation.as_str() {
         "http.request" | "http.open" => {
@@ -1219,7 +1237,6 @@ pub fn access_receipt(
     Some(receipt)
 }
 
-/// Runs a mod's `agents.spawn` with the request its `agent_spawn` chain settled on.
 fn spawn_call(
     access: &mut Access<'_>,
     host: &mut HostFn<'_>,
@@ -1276,7 +1293,6 @@ fn forward(
     result
 }
 
-/// Runs a host call for `caller`, routing service calls to their provider.
 pub(super) fn dispatch(
     access: &mut Access<'_>,
     host: &mut HostFn<'_>,
@@ -1629,7 +1645,6 @@ impl ModHost {
         }
     }
 
-    /// The final-request stage, absent without `model_send` interceptors or an enabled `request_policy` selection.
     pub fn send_policy(&self) -> Option<SendPolicy> {
         let required = self.intercepts("model_send");
         if required.is_none() && self.policies.is_empty() {
@@ -1691,15 +1706,13 @@ impl ModHost {
         })
     }
 
-    /// An applicable managed target that isn't running but whose grant reaches `surface`.
     fn unserved_on(&self, surface: &str) -> Option<&(String, Vec<String>, String)> {
         self.unserved
             .iter()
             .find(|(_, capabilities, _)| selects("*", surface, capabilities))
     }
 
-    /// `Some(true)` when a required interceptor, including a faulted mod's, or a managed target
-    /// that isn't running selects `surface`.
+    /// `Some(true)` when a required interceptor, including a faulted mod's, or a managed target that isn't running selects `surface`.
     pub fn intercepts(&self, surface: &str) -> Option<bool> {
         if self.unserved_on(surface).is_some() {
             return Some(true);
@@ -1757,8 +1770,7 @@ impl ModHost {
             .any(|link| link.matcher.is_null() || may_match(&link.matcher, input))
     }
 
-    /// Managed prepend, ordinary and managed append tiers; in each, ordinary links wrap required
-    /// ones and a faulted mod's required links stay and fail closed.
+    /// Managed prepend, ordinary and managed append tiers; in each, ordinary links wrap required ones and a faulted mod's required links stay and fail closed.
     fn links(&self, surface: &str) -> Vec<Link> {
         let order = order(&self.loaded).unwrap_or_default();
         let faulted = self
@@ -1837,7 +1849,6 @@ fn admission(result: &Value, scope: &[String]) -> std::result::Result<Vec<String
     }
 }
 
-/// Composes command or config rows without host operations; a row a handler drops becomes hidden.
 pub fn compose_rows(
     runtime: &Mutex<ModHost>,
     surface: &str,
@@ -1881,7 +1892,6 @@ pub fn compose_rows(
         .collect())
 }
 
-/// Runs `core` behind the surface's interceptors, or directly when none is registered.
 pub fn continue_operation(
     runtime: &Mutex<ModHost>,
     surface: &str,

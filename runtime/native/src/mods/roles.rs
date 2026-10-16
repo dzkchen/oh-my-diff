@@ -6,10 +6,8 @@ use std::collections::BTreeSet;
 
 const PLAN_PREFIX: &str = "omd-agent-";
 
-/// Tools a sub-agent thread may call, from its definition or its spawn request.
 pub(super) struct AgentTools(pub(super) BTreeSet<String>);
 
-/// A spawn whose working directory or tools an `agent_spawn` interceptor changed.
 #[derive(Clone, Deserialize, Serialize)]
 struct Plan {
     definition: Option<String>,
@@ -52,7 +50,6 @@ impl Core {
             .cloned()
     }
 
-    /// Writes the role layer for a definition (or an empty one) and returns its path.
     fn role_file(
         &self,
         lead: &Lead,
@@ -78,7 +75,7 @@ impl Core {
                 let provider = lead
                     .host
                     .accounts
-                    .0
+                    .by_thread
                     .lock()
                     .map_err(|_| "account lock poisoned")?
                     .get(&lead.thread.to_string())
@@ -112,7 +109,6 @@ impl Core {
         serde_json::from_slice(&text).ok()
     }
 
-    /// The tools a child spawned under role `name` may call, if its definition or plan limits them.
     pub(super) fn role_tools(&self, host: &Host, name: &str) -> Option<BTreeSet<String>> {
         let (definition, planned) = if name.starts_with(PLAN_PREFIX) {
             let plan = self.plan(host, name)?;
@@ -135,7 +131,6 @@ impl Core {
         }
     }
 
-    /// The definition a role name or plan names, for inventory records.
     pub(super) fn role_definition(&self, host: &Host, name: &str) -> Option<ModAgentDefinition> {
         if name.starts_with(PLAN_PREFIX) {
             return self
@@ -191,7 +186,6 @@ impl Core {
         }))
     }
 
-    /// Offered definitions after any `agent_offers` interceptors.
     fn offers(&self, lead: &Lead) -> Vec<(String, String)> {
         let offers = self
             .expansion
@@ -269,7 +263,6 @@ impl Core {
             .collect()
     }
 
-    /// Model-visible spawn request for an `agent_spawn` chain.
     pub(super) fn spawn_payload(
         &self,
         lead: &Lead,
@@ -293,7 +286,6 @@ impl Core {
             "tools": null})
     }
 
-    /// Native spawn arguments for the request a chain settled on.
     pub(super) fn spawn_arguments(
         &self,
         lead: &Lead,
@@ -375,7 +367,6 @@ impl Core {
     }
 }
 
-/// The spawn tool's result as the `agent_spawn` surface reports it.
 pub(super) fn spawn_result(result: &Value) -> Value {
     let output = result["output"].as_str().unwrap_or_default();
     let parsed = serde_json::from_str::<Value>(output).unwrap_or(Value::Null);

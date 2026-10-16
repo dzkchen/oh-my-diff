@@ -9,8 +9,8 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PREVIEW_SCHEMA = 1
-PREVIEW_PRODUCT = "oh-my-diff-private-preview-v1"
+MODS_SCHEMA = 1
+MODS_PRODUCT = "oh-my-diff-mods-v1"
 PLUGIN_SCHEMA = 1
 PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 
@@ -20,6 +20,7 @@ def digest(path):
 
 
 def run(arguments, cwd=None, env=None, capture=True):
+    arguments = [str(item) for item in arguments]
     streams = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE} if capture else {}
     result = subprocess.run(arguments, cwd=cwd, env=env, text=True, **streams)
     if result.returncode:
@@ -71,10 +72,27 @@ def validate_locations(prefix, bin_dir):
 
 
 def plugin_lock():
-    lock = json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text())
+    lock = json.loads((ROOT / "runtime/plugins.lock.json").read_text())
     if lock.get("schema") != PLUGIN_SCHEMA or lock.get("product") != PLUGIN_PRODUCT:
         raise ValueError("unrecognized bundled plugin lock")
     return lock
+
+
+def plugin_inventory(source):
+    names = json.loads((ROOT / "plugins/release-files.json").read_text())
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("invalid bundled plugin release inventory")
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate bundled plugin release file")
+    for name in names:
+        path = Path(name)
+        if path.is_absolute() or path.as_posix() != name or ".." in path.parts:
+            raise ValueError(f"unsafe bundled plugin release file: {name}")
+        if any((source / parent).is_symlink() for parent in (path, *path.parents)):
+            raise ValueError(f"symlink in bundled plugin release file: {name}")
+        if not (source / path).is_file():
+            raise ValueError(f"missing bundled plugin release file: {name}")
+    return sorted(names)
 
 
 def plugin_sources(lock=None):
@@ -84,11 +102,7 @@ def plugin_sources(lock=None):
     if digest(guide) != lock["guide"]["sha256"]:
         raise ValueError("pinned bundled plugin guide changed")
     recorded = set(lock["files"])
-    actual = {
-        path.relative_to(source).as_posix()
-        for path in source.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-    }
+    actual = set(plugin_inventory(source))
     if actual != recorded:
         raise ValueError("bundled plugin file inventory changed")
     for name, expected in lock["files"].items():
@@ -142,27 +156,34 @@ def atomic_text(path, text, mode=0o644):
             os.unlink(temporary)
 
 
-def preview_lock():
-    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    if lock.get("schema") != PREVIEW_SCHEMA or lock.get("product") != PREVIEW_PRODUCT:
-        raise ValueError("unrecognized preview lock")
-    return lock
+def check_or_write(path, text, write, stale):
+    if write:
+        atomic_text(path, text)
+        print(f"wrote {path.relative_to(ROOT)}")
+    elif not path.is_file() or path.read_text() != text:
+        raise SystemExit(stale)
 
 
-def preview_sources(lock):
-    if digest(ROOT / lock["types"]["path"]) != lock["types"]["sha256"]:
-        raise ValueError(f"pinned preview types changed: {lock['types']['path']}")
-    for identifier, package in lock["packages"].items():
-        if package.get("extension_type") != "mod":
-            raise ValueError(f"pinned preview package {identifier} must be labeled as a mod")
-        base = ROOT / package["source"]
-        for name, expected in package["files"].items():
-            if digest(base / name) != expected:
-                raise ValueError(f"pinned preview source changed: {package['source']}/{name}")
-        declared = json.loads((base / "mod.json").read_text())
-        if declared["api"] != package.get("api", lock["mod_api"]):
-            raise ValueError(f"package {identifier} declares mod API {declared['api']}; "
-                             f"this preview is pinned to {lock['mod_api']}")
-        if declared["id"] != identifier:
-            raise ValueError(f"pinned preview package disagrees with the lock: {identifier}")
+def package_digest(base):
+    manifest = (base / "mod.json").read_bytes()
+    declared = json.loads(manifest)
+    if declared.get("lifecycle"):
+        raise ValueError(f"{base.name} declares lifecycle scripts; install it through the package manager")
+    entrypoint = declared.get("entrypoint", "index.ts")
+    payload = manifest + b"\x00" + entrypoint.encode() + b"\x00" + (base / entrypoint).read_bytes()
+    for name in declared.get("assets", []):
+        payload += b"\x00" + name.encode() + b"\x00" + (base / name).read_bytes()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def validate_manifest(manifest, identifier):
+    supported = {row["version"] for row in json.loads((ROOT / "mods/compatibility.json").read_text())["apis"]}
+    if manifest["id"] != identifier or manifest["api"] not in supported:
+        raise ValueError(f"{identifier} has an incompatible package identity or mod API")
+
+
+def mods_lock():
+    lock = json.loads((ROOT / "runtime/mods.lock.json").read_text())
+    if lock.get("schema") != MODS_SCHEMA or lock.get("product") != MODS_PRODUCT:
+        raise ValueError("unrecognized first-party mod lock")
     return lock

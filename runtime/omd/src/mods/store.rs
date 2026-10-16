@@ -142,7 +142,8 @@ fn read_identified(path: &Path, limit: u64) -> Result<(Vec<u8>, FileStamp)> {
     let mut bytes = Vec::with_capacity(metadata.len().saturating_add(1).min(limit + 1) as usize);
     file.take(limit + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > limit {
-        return Err(failure("file_limit"));
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        return Err(failure(format!("file_limit: {name} exceeds {limit} bytes")));
     }
     Ok((bytes, file_stamp(&metadata)))
 }
@@ -180,7 +181,16 @@ pub(super) fn package_with_assets(
     Ok((package, source, hash, assets))
 }
 
-/// Reuses the last verified manifest and digest while every hashed file keeps its identity.
+pub(super) fn asset_map(assets: BTreeMap<String, String>) -> BTreeMap<String, Value> {
+    assets
+        .into_iter()
+        .map(|(name, text)| {
+            let sha256 = digest(text.as_bytes());
+            (name, serde_json::json!({"text": text, "sha256": sha256}))
+        })
+        .collect()
+}
+
 pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
     match reused_package(path) {
         Some(verified) => Ok(verified),
@@ -206,14 +216,7 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
         return None;
     }
     let verified = VERIFIED_PACKAGES.lock().ok()?.get(path).cloned()?;
-    verified
-        .0
-        .iter()
-        .all(|(file, expected)| {
-            std::fs::symlink_metadata(file)
-                .is_ok_and(|metadata| metadata.is_file() && file_stamp(&metadata) == *expected)
-        })
-        .then(|| (verified.1.clone(), verified.2.clone()))
+    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
 fn inspect_package(
@@ -355,12 +358,57 @@ fn write_directory_state(
     if &directory_state(directory, name, version)? != previous {
         return Err(failure("state_conflict: reload before retry"));
     }
+    replace_directory_file(directory, name, &stored_state(version, value)?)
+}
+
+fn stored_state(version: u32, value: &Value) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(
         &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
     )?;
     if bytes.len() > STATE_LIMIT {
         return Err(failure("state_limit"));
     }
+    Ok(bytes)
+}
+
+/// Rewrites thread or checkout state stored at another version through `migrate`, keeping the previous file beside it; the handler runs unlocked and a concurrent change wins and is re-read.
+pub(super) fn migrate_directory_state(
+    directory: &Path,
+    name: &str,
+    version: u32,
+    migrate: impl FnOnce(u64, Value) -> Result<Value>,
+) -> Result<Value> {
+    let path = directory.join(name);
+    let bytes = read(&path, STATE_LIMIT as u64)?;
+    let previous: Value = serde_json::from_slice(&bytes)?;
+    let from = match previous["version"].as_u64() {
+        Some(from)
+            if previous["schema"] == super::MOD_STATE_STORAGE_SCHEMA_VERSION
+                && from != u64::from(version) =>
+        {
+            from
+        }
+        _ => return state_value(&bytes, version),
+    };
+    let value = migrate(from, previous["value"].clone())?;
+    let migrated = stored_state(version, &value)?;
+    if directory.canonicalize()? != directory {
+        return Err(failure("state_directory_invalid"));
+    }
+    let _lock = lock(&directory.join(".lock"))?;
+    if read(&path, STATE_LIMIT as u64)? != bytes {
+        return directory_state(directory, name, version);
+    }
+    replace_directory_file(
+        directory,
+        &format!("{name}-backup-{}", digest(&bytes)),
+        &bytes,
+    )?;
+    replace_directory_file(directory, name, &migrated)?;
+    Ok(value)
+}
+
+fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
     let mut file = OpenOptions::new()
@@ -369,7 +417,7 @@ fn write_directory_state(
         .mode(0o600)
         .open(&temporary)?;
     let result = (|| {
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         std::fs::rename(&temporary, directory.join(name))?;
         File::open(directory)?.sync_all()
@@ -394,8 +442,7 @@ impl ModStore {
         Ok(store)
     }
 
-    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset
-    /// `packages.lock.json` leaves its packages as plain trusted selections.
+    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.
     pub fn reset(&self, name: &str) -> Result<PathBuf> {
         if !matches!(
             name,
@@ -435,7 +482,6 @@ impl ModStore {
         })
     }
 
-    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated stores.
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) {
         self.policy = (file, owner);
         self.user = Some(user.to_owned());
@@ -636,6 +682,40 @@ impl ModStore {
         self.selection_status_in(None)
     }
 
+    /// Stamps of the store files a package listing reads; `None` under administrator policy or the broker.
+    pub fn listing_stamp(&self) -> Option<Value> {
+        if crate::broker::deployed() || std::fs::symlink_metadata(&self.policy.0).is_ok() {
+            return None;
+        }
+        let stamps = [
+            self.root.join("mods.json"),
+            self.root.join("packages.lock.json"),
+            self.root.join("package-transaction.json"),
+            self.root.join("managed.json"),
+        ]
+        .iter()
+        .map(|path| super::configuration_stamp(path))
+        .collect::<Vec<_>>();
+        Some(json!([self.root, stamps]))
+    }
+
+    pub fn package_stamps<'a>(
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Option<Vec<(PathBuf, FileStamp)>> {
+        let verified = VERIFIED_PACKAGES.lock().ok()?;
+        paths
+            .into_iter()
+            .map(|path| verified.get(path).map(|package| package.0.clone()))
+            .collect::<Option<Vec<_>>>()
+            .map(|files| files.concat())
+    }
+
+    pub fn stamps_unchanged(stamps: &[(PathBuf, FileStamp)]) -> bool {
+        stamps
+            .iter()
+            .all(|(file, expected)| super::configuration_stamp(file) == Some(*expected))
+    }
+
     pub fn verify_selections(&self) -> Result<()> {
         for selection in self.configuration()?.mods {
             let _ = verified_package(&selection.path);
@@ -643,7 +723,6 @@ impl ModStore {
         Ok(())
     }
 
-    /// Selections after administrator policy; `project` scopes project-targeted managed packages.
     pub fn selection_status_in(&self, project: Option<&Path>) -> Result<Value> {
         let configuration = self.configuration()?;
         let lock = self.package_lock()?;
@@ -1057,7 +1136,6 @@ impl ModStore {
         Ok(json!({"imported": approved.len(), "skipped": skipped}))
     }
 
-    /// Disables every selection of the mod `target` (an id or package path) and drops its grant.
     pub fn revoke(&self, target: &str) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
@@ -1155,7 +1233,6 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    /// Refuses enabling a mod whose required service no other enabled mod provides.
     pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
         let selections = self.configuration()?.mods;
         for import in package

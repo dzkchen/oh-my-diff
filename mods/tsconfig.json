@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "strict": true, "noEmit": true, "allowImportingTsExtensions": true
+    "strict": true, "noEmit": true, "allowImportingTsExtensions": true,
+    "paths": { "@oh-my-diff/mod-api": ["./api.d.ts"] }
   },
-  "include": ["api.d.ts", "jsx-runtime.d.ts", "client.d.ts", "testing.d.ts", "examples/**/*.ts", "first-party/**/*.ts", "optional/**/*.ts"],
-  "exclude": ["exercise/**/*.ts"]
+  "include": ["api.d.ts", "jsx-runtime.d.ts", "client.d.ts", "testing.d.ts", "examples/**/*.ts", "examples/**/*.tsx", "examples/**/.omd/*.d.ts", "first-party/**/*.ts", "first-party/**/*.tsx", "ports/**/*.ts", "../plugins/bundled/**/*.ts", "../plugins/bundled/**/*.tsx"]
 }

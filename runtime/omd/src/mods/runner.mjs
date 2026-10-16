@@ -1,5 +1,5 @@
 import { stripTypeScriptTypes } from 'node:module';
-import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
+import { createContext, runInContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { readSync, writeSync } from 'node:fs';
 
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
@@ -10,14 +10,57 @@ if (nodeMajor !== 24 || nodeMinor < 18) {
 
 // A spare runner loads the TypeScript stripper before the host sends it a request.
 stripTypeScriptTypes('let ready: boolean;');
+// The host realm's intrinsics are frozen here rather than with --frozen-intrinsics: Node turns every prototype data
+// property into an accessor, which disables V8's array and iteration fast paths in every realm, mod contexts included.
+// Only the prototypes whose properties host code shadows by assignment (`error.name = ...`) get those accessors.
+{
+  const errors = [Error, AggregateError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];
+  const overridable = new Set([Object.prototype, ...errors.map(type => type.prototype)]);
+  const override = (object, key, { value, enumerable }) => Object.defineProperty(object, key, {
+    get() { return value; },
+    set(next) {
+      if (this === object) throw new TypeError(`Cannot assign to read only property '${String(key)}' of object`);
+      Object.defineProperty(this, key, { value: next, writable: true, enumerable: true, configurable: true });
+    },
+    enumerable,
+    configurable: false,
+  });
+  const seen = new Set();
+  const visit = value => {
+    if ((typeof value !== 'object' && typeof value !== 'function') || value === null || seen.has(value)) return;
+    seen.add(value);
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      visit(descriptor.value);
+      visit(descriptor.get);
+      visit(descriptor.set);
+    }
+    visit(Object.getPrototypeOf(value));
+    if (overridable.has(value)) {
+      for (const key of Reflect.ownKeys(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!('value' in descriptor) || !descriptor.configurable) continue;
+        override(value, key, descriptor);
+        const { get, set } = Object.getOwnPropertyDescriptor(value, key);
+        visit(get);
+        visit(set);
+      }
+    }
+    Object.freeze(value);
+  };
+  const names = ['AggregateError', 'Array', 'ArrayBuffer', 'Atomics', 'BigInt', 'BigInt64Array', 'BigUint64Array', 'Boolean', 'DataView', 'Date', 'Error', 'EvalError', 'FinalizationRegistry', 'Float32Array', 'Float64Array', 'Function', 'Int8Array', 'Int16Array', 'Int32Array', 'Intl', 'Iterator', 'JSON', 'Map', 'Math', 'Number', 'Object', 'Promise', 'Proxy', 'RangeError', 'ReferenceError', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol', 'SyntaxError', 'TypeError', 'Uint8Array', 'Uint8ClampedArray', 'Uint16Array', 'Uint32Array', 'URIError', 'WeakMap', 'WeakRef', 'WeakSet', 'WebAssembly', 'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent', 'escape', 'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt', 'unescape'];
+  for (const name of names) visit(globalThis[name]);
+  for (const value of [[][Symbol.iterator](), new Map().entries(), new Set().values(), ''[Symbol.iterator](), /./[Symbol.matchAll](''), function* () {}, async function () {}, async function* () {}]) visit(Object.getPrototypeOf(value));
+}
 const compiled = new Map();
 let compiledBytes = 0;
 function moduleFor(source, context, identifier, typescript = true) {
+  // The refusal is built in the mod's realm: a host-realm error would hand mods the host Function.
+  const importModuleDynamically = () => { throw runInContext("new Error('unsupported_import: dynamic import')", context); };
   const key = `${typescript}:${source}`;
   let cached = compiled.get(key);
   if (!cached) {
     const code = typescript ? stripTypeScriptTypes(source) : source;
-    const module = new SourceTextModule(code, { context, identifier });
+    const module = new SourceTextModule(code, { context, identifier, importModuleDynamically });
     const data = module.createCachedData();
     const bytes = Buffer.byteLength(key) + Buffer.byteLength(code) + data.length;
     if (bytes <= 1048576) {
@@ -31,20 +74,20 @@ function moduleFor(source, context, identifier, typescript = true) {
     }
     return module;
   }
-  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data });
+  return new SourceTextModule(cached.code, { context, identifier, cachedData: cached.data, importModuleDynamically });
 }
 let input = Buffer.alloc(0);
 function readLine() {
   const chunk = Buffer.alloc(65536);
   let end;
   while ((end = input.indexOf(10)) < 0) {
+    if (input.length > 1048576) throw new Error('input_limit');
     const read = readSync(0, chunk);
     if (!read) {
       end = input.length;
       break;
     }
     input = Buffer.concat([input, chunk.subarray(0, read)]);
-    if (input.length > 1048576) throw new Error('input_limit');
   }
   const line = input.subarray(0, end).toString();
   input = input.subarray(end + 1);
@@ -55,11 +98,25 @@ const request = JSON.parse(globalThis.__request);
 delete globalThis.__request;
 request.hook_budget_ms ??= 1000;
 let now = request.virtual_time_ms;
+let clockRead = false;
 if (Number.isSafeInteger(now)) {
-  globalThis.Date = class extends Date {
-    constructor(...args) { super(...(args.length ? args : [now])); }
-    static now() { return now; }
+  const Frozen = class extends Date {
+    constructor(...args) { if (!args.length) clockRead = true; super(...(args.length ? args : [now])); }
+    static now() { clockRead = true; return now; }
   };
+  globalThis.Date = new Proxy(Frozen, { apply: () => new Frozen().toString() });
+  Object.defineProperty(Frozen.prototype, 'constructor', { value: globalThis.Date, writable: true, configurable: true });
+  const Format = class extends Intl.DateTimeFormat {
+    get format() {
+      const format = super.format;
+      const frozen = date => format(date === undefined ? new Frozen() : date);
+      Object.defineProperty(this, 'format', { value: frozen });
+      return frozen;
+    }
+    formatToParts(date) { return super.formatToParts(date === undefined ? new Frozen() : date); }
+  };
+  Intl.DateTimeFormat = new Proxy(Format, { apply: (_, __, args) => new Format(...args) });
+  Object.defineProperty(Format.prototype, 'constructor', { value: Intl.DateTimeFormat, writable: true, configurable: true });
 }
 const handlers = new Map();
 const tools = new Map();
@@ -79,6 +136,7 @@ const updates = [];
 let state = structuredCloneFallback(request.state);
 let uiState = structuredCloneFallback(request.ui_state ?? null);
 let uiRead = false;
+let uiWritten = false;
 const initial = JSON.stringify(state ?? null);
 const reads = new Set();
 let tracking = null;
@@ -101,10 +159,12 @@ function serve(line) {
   Object.assign(request, { name: next.name, payload: next.payload, receipts: next.receipts ?? [], state: next.state });
   receipts = request.receipts;
   if (Number.isSafeInteger(next.virtual_time_ms)) now = next.virtual_time_ms;
+  clockRead = false;
   if (request.event === 'component') {
     state = structuredCloneFallback(next.state);
     uiState = structuredCloneFallback(next.ui_state ?? null);
     uiRead = false;
+    uiWritten = false;
   } else state = structuredCloneFallback(activatedState);
   reads.clear();
   calls.length = 0;
@@ -114,8 +174,146 @@ function serve(line) {
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
 const clock = globalThis.__clock;
+const utf8 = globalThis.__utf8;
+const hostCrypto = globalThis.__crypto;
 delete globalThis.__exchange;
 delete globalThis.__clock;
+delete globalThis.__utf8;
+delete globalThis.__crypto;
+// Host helpers take and return only primitives or this realm's arrays, and their failures are dropped unread,
+// so no host-realm object reaches code that mods can patch; the intrinsics used here are captured before mod code runs.
+const { apply } = Reflect;
+const { freeze, entries, fromEntries } = Object;
+const { isArray } = Array;
+const { stringify, parse } = JSON;
+const [Bytes, Text, RealmError, RealmTypeError, RealmPromise, Keys] = [Uint8Array, String, Error, TypeError, Promise, WeakMap];
+const { fromCharCode } = String;
+const charCodeAt = String.prototype.charCodeAt;
+const startsWith = String.prototype.startsWith;
+const map = Array.prototype.map;
+const [keyGet, keySet, keyHas] = [WeakMap.prototype.get, WeakMap.prototype.set, WeakMap.prototype.has];
+const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
+const { subarray, set: setBytes } = typedArray;
+const getter = (object, name) => Object.getOwnPropertyDescriptor(object, name).get;
+const [viewTag, viewBuffer, viewOffset, viewLength] = apply(map, [Symbol.toStringTag, 'buffer', 'byteOffset', 'byteLength'], [name => getter(typedArray, name)]);
+const [dataBuffer, dataOffset, dataLength] = apply(map, ['buffer', 'byteOffset', 'byteLength'], [name => getter(DataView.prototype, name)]);
+const bufferLength = getter(ArrayBuffer.prototype, 'byteLength');
+const tagOf = value => value !== null && typeof value === 'object' ? apply(viewTag, value, []) : undefined;
+const encodeResult = new Float64Array(2);
+globalThis.TextEncoder = class TextEncoder {
+  get encoding() { return 'utf-8'; }
+  encode(input = '') {
+    const text = Text(input);
+    let bytes;
+    try {
+      bytes = new Bytes(utf8.length(text));
+      if (!utf8.into(text, bytes, encodeResult)) bytes = null;
+    } catch {}
+    if (!bytes) throw new RealmTypeError('encode failed');
+    return bytes;
+  }
+  encodeInto(source, destination) {
+    const text = Text(source);
+    let encoded = false;
+    if (tagOf(destination) === 'Uint8Array') {
+      try {
+        encoded = utf8.into(text, destination, encodeResult);
+      } catch {}
+    }
+    if (!encoded) throw new RealmTypeError('encodeInto destination must be a Uint8Array');
+    return { read: encodeResult[0], written: encodeResult[1] };
+  }
+};
+if (hostCrypto) {
+  const keyIds = new Keys();
+  const latin1 = bytes => {
+    const length = apply(viewLength, bytes, []);
+    let text = '';
+    for (let at = 0; at < length; at += 8192) text += apply(fromCharCode, null, apply(subarray, bytes, [at, at + 8192]));
+    return text;
+  };
+  const fromLatin1 = text => {
+    const bytes = new Bytes(text.length);
+    for (let at = 0; at < text.length; at += 1) bytes[at] = apply(charCodeAt, text, [at]);
+    return bytes;
+  };
+  const viewBytes = value => new Bytes(apply(viewBuffer, value, []), apply(viewOffset, value, []), apply(viewLength, value, []));
+  const bufferBytes = value => {
+    try {
+      return new Bytes(apply(dataBuffer, value, []), apply(dataOffset, value, []), apply(dataLength, value, []));
+    } catch {}
+    try {
+      apply(bufferLength, value, []);
+      return new Bytes(value);
+    } catch {}
+    return null;
+  };
+  const outward = value => {
+    if (value === null || typeof value !== 'object') return value;
+    if (apply(keyHas, keyIds, [value])) return { $key: apply(keyGet, keyIds, [value]) };
+    const bytes = tagOf(value) !== undefined ? viewBytes(value) : bufferBytes(value);
+    if (bytes) return { $bytes: latin1(bytes) };
+    if (isArray(value)) return apply(map, value, [outward]);
+    return fromEntries(apply(map, entries(value), [([name, item]) => [name, outward(item)]]));
+  };
+  const inward = value => {
+    if (value === null || typeof value !== 'object') return value;
+    if (isArray(value)) return apply(map, value, [inward]);
+    if (typeof value.$bytes === 'string') {
+      const bytes = fromLatin1(value.$bytes);
+      return value.view ? bytes : apply(viewBuffer, bytes, []);
+    }
+    if (typeof value.$key === 'number') {
+      const key = freeze({ type: value.type, extractable: value.extractable, algorithm: freeze(inward(value.algorithm)), usages: freeze(value.usages) });
+      apply(keySet, keyIds, [key, value.$key]);
+      return key;
+    }
+    return fromEntries(apply(map, entries(value), [([name, item]) => [name, inward(item)]]));
+  };
+  const failure = ([name, message]) => {
+    const error = new RealmError(message);
+    error.name = name;
+    return error;
+  };
+  const method = name => (...args) => new RealmPromise((resolve, reject) => {
+    const payload = stringify(apply(map, args, [outward]));
+    const settle = text => {
+      const reply = parse(text);
+      if (reply.error) reject(failure(reply.error));
+      else resolve(inward(reply.value));
+    };
+    try {
+      hostCrypto.subtle(name, payload, settle);
+    } catch {
+      reject(new RealmError('crypto_unavailable'));
+    }
+  });
+  globalThis.crypto = freeze({
+    getRandomValues(array) {
+      const tag = tagOf(array);
+      if (tag === undefined || apply(startsWith, tag, ['Float'])) throw failure(['TypeMismatchError', 'The data argument must be an integer-type TypedArray']);
+      const bytes = viewBytes(array);
+      if (apply(viewLength, bytes, []) > 65536) throw failure(['QuotaExceededError', 'The requested length exceeds 65,536 bytes']);
+      let random;
+      try {
+        random = hostCrypto.random(apply(viewLength, bytes, []));
+      } catch {}
+      if (typeof random !== 'string') throw new RealmError('crypto_unavailable');
+      apply(setBytes, bytes, [fromLatin1(random)]);
+      return array;
+    },
+    randomUUID: () => {
+      let uuid;
+      try {
+        uuid = hostCrypto.uuid();
+      } catch {}
+      if (typeof uuid !== 'string') throw new RealmError('crypto_unavailable');
+      return uuid;
+    },
+    subtle: freeze(fromEntries(apply(map, ['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
+      'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey'], [name => [name, method(name)]]))),
+  });
+}
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -251,7 +449,7 @@ function requireCapability(name) {
 function writeState(value) {
   requireCapability(surface.state);
   if (rendering && !activating) throw new Error('render_side_effect_refused: state writes belong in events, commands or subscriptions');
-  state = structuredCloneFallback(value);
+  state = structuredCloneFallback(value ?? null);
 }
 function keyed() {
   requireCapability(surface.state);
@@ -395,7 +593,7 @@ function hook(name, options, handler) {
         const result = await run(envelope(hookName, native, input, CLASSIC[hookName][2](input), null, 'optional'));
         if (answer === null && result !== undefined && result !== null) answer = result;
       }
-      return kind === 'middleware' ? answer : undefined;
+      return native === 'approval' ? answer : undefined;
     };
     if (kind === 'middleware') api.middleware(native, dispatch);
     else api.on(native, dispatch);
@@ -657,8 +855,17 @@ const api = Object.freeze({
       requireCapability('terminal');
       if (activating || !['command', 'component_event'].includes(request.event)) throw new Error('ui_state_write_unavailable');
       const encoded = JSON.stringify(value);
-      if (typeof encoded !== 'string' || encoded.length > 65536) throw new Error('ui_state_limit');
-      uiState = JSON.parse(encoded); uiRead = true;
+      if (typeof encoded !== 'string') throw new Error('ui_state_limit');
+      // JSON.stringify writes a lone surrogate, in a key or a value, as a \\udXXX escape.
+      if (/(?<!\\\\)(?:\\\\\\\\)*\\\\ud[89a-f]/i.test(encoded)) throw new Error('ui_state_invalid_json');
+      let bytes = /[^\\x00-\\x7f]/.test(encoded) ? 0 : encoded.length;
+      if (!bytes) for (const character of encoded) {
+        const code = character.codePointAt(0);
+        bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+        if (bytes > 65536) break;
+      }
+      if (bytes > 65536) throw new Error('ui_state_limit');
+      uiState = JSON.parse(encoded); uiRead = true; uiWritten = true;
     },
   }),
   atom(key, fallback = null) { return cell(key, fallback); },
@@ -769,13 +976,70 @@ const api = Object.freeze({
   }),
 });
 globalThis.__omd = { api, handlers, intercept, flushSubscriptions, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, completers, registrations, updates,
-  state: () => rendering ? request.state : state, ui: () => ({ui_state: uiState, ui_read: uiRead}), request, calls,
+  state: () => rendering ? request.state : state, ui: () => ({ui_state: JSON.stringify(uiState), ui_read: uiRead, ui_written: uiWritten, clock_read: clockRead}), request, calls,
   pending: () => pending, ready: () => {
     activatedState = structuredCloneFallback(state); activating = false;
   }, suspension, serve, base, component: step };
 `;
 // Every callback takes a context that has never run mod code; the next one is built while the runner idles.
 let live = null;
+const encoder = new TextEncoder();
+const utf8 = Object.freeze({
+  length: text => Buffer.byteLength(text),
+  into(text, destination, result) {
+    try {
+      const { read, written } = encoder.encodeInto(text, destination);
+      result[0] = read;
+      result[1] = written;
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+const subtleMethods = new Set(['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey',
+  'deriveBits', 'importKey', 'exportKey', 'wrapKey', 'unwrapKey']);
+// Web Crypto runs here; the mod realm exchanges JSON text with bytes as latin1 strings and keys as indexes.
+function cryptoBridge() {
+  const keys = [];
+  const decode = value => {
+    if (Array.isArray(value)) return value.map(decode);
+    if (value === null || typeof value !== 'object') return value;
+    if (typeof value.$bytes === 'string') return Buffer.from(value.$bytes, 'latin1');
+    if (Object.hasOwn(value, '$key')) {
+      if (!Number.isInteger(value.$key) || !keys[value.$key]) throw new TypeError('unknown CryptoKey');
+      return keys[value.$key];
+    }
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, decode(item)]));
+  };
+  const encode = value => {
+    if (value instanceof ArrayBuffer) return { $bytes: Buffer.from(value).toString('latin1') };
+    if (ArrayBuffer.isView(value)) return { $bytes: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('latin1'), view: true };
+    if (value instanceof CryptoKey) {
+      keys.push(value);
+      return { $key: keys.length - 1, type: value.type, extractable: value.extractable, algorithm: encode(value.algorithm), usages: [...value.usages] };
+    }
+    if (Array.isArray(value)) return value.map(encode);
+    if (value === null || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, encode(item)]));
+  };
+  return Object.freeze({
+    random: length => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('latin1'),
+    uuid: () => crypto.randomUUID(),
+    subtle(name, payload, settle) {
+      new Promise(resolve => {
+        if (!subtleMethods.has(name)) throw new TypeError('unsupported operation');
+        resolve(crypto.subtle[name](...decode(JSON.parse(payload))));
+      }).then(value => JSON.stringify({ value: encode(value) }),
+        error => JSON.stringify({ error: [String(error?.name ?? 'Error'), String(error?.message ?? error)] }))
+        .then(text => {
+          try {
+            settle(text);
+          } catch {}
+        });
+    },
+  });
+}
 function prepare() {
   const globals = Object.create(null);
   globals.__exchange = frame => {
@@ -788,6 +1052,7 @@ function prepare() {
     }
   };
   globals.__clock = () => performance.now();
+  globals.__utf8 = utf8;
   const context = createContext(globals, {
     codeGeneration: { strings: false, wasm: false },
   });
@@ -800,10 +1065,11 @@ const { context, setup } = spare;
 spare = null;
 live = context;
 context.__request = line;
-if (request.environment?.includes('crypto')) context.crypto = globalThis.crypto;
+if (request.environment?.includes('crypto')) context.__crypto = cryptoBridge();
 try {
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
+  const parse = runInContext('JSON.parse', context);
   const mod = moduleFor(request.source, context, request.filename);
   const adapter = request.surface?.adapter;
   let adapt = null;
@@ -837,7 +1103,7 @@ try {
       if (asset) {
         const identifier = base + name;
         const module = name.endsWith('.json')
-          ? new SyntheticModule(['default'], function () { this.setExport('default', JSON.parse(asset.text)); }, { context, identifier })
+          ? new SyntheticModule(['default'], function () { this.setExport('default', parse(asset.text)); }, { context, identifier })
           : moduleFor(asset.text, context, identifier, name.endsWith('.ts'));
         linked.set(name, module);
         return module;
@@ -845,7 +1111,7 @@ try {
     }
     throw new Error(`unsupported_import: ${specifier}; import package assets by relative path, and the SDK by type only`);
   });
-  context.__omd.registrations.modules = [...linked.keys()].filter(name => name !== entry);
+  context.__omd.registrations.modules = parse(JSON.stringify([...linked.keys()].filter(name => name !== entry)));
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = moduleFor(`
@@ -927,10 +1193,21 @@ try {
   process.exitCode = 1;
 }
 }
+// A reused runner's request omits the fields its package fixes once the host has sent them (`KEPT_FIELDS`).
+const keptFields = ['source', 'assets', 'surface', 'field_policies'];
+let kept = null;
 for (;;) {
-  const line = readLine();
+  let line = readLine();
   if (!line) break;
   const request = JSON.parse(line);
+  if (request.kept) {
+    if (!kept) break;
+    Object.assign(request, kept.fields);
+    line = line.slice(0, -1) + kept.text + '}';
+  } else if (request.reuse) {
+    const fields = Object.fromEntries(keptFields.filter(field => Object.hasOwn(request, field)).map(field => [field, request[field]]));
+    kept = { fields, text: Object.entries(fields).map(([field, value]) => `,${JSON.stringify(field)}:${JSON.stringify(value)}`).join('') };
+  }
   await evaluate(request, line);
   if (!request.reuse || process.exitCode) break;
   spare = prepare();

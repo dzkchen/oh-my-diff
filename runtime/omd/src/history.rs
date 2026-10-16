@@ -81,11 +81,7 @@ fn call_id(item: &Value) -> Option<&str> {
 }
 
 fn preview(text: &str) -> &str {
-    let mut end = text.len().min(PREVIEW_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
+    &text[..text.floor_char_boundary(PREVIEW_BYTES)]
 }
 
 pub fn view(items: &[Value]) -> Value {
@@ -110,7 +106,6 @@ const COMPACTION_PREVIEW_BYTES: usize = 512;
 const COMPACTION_VIEW_ITEMS: usize = 1024;
 const COMPACTION_VIEW_TEXT: usize = 131_072;
 
-/// Newest items first get text previews until the budget is spent; older ones keep their shape.
 pub fn compaction_view(items: &[Value]) -> Value {
     let start = items.len().saturating_sub(COMPACTION_VIEW_ITEMS);
     let mut budget = COMPACTION_VIEW_TEXT;
@@ -121,16 +116,10 @@ pub fn compaction_view(items: &[Value]) -> Value {
         .rev()
         .map(|(index, item)| {
             let body = text(item);
-            let mut end = body.as_deref().map_or(0, |body| {
-                body.len().min(COMPACTION_PREVIEW_BYTES).min(budget)
-            });
             let preview = body.as_deref().map(|body| {
-                while !body.is_char_boundary(end) {
-                    end -= 1;
-                }
-                &body[..end]
+                &body[..body.floor_char_boundary(COMPACTION_PREVIEW_BYTES.min(budget))]
             });
-            budget -= end;
+            budget -= preview.map_or(0, str::len);
             json!({"index": index, "type": item["type"], "role": item.get("role"),
                 "call_id": call_id(item), "editable": editable(item), "images": images(item),
                 "text": preview, "bytes": body.as_deref().map_or(0, str::len)})
@@ -148,7 +137,6 @@ pub struct CompactionEdit {
     insert: Vec<Insert>,
 }
 
-/// Builds a replacement history from kept items and inserted user or developer text.
 pub fn compact(items: &[Value], edit: CompactionEdit) -> Result<Vec<Value>, String> {
     let invalid = |reason: &str| Err(format!("compaction_history_invalid: {reason}"));
     let bytes = edit.insert.iter().map(|i| i.text.len()).sum::<usize>();

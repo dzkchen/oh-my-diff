@@ -1252,7 +1252,6 @@ impl Task {
         Ok(())
     }
 
-    /// Records the provider's late settlement of a provider-billed request, once.
     pub fn settle_provider(
         &self,
         request: u32,

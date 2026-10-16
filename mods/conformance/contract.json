@@ -24,7 +24,7 @@
     "capabilities:fs.read": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"fs.read\""},"decision":"tool.workspace"},
     "capabilities:fs.write": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/mod.json","snippet":"\"fs.write\""},"decision":"tool.workspace"},
     "capabilities:history": {"status":"frozen","consumer":{"path":"mods/examples/context_fold/mod.json","snippet":"\"history\""},"decision":"context.history"},
-    "capabilities:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
+    "capabilities:history_persist": {"status":"experimental","reason":"Experimental in 1.0.0;example consumer `mods/examples/history_redact`."},
     "capabilities:history_write": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:http": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "capabilities:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/mod.json","snippet":"\"input\""},"decision":"context.input"},
@@ -44,7 +44,7 @@
     "capabilities:request_policy": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/mod.json","snippet":"\"request_policy\""},"decision":"kernel.final_request_policy"},
     "capabilities:services": {"status":"frozen","consumer":{"path":"mods/examples/service-consumer/mod.json","snippet":"\"services\""},"decision":"kernel.inter_mod_services"},
     "capabilities:sessions": {"status":"frozen","consumer":{"path":"mods/examples/port_list/mod.json","snippet":"\"sessions\""},"decision":"shared.session_index"},
-    "capabilities:sessions_tools": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
+    "capabilities:sessions_tools": {"status":"experimental","reason":"Experimental in 1.0.0;example consumer `mods/examples/tool_history`."},
     "capabilities:store": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"store\""},"decision":"context.store"},
     "capabilities:terminal": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/mod.json","snippet":"\"terminal\""},"decision":"terminal.view"},
     "capabilities:threads": {"status":"frozen","consumer":{"path":"mods/examples/notification_bridge/mod.json","snippet":"\"threads\""},"decision":"coordination.app_bridge"},
@@ -116,14 +116,14 @@
     "intercepts:compaction": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:component_change": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "intercepts:composer_edit": {"status":"frozen","consumer":{"path":"mods/examples/paste_tidy/index.ts","snippet":"api.intercept('composer_edit'"},"decision":"terminal.composer_drafts"},
-    "intercepts:composer_key": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
+    "intercepts:composer_key": {"status":"experimental","reason":"Experimental in 1.0.0."},
     "intercepts:config_list": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_list'"},"decision":"terminal.commands_config"},
     "intercepts:config_set": {"status":"frozen","consumer":{"path":"mods/examples/command_curator/index.ts","snippet":"api.intercept('config_set'"},"decision":"terminal.commands_config"},
     "intercepts:elicitation": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "intercepts:history_persist": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/history_redact`."},
+    "intercepts:history_persist": {"status":"experimental","reason":"Experimental in 1.0.0;example consumer `mods/examples/history_redact`."},
     "intercepts:host_operation": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/index.ts","snippet":"api.intercept('host_operation'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:input": {"status":"frozen","consumer":{"path":"mods/examples/frecency_rank/index.ts","snippet":"api.intercept('input'"},"decision":"context.input"},
-    "intercepts:mention": {"status":"experimental","reason":"Wave 1 surface shipped experimental in 1.0.0."},
+    "intercepts:mention": {"status":"experimental","reason":"Experimental in 1.0.0."},
     "intercepts:model_request": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('model_request'"},"decision":"kernel.request_stream_middleware"},
     "intercepts:model_send": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/index.ts","snippet":"api.intercept('model_send'"},"decision":"kernel.final_request_policy"},
     "intercepts:peer_receive": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
@@ -141,6 +141,7 @@
     "operations:agents.spawn": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('agents.spawn'"},"decision":"coordination.agents"},
     "operations:agents.wait": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('agents.wait'"},"decision":"coordination.agents"},
     "operations:app.request": {"status":"frozen","consumer":{"path":"mods/examples/worktree_task/index.ts","snippet":"api.host.call('app.request'"},"decision":"coordination.app_bridge"},
+    "operations:app.respond": {"status":"frozen","consumer":{"path":"mods/first-party/omd_auto_continue/index.ts","snippet":"api.host.tryCall('app.respond'"},"decision":"coordination.app_bridge"},
     "operations:app.routes": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:builtins.invoke": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:commands.describe": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
@@ -199,7 +200,7 @@
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
     "operations:sessions.list": {"status":"frozen","consumer":{"path":"mods/examples/scoped_data/index.ts","snippet":"api.host.tryCall('sessions.list'"},"decision":"shared.session_index"},
     "operations:sessions.ports": {"status":"frozen","consumer":{"path":"mods/examples/port_list/index.ts","snippet":"api.host.call('sessions.ports'"},"decision":"terminal.surface"},
-    "operations:sessions.read": {"status":"experimental","reason":"Wave 1 surface, experimental in 1.0.0; example consumer `mods/examples/tool_history`."},
+    "operations:sessions.read": {"status":"experimental","reason":"Experimental in 1.0.0;example consumer `mods/examples/tool_history`."},
     "operations:sessions.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/snapshot_review/index.ts","snippet":"api.host.call('sessions.snapshot'"},"decision":"shared.session_index"},
     "operations:settings.write": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('settings.write'"},"decision":"coordination.packages"},
     "operations:sidecars.invoke": {"status":"frozen","consumer":{"path":"mods/examples/service_request/index.ts","snippet":"api.host.tryCall('sidecars.invoke'"},"decision":"tool.sidecars"},
@@ -282,7 +283,6 @@
     "render_sites:tool_result": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "render_sites:turn_duration": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "render_sites:user_message": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "view_fields:backdrop": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"backdrop:"},"decision":"terminal.view"},
     "view_fields:background": {"status":"experimental","reason":"No verified top-level TerminalView consumer in the launch collection; nested component styles do not qualify."},
     "view_fields:footer": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "view_fields:foreground": {"status":"experimental","reason":"No verified top-level TerminalView consumer in the launch collection; nested component styles do not qualify."},
@@ -304,6 +304,7 @@
     "view_fields:title": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"title: 'My workspace'"},"decision":"terminal.view"},
     "view_fields:welcome": {"status":"frozen","consumer":{"path":"mods/first-party/omd_logo/index.ts","snippet":"welcome:"},"decision":"terminal.view"},
     "view_sites:above_composer": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"above_composer:"},"decision":"terminal.view"},
+    "view_sites:below_composer": {"status":"experimental","reason":"Added for the status line in this release; ships experimental and freezes after a release with its first-party consumer."},
     "view_sites:dialog": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"dialog:"},"decision":"terminal.view"},
     "view_sites:header": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "view_sites:owner/name": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"'layout_explorer/diff': { mode: 'replace'"},"decision":"terminal.surface"},
@@ -587,6 +588,7 @@
         "patch:send_results_keep_inner_edits_and_stay_inside_editable_text",
         "patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed",
         "patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies",
+        "patch:authority_grants_are_declared_scoped_expiring_and_revocable",
         "patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it"
       ]
     },
@@ -1264,13 +1266,13 @@
     {
       "id": "terminal.paint",
       "group": "terminal",
-      "decision": "Generic surface gradients and transformed image/ASCII backdrops",
+      "decision": "Generic surface gradients",
       "observe": "not applicable",
-      "alter": "`surface_styles` for composer/backdrop/approval framing; backdrop placement, scale, offset, dim, opacity, tint and image overlay paint",
+      "alter": "`surface_styles` for composer/approval framing",
       "replace": null,
-      "timing": "inline or owned viewport render; media cached until resource, transform, environment or geometry changes",
-      "ownership": "mod: colors, composition and contrast policy; host: bounded decode/render and native text/semantic preservation",
-      "limits": "scale 0.1-4, offsets -4096..4096 cells, dim/opacity 0-1, RGB or indexed colors; no-color drops styling; graphics only detected local Kitty protocol in owned viewport; ASCII/plain-color fallback; decorative backdrops omitted below 60 columns, solid colors retained",
+      "timing": "inline or owned viewport render",
+      "ownership": "mod: colors, composition and contrast policy; host: bounded render and native text/semantic preservation",
+      "limits": "opacity 0-1, RGB or indexed colors; no-color drops styling",
       "native": "hooks cannot style terminal surfaces",
       "covers": {
         "capabilities": [],
@@ -1279,13 +1281,10 @@
         "operations": []
       },
       "evidence": [
-        "patch:appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface",
-        "patch:transforms_place_tile_tint_and_gloss_without_mutating_source",
+        "patch:appearance_styles_are_bounded_and_merge_by_surface",
         "patch:surface_paint_preserves_text_semantics_and_special_backgrounds",
         "patch:paper_surface_on_dark_terminal_paints_solid_background_and_readable_native_fill",
-        "patch:narrow_paper_backdrop_keeps_solid_surface_while_omitting_ascii_decoration",
         "patch:inline_snapshot_keeps_ascii_palette_composer_dialog_and_workspace_bounded",
-        "patch:graphics_eligibility_uses_production_protocol_remote_motion_color_and_ownership",
         "patch:native_approval_stays_visible_and_owns_enter_over_retained_mod_dialog",
         "patch:no_color_panels_drop_theme_indices"
       ],
@@ -1541,7 +1540,7 @@
       "group": "coordination",
       "decision": "Pinned app-server requests and notifications",
       "observe": "`app_notification` and `app_server_request` for subscribed methods, with coalesced and dropped counts",
-      "alter": "`app.request` sends a routed method; only each route's listed fields are accepted, and thread, root and model fields are checked",
+      "alter": "`app.request` sends a routed method; only each route's listed fields are accepted, and thread, root and model fields are checked; `app.respond` answers a pending subscribed server request with a decline, an empty grant or a text answer",
       "replace": null,
       "timing": "user commands and event callbacks; turn-starting methods only from user contexts",
       "ownership": "mod: which routed method; host: the route table, per-method class, contexts, confirmation and thread scope",
@@ -1562,6 +1561,7 @@
         "replacements": [],
         "operations": [
           "app.request",
+          "app.respond",
           "app.routes"
         ]
       },
@@ -1572,7 +1572,8 @@
         "patch:queue_coalesces_deltas_and_drops_oldest_with_a_count",
         "patch:config_writes_refuse_authority_and_unknown_keys",
         "patch:confirmations_name_the_exact_request",
-        "patch:config_reads_redact_secret_values"
+        "patch:config_reads_redact_secret_values",
+        "patch:mod_responses_never_grant_authority"
       ],
       "replace_note": null
     },
@@ -1731,7 +1732,7 @@
       "replace": null,
       "timing": "background delivery at safe points",
       "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
-      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; independent channel counters capped at 256 per publisher and 4096 globally, new channels refused with channel_sequence_limit; reclaim publisher counters on publication after 15 minutes without successful publication and with no queued events, then restart at 1; 16 watches and 16 timers per mod (configurable); timers from 16 ms to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded; timer deliveries spaced at least 16 ms apart per owner/thread (up to 60 per second), coalescing repeated pending keys",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1753,6 +1754,8 @@
       },
       "evidence": [
         "patch:publishers_are_namespaced_and_subscribers_filter_by_pattern",
+        "patch:channel_sequence_admission_is_bounded_per_publisher_and_globally",
+        "patch:channel_sequences_expire_only_after_publisher_idle_and_queue_drain",
         "patch:slow_subscribers_drop_oldest_and_see_the_count",
         "patch:external_changes_are_reported_relative_to_the_root",
         "patch:channel_events_reach_subscribers_in_order",
@@ -2010,7 +2013,7 @@
       "replace": null,
       "timing": "event, tool, timer and channel callbacks and terminal commands in the session's process",
       "ownership": "mod: prompt, options and route; host: route grants, admission, settlement, interception and cancellation",
-      "limits": "prompt ≤ 8 KiB, system ≤ 8 KiB, context ≤ 32 KiB; ≤ 300 s; `agents` (and `sessions` for forks); `lead` only for a lead route listing the mod; a response cut at `max_output_tokens` returns `incomplete` with its streamed text",
+      "limits": "prompt ≤ 8 KiB, system ≤ 8 KiB, context ≤ 32 KiB; ≤ 300 s; `agents` (and `sessions` plus `sessions_tools` for forks); `lead` only for a lead route listing the mod; a response cut at `max_output_tokens` returns `incomplete` with its streamed text",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -2023,6 +2026,7 @@
       },
       "evidence": [
         "patch:model_completions_use_only_configured_worker_routes",
+        "patch:model_fork_checks_history_authority_before_access",
         "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses",
         "patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports"
       ],
@@ -2513,7 +2517,7 @@
     },
     {
       "id": "terminal_patch_composition",
-      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, backdrop, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
+      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
       "evidence": [
         "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
         "rust:a_failed_terminal_patch_is_transactional"
@@ -2558,10 +2562,10 @@
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale local generations are refused. In-flight work retains its captured source, but cancellation or changed authority, source or enablement rejects completion before state or results are committed. Settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
-        "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
+        "rust:disabling_during_native_work_rejects_completion_and_next_generation"
       ]
     },
     {

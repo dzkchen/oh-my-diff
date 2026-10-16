@@ -1,29 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const surface = { events: { terminal: 'terminal', component_event: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
-const unexpected = call => { throw new Error(`unexpected host call ${call.operation}`); };
+const unexpected = call => assert.fail(`unexpected host call ${call.operation}`);
 
 function run(input, host = unexpected) {
-  const receipts = [];
-  for (;;) {
-    const request = { source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'packages', 'store', 'terminal'],
-      settings: {}, state: null, surface, hook_budget_ms: 2000, receipts, ...input };
-    const output = JSON.parse(runnerSync(request).stdout);
-    if (output.error) throw new Error(output.error);
-    if (!output.host_call) return output;
-    try {
-      receipts.push({ call: output.host_call, value: host(output.host_call) });
-    } catch (error) {
-      if (host === unexpected) throw error;
-      receipts.push({ call: output.host_call, error: error.message });
-    }
-  }
+  const output = callback({ source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'packages', 'store', 'terminal'],
+    settings: {}, state: null, hook_budget_ms: 2000, ...input }, host);
+  if (output.error) throw new Error(output.error);
+  return { ...output, ui_state: JSON.parse(output.ui_state) };
 }
 
 const item = (id, extra = {}) => ({ id, kind: 'mod', version: '1.0.0', description: `${id} description`, scope: 'user', path: `/mods/${id}`, source: 'selection',
@@ -36,8 +23,9 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
     if (call.operation === 'packages.list') return { generation: 7, reload_error: null, packages: [
       item('omd_lsp_sync', { source: 'local', enabled: true, effective: true }), item('omd_advisor', { enabled: true, pending: 'reload' }),
       item('omd_workflow', { settings_schema: { type: 'object', properties: { greeting: { type: 'boolean', default: true }, density: { type: 'string', enum: ['full', 'compact'], default: 'full' } } }, settings: { greeting: true, density: 'full' } }),
-      item('omd_preview', { failed: 'callback_timeout: notes' })] };
-    if (call.operation === 'packages.preview') return { action: 'update', id: 'omd_lsp_sync', changes: { packages: [{ id: 'omd_lsp_sync', version: { from: '1.0.0', to: '1.1.0' } }] }, grants_added: ['exec'], conflicts: [] };
+      item('omd_preview', { failed: 'callback_timeout: notes' })]
+      .map(entry => call.arguments ? Object.fromEntries(call.arguments.fields.map(field => [field, entry[field]])) : entry) };
+    if (call.operation === 'packages.preview') return { action: 'update', id: 'omd_lsp_sync', changes: { packages: [{ id: 'omd_lsp_sync', version: { from: '1.0.0', to: '1.1.0' }, authority: { from: {}, to: { codex_config: { 'tools.update_plan.enabled': true } } } }] }, grants_added: ['exec'], conflicts: [] };
     if (call.operation === 'settings.write') return { settings: call.arguments.values };
     return { status: 'applied', generation: 8 };
   };
@@ -46,6 +34,7 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   const opened = run({ event: 'command', name: 'mods', payload: '' }, host);
   assert.equal(opened.state, null, 'opening does not change durable state');
   let state = opened.ui_state;
+  assert.ok(state.packages.every(entry => !('path' in entry) && !('settings' in entry) && !('grants' in entry)), 'the listing keeps only the fields it shows');
   const dialog = view(state);
   assert.deepEqual(opened.value.terminal.sites.dialog.components[1], dialog);
   assert.equal(dialog.title, 'Mods');
@@ -71,7 +60,11 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   const page = view(state);
   assert.equal(page.title, 'Workflow');
   assert.deepEqual(page.children.filter(child => child.id.startsWith('omd_mods_setting_')).map(child => [child.label, child.value]), [['greeting', 'true'], ['density', 'full']]);
+  const before = calls.length;
   state = command('set user:omd_workflow greeting false', state);
+  assert.equal(calls.slice(before).filter(call => call.operation === 'packages.list').length, 2, 'a setting change lists once before and once after the write');
+  assert.equal(state.details.id, 'omd_workflow');
+  assert.ok(state.packages.every(entry => !('settings' in entry)));
   assert.deepEqual(calls.find(call => call.operation === 'settings.write').arguments, { id: 'omd_workflow', values: { greeting: false } });
   assert.equal(state.notice, 'Workflow: greeting saved');
   state = command('back', state);
@@ -81,7 +74,7 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   assert.deepEqual(state.review.grants, ['exec']);
   state = command('apply', state);
   assert.deepEqual(calls.filter(call => call.operation === 'packages.apply').at(-1).arguments, { action: 'update', id: 'omd_lsp_sync', scope: 'user', expected_generation: 7 });
-  const escaped = run({ event: 'component_event', ui_state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_list', kind: 'input', events: [{ key: 'Esc', text: null }] } });
+  const escaped = run({ event: 'component_event', ui_state: { ...state, directory: true, query: 'git' }, payload: { component: 'omd_mods_dialog', kind: 'close', origin: 'user' } });
   assert.deepEqual([escaped.ui_state.open, escaped.ui_state.directory, escaped.ui_state.query], [false, false, ''], 'closing forgets the directory search');
   assert.ok(view({ ...state, review: { request: { action: 'install' }, label: 'Install Git', changes: {}, grants: Array(12).fill('fs.write') } }).children
     .find(child => child.id === 'omd_mods_review').text.split('\n').every(text => text.length <= 52), 'review text wraps for narrow terminals');
@@ -89,7 +82,7 @@ test('/mods groups friendly rows, toggles with the list action and applies only 
   assert.deepEqual([reopened.value, reopened.ui_state], [null, null]);
   const typed = run({ event: 'command', name: 'mods', payload: 'update omd_lsp_sync', ui_state: command('close', state) }, host);
   assert.equal(typed.ui_state.open, false);
-  assert.equal(typed.value.display, 'update Lsp Sync: omd_lsp_sync 1.0.0 → 1.1.0 · new permissions: exec\nRun /mods apply or /mods cancel');
+  assert.equal(typed.value.display, 'update Lsp Sync: omd_lsp_sync 1.0.0 → 1.1.0 · new permissions: exec · Codex config: tools.update_plan.enabled\nRun /mods apply or /mods cancel');
 });
 
 test('the directory searches the catalog, installs a picked version or a typed source in the chosen scope and survives a missing catalog', () => {
