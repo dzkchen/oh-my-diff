@@ -75,6 +75,86 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
 }
 
 #[test]
+fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died_idle() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let mut request = json!({"source":"export default api => api.command('v', () => 1);",
+        "filename":"/fixture/kept/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"v","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    let run = |request: &serde_json::Value| {
+        evaluate_warm(
+            &node,
+            "kept-fields",
+            request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap()["value"]
+            .clone()
+    };
+    assert_eq!(run(&request), json!(1));
+    assert_eq!(run(&request), json!(1));
+    request["source"] = json!("export default api => api.command('v', () => 2);");
+    assert_eq!(
+        run(&request),
+        json!(2),
+        "a live runner gets the changed source"
+    );
+    watchdog_kill("kept-fields");
+    assert_eq!(
+        run(&request),
+        json!(2),
+        "a runner that died idle is replaced"
+    );
+    super::invalidate_warm("kept-fields");
+}
+
+fn watchdog_kill(key: &str) {
+    let pid = WARM
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|runner| runner.key == key)
+        .unwrap()
+        .child
+        .id();
+    let mut tracked = super::TRACKED.lock().unwrap();
+    // SAFETY: the pooled runner is an unreaped child of this process.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    tracked.get_mut(&pid).unwrap().0 = true;
+    drop(tracked);
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+#[test]
+fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let input = json!({"component":"tool_call"});
+    let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
+        "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"intercept":{"render":"terminal"},"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
+        "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
+    let run = || {
+        evaluate_warm(
+            &node,
+            "idle-watchdog",
+            &request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+    };
+    run().unwrap();
+    watchdog_kill("idle-watchdog");
+    let error = run().unwrap_err().to_string();
+    assert!(error.starts_with("mod_out_of_memory:"), "{error}");
+    run().unwrap();
+    super::invalidate_warm("idle-watchdog");
+}
+
+#[test]
 fn reused_process_keeps_each_packages_authority_and_host_identity() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"export default api => { if (globalThis.activated) throw new Error('activation_leaked'); globalThis.activated = true; api.command('identity', () => { let writable = true; try { api.state.set(1); } catch { writable = false; } return {settings:api.settings, package:api.package.id, writable, caller:api.host.call('identity')}; }); };",
@@ -130,14 +210,27 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
         "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
     let run = |request: &serde_json::Value| {
-        evaluate_warm(&node, "memory-limit", request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
+        evaluate_warm(
+            &node,
+            "memory-limit",
+            request,
+            Duration::from_secs(5),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
     };
     let error = run(&request).unwrap_err().to_string();
     assert!(error.starts_with("mod_out_of_memory:"), "{error}");
     request["reuse"] = json!(false);
-    let error = super::evaluate(&node, &request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
-        .unwrap_err()
-        .to_string();
+    let error = super::evaluate(
+        &node,
+        &request,
+        Duration::from_secs(5),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(error.starts_with("mod_out_of_memory:"), "{error}");
     request["reuse"] = json!(true);
     request["source"] = json!("export default api => api.command('fill', () => 1);");

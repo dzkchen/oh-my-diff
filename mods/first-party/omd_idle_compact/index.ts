@@ -10,7 +10,7 @@ const LOCAL_PROVIDERS = new Set(['ollama', 'lmstudio', 'oss']);
 const FIRE_AT = 0.9;
 const MAX_DELAY_MS = 24 * 3_600_000;
 const RETRY_MS = 15_000;
-const RETRYABLE = /^client_context_changed/;
+const RETRYABLE = /^client(_surface)?_context_changed/;
 const NOTICE = 'Compacted while idle, before the prompt cache expired';
 const CANCELLED = { approval: 'The pending approval was cancelled.', question: 'The unanswered question was cancelled.' };
 

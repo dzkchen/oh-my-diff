@@ -92,18 +92,20 @@ fn footprint(pid: u32) -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
     // SAFETY: `info` is a writable `rusage_info_v0`, the size `RUSAGE_INFO_V0` asks for.
     let status = unsafe {
-        libc::proc_pid_rusage(pid as libc::c_int, libc::RUSAGE_INFO_V0, info.as_mut_ptr().cast())
+        libc::proc_pid_rusage(
+            pid as libc::c_int,
+            libc::RUSAGE_INFO_V0,
+            info.as_mut_ptr().cast(),
+        )
     };
     // SAFETY: a zero status filled `info`.
     (status == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
 }
 
+/// Runners exist only on macOS (`command`).
 #[cfg(not(target_os = "macos"))]
-fn footprint(pid: u32) -> Option<u64> {
-    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
-    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
-    // SAFETY: `sysconf` reads a constant.
-    Some(pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64)
+fn footprint(_pid: u32) -> Option<u64> {
+    None
 }
 
 /// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose physical footprint passes `MEMORY_LIMIT`.
@@ -166,7 +168,6 @@ fn reap() {
 }
 
 fn spawn(node: &Path) -> Result<Child> {
-    let _profile = super::Profile::new("runner_spawn");
     let child = command(node)?
         .args([
             "--max-old-space-size=64",
@@ -176,7 +177,6 @@ fn spawn(node: &Path) -> Result<Child> {
             "--no-warnings",
             "--experimental-vm-modules",
             "--disallow-code-generation-from-strings",
-            "--frozen-intrinsics",
             "--input-type=module",
             "--eval",
             RUNNER,
@@ -190,13 +190,13 @@ fn spawn(node: &Path) -> Result<Child> {
 }
 
 fn runner(node: &Path) -> Result<Child> {
-    let _profile = super::Profile::new("spare_acquisition");
     let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
-    for (_, child) in spares.0.extract_if(.., |(path, child)| {
-        path != node || exited(child)
-    }) {
+    for (_, child) in spares
+        .0
+        .extract_if(.., |(path, child)| path != node || exited(child))
+    {
         stop(child);
     }
     let warm = (!spares.0.is_empty()).then(|| spares.0.remove(0).1);
@@ -219,6 +219,35 @@ fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     }
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+/// Request fields fixed by a package identity. A reused runner keeps the last ones it was sent, and a request whose
+/// fields match goes without them: a request larger than the pipe buffer blocks the host until the runner drains it,
+/// which costs a wake-up of milliseconds on an idle machine.
+const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
+
+fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
+where
+    R: for<'a> std::ops::Index<&'a str, Output = Value>,
+{
+    use sha2::Digest;
+    let mut digest = sha2::Sha256::new();
+    for field in KEPT_FIELDS {
+        digest.update(serde_json::to_vec(&request[field])?);
+        digest.update([0]);
+    }
+    Ok(digest.finalize().into())
+}
+
+fn lean_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
+    let mut lean = serde_json::to_value(request)?;
+    if let Some(fields) = lean.as_object_mut() {
+        for field in KEPT_FIELDS {
+            fields.remove(field);
+        }
+        fields.insert("kept".into(), Value::Bool(true));
+    }
+    request_line(&lean)
 }
 
 fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHandle<()>) {
@@ -299,6 +328,8 @@ struct Warm {
     born: Instant,
     /// Bytes of the activation request outside its serve fields.
     base: usize,
+    /// Digest of the `KEPT_FIELDS` a reused runner holds.
+    kept: Option<[u8; 32]>,
 }
 
 impl Warm {
@@ -468,6 +499,7 @@ fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
         pinned: None,
         born: Instant::now(),
         base: 0,
+        kept: None,
     })
 }
 
@@ -483,12 +515,10 @@ pub(super) fn evaluate_warm<R>(
 where
     R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
 {
-    let _profile = super::Profile::new(if request["serve"] == true {
-        "render_callback"
-    } else {
-        "fresh_callback"
-    });
-    let serve = if request["reuse"] == true {
+    let kept = (request["reuse"] == true)
+        .then(|| kept_digest(request))
+        .transpose()?;
+    let serve = if kept.is_some() {
         request_line(request)?
     } else {
         request_line(
@@ -510,12 +540,17 @@ where
         let index = runners.iter().position(|runner| runner.key == key)?;
         Some(runners.swap_remove(index))
     });
-    if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child))
-        && dead.halt().1
-    {
-        return Err(memory_failure());
+    if let Some(dead) = reused.take_if(|warm| exited(&mut warm.child)) {
+        let stateful = dead.serve || dead.pinned.is_some();
+        if dead.halt().1 && stateful {
+            return Err(memory_failure());
+        }
     }
     let (mut warm, bytes) = match reused {
+        Some(warm) if kept.is_some() && warm.kept == kept => {
+            let lean = lean_line(request)?;
+            (warm, lean)
+        }
         Some(warm) => {
             // The activation request differs from this one only in the serve fields.
             if warm.base + serve.len() > INPUT_LIMIT + 1 {
@@ -549,6 +584,7 @@ where
             (warm, bytes)
         }
     };
+    warm.kept = kept;
     let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
     let error = match output {
         Ok(Some(value)) if value.get("error").is_none() => {

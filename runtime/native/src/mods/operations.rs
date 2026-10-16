@@ -225,15 +225,20 @@ async fn submit_receipt(
     receipt.validate()?;
     let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
+    let name = format!("receipt-{}.json", execution::hash(&bytes));
     // Only an accepted receipt leaves evidence; a failed write withdraws it.
     let submitted = {
-        let mut contract = lead.session.contract.lock().map_err(|_| "contract_lock_poisoned")?;
+        let mut contract = lead
+            .session
+            .contract
+            .lock()
+            .map_err(|_| "contract_lock_poisoned")?;
+        if lead.session.evidence.join(&name).exists() {
+            return Err("receipt_duplicate".into());
+        }
         let prior = contract.clone();
         let submitted = contract.submit(receipt)?;
-        if let Err(error) = lead
-            .session
-            .evidence(&format!("receipt-{}.json", execution::hash(&bytes)), &value)
-        {
+        if let Err(error) = lead.session.evidence(&name, &value) {
             *contract = prior;
             return Err(error);
         }

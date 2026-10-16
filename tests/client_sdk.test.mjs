@@ -39,7 +39,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', view = {} } = {}) {
+function fakeHost({ padding = '', view = {}, overloadedResumes = 0 } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -67,7 +67,8 @@ function fakeHost({ padding = '', view = {} } = {}) {
     else if (message.method === 'omd/client/attach') {
       reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
-    } else if (message.method === 'omd/action') {
+    } else if (message.method === 'thread/resume' && host.epoch !== '1' && overloadedResumes > 0 && overloadedResumes--) host.send({ id: message.id, error: { code: -32001, message: 'Server overloaded; retry later.' } });
+    else if (message.method === 'omd/action') {
       if (message.params.actionToken !== host.token) host.send({ id: message.id, error: { code: -32600, message: 'action_replayed' } });
       else {
         const spent = (host.token = `token-${++host.used}`);
@@ -154,6 +155,24 @@ test('unix client answers pings, reads large views and reconnects with attach, u
     assert.equal(host.seen.findLast(message => message.method === 'thread/resume').params.threadId, 'thread-1');
     await until(() => views.some(view => view.epoch === '2'));
     assert.equal(session.actionToken, 'token-0');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a resume refused as overloaded after a reconnect is retried, not dropped', async () => {
+  const host = fakeHost({ overloadedResumes: 1 });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; } });
+  try {
+    await session.request('thread/resume', { threadId: 'thread-1' });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    assert.deepEqual(reconnected, { epoch: '3', previousEpoch: '1' });
+    assert.deepEqual(host.seen.filter(message => message.method === 'thread/resume').map(message => message.epoch), ['1', '2', '3']);
   } finally {
     session.close();
     host.server.close();

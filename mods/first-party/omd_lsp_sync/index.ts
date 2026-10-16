@@ -158,7 +158,7 @@ export default function activate(api: ModAPI) {
       const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
       if (!settled.ok) { incomplete(s, settled.error); continue; }
       const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
-      const synced = synchronize(s, changed);
+      const synced = synchronize(s, changed, files);
       if (!synced.ok) { incomplete(s, synced.error); continue; }
       let reason = '';
       for (let wait = 0; wait < DIAGNOSTIC_WAITS && [...edited, ...opened].some(path => !s.diagnostics[path]); wait++) {

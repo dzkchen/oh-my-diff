@@ -216,11 +216,12 @@ export function createClient(api: ModAPI) {
     }
     return ok(true);
   };
-  const synchronize = (s: State, paths: string[]): Result<boolean> => {
+  const synchronize = (s: State, paths: string[], known?: Record<string, FileStat | null>): Result<boolean> => {
     const selected = [...new Set(paths)].filter(path => adapterFor(path) === s.adapter);
     if (!selected.length) return ok(false);
     if (selected.length > 128) return fail('document_batch_limit');
-    const stat = budget({ paths: selected, hash: true }, a => api.host.tryCall('workspace.stat', a));
+    const stat = known && selected.every(path => path in known) ? ok({ files: known })
+      : budget({ paths: selected, hash: true }, a => api.host.tryCall('workspace.stat', a));
     if (!stat.ok) return stat;
     let changed = false;
     for (let index = 0; index < selected.length; index += 16) {

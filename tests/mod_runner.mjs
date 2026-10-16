@@ -30,7 +30,7 @@ let slots = 0;
 function boot() {
   const slot = join(directory, String(slots++));
   execFileSync('mkfifo', [`${slot}.in`, `${slot}.out`]);
-  const child = spawn('sh', ['-c', 'exec "$0" --max-old-space-size=64 --no-compilation-cache --no-lazy --enable-source-maps --no-warnings --experimental-vm-modules --disallow-code-generation-from-strings --frozen-intrinsics --input-type=module --eval "$1" < "$2" > "$3" 2> "$4"',
+  const child = spawn('sh', ['-c', 'exec "$0" --max-old-space-size=64 --no-compilation-cache --no-lazy --enable-source-maps --no-warnings --experimental-vm-modules --disallow-code-generation-from-strings --input-type=module --eval "$1" < "$2" > "$3" 2> "$4"',
     process.execPath, runner, `${slot}.in`, `${slot}.out`, `${slot}.err`], { stdio: 'ignore' });
   child.unref();
   return { child, input: openSync(`${slot}.in`, 'w'), output: openSync(`${slot}.out`, 'r'), stderr: `${slot}.err`, buffer: Buffer.alloc(0) };

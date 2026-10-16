@@ -40,9 +40,11 @@ test('the timer compacts an idle thread or one waiting on the user, never a runn
   assert.deepEqual(fire(armed).calls, [compact]);
   assert.equal(fire(armed).state.requested, 'idle');
   assert.deepEqual(fire(armed, NOW + 31 * MINUTE).calls, [], 'an expired cache is not compacted');
-  const elsewhere = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error('client_context_changed') : {} });
-  assert.deepEqual(elsewhere.calls, [compact, ['events.schedule', { key: 'idle', delay_ms: 15_000 }]], 'another thread in view retries');
-  assert.equal(elsewhere.state.requested, null);
+  for (const error of ['client_context_changed', 'client_surface_context_changed']) {
+    const elsewhere = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error(error) : {} });
+    assert.deepEqual(elsewhere.calls, [compact, ['events.schedule', { key: 'idle', delay_ms: 15_000 }]], 'another thread in view retries');
+    assert.equal(elsewhere.state.requested, null);
+  }
   const refused = run('timer', { key: 'idle' }, armed, { now: NOW + 27 * MINUTE, answer: call => call.operation === 'app.request' ? new Error('app_request_refused') : {} });
   assert.deepEqual(refused.calls, [compact], 'a final refusal is not retried');
 
