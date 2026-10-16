@@ -374,7 +374,10 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
     let invalid = || denied("app_params_invalid", spec);
     let edit = |edit: Option<&serde_json::Map<String, Value>>| {
         let edit = edit.ok_or_else(invalid)?;
-        let key = edit.get("keyPath").and_then(Value::as_str).ok_or_else(invalid)?;
+        let key = edit
+            .get("keyPath")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?;
         if edit.get("value").is_some_and(redacted) {
             return Err(denied("app_config_value_redacted", key));
         }
@@ -404,7 +407,8 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
 }
 
 /// A value read back through the client surface carries the redaction marker in place of a secret.
-fn redacted(value: &Value) -> bool {
+/// Whether a config value still holds a `<redacted>` mask from a read.
+pub fn redacted(value: &Value) -> bool {
     match value {
         Value::String(text) => text.contains("<redacted>"),
         Value::Array(items) => items.iter().any(redacted),

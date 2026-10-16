@@ -1235,15 +1235,16 @@ server's `enabled`, `enabled_tools` and `disabled_tools`.
 `env` or `query_params` table, `shell_environment_policy.set` and the `args` of
 anything with a `command` (MCP servers, also under profiles and plugins), every
 string whose key ends in a secret word (`*_token`, `*secret`, `password`, API
-keys; not `*_credentials_store` or a provider's `env_key`, which names a
-variable) and every line that looks like a credential
+keys; not `*_credentials_store`), a provider's `env_key` unless it is an
+upper-case variable name with an underscore (`OPENAI_API_KEY`), and every line that looks like a credential
 (bearer tokens, key prefixes, private keys, user information in URLs; the other
 lines of multi-line text stay), and reduce an MCP server `url` or provider
 `base_url` to scheme, host and port (user information becomes `<redacted>@`,
 anything after the host `/<redacted>`), in the effective config and in each
 layer. `hooks/list` applies the same line rule to hook `command` strings.
-Config writes refuse any value containing `<redacted>`
-(`app_config_value_redacted`), so a read value cannot be written back masked.
+Config writes, `config.set` included, refuse any Codex value containing
+`<redacted>` (`app_config_value_redacted`), so a read value cannot be written
+back masked; mod settings may hold the literal text.
 `command/exec`, `process/*`, `fs/*`, `thread/shellCommand`,
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas

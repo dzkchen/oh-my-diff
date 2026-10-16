@@ -196,7 +196,8 @@ class Session {
   }
 
   async reconnect() {
-    const rejected = error => error instanceof Error && 'code' in error && Number.isInteger(error.code);
+    // -32001 is the app server's transient overload refusal, retried like a dropped link.
+    const rejected = error => error instanceof Error && 'code' in error && Number.isInteger(error.code) && error.code !== -32001;
     // The host refusing a replayed update or resume drops that request; only a refused initialize or attach ends the session.
     const tolerate = async (call, drop) => {
       try { await call(); } catch (error) {

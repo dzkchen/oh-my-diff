@@ -66,7 +66,7 @@ async function until(find) {
   throw new Error('timed out');
 }
 
-function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0, refuseResumes = false, refuseInitialize = false } = {}) {
+function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0, refuseResumes = false, overloadedResumes = 0, refuseInitialize = false } = {}) {
   const seen = [];
   const protocols = [];
   const sockets = new Set();
@@ -96,6 +96,7 @@ function fakeHost({ padding = '', pushes = true, view = {}, staleActions = 0, re
       reply({ clientId: `client-${host.epoch}`, protocol: 'omd-client/1', epoch: host.epoch, roster: [], features: [], delegable: [] });
       if (pushes) host.send({ method: 'omd/view/updated', params: { epoch: host.epoch, revision: 1, snapshot: { view, padding }, actionToken: host.token } });
     } else if (message.method === 'thread/resume' && refuseResumes && host.epoch !== '1') host.send({ id: message.id, error: { code: -32600, message: 'thread_gone' } });
+    else if (message.method === 'thread/resume' && host.epoch !== '1' && overloadedResumes > 0 && overloadedResumes--) host.send({ id: message.id, error: { code: -32001, message: 'Server overloaded; retry later.' } });
     else if (message.method === 'omd/action') {
       if (staleActions > 0 && staleActions--) host.send({ id: message.id, error: { code: -32600, message: 'action_stale' } });
       else if (message.params.actionToken !== host.token) host.send({ id: message.id, error: { code: -32600, message: 'action_replayed' } });
@@ -205,6 +206,24 @@ test('a resume the host refuses after a reconnect is dropped and the client keep
     await until(() => reconnected > 1);
     assert.equal(closed, false);
     assert.equal(host.seen.filter(message => message.method === 'thread/resume').length, 2, 'the refused resume is not replayed again');
+  } finally {
+    session.close();
+    host.server.close();
+  }
+});
+
+test('a resume refused as overloaded after a reconnect is retried, not dropped', async () => {
+  const host = fakeHost({ overloadedResumes: 1 });
+  const path = join(mkdtempSync(join(tmpdir(), 'omd-client-')), 'host.sock');
+  await new Promise(resolve => host.server.listen(path, resolve));
+  let reconnected;
+  const session = await connect({ url: `unix://${path}`, name: 'sdk-test', renderer, onView() {}, onRoster() {}, onMirrored() {}, onReconnect: change => { reconnected = change; } });
+  try {
+    await session.request('thread/resume', { threadId: 'thread-1' });
+    for (const socket of host.sockets) socket.destroy();
+    await until(() => reconnected);
+    assert.deepEqual(reconnected, { epoch: '3', previousEpoch: '1' });
+    assert.deepEqual(host.seen.filter(message => message.method === 'thread/resume').map(message => message.epoch), ['1', '2', '3']);
   } finally {
     session.close();
     host.server.close();

@@ -425,7 +425,7 @@ test('LSP mod batches feedback across languages and reports incomplete checks', 
   const { files, state } = build();
   const host = feedback(files);
   const result = drive(host, 'tool_output', event, state);
-  assert.deepEqual(host.batches.slice(0, 2).map(batch => batch.length), [128, 1]);
+  assert.deepEqual(host.batches.map(batch => batch.length), [128, 1]);
   for (const extension of ['py', 'ts']) assert.match(result.value.append, new RegExp(`f000\\.${extension}: 1 new, 0 resolved`));
   for (const refusal of ['stat', 'sync']) {
     const refused = drive(feedback(files, refusal), 'tool_output', event, state);

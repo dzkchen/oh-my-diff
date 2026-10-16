@@ -83,6 +83,52 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
 }
 
 #[test]
+fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died_idle() {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let mut request = json!({"source":"export default api => api.command('v', () => 1);",
+        "filename":"/fixture/kept/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
+        "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
+        "state":null,"settings":{},"event":"command","name":"v","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
+    let run = |request: &serde_json::Value| {
+        evaluate_warm(
+            &node,
+            "kept-fields",
+            request,
+            Duration::from_secs(2),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
+        .unwrap()["value"]
+            .clone()
+    };
+    assert_eq!(run(&request), json!(1));
+    assert_eq!(run(&request), json!(1));
+    request["source"] = json!("export default api => api.command('v', () => 2);");
+    assert_eq!(
+        run(&request),
+        json!(2),
+        "a live runner gets the changed source"
+    );
+    let pid = WARM
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|runner| runner.key == "kept-fields")
+        .unwrap()
+        .child
+        .id();
+    // SAFETY: the pooled runner is an unreaped child of this process.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        run(&request),
+        json!(2),
+        "a runner that died idle is replaced"
+    );
+    super::invalidate_warm("kept-fields");
+}
+
+#[test]
 fn reused_process_flushes_large_responses() {
     let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let request = json!({"source":"export default api => api.command('large', () => 'x'.repeat(200000));",
@@ -209,14 +255,27 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
         "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
     let run = |request: &serde_json::Value| {
-        evaluate_warm(&node, "memory-limit", request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
+        evaluate_warm(
+            &node,
+            "memory-limit",
+            request,
+            Duration::from_secs(5),
+            &|| true,
+            &mut |_| unreachable!(),
+        )
     };
     let error = run(&request).unwrap_err().to_string();
     assert!(error.starts_with("mod_out_of_memory:"), "{error}");
     request["reuse"] = json!(false);
-    let error = super::evaluate(&node, &request, Duration::from_secs(5), &|| true, &mut |_| unreachable!())
-        .unwrap_err()
-        .to_string();
+    let error = super::evaluate(
+        &node,
+        &request,
+        Duration::from_secs(5),
+        &|| true,
+        &mut |_| unreachable!(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(error.starts_with("mod_out_of_memory:"), "{error}");
     request["reuse"] = json!(true);
     request["source"] = json!("export default api => api.command('fill', () => 1);");
@@ -428,7 +487,13 @@ fn reused_callback_runners_never_evict_render_runners() {
             .count()
             <= super::reused_pool()
     );
-    for key in ["kind-render", "kind-command-0", "kind-command-1", "kind-command-2", "kind-command-3"] {
+    for key in [
+        "kind-render",
+        "kind-command-0",
+        "kind-command-1",
+        "kind-command-2",
+        "kind-command-3",
+    ] {
         super::invalidate_warm(key);
     }
 }
