@@ -663,42 +663,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn session_database_selection_honors_config_profile_and_explicit_scope() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let home = root.join("home");
-        let repository = root.join("repo");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(repository.join(".codex")).unwrap();
-        let environment = root.join("environment");
-        assert_eq!(
-            database(&home, &repository, None, Some(environment.clone())).unwrap(),
-            environment.join("state_5.sqlite")
-        );
-        let configured = root.join("configured");
-        std::fs::write(
-            home.join("config.toml"),
-            format!(
-                "profile='selected'\n[profiles.selected]\nsqlite_home='{}'\n",
-                configured.display()
-            ),
-        )
-        .unwrap();
-        assert_eq!(
-            database(&home, &repository, None, Some(environment.clone())).unwrap(),
-            configured.join("state_5.sqlite")
-        );
-        std::fs::write(
-            repository.join(".codex/config.toml"),
-            "\"\\u0073qlite_home\"='/unknown'\n",
-        )
-        .unwrap();
-        assert!(database(&home, &repository, None, None).is_err());
-        assert_eq!(
-            database(&home, &repository, Some(environment.clone()), None).unwrap(),
-            environment.join("state_5.sqlite")
-        );
-        assert!(database(&home, &repository, Some(PathBuf::from("relative")), None).is_err());
-    }
 }

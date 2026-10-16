@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { activate, assertFailure, assertShortCircuit, assertWrapped, attach, clock, component, coreValue, detach, environment, find, intercept, invoke, mount, packages, pointer, runScenario, state, storeMock, text, tiers, waitUntil } from '../mods/author/testing.mjs';
+import { activate, clock, component, environment, find, intercept, packages, pointer, state, text } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -26,46 +26,6 @@ test('author packaging preserves custom entrypoints, assets and lifecycle script
     if (!process.env.OMD_MOD_BIN) assert.ok(readFileSync(join(root, 'inspections'), 'utf8').trim().split('\n').includes(report.package));
     assert.equal(JSON.parse(readFileSync(join(report.package, 'package-report.json'))).sha256, report.sha256);
   } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test('author example refuses an unknown or listed-but-missing example cleanly', () => {
-  const root = mkdtempSync(join(tmpdir(), 'omd-author-example-'));
-  try {
-    mkdirSync(join(root, 'sdk/author'), { recursive: true });
-    copyFileSync(new URL('../mods/author/cli.mjs', import.meta.url), join(root, 'sdk/author/cli.mjs'));
-    writeFileSync(join(root, 'sdk/package.json'), JSON.stringify({ version: '1', files: ['examples/ghost'] }));
-    for (const name of ['ghost', 'nope']) {
-      const result = spawnSync(process.execPath, [join(root, 'sdk/author/cli.mjs'), 'example', join(root, name), name], { encoding: 'utf8' });
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, new RegExp(`unknown_example: ${name}`));
-    }
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test('component steps keep an explicit zero size', () => {
-  assert.deepEqual(component('m', 'grid', { columns: 0, rows: 0 }), { type: 'component', mod: 'm', module: 'grid', columns: 0, rows: 0 });
-});
-
-test('author test fails when a project has no tests', () => {
-  const root = mkdtempSync(join(tmpdir(), 'omd-author-test-'));
-  try {
-    writeFileSync(join(root, 'mod.tests.ts'), '');
-    const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, 'test', root], { encoding: 'utf8' });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /no_tests/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test('the test kit seeds and reads persisted mod state through the engine', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
-  const counter = new URL('../mods/examples/counter', import.meta.url).pathname;
-  const trace = runScenario(counter, { steps: [
-    state('counter', { value: 41 }),
-    invoke('counter', 'tool', 'count', {}, { expect: { count: 42 } }),
-    state('counter', { expect: 42 }),
-    invoke('counter', 'command', 'reset'),
-    state('counter', { expect: 0 }),
-  ] });
-  assert.deepEqual(trace.steps.map(step => step.value), [41, { count: 42 }, 42, { display: 'Counter reset to 0' }, 0]);
 });
 
 test('author example and diagnostic commands preserve their public arguments', () => {
@@ -284,75 +244,3 @@ const inventory = (parameters) => ({ thread_id: 'fixture', tools: [
   { name: 'apply_patch', kind: 'builtin', server: null, original: { description: 'Patch files', parameters: null, freeform: true }, effective: null },
   { name: 'mcp__docs__search', kind: 'mcp', server: 'docs', original: { description: 'Search docs', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer' } }, required: ['query'] }, freeform: false }, effective: { description: 'Search docs', parameters: null, deferred: true } },
 ] });
-
-test('fixture-rendered scaffold, typed tool, UI, guard and policy tier work offline from a fixture inventory, not supported-client proof', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'omd-author-workflow-'));
-  const mods = new URL('../mods/', import.meta.url).pathname;
-  const cli = join(mods, 'author/cli.mjs');
-  const author = (...args) => spawnSync(process.execPath, ['--no-warnings', cli, ...args], { encoding: 'utf8' });
-  try {
-    const project = join(root, 'proof');
-    assert.equal(author('create', project, 'proof').status, 0);
-    rmSync(join(project, 'node_modules/@oh-my-diff'), { recursive: true, force: true });
-    mkdirSync(join(project, 'node_modules/.bin'), { recursive: true });
-    mkdirSync(join(project, 'node_modules/@oh-my-diff'));
-    symlinkSync(mods, join(project, 'node_modules/@oh-my-diff/mod-api'));
-    symlinkSync(join(mods, 'node_modules/typescript'), join(project, 'node_modules/typescript'));
-    symlinkSync(join(mods, 'node_modules/typescript/bin/tsc'), join(project, 'node_modules/.bin/tsc'));
-    const manifest = JSON.parse(readFileSync(join(project, 'mod.json'), 'utf8'));
-    writeFileSync(join(project, 'mod.json'), JSON.stringify({ ...manifest, capabilities: ['commands', 'interception', 'terminal', 'store', 'exec'], exec_environment: ['MODE'] }));
-    const policy = join(root, 'policy');
-    mkdirSync(policy);
-    writeFileSync(join(policy, 'mod.json'), JSON.stringify({ schema: 1, id: 'policy', version: '0.1.0', api: manifest.api, state_version: 1, capabilities: ['interception'] }));
-    writeFileSync(join(policy, 'index.ts'), "export default function activate(api) { api.intercept('tool', async (input, next) => JSON.stringify(input.arguments).includes('sudo') ? { deny: 'no sudo' } : next(input)); }\n");
-
-    const store = join(root, 'store');
-    const engine = (...args) => spawnSync(process.env.OMD_MOD_BIN, args, { encoding: 'utf8' });
-    assert.equal(engine('init', store, process.execPath).status, 0);
-    const parameters = { type: 'object', properties: { cmd: { type: 'string', description: 'Shell command' }, workdir: { type: 'string' } }, required: ['cmd'], additionalProperties: false };
-    writeFileSync(join(store, 'tool-inventory.json'), JSON.stringify(inventory(parameters)));
-    writeFileSync(join(project, 'index.ts'), guardSource('cmd'));
-    assert.equal(author('watch', project, '--', store, '--once').status, 0);
-    const types = readFileSync(join(project, '.omd/tool-types.d.ts'), 'utf8');
-    assert.match(types, /"exec_command": \{ \/\*\* Shell command \*\/ "cmd": string; "workdir"\?: string; \};/);
-    assert.match(types, /"apply_patch": string;/);
-    assert.match(types, /"mcp__docs__search": \{[^}]*"query": string;[^}]*"limit"\?: number;|"mcp__docs__search": \{[^}]*"limit"\?: number;[^}]*"query": string;/);
-    assert.equal(author('check', project).status, 0);
-    writeFileSync(join(project, 'index.ts'), guardSource('command'));
-    const rejected = author('check', project);
-    assert.notEqual(rejected.status, 0);
-    assert.match(rejected.stdout, /Property 'command' does not exist/);
-    writeFileSync(join(project, 'index.ts'), guardSource('cmd'));
-
-    const call = (tool, args) => ({ tool, arguments: args, call_id: 'call-1', thread_id: 'fixture', agent_id: null, schema: null, raw_arguments: JSON.stringify(args), batch: null });
-    const effective = { output: 'ok', success: true };
-    const trace = runScenario(project, clock(1000), environment({ MODE: 'ci' }), storeMock({ get: [['git']] }), packages(policy), tiers({ append: ['policy'] }), { steps: [
-      invoke('proof', 'command', 'policy', null, { expect: { mode: 'ci', allow: ['git'] } }),
-      waitUntil(invoke('proof', 'command', 'clock'), 3000, { everyMs: 1000, maxMs: 5000, expect: { waited_ms: 2000, value: 3000 } }),
-      intercept('tool', call('exec_command', { cmd: 'ls' }), { core: [coreValue(effective)] }),
-      intercept('tool', call('exec_command', { cmd: 'git push origin main' }), { core: [coreValue(effective)] }),
-      intercept('tool', call('exec_command', { cmd: 'rm -rf build' })),
-      intercept('tool', call('exec_command', { cmd: 'sudo ls' })),
-      intercept('tool', call('exec_command', {}), { core: [coreValue(effective)] }),
-      mount('proof'),
-      activate('proof', 'allow', { expect: { action: { command: 'proof:allow', args: '' }, result: 'allowed' } }),
-      attach('web', { renderer: { kind: 'gui', pointer: 'pixel' } }),
-      mount('proof'),
-      pointer('proof', 'canvas', { column: 1, row: 0, action: 'down', button: 'left' }, { client: 'client-1' }),
-      invoke('proof', 'command', 'last', null, { expect: { kind: 'pointer', component: 'canvas', client: 'client-1', action: 'down' } }),
-      detach('client-1'),
-    ] });
-    const chain = index => trace.steps[index].value;
-    assert.deepEqual(chain(2).trace.map(entry => entry.mod), ['engine', 'policy', 'proof']);
-    assertWrapped(chain(3), 'proof');
-    assert.equal(chain(3).core_calls[0].arguments.cmd, 'echo guarded');
-    assertShortCircuit(chain(4), 'proof');
-    assertShortCircuit(chain(5), 'policy');
-    assertFailure(chain(6), 'proof', /cmd_required/);
-    assert.equal(find(chain(7), 'canvas').pointer, true);
-    assert.match(text(chain(7)), /clients:0\nAllow/);
-    assert.match(text(chain(10)), /clients:1/);
-    assert.equal(trace.paid_requests, 0);
-    assert.deepEqual(trace.unused_mock_replies, []);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});

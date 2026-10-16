@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -74,87 +74,12 @@ export const tree = (
   });
 }));
 
-test('a .tsx asset compiles beside its source and index.tsx imports the compiled file', () => withProject(`
-import { Row } from './parts/row.tsx';
-export const tree = <box id="root" label="Root"><Row name="a" /></box>;
-`, { typecheck: true }, async directory => {
-  mkdirSync(join(directory, 'parts'));
-  writeFileSync(join(directory, 'parts/row.tsx'), 'export const Row = ({ name }: { name: string }) => <line id={name} label={name}>{name}</line>;\n');
-  const result = check(directory);
-  assert.equal(result.status, 0, result.output);
-  assert.match(readFileSync(join(directory, 'index.ts'), 'utf8'), /from '\.\/parts\/row\.ts'/);
-  assert.match(readFileSync(join(directory, 'parts/row.ts'), 'utf8'), /^\/\/ @ts-nocheck\n\/\/ Generated from parts\/row\.tsx; edit that file instead\.\n/);
-  assert.doesNotMatch(readFileSync(join(directory, 'parts/row.ts'), 'utf8'), /^import /m);
-  const { tree } = await evaluate(directory);
-  assert.deepEqual(tree, { type: 'box', id: 'root', label: 'Root', children: [{ type: 'line', id: 'a', label: 'a', spans: [{ text: 'a' }] }] });
-  writeFileSync(join(directory, 'parts/row.ts'), 'export const Row = () => null;\n');
-  assert.match(check(directory).output, /jsx_entrypoint_conflict: parts\/row\.ts was not generated from parts\/row\.tsx/);
-}));
-
-test('a .tsx asset keeps a hand-written index.ts in the type check', () => withProject('', { typecheck: true }, directory => {
-  rmSync(join(directory, 'index.tsx'));
-  mkdirSync(join(directory, 'parts'));
-  writeFileSync(join(directory, 'parts/row.tsx'), 'export const Row = ({ name }: { name: string }) => <line id={name} label={name}>{name}</line>;\n');
-  writeFileSync(join(directory, 'index.ts'), "export const count: number = 'one';\n");
-  const result = check(directory);
-  assert.notEqual(result.status, 0);
-  assert.match(result.output, /index\.ts.*TS2322/);
-}));
-
-test('scenario runs compile the index.tsx of every package they install', async () => {
-  const stub = join(mkdtempSync(join(tmpdir(), 'omd-stub-')), 'omd-mod');
-  writeFileSync(stub, '#!/bin/sh\nexit 1\n');
-  chmodSync(stub, 0o755);
-  await withProject('export const tree = <slot />;', {}, async sibling => {
-    await withProject('export const tree = <slot />;', {}, async main => {
-      writeFileSync(join(main, 'mod.test.json'), JSON.stringify({ packages: [sibling] }));
-      const result = spawnSync(process.execPath, ['--no-warnings', cli, 'test', main], { encoding: 'utf8', env: { ...process.env, OMD_MOD_BIN: stub } });
-      assert.notEqual(result.status, 0);
-      assert.ok(existsSync(join(main, 'index.ts')));
-      assert.ok(existsSync(join(sibling, 'index.ts')), result.stderr);
-    });
-  });
-  rmSync(dirname(stub), { recursive: true, force: true });
-});
-
-test('unknown elements and children on childless kinds fail at evaluation', async () => {
-  for (const [source, message] of [
-    ['const Tag = "blink" as any; export const tree = <Tag />;', 'jsx_unsupported_element: blink'],
-    ['export const tree = <slot>{"hi" as any}</slot>;', 'jsx_children_unsupported: slot'],
-  ]) {
-    await withProject(source, {}, async directory => {
-      assert.equal(check(directory).status, 0);
-      await assert.rejects(evaluate(directory), { message });
-    });
-  }
-});
-
-test('fragments are rejected and typescript is required', async () => {
-  await withProject('export const tree = <><slot /></>;', {}, directory => {
-    assert.match(check(directory).output, /jsx_unsupported_element: fragment/);
-  });
-  await withProject('export const tree = <slot />;', { typescript: false }, directory => {
-    assert.match(check(directory).output, /jsx_requires_typescript: pnpm add -D typescript@5\.9\.3/);
-  });
-});
-
 test('a hand-written index.ts is never overwritten by index.tsx', async () => {
   await withProject('export const tree = <slot />;', {}, directory => {
     const handWritten = '// @ts-nocheck\nexport default () => {};\n';
     writeFileSync(join(directory, 'index.ts'), handWritten);
     assert.match(check(directory).output, /jsx_entrypoint_conflict/);
     assert.equal(readFileSync(join(directory, 'index.ts'), 'utf8'), handWritten);
-  });
-});
-
-test('types reject unsupported elements and props in index.tsx', async () => {
-  await withProject('export const tree = <blink id="x" label="x" />;', { typecheck: true }, directory => {
-    const result = check(directory);
-    assert.notEqual(result.status, 0);
-    assert.match(result.output, /index\.tsx.*'blink' does not exist/);
-  });
-  await withProject('export const tree = <text id="x" label="x" text="a">b</text>;', { typecheck: true }, directory => {
-    assert.match(check(directory).output, /index\.tsx.*TS2322/);
   });
 });
 

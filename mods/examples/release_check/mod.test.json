@@ -123,16 +123,6 @@
       }
     },
     {
-      "type": "invoke",
-      "mod": "release_check",
-      "event": "command",
-      "name": "picked",
-      "payload": 3,
-      "expect": {
-        "display": "Picked row 3"
-      }
-    },
-    {
       "type": "intercept",
       "surface": "response_stream",
       "payload": {

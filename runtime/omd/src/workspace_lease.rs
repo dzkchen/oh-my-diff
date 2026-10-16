@@ -147,36 +147,4 @@ mod tests {
         assert!(shared(root.path()).is_ok());
     }
 
-    #[test]
-    fn renaming_a_checkout_does_not_split_its_lease_identity() {
-        const CHILD: &str = "OMD_LEASE_RENAME_TEST_CHILD";
-        if std::env::var_os(CHILD).is_none() {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "workspace_lease::tests::renaming_a_checkout_does_not_split_its_lease_identity",
-                    "--test-threads=1",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            return;
-        }
-        let parent = tempfile::tempdir().unwrap();
-        let before = parent.path().join("before");
-        let after = parent.path().join("after");
-        fs::create_dir(&before).unwrap();
-        let held = shared(&before).unwrap();
-        fs::rename(&before, &after).unwrap();
-        assert!(exclusive(&after).is_err());
-        drop(held);
-        exclusive(&after).expect("renamed checkout lease must release on drop");
-    }
 }

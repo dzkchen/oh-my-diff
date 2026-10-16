@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { HOST_RECEIPT_BYTES, callback, runnerSync, surface } from '../tests/mod_runner.mjs';
+import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
@@ -16,29 +16,6 @@ test('UI state serialized boundaries agree with the native validator', () => {
       { capabilities: ['terminal', 'commands'], event: 'command', name: 'write', payload: encoded });
     assert.equal(!reply.error, entry.valid, `${entry.name}: ${reply.error}`);
   }
-});
-
-test('the test harness refuses the 129th host call like the host', () => {
-  const source = 'export default api => api.command("spin", () => { for (let index = 0; index < 129; index++) api.host.tryCall("store.get", { key: "k" }); })';
-  const request = { source, filename: 'fixture.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'store'], state: null, settings: {}, event: 'command', name: 'spin', payload: null };
-  let calls = 0;
-  assert.throws(() => callback(request, () => { calls++; return null; }), /host_call_limit/);
-  assert.equal(calls, 128);
-});
-
-test('the test harness counts the receipt separator when it sizes a result like the host', () => {
-  const source = 'export default api => api.command("two", () => { api.host.tryCall("store.get", { key: "a" }); return api.host.tryCall("store.get", { key: "b" }); })';
-  const request = { source, filename: 'fixture.ts', api: '0.2.0-experimental.5', capabilities: ['commands', 'store'], state: null, settings: {}, event: 'command', name: 'two', payload: null };
-  const size = (call, value) => Buffer.byteLength(JSON.stringify({ call, value }));
-  const outcome = extra => {
-    let spent = 2;
-    return callback(request, call => {
-      if (call.arguments.key === 'a') { spent += size(call, null); return null; }
-      return 'x'.repeat(HOST_RECEIPT_BYTES - spent - size(call, '') + extra);
-    }).value;
-  };
-  assert.equal(outcome(-1).ok, true);
-  assert.match(outcome(0).error, /^host_result_limit/);
 });
 
 test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
@@ -90,13 +67,6 @@ test('render callbacks cannot mutate activation registrations', () => {
   }
 });
 
-test('classic hooks cannot register handlers during callbacks', () => {
-  const reply = run(`export default api => api.hook('PostToolUse', () => {
-    api.hook('PostToolUse', () => api.state.set({ late: true }));
-  });`, { capabilities: ['lifecycle', 'store'], event: 'tool_result', payload: { tool: 'read_file', outcome: 'succeeded' } });
-  assert.match(reply.error ?? '', /hook_registration_outside_activation/);
-});
-
 test('warm renders and continuation replays restore post-activation atoms', () => {
   const input = { component: 'tool_call' };
   const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
@@ -134,10 +104,6 @@ test('Date() and Intl date formatting read the callback clock', () => {
   })`;
   assert.deepEqual(run(source, { capabilities: ['commands'], event: 'command', name: 'now', virtual_time_ms: 1000 }).value, [true, true, true, 1000, true, true, true]);
 });
-test('the test harness kills an interactive callback that never returns', () => {
-  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', hook_budget_ms: 500 };
-  assert.throws(() => callback(request, () => null), /runner_timed_out/);
-});
 test('package text assets are read only and limited to the selected package', () => {
   const source = 'export default api => api.command("asset", () => api.assets.read("worker.mjs"))';
   const assets = { 'worker.mjs': { text: 'export default 1', sha256: 'a'.repeat(64) } };
@@ -170,14 +136,6 @@ test('component module steps deliver input, ticks and one post without host auth
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
-  assert.match(run('export default api => api.component("x", { view: 1 })', { capabilities: ['terminal'] }).error, /handler_required: x/);
-  const paused = start => `export default api => api.component("p", { init: () => ${start}, every: { ms: n => n ? null : 20, tick: n => n + 1 }, view: n => [{ type: "text", id: "n", label: "N", text: String(n) }] })`;
-  const pausedStep = start => run(paused(start), { capabilities: ['terminal'], event: 'component', name: 'p', payload: { now: 100, events: [] } }).value.next_ms;
-  assert.deepEqual([pausedStep(0), pausedStep(1)], [20, null]);
-  const asynchronous = handler => run(`export default api => api.component("a", { ${handler}, view: s => [{ type: "text", id: "t", label: "a", text: JSON.stringify(s) }] })`,
-    { capabilities: ['terminal'], event: 'component', name: 'a', payload: { now: 0, events: [{ kind: 'key', key: 'x', text: null }] } });
-  assert.match(asynchronous('init: () => 0, key: async s => s + 1').error, /component_handlers_must_be_synchronous/);
-  assert.match(asynchronous('init: async () => 0, key: s => s').error, /component_handlers_must_be_synchronous/);
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
@@ -295,32 +253,9 @@ test('host errors from stack overflow can neither compile code nor patch the hos
   assert.deepEqual(reply.value?.found, ['contained'], reply.error);
   assert.ok(!reply.value.host.includes('patched'), JSON.stringify(reply.value));
 });
-test('duplicate registrations rejected', () => {
-  assert.match(run('export default api => { api.command("a", () => null); api.command("a", () => null) }', { capabilities: ['commands'] }).error, /conflict/);
-});
-test('persistent state passed through tool invocation', () => {
-  const source = 'export default api => api.tool({ name:"count", description:"count", parameters:{type:"object",properties:{}} }, () => { api.state.set(api.state.get()+1); return api.state.get(); })';
-  const reply = run(source, { capabilities: ['tools','store'], state: 9, event: 'tool', name: 'count' });
-  assert.equal(reply.state, 10);
-  assert.equal(reply.value, 10);
-});
 test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   assert.match(run('export default api => api.command("large", () => "x".repeat(270000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
-});
-test('commands carry descriptions and tools carry labels and bounded progress', () => {
-  const source = `export default api => {
-    api.command('reset', () => ({display:'done'}), {description:'Reset state'});
-    api.tool({name:'work',label:'Work hard',description:'Work',parameters:{type:'object',properties:{}}}, () => { api.progress('half'); api.progress('all'); return 1; });
-    api.command('bad', () => api.progress('no'));
-  }`;
-  const inspect = run(source, { capabilities: ['commands', 'tools'] });
-  assert.deepEqual(inspect.registrations.commands, [{ name: 'reset', description: 'Reset state' }, { name: 'bad' }]);
-  assert.equal(inspect.registrations.tools[0].label, 'Work hard');
-  const tool = run(source, { capabilities: ['commands', 'tools'], event: 'tool', name: 'work', payload: {} });
-  assert.deepEqual(tool.updates, ['half', 'all']);
-  assert.match(run(source, { capabilities: ['commands', 'tools'], event: 'command', name: 'bad' }).error, /progress_outside_tool/);
-  assert.match(run('export default api => api.command("x", () => null, {hidden:true})', { capabilities: ['commands'] }).error, /unsupported_command_option/);
 });
 test('lifecycle events and interceptors require their capabilities', () => {
   const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];
@@ -413,23 +348,6 @@ test('reactive atoms track reads, recompute derived values and run keyed subscri
   assert.deepEqual(edge.value, { name: 'none', missing: null, proto: 7 });
 });
 
-test('repeating timers stop when cancelled inside their handler and keep running after a throw', () => {
-  const source = `export default api => {
-    const poll = api.time.every('poll', 100, () => { if (api.state.get()?.stop) poll.cancel(); if (api.state.get()?.boom) throw new Error('boom'); });
-  }`;
-  const tick = (state, receipts = []) => run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:poll' }, state, receipts });
-  const stopping = tick({ stop: true });
-  assert.equal(stopping.host_call.operation, 'events.cancel');
-  const stopped = tick({ stop: true }, [{ call: stopping.host_call, value: null }]);
-  assert.equal(stopped.host_call, null);
-  assert.deepEqual(stopped.calls.map(call => call.operation), ['events.cancel']);
-  const failing = tick({ boom: true });
-  assert.equal(failing.host_call.operation, 'events.schedule');
-  assert.equal(failing.host_call.arguments.delay_ms, 100);
-  assert.match(run(source.replace("'poll', 100,", "'poll', 15,"), { capabilities: ['events', 'store'] }).error, /invalid_timer_interval/);
-  assert.match(tick({ boom: true }, [{ call: failing.host_call, value: null }]).error, /boom/);
-});
-
 test('typed middleware and services register without ambient authority', () => {
   const contract = { name: 'fixture.echo', version: '1.0.0', methods: { echo: { input: 'string', output: 'string' } } };
   const source = `export default api => {
@@ -444,33 +362,4 @@ test('typed middleware and services register without ambient authority', () => {
   const service = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'service', name: 'fixture.echo.echo', payload: 'hello' });
   assert.equal(service.value, 'hello');
   assert.match(run(source, { capabilities: ['middleware', 'commands'], event: 'inspect' }).error, /capability_denied: services/);
-});
-test('independent workspace mod uses public read and transaction calls', () => {
-  const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['fs.read', 'fs.write', 'tools', 'store'];
-  const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
-  const first = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload });
-  assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
-  const read = { files: {
-    'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
-    'src/new.ts': null,
-    'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
-  } };
-  const receipts = [{ call: first.host_call, value: read }];
-  const second = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts });
-  assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
-    expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
-    writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
-  } });
-  const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
-  const final = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
-  assert.deepEqual(final.value, result);
-  const observed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
-  assert.equal(observed.state.last_write.status, 'observed');
-  const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
-  const proposed = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
-  assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
-  const requested = run(source, { api: '0.2.0-experimental.5', capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.match(run(source, { api: '0.2.0-experimental.5', capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
 });

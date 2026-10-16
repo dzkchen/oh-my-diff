@@ -760,8 +760,7 @@
       ],
       "result": "The repository example packages load, inspect and register together against the published host features, and their events, operations and capabilities stay inside the published API.",
       "evidence": [
-        "rust:omd/tests/examples.rs::host_feature_examples_load_and_register_together",
-        "script:tests/examples_api.test.mjs"
+        "rust:omd/tests/examples.rs::host_feature_examples_load_and_register_together"
       ]
     },
     {

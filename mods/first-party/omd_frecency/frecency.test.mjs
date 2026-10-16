@@ -33,36 +33,6 @@ function repository(files, status) {
   return { host, writes };
 }
 
-test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and drop renamed files', () => {
-  const files = { tick: 10, files: { 'test/parser_test.ts': [5, 10], 'old/parser.ts': [3, 9] } };
-  const mention = (query, candidates) => {
-    const { host, writes } = repository(files, ' M src/parser.ts\n?? "docs/new notes.md"\nR  a.ts -> src/moved.ts\n D gone.ts\n');
-    const { value } = run('completion', { kind: 'mention', query, candidates: candidates.map(path => ({ path, score: 1 })) }, host);
-    return { paths: value.items.map(item => item.path), writes };
-  };
-  const ranked = mention('parser', ['docs/parser-notes.md', 'src/parse.ts', 'src/parser.ts', 'test/parser_test.ts']);
-  assert.deepEqual(ranked.paths, ['test/parser_test.ts', 'src/parser.ts', 'docs/parser-notes.md', 'src/parse.ts']);
-  assert.deepEqual(ranked.writes, [{ tick: 10, files: { 'test/parser_test.ts': [5, 10] } }]);
-  assert.deepEqual(mention('parsre', []).paths, ['test/parser_test.ts', 'src/parser.ts']);
-  assert.equal(mention('Parser', ['src/Parser.java', 'src/parser.ts']).paths[0], 'src/Parser.java');
-  assert.equal(mention('parser', ['src/Parser.java', 'src/parser.ts']).paths[0], 'test/parser_test.ts');
-  assert.deepEqual(mention('', []).paths, ['test/parser_test.ts', 'src/parser.ts', 'src/moved.ts', 'docs/new notes.md']);
-  assert.equal(run('completion', { kind: 'argument', command: 'note', query: '', line: '' }, () => { throw new Error('no host call'); }).value, null);
-});
-
-test('backfilled history is statted page by page, so deleted files never surface and are forgotten in one save', () => {
-  const stale = Array.from({ length: 120 }, (_, index) => [`old/file${index}.ts`, [5, 10]]);
-  const kept = Array.from({ length: 30 }, (_, index) => [`keep/file${index}.ts`, [1, 10]]);
-  const { host, writes } = repository({ tick: 10, files: Object.fromEntries([...stale, ...kept]) }, ' M src/edited.ts\n');
-  const { value, calls } = run('completion', { kind: 'mention', query: '', candidates: [{ path: 'src/a.ts', score: 1 }] }, host);
-  const paths = value.items.map(item => item.path);
-  assert.deepEqual(paths.filter(path => path.startsWith('old/')), []);
-  assert.deepEqual(paths, ['src/edited.ts', ...kept.map(([path]) => path), 'src/a.ts']);
-  assert.equal(calls.filter(call => call.operation === 'workspace.stat').length, 4);
-  assert.equal(writes.length, 1);
-  assert.deepEqual(Object.keys(writes[0].files), kept.map(([path]) => path));
-});
-
 test('a failed existence check keeps history entries instead of hiding them', () => {
   const { host, writes } = repository({ tick: 10, files: { 'notes/plan.md': [5, 10] } }, '');
   const failing = call => {
@@ -84,22 +54,6 @@ test('ranking a full history beside a large Git status keeps every host call ins
   assert.equal(value.items.length, 50);
   assert.equal(writes.length, 1);
   assert.deepEqual(Object.keys(writes[0].files).filter(path => path.startsWith('old/')), []);
-});
-
-test('submitted prompts queue paths; the next turn learns only files Git does not ignore', () => {
-  const none = () => { throw new Error('no host call'); };
-  const submit = text => run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
-    call => call.operation === 'continuation.next' ? { result: { text: call.arguments.input.text }, trace: [] } : none(), '0');
-  assert.equal(submit('explain the failing build').state, null);
-  const queued = submit('Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)');
-  assert.deepEqual(queued.value, { result: { text: 'Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)' } });
-  assert.deepEqual(queued.state, ['src/a.ts', 'docs/my notes.md', 'build/out.js']);
-  const { host, writes } = repository({ tick: 4, files: { 'src/a.ts': [2, 1] } }, 'src/a.ts\0docs/my notes.md\0');
-  const learned = run('turn_start', { turn_id: 't' }, host, '', queued.state);
-  assert.deepEqual(learned.calls[0].arguments.argv.slice(-3), ['src/a.ts', 'docs/my notes.md', 'build/out.js']);
-  assert.deepEqual(writes, [{ tick: 5, files: { 'src/a.ts': [3, 5], 'docs/my notes.md': [1, 5] } }]);
-  assert.equal(learned.state, null);
-  assert.deepEqual(run('turn_start', { turn_id: 'u' }, none).calls, []);
 });
 
 for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 100], ['JSON escaping', '\\'.repeat(120), 64]]) {

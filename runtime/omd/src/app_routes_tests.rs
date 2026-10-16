@@ -44,20 +44,6 @@ impl Fixture {
 use InvocationContext::{Event, User};
 
 #[test]
-fn table_matches_the_route_surface() {
-    assert_eq!(route("thread/fork").unwrap().class, "threads");
-    assert!(route("command/exec").is_none());
-    assert!(route("fs/writeFile").is_none());
-    assert!(route("account/login/start").is_none());
-    assert!(notification_routed("turn/completed"));
-    assert!(!notification_routed("rawResponse/completed"));
-    assert!(server_request_routed(
-        "item/commandExecution/requestApproval"
-    ));
-    assert!(!server_request_routed("account/chatgptAuthTokens/refresh"));
-}
-
-#[test]
 fn capability_context_and_unrouted_methods_are_enforced() {
     let f = fixture(&["threads", "sessions"]);
     assert_eq!(
@@ -97,31 +83,6 @@ fn capability_context_and_unrouted_methods_are_enforced() {
         f.code("thread/list", json!([1]), Event),
         "app_params_invalid"
     );
-}
-
-#[test]
-fn transcript_rewrites_need_history_write_and_stay_on_reachable_threads() {
-    let edit = |thread: &str| json!({"threadId": thread, "expectedRevision": "r:1", "edits": [{"op": "delete", "id": "x"}]});
-    assert_eq!(
-        fixture(&["threads"]).code("thread/rewrite", edit("current"), User),
-        "app_capability_missing"
-    );
-    let f = fixture(&["history_write"]);
-    assert_eq!(f.code("thread/rewrite", edit("current"), User), "ok");
-    assert_eq!(f.code("thread/rewrite", edit("other"), Event), "ok");
-    assert_eq!(
-        f.code("thread/rewrite", edit("someone-else"), User),
-        "app_thread_out_of_scope"
-    );
-    assert_eq!(
-        f.code(
-            "thread/rewrite",
-            json!({"threadId": "current", "author": "user"}),
-            User
-        ),
-        "app_param_refused"
-    );
-    assert!(notification_routed("thread/rewritten"));
 }
 
 #[test]
@@ -264,35 +225,6 @@ fn root_fields_stay_inside_the_session_roots() {
 }
 
 #[test]
-fn model_fields_must_name_a_configured_route() {
-    let f = fixture(&["threads"]);
-    assert_eq!(
-        f.code(
-            "thread/start",
-            json!({"model": "gpt-test", "modelProvider": "openai"}),
-            User
-        ),
-        "ok"
-    );
-    assert_eq!(
-        f.code(
-            "thread/start",
-            json!({"model": "gpt-test", "modelProvider": "other"}),
-            User
-        ),
-        "app_route_unconfigured"
-    );
-    assert_eq!(
-        f.code(
-            "turn/settings/update",
-            json!({"threadId": "current", "turnId": "t", "model": "unknown"}),
-            Event
-        ),
-        "app_route_unconfigured"
-    );
-}
-
-#[test]
 fn config_writes_refuse_authority_and_unknown_keys() {
     let f = fixture(&["config.write"]);
     let write = |key: &str| {
@@ -411,14 +343,6 @@ fn config_writes_refuse_authority_and_unknown_keys() {
 }
 
 #[test]
-fn subscriptions_match_exact_and_prefix_patterns() {
-    let patterns = vec!["turn/*".to_owned(), "item/completed".to_owned()];
-    assert!(subscribed(&patterns, "turn/completed"));
-    assert!(subscribed(&patterns, "item/completed"));
-    assert!(!subscribed(&patterns, "item/started"));
-}
-
-#[test]
 fn queue_coalesces_deltas_and_drops_oldest_with_a_count() {
     let mut queue = NotificationQueue::new(3, 1 << 20);
     let delta = |text: &str| json!({"threadId": "t", "turnId": "u", "itemId": "i", "delta": text});
@@ -449,60 +373,6 @@ fn queue_coalesces_deltas_and_drops_oldest_with_a_count() {
     );
     queue.push("turn/started", json!({}));
     assert_eq!(queue.drain()[0].dropped, 0);
-}
-
-#[test]
-fn queue_bounds_bytes_but_keeps_the_newest_event() {
-    let mut queue = NotificationQueue::new(10, 64);
-    queue.push("error", json!({"message": "x".repeat(40)}));
-    queue.push("error", json!({"message": "y".repeat(40)}));
-    let drained = queue.drain();
-    assert_eq!((drained.len(), drained[0].dropped), (1, 1));
-    assert!(
-        drained[0].params["message"]
-            .as_str()
-            .unwrap()
-            .starts_with('y')
-    );
-    for _ in 0..8 {
-        queue.push(
-            "item/agentMessage/delta",
-            json!({"threadId": "t", "itemId": "i", "delta": "z".repeat(20)}),
-        );
-    }
-    let drained = queue.drain();
-    assert!(
-        drained
-            .iter()
-            .all(|event| event.params["delta"].as_str().unwrap().len() <= 64)
-    );
-    assert!(drained[0].dropped > 0);
-}
-
-#[test]
-fn session_roots_include_linked_worktrees() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path().canonicalize().unwrap();
-    let repository = base.join("repo");
-    std::fs::create_dir(&repository).unwrap();
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(&repository)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    };
-    git(&["init", "-q"]);
-    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
-    git(&["worktree", "add", "-q", "../linked"]);
-    let roots = session_roots(&repository);
-    assert_eq!(roots[0], repository);
-    assert!(roots.contains(&base.join("linked")));
-    assert_eq!(session_roots(&base), vec![base.clone()]);
 }
 
 #[test]

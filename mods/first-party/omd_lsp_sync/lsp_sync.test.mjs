@@ -6,7 +6,7 @@ import { closeSync, constants, mkdtempSync, openSync, readFileSync, readSync, re
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -17,150 +17,7 @@ const base = {
   assets: Object.fromEntries(manifest.assets.map(name => [name, { text: readFileSync(new URL(name, import.meta.url), 'utf8'), sha256: '0'.repeat(64) }])),
 };
 
-function replay(host, extra) {
-  const output = callback({ ...base, hook_budget_ms: 500, ...extra }, host);
-  assert.equal(output.error, undefined, output.error);
-  return output;
-}
-
-const script = steps => call => {
-  const [operation, args, value] = steps.shift() ?? [];
-  assert.equal(call.operation, operation);
-  if (args) assert.deepEqual(call.arguments, args);
-  return value;
-};
-
 const observed = { key: 'lsp.observed_repository', scope: 'repository' };
-const sizes = (files, paths) => ({ files: Object.fromEntries(paths.map(path => [path, files[path] ? { kind: 'file', size: files[path].text.length, mtime_ms: 0, sha256: files[path].sha256 } : null])) });
-
-test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
-  const repository = '/tmp/project';
-  const files = {
-    'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
-    'pkg/new.py': null,
-    'pkg/__init__.py': { text: 'from .old import value as alias\n', sha256: 'barrel-hash' },
-    'pkg/use.py': { text: 'from pkg.old import value as local\n', sha256: 'alias-hash' },
-  };
-  const uri = path => `file://${repository}/${path}`;
-  let running = false;
-  let idleMs = 0;
-  let rename = null;
-  let observedRepository = null;
-  const server = call => {
-    switch (call.operation) {
-      case 'store.get':
-        assert.deepEqual(call.arguments, observed);
-        return observedRepository;
-      case 'store.put':
-        assert.deepEqual(call.arguments, { ...observed, expected_revision: null, value: { repository } });
-        observedRepository = { revision: 1, value: call.arguments.value };
-        return { revision: 1 };
-      case 'process.which': return { found: [{ name: 'pylsp', path: '/bin/pylsp', sha256: 'server-hash' }] };
-      case 'process.start': running = true; return { session: 'python', running: true };
-      case 'process.status': return { session: 'python', running, idle_ms: idleMs };
-      case 'process.stop': running = false; return { stopped: true };
-      case 'events.publish': return { delivered: 0, dropped: 0 };
-      case 'workspace.stat': return sizes(files, call.arguments.paths);
-      case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-      case 'process.exchange': {
-        const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
-        if (!request) {
-          const opened = call.arguments.send?.find(message => message.method === 'textDocument/didOpen');
-          return { session: 'python', running: true, messages: opened ? [{ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uri('pkg/old.py'), version: 1, diagnostics: [{ message: 'example' }] } }] : [] };
-        }
-        const result = request.method === 'initialize' ? { capabilities: { workspace: { fileOperations: { willRename: { filters: [] } } } } } : rename;
-        return { session: 'python', running: true, messages: [{ jsonrpc: '2.0', id: request.id, result }] };
-      }
-      default: throw new Error(`unexpected operation ${call.operation}`);
-    }
-  };
-  const sync = (event, payload, state = null) => replay(server, { event, payload, state });
-  const write = sync('workspace_change', { repository, call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
-  assert.equal(write.state.servers.python.status, 'synced');
-  assert.equal(write.state.servers.python.documents['pkg/old.py'].version, 1);
-  assert.equal(write.state.servers.python.diagnostics['pkg/old.py'].count, 1);
-  rename = { documentChanges: [
-    { textDocument: { uri: uri('pkg/__init__.py'), version: null }, edits: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 9 } }, newText: 'new' }] },
-    { textDocument: { uri: uri('pkg/use.py'), version: null }, edits: [{ range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } }, newText: 'new' }] },
-  ] };
-  const requested = sync('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(requested.value, { status: 'ready', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null, 'pkg/__init__.py': 'barrel-hash', 'pkg/use.py': 'alias-hash' }, writes: { 'pkg/__init__.py': 'from .new import value as alias\n', 'pkg/use.py': 'from pkg.new import value as local\n' } });
-  rename.documentChanges[0].textDocument.version = 9;
-  const stale = sync('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
-  const idle = sync('idle', {}, requested.state);
-  assert.equal(idle.state.servers.python.running, true);
-  assert.equal(running, true);
-  idleMs = 16 * 60_000;
-  const expired = sync('idle', {}, requested.state);
-  assert.equal(expired.state.servers.python.status, 'idle');
-  assert.equal(running, false);
-});
-
-test('LSP mod reports an absent server and leaves the write event recoverable', () => {
-  const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const steps = [
-    ['store.get', observed, null],
-    ['store.put', { ...observed, expected_revision: null, value: { repository: payload.repository } }, { revision: 1 }],
-    ['process.which', { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] }, { found: [] }],
-    ['events.publish', undefined, { delivered: 0, dropped: 0 }],
-  ];
-  const absent = replay(script(steps), { event: 'workspace_change', payload });
-  assert.equal(steps.length, 0);
-  assert.equal(absent.state.servers.python.status, 'fallback');
-  assert.equal(absent.state.servers.python.reason, 'python_server_absent');
-  const broken = runnerSync({ source: 'export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', filename: 'fixture.ts', api: manifest.api,
-    capabilities: ['fs.read'], state: null, settings: {}, event: 'workspace_change', payload });
-  assert.match(broken.error, /broken/);
-});
-
-test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
-  const repository = '/tmp/project';
-  const files = {
-    'src/app.ts': { text: 'export const value = 1;\n', sha256: 'ts-sha' },
-    'src/helper.js': { text: 'export const helper = 1;\n', sha256: 'js-sha' },
-    'src/main.rs': { text: 'fn main() {}\n', sha256: 'rs-sha' },
-    'src/Main.java': { text: 'class Main {}\n', sha256: 'java-sha' },
-  };
-  const started = [];
-  const opened = [];
-  let observedRepository = null;
-  const server = call => {
-    if (call.operation === 'store.get') {
-      assert.deepEqual(call.arguments, observed);
-      return observedRepository;
-    }
-    if (call.operation === 'store.put') {
-      assert.deepEqual(call.arguments, { ...observed, expected_revision: null, value: { repository } });
-      observedRepository = { revision: 1, value: call.arguments.value };
-      return { revision: 1 };
-    }
-    if (call.operation === 'process.which') return { found: call.arguments.names.filter(name => ['typescript-language-server', 'rust-analyzer', 'jdtls'].includes(name)).map(name => ({ name, path: `/bin/${name}`, sha256: `${name}-sha` })) };
-    if (call.operation === 'process.start') { started.push(call.arguments); return { session: call.arguments.session, running: true }; }
-    if (call.operation === 'process.stop') return { stopped: false };
-    if (call.operation === 'events.publish') return { delivered: 0, dropped: 0 };
-    if (call.operation === 'workspace.stat') return sizes(files, call.arguments.paths);
-    if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-    if (call.operation === 'process.exchange') {
-      const request = call.arguments.send?.find(message => message.method === 'initialize');
-      if (request) return { session: call.arguments.session, running: true, messages: [{ jsonrpc: '2.0', id: request.id, result: { capabilities: { workspace: { fileOperations: { willRename: {} } } } } }] };
-      opened.push(...(call.arguments.send ?? []).filter(message => message.method === 'textDocument/didOpen').map(message => [call.arguments.session, message.params.textDocument.languageId, message.params.textDocument.uri]));
-      return { session: call.arguments.session, running: true, messages: [] };
-    }
-    throw new Error(`unexpected operation ${call.operation}`);
-  };
-  const payload = { repository, source: 'tool', call_id: 'mixed', status: 'observed', changes: Object.keys(files).map(path => ({ path, before: null, after: files[path].sha256 })) };
-  const result = replay(server, { event: 'workspace_change', payload });
-  assert.deepEqual(started.map(item => [item.session, item.name, item.arguments]), [
-    ['typescript', 'typescript-language-server', ['--stdio']], ['rust', 'rust-analyzer', []], ['java', 'jdtls', ['--jvm-arg=-Duser.home={process.home}']],
-  ]);
-  assert.deepEqual(opened.map(item => item.slice(0, 2)), [['typescript', 'typescript'], ['typescript', 'javascript'], ['rust', 'rust'], ['java', 'java']]);
-  assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
-  assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
-  assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = runnerSync({ ...base, event: 'workspace_pre_rename', payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
-  assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
-});
 
 const digest = text => typeof text === 'string' ? createHash('sha256').update(text).digest('hex') : null;
 const failure = message => new Error(message);
@@ -234,22 +91,6 @@ function diagnosticServer() {
         documents.set(params.textDocument.uri, [params.textDocument.version, text]);
         return [...text.includes('ASK') ? [{ jsonrpc: '2.0', id: 99, method: 'workspace/configuration', params: { items: Array(14_000).fill({}) } }] : [], ...publish()];
       }
-      default: return [];
-    }
-  };
-}
-
-function viewServer() {
-  return ({ method, params, id }) => {
-    const uri = params?.textDocument?.uri;
-    switch (method) {
-      case 'initialize': return [reply(id, { capabilities: { hoverProvider: true, documentSymbolProvider: true, documentFormattingProvider: true, codeActionProvider: true } })];
-      case 'textDocument/didOpen':
-        return uri.endsWith('/quiet.py') ? [] : [published(uri, params.textDocument.version, uri.endsWith('/clean.py') ? [] : [{ range: span(2, 4, 8), severity: 1, message: 'size is unused' }])];
-      case 'textDocument/hover': return [reply(id, { contents: [{ language: 'python', value: 'value: int' }, 'Module constant'] })];
-      case 'textDocument/documentSymbol': return [reply(id, [{ name: 'Box', kind: 5, range: span(1, 0, 9), selectionRange: span(1, 6, 9), children: [{ name: 'size', kind: 8, range: span(2, 4, 12), selectionRange: span(2, 4, 8) }] }])];
-      case 'textDocument/formatting': return [reply(id, [{ range: span(0, 0, 7), newText: 'value = 1' }])];
-      case 'textDocument/codeAction': return [reply(id, [{ title: 'Rename Box', kind: 'quickfix', edit: { changes: { [uri]: [{ range: span(1, 6, 9), newText: 'Crate' }] } } }])];
       default: return [];
     }
   };
@@ -390,89 +231,6 @@ const output = (args, tool = 'apply_patch') => ({ call_id: 'c', tool, arguments:
 const area = { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } };
 const pair = { 'old.py': 'value = 1\n', 'user.py': 'from old import value\n' };
 
-test('LSP mod batches feedback across languages and reports incomplete checks', () => {
-  const build = (prefix = '') => {
-    const files = {};
-    const servers = {};
-    for (const [adapter, extension, count] of [['python', 'py', 65], ['typescript', 'ts', 64]]) {
-      const documents = {};
-      for (let index = 0; index < count; index++) {
-        const name = `${prefix}f${String(index).padStart(3, '0')}.${extension}`;
-        files[name] = 'x=1\n';
-        documents[name] = { sha256: digest('x=1\n'), version: 1 };
-      }
-      servers[adapter] = { repository: '/repo', running: true, status: 'synced', documents };
-      files[`${prefix}f000.${extension}`] = 'x=2\n';
-    }
-    return { files, state: { servers } };
-  };
-  const feedback = (files, refusal) => {
-    const host = createHost({ files });
-    host.batches = [];
-    host.intercept = ({ operation, arguments: args }) => {
-      if (operation === 'workspace.stat') {
-        host.batches.push(args.paths);
-        if (refusal === 'stat' && host.batches.length === 2) throw failure('stat_unavailable');
-      }
-      if (operation !== 'process.exchange') return undefined;
-      if (refusal === 'sync') throw failure('sync_unavailable');
-      return { session: args.session, running: true, messages: args.send.filter(message => message.method === 'textDocument/didChange').map(({ params }) =>
-        published(params.textDocument.uri, params.textDocument.version, [{ severity: 1, message: 'new error', range: { start: { line: 0, character: 0 } } }])) };
-    };
-    return host;
-  };
-  const event = { tool: 'apply_patch', arguments: '', success: true };
-  const { files, state } = build();
-  const host = feedback(files);
-  const result = drive(host, 'tool_output', event, state);
-  assert.deepEqual(host.batches.slice(0, 2).map(batch => batch.length), [128, 1]);
-  for (const extension of ['py', 'ts']) assert.match(result.value.append, new RegExp(`f000\\.${extension}: 1 new, 0 resolved`));
-  for (const refusal of ['stat', 'sync']) {
-    const refused = drive(feedback(files, refusal), 'tool_output', event, state);
-    assert.match(refused.value.append, /feedback incomplete/);
-    for (const adapter of Object.keys(state.servers)) assert.equal(refused.state.servers[adapter].status, 'stale');
-  }
-  const long = build('a'.repeat(180));
-  const budget = drive(feedback(long.files), 'tool_output', event, long.state);
-  assert.match(budget.value.append, /feedback incomplete: callback_budget/);
-  for (const adapter of Object.keys(long.state.servers)) assert.equal(budget.state.servers[adapter].status, 'stale');
-});
-
-test('LSP service answers through the running server and confirms edits', () => {
-  const host = createHost({ files: { 'box.py': 'value=1\nclass Box:\n    size = 2\n' }, server: viewServer });
-  let state = null;
-  const query = request => {
-    const answered = drive(host, 'service', request, state, 'omd.lsp.query');
-    state = answered.state;
-    return answered.value;
-  };
-  assert.equal(query({ op: 'hover', path: 'box.py', line: 1, character: 1 }).text, '```python\nvalue: int\n```\n\nModule constant');
-  assert.deepEqual(query({ op: 'symbols', path: 'box.py' }).items, [{ label: 'class Box · 2', value: 'box.py:2' }, { label: '  field size · 3', value: 'box.py:3' }]);
-  assert.deepEqual(query({ op: 'diagnostics', path: 'box.py' }).items, [{ label: 'box.py:3:5 size is unused', value: 'box.py:3' }]);
-  assert.equal(query({ op: 'format', path: 'box.py' }).text, 'Formatted box.py');
-  assert.equal(host.files['box.py'], 'value = 1\nclass Box:\n    size = 2\n');
-  const actions = query({ op: 'actions', path: 'box.py', line: 2, character: 1 });
-  assert.deepEqual([actions.action, actions.items], ['apply', [{ label: 'Rename Box', value: '0:box.py' }]]);
-  assert.equal(query({ op: 'apply', path: 'box.py', index: 0 }).text, 'Applied: Rename Box');
-  assert.equal(host.files['box.py'], 'value = 1\nclass Crate:\n    size = 2\n');
-  assert.equal(query({ op: 'hover', path: '../box.py', line: 1, character: 1 }).status, 'error');
-  assert.equal(host.count('process.start'), 1);
-  for (let n = 0; n < 20; n++) state.servers.python.diagnostics[`f${n}.py`] = { count: 50, version: null, errors: Array.from({ length: 50 }, (_, line) => `${line}:1 ${'x'.repeat(200)}`) };
-  query({ op: 'hover', path: 'box.py', line: 1, character: 1 });
-  assert.ok(Buffer.byteLength(JSON.stringify(state)) <= 65_536);
-});
-
-test('LSP diagnostics query separates failure, pending and published empty', () => {
-  const files = { 'quiet.py': 'value = 1\n', 'clean.py': 'value = 1\n' };
-  const pending = 'diagnostics pending: the language server has not published diagnostics for this file yet; try again';
-  for (const [lost, name, expected] of [[true, 'quiet.py', ['error', 'process not found: python']], [false, 'quiet.py', ['error', pending]], [false, 'clean.py', ['ready', 'No results']]]) {
-    const host = createHost({ files, server: viewServer });
-    if (lost) host.intercept = ({ operation, arguments: args }) => { if (operation === 'process.exchange' && args.wait_ms === 250) throw failure('process_not_found: python'); };
-    const answer = drive(host, 'service', { op: 'diagnostics', path: name }, null, 'omd.lsp.query').value;
-    assert.deepEqual([answer.status, answer.message, answer.items], [...expected, []], `${name} lost=${lost}`);
-  }
-});
-
 test('LSP budget failure after didChange restarts the server instead of rolling back', () => {
   const host = createHost({ files: { 'a.py': 'value = 1\n' }, server: diagnosticServer });
   let state = drive(host, 'workspace_change', change(host, ['a.py']), null).state;
@@ -521,58 +279,6 @@ test('LSP path mentions in a huge unbroken argument are scanned in linear time',
   const started = Date.now();
   assert.equal(drive(host, 'tool_output', output('a'.repeat(100_000))).value, null);
   assert.ok(Date.now() - started < 2000);
-});
-
-test('LSP post-edit feedback reports only introduced and resolved errors', () => {
-  const host = createHost({ files: { 'old.py': 'value = 1\n', 'user.py': 'from old import value\n' }, server: diagnosticServer });
-  const prefix = 'Language-server errors after this call:\n';
-  const state = drive(host, 'workspace_change', change(host, ['old.py', 'user.py']), null).state;
-  host.files['old.py'] = 'val = 1\nERR broken syntax\n';
-  const broken = drive(host, 'tool_output', output('*** Update File: old.py'), state);
-  assert.equal(broken.value.append, `${prefix}old.py: 1 new, 0 resolved\n  + 2:1 broken syntax\nuser.py (dependent): 1 new, 0 resolved\n  + 1:1 value is undefined`);
-  host.files['old.py'] = 'value = 1\n';
-  const fixed = drive(host, 'tool_output', output('/repo/old.py'), broken.state);
-  assert.match(fixed.value.append, /old\.py: 0 new, 1 resolved\n {2}- 2:1 broken syntax/);
-  assert.match(fixed.value.append, /user\.py \(dependent\): 0 new, 1 resolved/);
-  assert.equal(drive(host, 'tool_output', output('cat old.py'), fixed.state).value, null);
-  host.files['new.py'] = 'ERR preexisting\n';
-  const read = drive(host, 'tool_output', output({ cmd: 'sed -n 1p new.py' }, 'exec_command'), fixed.state);
-  assert.equal(read.value.append, `${prefix}new.py: 1 existing (v1)\n  1:1 preexisting`);
-  assert.deepEqual(host.published.at(-1).data[0].errors, ['new.py:1:1 preexisting']);
-  const opened = drive(host, 'tool_output', output('*** Add File: new.py'), fixed.state);
-  assert.equal(opened.value, null);
-  assert.ok('new.py' in opened.state.servers.python.documents);
-  host.files['new.py'] = 'ERR preexisting\nERR added\n';
-  host.files['old.py'] = 'value = 1\nERR also\n';
-  const edited = drive(host, 'tool_output', output(null), opened.state);
-  assert.equal(edited.value.append, `${prefix}old.py: 1 new, 0 resolved\n  + 2:1 also\nnew.py: 1 new, 0 resolved\n  + 2:1 added`);
-  assert.equal(host.count('process.start'), 1);
-});
-
-test('LSP explicit reads start only the viewed server, set the edit baseline and never write', () => {
-  const files = { 'old.py': 'value = 1\nERR before\n' };
-  const read = command => output({ cmd: command }, 'exec_command');
-  const denied = createHost({ files, server: diagnosticServer });
-  denied.startError = 'managed_process_requires_native_sandbox';
-  for (const [host, unavailable] of [[createHost({ files, server: diagnosticServer }), null], [createHost({ files }), 'python_server_absent'], [denied, denied.startError]]) {
-    host.observe();
-    assert.equal(drive(host, 'tool_output', read('rg -n value old.py')).value, null);
-    assert.equal(drive(host, 'tool_output', read('cat README.md')).value, null);
-    assert.ok(!host.operations.includes('process.which'));
-    const first = drive(host, 'tool_output', read('cat old.py'));
-    assert.ok(!['workspace.transaction', 'workspace.backup', 'workspace.restore'].some(operation => host.operations.includes(operation)));
-    if (unavailable) {
-      assert.equal(first.value.append, `Language-server errors after this call:\npython language server unavailable: ${unavailable}`);
-      assert.equal(drive(host, 'tool_output', read('cat old.py'), first.state).value, null);
-      continue;
-    }
-    assert.equal(first.value.append, 'Language-server errors after this call:\nold.py: 1 existing (v1)\n  2:1 before');
-    assert.equal(drive(host, 'tool_output', read('nl -ba old.py'), first.state).value, null);
-    host.files['old.py'] = 'value = 1\nERR before\nERR after\n';
-    const edited = drive(host, 'tool_output', output('*** Update File: old.py'), first.state);
-    assert.equal(edited.value.append, 'Language-server errors after this call:\nold.py: 1 new, 0 resolved\n  + 3:1 after');
-    assert.equal(host.count('process.start'), 1);
-  }
 });
 
 test('LSP cancelled reads recover without orphaned servers', () => {

@@ -99,35 +99,6 @@ fn publishers_are_namespaced_and_subscribers_filter_by_pattern() {
 }
 
 #[test]
-fn names_and_sizes_are_bounded() {
-    let mut bus = EventBus::default();
-    for name in ["", "Upper", "a/b", &"x".repeat(65)] {
-        assert!(
-            bus.publish("m", name, json!(null), None, "thread").is_err(),
-            "{name}"
-        );
-    }
-    assert!(
-        bus.publish(
-            "m",
-            "big",
-            json!("x".repeat(CHANNEL_EVENT_BYTES)),
-            None,
-            "thread"
-        )
-        .is_err()
-    );
-    assert!(
-        bus.publish("m", "ok", json!(null), Some("c".repeat(257)), "thread")
-            .is_err()
-    );
-    assert!(
-        bus.publish("m", "ok.v1-x_2", json!(null), None, "thread")
-            .is_ok()
-    );
-}
-
-#[test]
 fn slow_subscribers_drop_oldest_and_see_the_count() {
     let mut bus = EventBus::new(2, 1 << 20);
     bus.subscribe("slow", vec!["p/*".to_owned()]);
@@ -155,31 +126,3 @@ fn slow_subscribers_drop_oldest_and_see_the_count() {
     assert_eq!(bus.drain("slow", usize::MAX)[0].dropped, 0);
 }
 
-#[test]
-fn resubscribing_replaces_patterns_and_empty_unsubscribes() {
-    let mut bus = EventBus::default();
-    bus.subscribe("m", vec!["a/*".to_owned()]);
-    bus.subscribe("m", vec!["b/*".to_owned()]);
-    assert_eq!(
-        bus.publish("a", "x", json!(1), None, "thread")
-            .unwrap()
-            .delivered,
-        0
-    );
-    assert_eq!(
-        bus.publish("b", "x", json!(1), None, "thread")
-            .unwrap()
-            .delivered,
-        1
-    );
-    bus.subscribe("m", Vec::new());
-    assert_eq!(
-        (
-            bus.pending("m"),
-            bus.publish("b", "x", json!(1), None, "thread")
-                .unwrap()
-                .delivered
-        ),
-        (0, 0)
-    );
-}

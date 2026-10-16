@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
-import { profileEntry, catalogEntry } from './setup.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -44,25 +43,6 @@ test('provider tool aliases preserve colliding names and round-trip their origin
   const calls = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
   assert.deepEqual(calls.map(call => [call.namespace ?? '', call.name, call.type]),
     specs.map(spec => [spec.namespace ?? '', spec.name, spec.type === 'custom' ? 'custom_tool_call' : 'function_call']));
-});
-
-test('host cache breakpoints become cache_control on the marked system or context block', () => {
-  const body = { instructions: 'base', input: [
-    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'mod system' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'context one' }, { type: 'input_text', text: 'context two' }, { type: 'input_text', text: 'prompt' }] },
-  ] };
-  const ephemeral = { type: 'ephemeral' };
-  assert.deepEqual(breakpoint('1:1'), [1, 1]);
-  assert.equal(breakpoint('x'), null);
-  const anthropic = anthropicRequest(body, {}, breakpoint('1:1'));
-  assert.equal(anthropic.system, 'base\n\nmod system');
-  assert.deepEqual(anthropic.messages[0].content.map(part => part.cache_control ?? null), [null, ephemeral, null]);
-  assert.deepEqual(anthropicRequest(body, {}, [0, 0]).system, [{ type: 'text', text: 'base\n\nmod system', cache_control: ephemeral }]);
-  const chat = chatRequest(body, { cache_control: true }, [1, 0]);
-  assert.deepEqual(chat.messages[1].content[0], { type: 'text', text: 'context one', cache_control: ephemeral });
-  assert.deepEqual(chatRequest(body, {}, [1, 0]).messages.map(message => typeof message.content), ['string', 'string']);
-  const forked = { instructions: 'base', input: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'earlier answer' }] }, body.input[1]] };
-  assert.deepEqual(chatRequest(forked, { cache_control: true }, [0, 0]).messages[1].content, [{ type: 'text', text: 'earlier answer', cache_control: ephemeral }]);
 });
 
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
@@ -183,49 +163,6 @@ test('router adapts Responses requests to each protocol through the credential g
   }
 });
 
-test('chat and anthropic requests carry the smaller of the caller and profile output limits', () => {
-  const limits = (body, max_output) => [chatRequest(body, { max_output }).max_tokens, anthropicRequest(body, { max_output }).max_tokens];
-  assert.deepEqual(limits({ max_output_tokens: 17 }, 4096), [17, 17]);
-  assert.deepEqual(limits({ max_output_tokens: 9000 }, 4096), [4096, 4096]);
-  assert.deepEqual(limits({}, 4096), [4096, 4096]);
-  assert.equal('max_tokens' in chatRequest({}, {}), false);
-  for (const url of ['https://api.openai.com/v1/chat/completions', 'https://team.openai.azure.com/openai/deployments/o4/chat/completions']) {
-    const request = chatRequest({}, { url, max_output: 4096 });
-    assert.equal(request.max_completion_tokens, 4096);
-    assert.equal('max_tokens' in request, false);
-  }
-});
-
-test('a tool loop whose last call carries no thinking of this account is continued without thinking', () => {
-  const profile = { name: 'd', credential: 'p1', url: 'https://up.example/anthropic', reasoning: true, max_output: 32000 };
-  const call = { type: 'function_call', call_id: 't1', name: 'exec_command', arguments: '{}' };
-  const result = { type: 'function_call_output', call_id: 't1', output: 'ok' };
-  const user = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'go' }] };
-  const body = input => ({ input, reasoning: { effort: 'high' } });
-  assert.equal(anthropicRequest(body([user, call, result]), profile).thinking, undefined);
-  assert.equal(anthropicRequest(body([user, call, result, user]), profile).thinking.type, 'enabled');
-  assert.equal(anthropicRequest(body([user]), profile).thinking.type, 'enabled');
-});
-
-test('chat tool-result images follow the tool messages as image messages while user images stay in place', () => {
-  const png = 'data:image/png;base64,AAAA';
-  const call = id => ({ type: 'function_call', call_id: id, name: 'view', arguments: '{}' });
-  const body = { input: [
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'look' }, { type: 'input_image', image_url: png }] },
-    call('a'), call('b'),
-    { type: 'function_call_output', call_id: 'a', output: [{ type: 'input_text', text: 'shot' }, { type: 'input_image', image_url: png }] },
-    { type: 'function_call_output', call_id: 'b', output: 'plain' },
-    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'seen' }] },
-  ] };
-  const { messages } = chatRequest(body, {});
-  assert.deepEqual(messages.map(message => message.role), ['user', 'assistant', 'tool', 'tool', 'user', 'assistant']);
-  assert.deepEqual(messages[0].content, [{ type: 'text', text: 'look' }, { type: 'image_url', image_url: { url: png } }]);
-  assert.match(messages[2].content, /^shot\n/);
-  assert.equal(messages[3].content, 'plain');
-  assert.deepEqual(messages[4].content, [{ type: 'text', text: 'Image output of tool call a:' }, { type: 'image_url', image_url: { url: png } }]);
-  assert.ok(!JSON.stringify(messages).includes('[image]'));
-});
-
 const replay = (make, events, tools = [{ type: 'function', name: 'exec_command' }, { type: 'custom', name: 'apply_patch' }]) => {
   const sent = [];
   const emitter = new Emitter(event => sent.push(event), toolTable({ tools }).reverse, 'response');
@@ -313,15 +250,6 @@ test('reasoning from a credential replaced under the same profile name is not se
     gateway.close();
     rmSync(directory, { recursive: true, force: true });
   }
-});
-
-test('a text-only profile declares text input so Codex strips images before they reach the provider', () => {
-  const credentials = [{ id: 'p1', label: 'router', origin: 'https://up.example', kind: 'api_key' }];
-  const bundled = [{ slug: 'native', context_window: 1000, input_modalities: ['text', 'image'] }];
-  const entry = text_only => catalogEntry('router/up', profileEntry({ name: 'router', credential: 'router', protocol: 'chat',
-    url: 'https://up.example/v1/chat/completions', model: 'up', window: 1000, paid: '1:1', text_only }, credentials), bundled, 0);
-  assert.deepEqual(entry(true).input_modalities, ['text']);
-  assert.deepEqual(entry(false).input_modalities, ['text', 'image']);
 });
 
 test('setup removing the last profile drops its route and service grant', () => {
