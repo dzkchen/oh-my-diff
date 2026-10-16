@@ -240,7 +240,6 @@ pub use mods::persist_changed_by;
 pub use mods::persist_chunks;
 pub use mods::persist_cut;
 pub use mods::persist_texts;
-pub use mods::profile;
 pub use mods::render_shared;
 pub use mods::valid_glyphs;
 pub use mods::write_settings;

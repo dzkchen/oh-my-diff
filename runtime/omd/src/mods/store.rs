@@ -228,7 +228,6 @@ fn inspect_package(
     BTreeMap<String, String>,
     Vec<(PathBuf, FileStamp)>,
 )> {
-    let _profile = super::Profile::new("package_read_hash");
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
@@ -301,7 +300,6 @@ pub(super) enum StateLocation {
 }
 
 fn lock(path: &Path) -> Result<File> {
-    let _profile = super::Profile::new("store_lock");
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -602,13 +600,9 @@ impl ModStore {
             .open(&temporary)?;
         let result = (|| {
             file.write_all(bytes)?;
-            {
-                let _profile = super::Profile::new("durable_file_sync");
-                file.sync_all()?;
-            }
+            file.sync_all()?;
             commit()?;
             std::fs::rename(&temporary, &path)?;
-            let _profile = super::Profile::new("durable_directory_sync");
             File::open(&self.root)?.sync_all()
         })();
         if result.is_err() {
@@ -735,7 +729,6 @@ impl ModStore {
         lock: &crate::ModPackageLock,
         mut manifests: Option<&mut Vec<Value>>,
     ) -> Result<Value> {
-        let _profile = super::Profile::new("selection_status");
         let brokered = brokered_grants(&self.root)?;
         let (managed, mut managed_error) = match self.managed() {
             Ok(managed) => (managed, None),
@@ -1363,7 +1356,6 @@ impl ModStore {
         previous: &Value,
         value: &Value,
     ) -> Result<()> {
-        let _profile = super::Profile::new("state_commit");
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         if &self.state(id, scope, version)? != previous {

@@ -28816,7 +28816,7 @@ index 45f586651..a7338a08d 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b..5d3d9445f 100644
+index 5dfc3ad7b..3fc697f41 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -233,6 +233,10 @@ mod link_hover;
@@ -28901,7 +28901,7 @@ index 5dfc3ad7b..5d3d9445f 100644
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1168,7 +1199,89 @@ impl App {
+@@ -1168,7 +1199,86 @@ impl App {
          Ok(())
      }
 
@@ -28968,7 +28968,6 @@ index 5dfc3ad7b..5d3d9445f 100644
 +    }
 +
      fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
-+        let prepare_started = std::time::Instant::now();
 +        crate::mod_render::set_frames(tui.frame_requester());
 +        crate::mod_render::set_surface(
 +            tui.is_owned_screen(),
@@ -28986,12 +28985,10 @@ index 5dfc3ad7b..5d3d9445f 100644
 +                    .is_none(),
 +        );
 +        self.sync_mod_ui();
-+        crate::mod_runtime::startup_profile("frame_prepare", prepare_started);
-+        let layout_started = std::time::Instant::now();
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1188,33 +1301,54 @@ impl App {
+@@ -1188,33 +1298,47 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -29016,7 +29013,6 @@ index 5dfc3ad7b..5d3d9445f 100644
          }
 -        self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
 -            let desired_height = if dashboard_visible {
-+        crate::mod_runtime::startup_profile("frame_layout", layout_started);
 +        self.with_chat_widget_frame(chat_width, |desired_height, chat_widget| {
 +            let desired_height = if dashboard_visible || mod_dialog_visible {
                  screen_size.height
@@ -29026,9 +29022,7 @@ index 5dfc3ad7b..5d3d9445f 100644
 +                    .min(screen_size.height)
              };
              let mut rendered_area = Rect::default();
-+            let draw_started = std::time::Instant::now();
              tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
-+                let widgets_started = std::time::Instant::now();
                  let area = frame.area();
                  rendered_area = area;
 -                chat_widget.render(area, frame.buffer);
@@ -29037,10 +29031,7 @@ index 5dfc3ad7b..5d3d9445f 100644
 -                    frame.set_cursor_style(chat_widget.cursor_style(area));
 +                let chat_area = crate::mod_ui::chat_area(area, &mod_snapshot, header_rows);
 +                chat_widget.render(chat_area, frame.buffer);
-+                crate::mod_runtime::startup_profile("frame_widgets", widgets_started);
-+                let mods_started = std::time::Instant::now();
 +                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
-+                crate::mod_runtime::startup_profile("frame_mods", mods_started);
 +                self.chat_widget.note_rendered_width(chat_area.width);
 +                if let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
@@ -29048,12 +29039,11 @@ index 5dfc3ad7b..5d3d9445f 100644
                  }
 +                crate::mod_client::transmit();
              })?;
-+            crate::mod_runtime::startup_profile("frame_draw", draw_started);
 +            crate::mod_client::flush();
              Ok(rendered_area)
          })
      }
-@@ -1224,6 +1358,7 @@ impl App {
+@@ -1224,6 +1348,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -29466,7 +29456,7 @@ index 1d328eae5..201f2e0f0 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 2979e0a9a..4aa9192b9 100644
+index 2979e0a9a..5b0dab841 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -104,6 +104,7 @@ impl App {
@@ -29477,7 +29467,7 @@ index 2979e0a9a..4aa9192b9 100644
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -409,6 +410,97 @@ impl App {
+@@ -409,6 +410,90 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -29542,21 +29532,14 @@ index 2979e0a9a..4aa9192b9 100644
 +                    let refresh = self.chat_widget
 +                        .on_mod_command_finished(invocation, result, quiet);
 +                    if direct && self.overlay.is_none() {
-+                        let started = std::time::Instant::now();
 +                        let screen_size = tui.terminal.last_known_screen_size;
 +                        self.handle_draw_pre_render(tui, screen_size)?;
 +                        if self.transcript_reflow.has_pending_reflow() {
 +                            self.transcript_reflow.schedule_immediate();
 +                            self.maybe_run_resize_reflow(tui, screen_size)?;
 +                        }
-+                        crate::mod_runtime::startup_profile("command_pre_render", started);
-+                        let tick_started = std::time::Instant::now();
 +                        self.chat_widget.pre_draw_tick();
-+                        crate::mod_runtime::startup_profile("command_tick", tick_started);
-+                        let paint_started = std::time::Instant::now();
 +                        self.render_chat_widget_frame(tui, screen_size)?;
-+                        crate::mod_runtime::startup_profile("command_paint", paint_started);
-+                        crate::mod_runtime::startup_profile("command_draw", started);
 +                    }
 +                    if let Some(invocation) = refresh {
 +                        tokio::task::spawn_blocking(move || crate::mod_runtime::refresh_command(invocation));
@@ -29575,7 +29558,7 @@ index 2979e0a9a..4aa9192b9 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -849,6 +941,10 @@ impl App {
+@@ -849,6 +934,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -29586,7 +29569,7 @@ index 2979e0a9a..4aa9192b9 100644
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1705,8 +1801,18 @@ impl App {
+@@ -1705,8 +1794,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -29605,7 +29588,7 @@ index 2979e0a9a..4aa9192b9 100644
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2964,6 +3070,14 @@ impl App {
+@@ -2964,6 +3063,14 @@ impl App {
                  self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                      .await?;
              }
@@ -29751,7 +29734,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 3fcd0cd23..a820b1f96 100644
+index 3fcd0cd23..5db984220 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -63,8 +63,9 @@ impl App {
@@ -29765,17 +29748,16 @@ index 3fcd0cd23..a820b1f96 100644
              })
          };
          changed || search_changed
-@@ -75,6 +76,9 @@ impl App {
+@@ -75,6 +76,8 @@ impl App {
          tui: &mut tui::Tui,
          screen_size: Size,
      ) -> Result<Rect> {
 +        let _stage = codex_omd::frame_metrics::stage("owned_frame");
-+        let layout_started = std::time::Instant::now();
 +        let _footer_frame = crate::mod_ui::footer_frame();
          self.chat_widget.sync_warnings(&self.transcript_cells);
          let motion = MotionMode::from_animations_enabled(
              self.local_settings.tui.animations && self.local_settings.tui.effects.shimmer,
-@@ -85,8 +89,22 @@ impl App {
+@@ -85,8 +88,22 @@ impl App {
          } else {
              "esc latest"
          };
@@ -29800,7 +29782,7 @@ index 3fcd0cd23..a820b1f96 100644
          let composer_hint = self.composer_hint(transcript_width);
          let now = Instant::now();
          let turn_tip = self.turn_tip(transcript_width, now, &tui.frame_requester());
-@@ -101,8 +119,7 @@ impl App {
+@@ -101,8 +118,7 @@ impl App {
          let mut composer_gap = (!self.chat_widget.has_active_view()
              && !self.chat_widget.is_external_writer_view())
          .then(crate::bottom_pane::ComposerGap::default);
@@ -29810,7 +29792,7 @@ index 3fcd0cd23..a820b1f96 100644
          let chat_widget = &self.chat_widget;
          let view = &mut self.transcript_view;
          let active_key = chat_widget.active_cell_transcript_key();
-@@ -112,17 +129,14 @@ impl App {
+@@ -112,17 +128,14 @@ impl App {
              tui.frame_requester().schedule_frame();
          }
          let footer_area = crate::bottom_pane::inset_footer_hint_area(Rect::new(
@@ -29833,7 +29815,7 @@ index 3fcd0cd23..a820b1f96 100644
          let bottom =
              chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
                  max_height: Some(max_composer_height),
-@@ -140,37 +154,28 @@ impl App {
+@@ -140,20 +153,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
          let bottom_height = if dashboard_visible {
@@ -29858,12 +29840,9 @@ index 3fcd0cd23..a820b1f96 100644
          let mut rendered_cursor = None;
          let mut footer_height_changed = false;
          let mut feedback_tick = None;
-         let mut blossom_tick = None;
+@@ -161,16 +167,11 @@ impl App {
          let mut transcript_bottom = available.saturating_sub(u16::from(composer_gap.is_none()));
-+        crate::mod_runtime::startup_profile("frame_owned_layout", layout_started);
-+        let draw_started = std::time::Instant::now();
          tui.draw(screen_size.height, |frame| {
-+            let widgets_started = std::time::Instant::now();
              ratatui::widgets::Clear.render(
 -                Rect::new(/*x*/ 0, /*y*/ 0, screen_size.width, available),
 +                Rect::new(area.x, area.y, area.width, available),
@@ -29880,7 +29859,7 @@ index 3fcd0cd23..a820b1f96 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -209,45 +214,44 @@ impl App {
+@@ -209,45 +210,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -29952,7 +29931,7 @@ index 3fcd0cd23..a820b1f96 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -260,8 +264,8 @@ impl App {
+@@ -260,8 +260,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -29963,14 +29942,12 @@ index 3fcd0cd23..a820b1f96 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -270,16 +274,25 @@ impl App {
+@@ -270,16 +270,22 @@ impl App {
              .filter(|_| chat_widget.no_modal_or_popup_active());
              feedback_tick =
                  view.render_composer_gap(follow_area, composer_hint.as_ref(), frame.buffer, now);
 -            chat_widget.note_rendered_width(screen_size.width);
 +            chat_widget.note_rendered_width(area.width);
-+            crate::mod_runtime::startup_profile("frame_owned_widgets", widgets_started);
-+            let mods_started = std::time::Instant::now();
 +            crate::mod_ui::render_owned(screen, area, frame.buffer, &mod_snapshot);
 +            if mod_welcome {
 +                crate::mod_ui::render_welcome(
@@ -29983,7 +29960,6 @@ index 3fcd0cd23..a820b1f96 100644
 +                    &mod_snapshot,
 +                );
 +            }
-+            crate::mod_runtime::startup_profile("frame_owned_mods", mods_started);
              let dialog = chat_widget.centered_dialog();
              let (foreground, foreground_area): (&dyn Renderable, Rect) =
                  if let Some(dialog) = &dialog {
@@ -29996,13 +29972,12 @@ index 3fcd0cd23..a820b1f96 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -290,12 +303,15 @@ impl App {
+@@ -290,12 +296,14 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
 +            crate::mod_client::transmit();
          })?;
-+        crate::mod_runtime::startup_profile("frame_owned_draw", draw_started);
          if let Some((surface, tip)) = &turn_tip
              && tip.rendered.get()
          {
@@ -35804,13 +35779,13 @@ index 1cd4a356c..75640d11b 100644
          visible_lines(self.display_hyperlink_lines(width))
      }
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index ac39aef42..1a328caed 100644
+index ac39aef42..f51f30cbd 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -196,7 +196,99 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
- /// intact by adaptive wrapping). Concrete types only need to override
- /// heights when they apply additional layout logic beyond what
- /// `Paragraph::line_count` captures.
+@@ -187,6 +187,95 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+         .collect()
+ }
+
 +/// Runs `cell`'s native drawing through the matching mod `render` hooks, telling tool rows whether the user expanded them; the flag reports whether a hook replaced the native drawing.
 +pub(crate) fn hooked_lines<C: HistoryCell + ?Sized>(
 +    cell: &C,
@@ -35900,6 +35875,12 @@ index ac39aef42..1a328caed 100644
 +    )
 +}
 +
+ /// A single renderable unit of conversation history.
+ ///
+ /// Each cell produces logical `Line`s and reports how many viewport
+@@ -197,6 +286,9 @@ pub(crate) fn plain_lines(lines: impl IntoIterator<Item = Line<'static>>) -> Vec
+ /// heights when they apply additional layout logic beyond what
+ /// `Paragraph::line_count` captures.
  pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 +    fn render_members(&self) -> Vec<RenderMember<'_>> {
 +        Vec::new()
@@ -39642,7 +39623,7 @@ index 92b3eb1ca..ee34d4606 100644
          },
      );
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 9f49da4ad..c04cf2946 100644
+index 9f49da4ad..c6969589a 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -122,6 +122,7 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused:
@@ -39677,10 +39658,11 @@ index 9f49da4ad..c04cf2946 100644
      }
 
      /// Defer a fresh fullscreen launch until its first synchronized frame is ready.
-@@ -1003,6 +1009,22 @@ impl Tui {
+@@ -1029,6 +1035,23 @@ impl Tui {
+         }
+     }
 
-     /// Emit a desktop notification now if the terminal is unfocused.
-     /// Returns true if a notification was posted.
++    /// Emit a titled desktop notification now if the terminal is unfocused, naming the protocol used.
 +    pub fn notify_titled(
 +        &mut self,
 +        title: &str,
@@ -39697,9 +39679,9 @@ index 9f49da4ad..c04cf2946 100644
 +            .map_err(|_| "notification_failed")
 +    }
 +
-     pub fn notify(&mut self, message: impl AsRef<str>) -> bool {
-         let terminal_focused = self.is_terminal_focused();
-         if !should_emit_notification(self.notification_condition, terminal_focused) {
+     pub fn event_stream(&self) -> Pin<Box<dyn Stream<Item = TuiEvent> + Send + 'static>> {
+         #[cfg(unix)]
+         let stream = TuiEventStream::new(
 diff --git a/codex-rs/tui/src/tui/alternate_screen.rs b/codex-rs/tui/src/tui/alternate_screen.rs
 index 2313da69d..01232d273 100644
 --- a/codex-rs/tui/src/tui/alternate_screen.rs
@@ -79373,179 +79355,6 @@ index 000000000..30a93622b
 +        assert_eq!(visible("a\u{7}é", 2), "a");
 +    }
 +}
-diff --git a/codex-rs/ext/omd/src/request_observer.rs b/codex-rs/ext/omd/src/request_observer.rs
-new file mode 100644
-index 000000000..821237c79
---- /dev/null
-+++ b/codex-rs/ext/omd/src/request_observer.rs
-@@ -0,0 +1,167 @@
-+use codex_client::EncodedJsonBody;
-+use codex_client::Request;
-+use codex_client::StreamResponse;
-+use codex_client::TransportError;
-+use serde_json::Value;
-+use std::sync::Arc;
-+use std::sync::OnceLock;
-+
-+pub trait ResponseAttempt: Send + Sync {
-+    /// Observes one raw event; replacing it with `Value::Null` drops it.
-+    fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError>;
-+    fn injected(&mut self) -> Vec<Value> {
-+        Vec::new()
-+    }
-+    fn failed(&mut self, reason: &str);
-+}
-+
-+pub trait ResponseObserver: Send + Sync {
-+    fn prepare(
-+        &self,
-+        request: &mut Request,
-+        body: &mut Option<EncodedJsonBody>,
-+    ) -> Result<(), TransportError>;
-+    fn before_send(
-+        &self,
-+        request: &mut Request,
-+        body: Option<&EncodedJsonBody>,
-+    ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
-+    fn requires_observation(&self, thread: Option<&str>) -> bool {
-+        let _ = thread;
-+        true
-+    }
-+    fn policed(&self) -> bool {
-+        false
-+    }
-+    fn answer(&self, request: &Request) -> Option<Vec<Value>> {
-+        let _ = request;
-+        None
-+    }
-+}
-+
-+/// Marks a request whose items carry metadata the provider does not accept; it is removed after `prepare`.
-+pub const STRIP_ITEM_METADATA: &str = "x-codex-strip-item-metadata";
-+
-+pub fn installed() -> bool {
-+    OBSERVER.get().is_some()
-+}
-+
-+pub const STREAM_CONTROL: &str = "stream_control:";
-+
-+pub fn stream_control_error(control: &serde_json::Value) -> TransportError {
-+    TransportError::Build(format!("{STREAM_CONTROL}{control}"))
-+}
-+
-+pub fn stream_control(message: &str) -> Option<serde_json::Value> {
-+    let start = message.find(STREAM_CONTROL)? + STREAM_CONTROL.len();
-+    serde_json::Deserializer::from_str(&message[start..])
-+        .into_iter::<serde_json::Value>()
-+        .next()?
-+        .ok()
-+        .filter(serde_json::Value::is_object)
-+}
-+
-+static OBSERVER: OnceLock<Arc<dyn ResponseObserver>> = OnceLock::new();
-+
-+pub fn install_response_observer(observer: Arc<dyn ResponseObserver>) -> Result<(), &'static str> {
-+    OBSERVER
-+        .set(observer)
-+        .map_err(|_| "response observer already installed")
-+}
-+
-+pub(crate) struct ObservedStream {
-+    pub response: StreamResponse,
-+    pub attempt: Option<Box<dyn ResponseAttempt>>,
-+}
-+
-+impl crate::telemetry::WithStatus for ObservedStream {
-+    fn status(&self) -> http::StatusCode {
-+        self.response.status
-+    }
-+}
-+
-+pub(crate) fn admit(
-+    request: &mut Request,
-+    body: Option<&EncodedJsonBody>,
-+) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError> {
-+    match OBSERVER.get() {
-+        Some(observer) => observer.before_send(request, body),
-+        None => Ok(None),
-+    }
-+}
-+
-+pub(crate) fn reject_policed_transport() -> Result<(), crate::error::ApiError> {
-+    if OBSERVER.get().is_some_and(|observer| observer.policed()) {
-+        return Err(crate::error::ApiError::InvalidRequest {
-+            message: "local OMD request policy: final_request_refused: request_policy_unsupported_transport: a final-request policy is active and this provider transport cannot pass it".into(),
-+        });
-+    }
-+    Ok(())
-+}
-+
-+pub(crate) fn reject_unobserved_transport(
-+    headers: &http::HeaderMap,
-+) -> Result<(), crate::error::ApiError> {
-+    reject_policed_transport()?;
-+    let thread = headers
-+        .get("thread-id")
-+        .and_then(|value| value.to_str().ok());
-+    if OBSERVER
-+        .get()
-+        .is_some_and(|observer| observer.requires_observation(thread))
-+    {
-+        return Err(crate::error::ApiError::InvalidRequest {
-+            message: "local OMD request policy requires observed HTTP Responses transport".into(),
-+        });
-+    }
-+    Ok(())
-+}
-+
-+pub(crate) fn reject_websocket_transport() -> Result<(), crate::error::ApiError> {
-+    if OBSERVER.get().is_some() {
-+        return Err(crate::error::ApiError::InvalidRequest {
-+            message: "local OMD request policy requires observed HTTP Responses transport".into(),
-+        });
-+    }
-+    Ok(())
-+}
-+
-+pub(crate) fn prepare(
-+    request: &mut Request,
-+    body: &mut Option<EncodedJsonBody>,
-+) -> Result<(), TransportError> {
-+    if let Some(observer) = OBSERVER.get() {
-+        observer.prepare(request, body)?;
-+    }
-+    if request.headers.remove(STRIP_ITEM_METADATA).is_some()
-+        && let Some(encoded) = body.as_ref()
-+    {
-+        let build = |error: serde_json::Error| TransportError::Build(error.to_string());
-+        let mut value: Value = serde_json::from_slice(encoded.as_bytes()).map_err(build)?;
-+        for item in value["input"].as_array_mut().into_iter().flatten() {
-+            if let Some(item) = item.as_object_mut() {
-+                item.remove("internal_chat_message_metadata_passthrough");
-+            }
-+        }
-+        *body = Some(EncodedJsonBody::encode(&value).map_err(build)?);
-+    }
-+    Ok(())
-+}
-+
-+pub(crate) fn answer(request: &Request) -> Option<StreamResponse> {
-+    let events = OBSERVER.get()?.answer(request)?;
-+    let chunks = events
-+        .into_iter()
-+        .map(|event| Ok(bytes::Bytes::from(format!("data: {event}\n\n"))))
-+        .collect::<Vec<_>>();
-+    let mut headers = http::HeaderMap::new();
-+    headers.insert(
-+        http::header::CONTENT_TYPE,
-+        http::HeaderValue::from_static("text/event-stream"),
-+    );
-+    Some(StreamResponse {
-+        status: http::StatusCode::OK,
-+        headers,
-+        bytes: Box::pin(futures::stream::iter(chunks)),
-+    })
-+}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
 index 000000000..d0f24c0a3
@@ -97341,10 +97150,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..6397d59c8
+index 000000000..762f10c93
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,251 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97587,7 +97396,6 @@ index 000000000..6397d59c8
 +pub use mods::persist_chunks;
 +pub use mods::persist_cut;
 +pub use mods::persist_texts;
-+pub use mods::profile;
 +pub use mods::render_shared;
 +pub use mods::valid_glyphs;
 +pub use mods::write_settings;
@@ -99457,10 +99265,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..f61fbeea6
+index 000000000..6152059b7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6031 @@
+@@ -0,0 +1,5980 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -99581,46 +99389,6 @@ index 000000000..f61fbeea6
 +use std::sync::OnceLock;
 +use std::time::Duration;
 +use std::time::Instant;
-+
-+fn profiling() -> bool {
-+    static PROFILING: OnceLock<bool> = OnceLock::new();
-+    *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
-+}
-+
-+pub fn profile(name: &str, started: Instant) {
-+    if !profiling() {
-+        return;
-+    }
-+    use std::io::Write;
-+    let line = format!("OMD_PROFILE {name} {}\n", started.elapsed().as_micros());
-+    if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
-+        if let Ok(mut file) = std::fs::OpenOptions::new()
-+            .create(true)
-+            .append(true)
-+            .open(path)
-+        {
-+            let _ = file.write_all(line.as_bytes());
-+        }
-+    } else {
-+        eprint!("{line}");
-+    }
-+}
-+
-+struct Profile(&'static str, Option<Instant>);
-+
-+impl Profile {
-+    fn new(name: &'static str) -> Self {
-+        Self(name, profiling().then(Instant::now))
-+    }
-+}
-+
-+impl Drop for Profile {
-+    fn drop(&mut self) {
-+        if let Some(started) = self.1 {
-+            profile(self.0, started);
-+        }
-+    }
-+}
 +
 +use crate::credentials::url_origin;
 +
@@ -102632,7 +102400,6 @@ index 000000000..f61fbeea6
 +        repository: Option<&Path>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<Self> {
-+        let _profile = Profile::new("host_open");
 +        let store = ModStore::open(root)?;
 +        let mut host = Self {
 +            store,
@@ -102799,8 +102566,6 @@ index 000000000..f61fbeea6
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
-+        let _profile = Profile::new("reload");
-+        let config_profile = Profile::new("configuration_read_hash");
 +        let path = self.store.root.join("mods.json");
 +        let stamp = configuration_stamp(&path);
 +        if self.current(stamp) {
@@ -102808,7 +102573,6 @@ index 000000000..f61fbeea6
 +        }
 +        self.configuration_stamp = None;
 +        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
-+        drop(config_profile);
 +        let (brokered, managed, deployment) = match self.authority(&sha256) {
 +            Ok(authority) => authority,
 +            Err(error) => {
@@ -102929,7 +102693,6 @@ index 000000000..f61fbeea6
 +        }
 +        self.unserved = self.unserved_targets(&user);
 +        self.publish_surfaces();
-+        let selection_profile = Profile::new("selection_verification");
 +        let selected = Self::select(
 +            &selections,
 +            administered,
@@ -102939,7 +102702,6 @@ index 000000000..f61fbeea6
 +            &mut rejected,
 +            store::package,
 +        )?;
-+        drop(selection_profile);
 +        let adapters = Self::adapters(&selected);
 +        let mut next = BTreeMap::new();
 +        for (id, (selection, package, source)) in selected {
@@ -103037,9 +102799,7 @@ index 000000000..f61fbeea6
 +                    }
 +                    state => state?,
 +                };
-+                let inspection_profile = Profile::new("inspection_callback");
 +                let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
-+                drop(inspection_profile);
 +                if reply.state != loaded.state {
 +                    return Err(failure("state_write_during_registration"));
 +                }
@@ -103146,12 +102906,10 @@ index 000000000..f61fbeea6
 +                .record_security_event("load_denied", json!({"selections": denied}));
 +        }
 +        self.rejected = rejected;
-+        let admission_profile = Profile::new("admission");
 +        self.admit(active);
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
 +        }
-+        drop(admission_profile);
 +        self.retain_environment();
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
@@ -103269,7 +103027,6 @@ index 000000000..f61fbeea6
 +
 +    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
 +    fn authority(&mut self, digest: &str) -> Result<Authority> {
-+        let _profile = Profile::new("authority");
 +        if let Some((at, cached, authority)) = &self.brokered
 +            && cached == digest
 +            && at.elapsed() < BROKER_REFRESH
@@ -106564,10 +106321,10 @@ index 000000000..053ec1817
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..e82eed3e8
+index 000000000..9a6ea6a38
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,434 @@
+@@ -0,0 +1,432 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -106871,10 +106628,8 @@ index 000000000..e82eed3e8
 +            // Clipboard delivery is external work bounded by the surface call lifetime.
 +            || call.operation == "terminal.copy";
 +        scope.charge_call()?;
-+        let (receipt, receipt_bytes) = {
-+            let _profile = super::Profile::new("host_call");
-+            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
-+        };
++        let (receipt, receipt_bytes) =
++            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?;
 +        expected.push(call);
 +        receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
 +        receipts.push(receipt.clone());
@@ -113311,10 +113066,10 @@ index 000000000..262995594
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..4fed6aba7
+index 000000000..e2e510f96
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,604 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -113403,7 +113158,6 @@ index 000000000..4fed6aba7
 +}
 +
 +fn spawn(node: &Path) -> Result<Child> {
-+    let _profile = super::Profile::new("runner_spawn");
 +    command(node)?
 +        .args([
 +            "--max-old-space-size=64",
@@ -113425,7 +113179,6 @@ index 000000000..4fed6aba7
 +}
 +
 +fn runner(node: &Path) -> Result<Child> {
-+    let _profile = super::Profile::new("spare_acquisition");
 +    let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
 +    let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
 +    spares.1 = Some(Instant::now());
@@ -113706,11 +113459,6 @@ index 000000000..4fed6aba7
 +where
 +    R: serde::Serialize + for<'a> std::ops::Index<&'a str, Output = Value>,
 +{
-+    let _profile = super::Profile::new(if request["serve"] == true {
-+        "render_callback"
-+    } else {
-+        "fresh_callback"
-+    });
 +    let serve = if request["reuse"] == true {
 +        request_line(request)?
 +    } else {
@@ -116220,10 +115968,10 @@ index 000000000..9045b9273
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..c84eaa5f2
+index 000000000..f9d5e0c45
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1377 @@
+@@ -0,0 +1,1369 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -116454,7 +116202,6 @@ index 000000000..c84eaa5f2
 +    BTreeMap<String, String>,
 +    Vec<(PathBuf, FileStamp)>,
 +)> {
-+    let _profile = super::Profile::new("package_read_hash");
 +    if !path.is_absolute() || path.canonicalize()? != path {
 +        return Err(failure("canonical_package_path_required"));
 +    }
@@ -116527,7 +116274,6 @@ index 000000000..c84eaa5f2
 +}
 +
 +fn lock(path: &Path) -> Result<File> {
-+    let _profile = super::Profile::new("store_lock");
 +    let file = OpenOptions::new()
 +        .create(true)
 +        .truncate(false)
@@ -116828,13 +116574,9 @@ index 000000000..c84eaa5f2
 +            .open(&temporary)?;
 +        let result = (|| {
 +            file.write_all(bytes)?;
-+            {
-+                let _profile = super::Profile::new("durable_file_sync");
-+                file.sync_all()?;
-+            }
++            file.sync_all()?;
 +            commit()?;
 +            std::fs::rename(&temporary, &path)?;
-+            let _profile = super::Profile::new("durable_directory_sync");
 +            File::open(&self.root)?.sync_all()
 +        })();
 +        if result.is_err() {
@@ -116961,7 +116703,6 @@ index 000000000..c84eaa5f2
 +        lock: &crate::ModPackageLock,
 +        mut manifests: Option<&mut Vec<Value>>,
 +    ) -> Result<Value> {
-+        let _profile = super::Profile::new("selection_status");
 +        let brokered = brokered_grants(&self.root)?;
 +        let (managed, mut managed_error) = match self.managed() {
 +            Ok(managed) => (managed, None),
@@ -117589,7 +117330,6 @@ index 000000000..c84eaa5f2
 +        previous: &Value,
 +        value: &Value,
 +    ) -> Result<()> {
-+        let _profile = super::Profile::new("state_commit");
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
 +        if &self.state(id, scope, version)? != previous {
@@ -148779,10 +148519,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..36188e2ee
+index 000000000..ff0f0dc8f
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,605 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -148840,14 +148580,12 @@ index 000000000..36188e2ee
 +    }
 +
 +    fn start_mod_command(&mut self, command: ModSlashCommand, args: String, quiet: bool) {
-+        let started = std::time::Instant::now();
 +        crate::mod_ui::reopen_dialogs();
 +        let tx = self.app_event_tx.clone();
 +        let invocation = command.invocation.clone();
 +        let token = self.mod_token();
 +        let running = self.turn_lifecycle.agent_turn_running;
 +        std::thread::spawn(move || {
-+            crate::mod_runtime::startup_profile("command_dispatch", started);
 +            let result = crate::mod_runtime::run_command(
 +                &command.invocation,
 +                &args,
@@ -148858,7 +148596,6 @@ index 000000000..36188e2ee
 +                &token,
 +                |_| Err("builtin_unavailable".to_owned()),
 +            );
-+            crate::mod_runtime::startup_profile("command_worker_total", started);
 +            tx.send(AppEvent::ModCommandFinished {
 +                invocation,
 +                token,
@@ -148874,7 +148611,6 @@ index 000000000..36188e2ee
 +        result: Result<ModCommandResult, String>,
 +        quiet: bool,
 +    ) -> Option<crate::mod_runtime::ModInvocation> {
-+        let started = std::time::Instant::now();
 +        let ModCommandResult {
 +            outcome,
 +            preview,
@@ -148906,7 +148642,6 @@ index 000000000..36188e2ee
 +            self.refresh_status_line();
 +        }
 +        self.request_redraw();
-+        crate::mod_runtime::startup_profile("command_publish", started);
 +        refresh
 +    }
 +
@@ -156523,10 +156258,10 @@ index 000000000..7ca758b14
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..174abec95
+index 000000000..3d6291318
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1542 @@
+@@ -0,0 +1,1525 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -156703,15 +156438,12 @@ index 000000000..174abec95
 +    Restore(CATALOG.lock().unwrap().replace((Instant::now(), commands)))
 +}
 +
-+pub(crate) use codex_omd::profile as startup_profile;
-+
 +/// Runs before the provisional composer has a live thread; the observer path rejects native-task operations at the host boundary.
 +pub(crate) fn prepare_startup(repository: &Path, phase: &str) {
 +    prepare_startup_active(repository, phase, &|| true);
 +}
 +
 +pub(crate) fn prepare_startup_active(repository: &Path, phase: &str, active: &dyn Fn() -> bool) {
-+    let started = Instant::now();
 +    if !crate::omd::is_active() || !active() {
 +        return;
 +    }
@@ -156735,9 +156467,7 @@ index 000000000..174abec95
 +            "client": crate::mod_client::value(),
 +        });
 +        let pty_scope = serde_json::json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
-+        let terminal_started = Instant::now();
 +        let terminal = runtime.terminal_view(input.clone(), active);
-+        startup_profile("startup_terminal", terminal_started);
 +        input["pty_scope"] = pty_scope;
 +        Some(ModViewSnapshot {
 +            view: terminal.view,
@@ -156753,13 +156483,6 @@ index 000000000..174abec95
 +        let prepared = snapshot.is_some();
 +        crate::mod_ui::startup_preview(snapshot, repository);
 +        if prepared {
-+            if let Some(path) = std::env::var_os("OMD_PROFILE_READY") {
-+                if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-+                {
-+                    let value = serde_json::json!({"pid": std::process::id(), "ready_unix_ns": now.as_nanos()});
-+                    let _ = std::fs::write(path, value.to_string());
-+                }
-+            }
 +            if let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
 +            {
 +                std::thread::spawn(move || {
@@ -156771,7 +156494,6 @@ index 000000000..174abec95
 +            }
 +        }
 +    }
-+    startup_profile("startup_prepare", started);
 +}
 +
 +fn builtin(name: &str) -> bool {
@@ -157820,7 +157542,6 @@ index 000000000..174abec95
 +    args: &str,
 +    invocation: &ModInvocation,
 +) -> Result<ModCommandResult, String> {
-+    let started = Instant::now();
 +    let paths = crate::omd::mod_paths_for(&invocation.context.repository)
 +        .ok_or("mods are not configured for this session")?;
 +    let active = || current(invocation);
@@ -157866,12 +157587,10 @@ index 000000000..174abec95
 +        |_| {},
 +    )
 +    .map_err(|e| e.to_string())?;
-+    startup_profile("command_invoke", started);
 +    if !active() {
 +        return Err("callback_cancelled".to_owned());
 +    }
 +    let outcome = ModCommandOutcome::parse(&value).map_err(|e| e.to_string())?;
-+    let started = Instant::now();
 +    let preview = preview_with(
 +        &mut runtime.locked(),
 +        &paths,
@@ -157882,7 +157601,6 @@ index 000000000..174abec95
 +            .map(|patch| (id.as_str(), generation, patch)),
 +        &active,
 +    );
-+    startup_profile("command_preview", started);
 +    Ok(ModCommandResult {
 +        refresh: outcome.terminal.as_ref().map(|_| invocation.clone()),
 +        value,
@@ -159327,10 +159045,10 @@ index 000000000..297bab632
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..35865991a
+index 000000000..15b11bd10
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1066 @@
+@@ -0,0 +1,1109 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -159346,6 +159064,8 @@ index 000000000..35865991a
 +use std::sync::Arc;
 +use std::sync::Mutex;
 +use std::sync::MutexGuard;
++use std::sync::atomic::AtomicUsize;
++use std::sync::atomic::Ordering;
 +use std::time::Duration;
 +use std::time::Instant;
 +
@@ -159770,7 +159490,6 @@ index 000000000..35865991a
 +    matches: Vec<codex_file_search::FileMatch>,
 +    tx: crate::app_event_sender::AppEventSender,
 +) {
-+    use std::sync::atomic::Ordering;
 +    let generation = COMPLETION.fetch_add(1, Ordering::AcqRel) + 1;
 +    let limit = completion_items();
 +    std::thread::spawn(move || {
@@ -159813,7 +159532,6 @@ index 000000000..35865991a
 +    payload: Value,
 +    tx: crate::app_event_sender::AppEventSender,
 +) {
-+    use std::sync::atomic::Ordering;
 +    let generation = COMPLETION.fetch_add(1, Ordering::AcqRel) + 1;
 +    let limit = completion_items();
 +    std::thread::spawn(move || {
@@ -159896,20 +159614,56 @@ index 000000000..35865991a
 +    })
 +}
 +
++const EVENT_QUEUE: usize = 256;
++
++/// Delivers events in order on one worker thread. Beyond `EVENT_QUEUE` waiting events new ones are
++/// dropped, and `with_dropped` reports the count on the next delivered event.
++struct EventQueue<T> {
++    sender: std::sync::mpsc::SyncSender<T>,
++    dropped: Arc<AtomicUsize>,
++}
++
++impl<T: Send + 'static> EventQueue<T> {
++    fn spawn(deliver: impl Fn(T, &AtomicUsize) + Send + 'static) -> Self {
++        let (sender, receiver) = std::sync::mpsc::sync_channel(EVENT_QUEUE);
++        let dropped = Arc::new(AtomicUsize::new(0));
++        let counter = Arc::clone(&dropped);
++        std::thread::spawn(move || {
++            while let Ok(item) = receiver.recv() {
++                deliver(item, &counter);
++            }
++        });
++        Self { sender, dropped }
++    }
++
++    fn push(&self, item: T) -> bool {
++        let queued = self.sender.try_send(item).is_ok();
++        if !queued {
++            self.dropped.fetch_add(1, Ordering::Relaxed);
++        }
++        queued
++    }
++}
++
++fn with_dropped(mut payload: Value, dropped: &AtomicUsize) -> Value {
++    let dropped = dropped.swap(0, Ordering::Relaxed);
++    if dropped > 0 {
++        payload["dropped"] = dropped.into();
++    }
++    payload
++}
++
 +pub(crate) fn terminal_event(event: &'static str, payload: Value) {
-+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<(&'static str, Value)>> =
++    static QUEUE: std::sync::OnceLock<EventQueue<(&'static str, Value)>> =
 +        std::sync::OnceLock::new();
 +    if registered(event) {
-+        let queue = QUEUE.get_or_init(|| {
-+            let (sender, receiver) = std::sync::mpsc::channel::<(&'static str, Value)>();
-+            std::thread::spawn(move || {
-+                while let Ok((event, payload)) = receiver.recv() {
-+                    crate::mod_runtime::broadcast_event(event, payload);
-+                }
-+            });
-+            sender
-+        });
-+        let _ = queue.send((event, payload));
++        QUEUE
++            .get_or_init(|| {
++                EventQueue::spawn(|(event, payload), dropped| {
++                    crate::mod_runtime::broadcast_event(event, with_dropped(payload, dropped));
++                })
++            })
++            .push((event, payload));
 +    }
 +}
 +
@@ -159951,41 +159705,48 @@ index 000000000..35865991a
 +}
 +
 +pub(crate) fn component_event(payload: Value) {
-+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<Value>> = std::sync::OnceLock::new();
++    static QUEUE: std::sync::OnceLock<EventQueue<Value>> = std::sync::OnceLock::new();
 +    if registered("component_event") || codex_omd::process_raster::any() {
 +        let queue = QUEUE.get_or_init(|| {
-+            let (sender, receiver) = std::sync::mpsc::channel::<Value>();
-+            std::thread::spawn(move || {
-+                while let Ok(payload) = receiver.recv() {
-+                    let payload = if payload["kind"] == "motion" {
-+                        let Some(latest) = payload["component"]
-+                            .as_str()
-+                            .and_then(|component| motion().remove(component))
-+                        else {
-+                            continue;
-+                        };
-+                        latest
-+                    } else {
-+                        payload
-+                    };
-+                    let mut payload = payload;
-+                    if let Some(pointer) = payload["pointer"].as_object_mut() {
-+                        pointer.remove("fraction");
-+                    }
-+                    if let Some(owner) = payload["component"]
++            EventQueue::spawn(|payload: Value, dropped| {
++                let mut payload = if payload["kind"] == "motion" {
++                    let Some(latest) = payload["component"]
 +                        .as_str()
-+                        .and_then(crate::mod_ui::component_owner)
-+                    {
-+                        crate::mod_runtime::invoke_event(&owner, "component_event", payload);
-+                    }
++                        .and_then(|component| motion().remove(component))
++                    else {
++                        return;
++                    };
++                    latest
++                } else {
++                    payload
++                };
++                if let Some(pointer) = payload["pointer"].as_object_mut() {
++                    pointer.remove("fraction");
 +                }
-+            });
-+            sender
++                if let Some(owner) = payload["component"]
++                    .as_str()
++                    .and_then(crate::mod_ui::component_owner)
++                {
++                    crate::mod_runtime::invoke_event(
++                        &owner,
++                        "component_event",
++                        with_dropped(payload, dropped),
++                    );
++                }
++            })
 +        });
 +        if let Some(pending) = close_motion(&payload) {
-+            let _ = queue.send(pending);
++            queue.push(pending);
 +        }
-+        let _ = queue.send(payload);
++        let marker = (payload["kind"] == "motion")
++            .then(|| payload["component"].as_str().map(str::to_owned))
++            .flatten();
++        // A dropped marker releases its pending motion, so the next move queues a new one.
++        if !queue.push(payload)
++            && let Some(component) = marker
++        {
++            motion().remove(&component);
++        }
 +    }
 +}
 +
@@ -160033,7 +159794,7 @@ index 000000000..35865991a
 +        std::sync::OnceLock::new();
 +    if registered("component_event") || codex_omd::process_raster::any() {
 +        let queue = QUEUE.get_or_init(|| {
-+            let (sender, receiver) = std::sync::mpsc::sync_channel::<(String, Value)>(256);
++            let (sender, receiver) = std::sync::mpsc::sync_channel::<(String, Value)>(EVENT_QUEUE);
 +            std::thread::spawn(move || {
 +                while let Ok(first) = receiver.recv() {
 +                    let mut pending = vec![first];
@@ -160399,10 +160160,10 @@ index 000000000..35865991a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..753e73fba
+index 000000000..9351b6e9f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,830 @@
+@@ -0,0 +1,864 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -161155,6 +160916,40 @@ index 000000000..753e73fba
 +}
 +
 +#[test]
++fn event_queue_bounds_waiting_events_and_reports_drops() {
++    let (entered, blocked) = std::sync::mpsc::channel();
++    let (release, released) = std::sync::mpsc::channel::<()>();
++    let (delivered, deliveries) = std::sync::mpsc::channel();
++    let released = Mutex::new(released);
++    let queue = EventQueue::spawn(move |value: Value, dropped| {
++        if value == 0 {
++            entered.send(()).unwrap();
++            released.lock().unwrap().recv().unwrap();
++        }
++        delivered
++            .send(with_dropped(json!({"value": value}), dropped))
++            .unwrap();
++    });
++    assert!(queue.push(json!(0)));
++    blocked.recv().unwrap();
++    for value in 1..=EVENT_QUEUE {
++        assert!(queue.push(json!(value)));
++    }
++    assert!(!queue.push(json!("overflow")));
++    assert!(!queue.push(json!("overflow")));
++    release.send(()).unwrap();
++    assert_eq!(
++        deliveries.recv().unwrap(),
++        json!({"value": 0, "dropped": 2})
++    );
++    for value in 1..=EVENT_QUEUE {
++        assert_eq!(deliveries.recv().unwrap(), json!({"value": value}));
++    }
++    assert!(queue.push(json!("after")));
++    assert_eq!(deliveries.recv().unwrap(), json!({"value": "after"}));
++}
++
++#[test]
 +fn input_batches_keep_order_per_component_and_report_drops() {
 +    let key = |text: &str| json!({"key": null, "text": text});
 +    let mut pending = vec![
@@ -161235,10 +161030,10 @@ index 000000000..753e73fba
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..44d0bfce8
+index 000000000..eec72f21e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4572 @@
+@@ -0,0 +1,4580 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -161316,6 +161111,7 @@ index 000000000..44d0bfce8
 +    seen: Option<(u64, u64)>,
 +    preview: bool,
 +    startup_repository: Option<std::path::PathBuf>,
++    presentation: u64,
 +}
 +
 +#[derive(Clone)]
@@ -162272,6 +162068,26 @@ index 000000000..44d0bfce8
 +    .map(|slot| slot.map(color))
 +}
 +
++// Hashes presentation content, not the lifecycle revision, so ordinary terminal events don't
++// invalidate retained transcript layouts.
++fn presentation(snapshot: &ModViewSnapshot) -> u64 {
++    use std::hash::Hash;
++    use std::hash::Hasher;
++    let view = &snapshot.view;
++    let mut revision = std::collections::hash_map::DefaultHasher::new();
++    serde_json::to_vec(&(
++        &view.theme,
++        &view.surface_styles,
++        &view.session_title_suffix,
++        &view.greeting,
++        view.foreground,
++        view.background,
++    ))
++    .unwrap_or_default()
++    .hash(&mut revision);
++    revision.finish()
++}
++
 +pub(crate) fn preserve_preview(preview: &ModViewSnapshot, incoming: &ModViewSnapshot) -> bool {
 +    let bootstrap = incoming.input.is_null()
 +        && incoming.diagnostics.is_empty()
@@ -162497,14 +162313,21 @@ index 000000000..44d0bfce8
 +    }
 +}
 +
-+pub(crate) fn refresh() {
-+    let (terminal, snapshot) = crate::omd::mod_snapshot();
-+    let context = crate::mod_runtime::active_context();
-+    let matches_context = context.as_ref().is_some_and(|context| {
++fn matches_context(
++    snapshot: &ModViewSnapshot,
++    context: Option<&crate::mod_runtime::ModContext>,
++) -> bool {
++    context.is_some_and(|context| {
 +        snapshot.input["ledger"]["thread_id"].as_str()
 +            == context.thread_id.map(|id| id.to_string()).as_deref()
 +            && snapshot.input["ledger"]["cwd"].as_str() == context.repository.to_str()
-+    });
++    })
++}
++
++pub(crate) fn refresh() {
++    let (terminal, snapshot) = crate::omd::mod_snapshot();
++    let context = crate::mod_runtime::active_context();
++    let matches_context = matches_context(&snapshot, context.as_ref());
 +    let mut blocked = BLOCKED_SNAPSHOT.locked();
 +    if context.is_some() && !matches_context
 +        || blocked.as_ref() == Some(&(snapshot.epoch, snapshot.revision))
@@ -162542,6 +162365,7 @@ index 000000000..44d0bfce8
 +    crate::mod_render::refresh((snapshot.epoch, snapshot.revision));
 +    *cache = Some(Cache {
 +        colors: colors(&snapshot),
++        presentation: presentation(&snapshot),
 +        snapshot: snapshot.into(),
 +        terminal,
 +        seen,
@@ -162555,23 +162379,19 @@ index 000000000..44d0bfce8
 +    crate::mod_render::clear_tool_notices();
 +    let (_, snapshot) = crate::omd::mod_snapshot();
 +    let context = crate::mod_runtime::active_context();
-+    if context.as_ref().is_some_and(|context| {
-+        context.thread_id.is_none()
-+            && with_cache(|cache| {
++    let matches_context = matches_context(&snapshot, context.as_ref());
++    *BLOCKED_SNAPSHOT.locked() = (!matches_context).then_some((snapshot.epoch, snapshot.revision));
++    // `refresh` draws nothing until a publication matches the new context, so the startup preview
++    // of the same repository stays up until then, also when the thread attaches first.
++    if !matches_context
++        && context.is_some_and(|context| {
++            with_cache(|cache| {
 +                cache.startup_repository.as_deref() == Some(context.repository.as_path())
-+                    && preserve_preview(&cache.snapshot, &snapshot)
 +            }) == Some(true)
-+    }) {
++        })
++    {
 +        return;
 +    }
-+    let matches_context = crate::mod_runtime::active_context()
-+        .as_ref()
-+        .is_some_and(|context| {
-+            snapshot.input["ledger"]["thread_id"].as_str()
-+                == context.thread_id.map(|id| id.to_string()).as_deref()
-+                && snapshot.input["ledger"]["cwd"].as_str() == context.repository.to_str()
-+        });
-+    *BLOCKED_SNAPSHOT.locked() = (!matches_context).then_some((snapshot.epoch, snapshot.revision));
 +    *CACHE
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
@@ -162587,6 +162407,7 @@ index 000000000..44d0bfce8
 +    let seen = cache.as_ref().and_then(|cache| cache.seen);
 +    *cache = Some(Cache {
 +        colors: colors(&snapshot),
++        presentation: presentation(&snapshot),
 +        snapshot: snapshot.into(),
 +        terminal: true,
 +        seen,
@@ -162660,25 +162481,7 @@ index 000000000..44d0bfce8
 +}
 +
 +pub(crate) fn presentation_revision() -> u64 {
-+    use std::hash::Hash;
-+    use std::hash::Hasher;
-+    let mut revision = std::collections::hash_map::DefaultHasher::new();
-+    with_cache(|cache| {
-+        // Hash presentation content, not the lifecycle revision, so ordinary terminal events don't invalidate retained transcript layouts.
-+        let view = &cache.snapshot.view;
-+        serde_json::to_vec(&(
-+            &view.theme,
-+            &view.surface_styles,
-+            &view.session_title_suffix,
-+            &view.greeting,
-+            view.foreground,
-+            view.background,
-+            crate::mod_render::epoch(),
-+        ))
-+        .unwrap_or_default()
-+        .hash(&mut revision);
-+    });
-+    revision.finish()
++    with_cache(|cache| cache.presentation ^ crate::mod_render::epoch()).unwrap_or_default()
 +}
 +
 +pub(crate) fn welcome_visible(
@@ -166108,10 +165911,10 @@ index 000000000..e5c401b5c
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..827c4413e
+index 000000000..729b2b628
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2471 @@
+@@ -0,0 +1,2519 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -167113,6 +166916,54 @@ index 000000000..827c4413e
 +        "memory_limit":"cell struct bytes exclude heap string capacity; RSS is a test-process sample, not an allocator or instantaneous peak measurement"})
 +    );
 +}
++
++#[test]
++#[serial_test::serial]
++fn startup_preview_stays_until_a_publication_matches_the_attached_thread() {
++    let store = tempfile::tempdir().unwrap();
++    let repository = store.path().canonicalize().unwrap();
++    let _environment = crate::omd::tests::omd_environment(&repository);
++    let publish = |snapshot: &ModViewSnapshot| {
++        std::fs::write(
++            repository.join("mod-view.json"),
++            serde_json::to_vec(snapshot).unwrap(),
++        )
++        .unwrap();
++    };
++    publish(&ModViewSnapshot::default());
++    let mut startup = snapshot(serde_json::json!({"greeting": "preview"}));
++    startup.input = serde_json::json!({"event": "startup", "ledger": null,
++        "presentation": {"thread_id": null, "phase": "fresh"}});
++    startup_preview(Some(startup), &repository);
++    let thread = codex_protocol::ThreadId::new();
++    let attach = |thread_id| {
++        crate::mod_runtime::synchronize_context(crate::mod_runtime::ModContext {
++            thread_id,
++            repository: repository.clone(),
++            policy: codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted(),
++        });
++        invalidate_context();
++        refresh();
++    };
++    attach(Some(thread));
++    let mut thread_less = snapshot(serde_json::json!({"greeting": "thread-less"}));
++    thread_less.epoch = 1;
++    thread_less.input = serde_json::json!({"event": "start",
++        "ledger": {"thread_id": null, "cwd": repository}});
++    publish(&thread_less);
++    refresh();
++    assert_eq!(greeting().as_deref(), Some("preview"));
++    let mut live = snapshot(serde_json::json!({"greeting": "live"}));
++    live.epoch = 1;
++    live.revision = 1;
++    live.input = serde_json::json!({"event": "start",
++        "ledger": {"thread_id": thread.to_string(), "cwd": repository}});
++    publish(&live);
++    refresh();
++    assert_eq!(greeting().as_deref(), Some("live"));
++    attach(None);
++}
++
 +#[test]
 +#[serial_test::serial]
 +fn startup_preview_survives_only_empty_bootstrap_and_yields_to_real_publications() {

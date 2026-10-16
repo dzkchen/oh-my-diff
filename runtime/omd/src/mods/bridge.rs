@@ -301,10 +301,8 @@ pub(super) fn run(
             // Clipboard delivery is external work bounded by the surface call lifetime.
             || call.operation == "terminal.copy";
         scope.charge_call()?;
-        let (receipt, receipt_bytes) = {
-            let _profile = super::Profile::new("host_call");
-            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
-        };
+        let (receipt, receipt_bytes) =
+            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?;
         expected.push(call);
         receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
         receipts.push(receipt.clone());
