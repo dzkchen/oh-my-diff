@@ -9,14 +9,12 @@ struct OfflineHost {
     now_ms: u64,
     /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
     timers: BTreeMap<(Option<String>, String, String), u64>,
-    /// The state thread of the callback in flight.
     thread: Option<String>,
     /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
     thread_scoped: std::collections::BTreeSet<String>,
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
-    /// The owner of the component module runners this scenario mounts.
     owner: String,
 }
 
@@ -335,7 +333,6 @@ impl ModHost {
         )
     }
 
-    /// Runs the steps with `tiers` mods simulated as administrator-managed packages in that tier.
     fn offline_steps(
         &mut self,
         steps: &[Value],

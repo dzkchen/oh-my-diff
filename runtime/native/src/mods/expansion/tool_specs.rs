@@ -75,7 +75,6 @@ impl State {
     }
 }
 
-/// Turns the composed tool list into hide, defer and re-describe decisions against the original.
 pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustment {
     let tools = tools.as_array().cloned().unwrap_or_default();
     let mut adjustment = ToolSpecAdjustment::default();

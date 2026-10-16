@@ -143,7 +143,6 @@ fn credential_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Serves one session host call under an optional captured source binding.
 pub type SessionDispatcher = Arc<
     dyn Fn(
             &str,
@@ -183,7 +182,6 @@ impl Drop for SessionRegistration {
     }
 }
 
-/// Lets callbacks outside the session (terminal commands) reach the session's model operations.
 pub fn install_session_dispatcher(dispatcher: SessionDispatcher) -> std::io::Result<SessionRegistration> {
     let registration = reserve_session_dispatcher()?;
     registration.install(dispatcher)?;
@@ -241,7 +239,6 @@ pub fn session_call(
     dispatcher(thread, caller, source, policy, call, active)
 }
 
-/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
 pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
     for root in protected.iter().cloned().chain(credential_paths()) {
         for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
@@ -754,7 +751,6 @@ impl Host<'_> {
         )
     }
 
-    /// Runs a workspace read, list, stat or transaction against a granted root outside the workspace.
     fn external(
         &self,
         caller: &Caller<'_>,

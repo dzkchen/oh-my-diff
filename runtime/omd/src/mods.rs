@@ -124,7 +124,6 @@ fn profiling() -> bool {
     *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
 }
 
-/// Records the time since `started` under `name` when `OMD_PROFILE_STARTUP` is set.
 pub fn profile(name: &str, started: Instant) {
     if !profiling() {
         return;
@@ -181,7 +180,6 @@ thread_local! {
     static STATE_THREAD: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// Binds `state_scope: "thread"` mod state to a session thread for invocations on this OS thread.
 pub struct StateThread(Option<String>);
 
 impl StateThread {
@@ -605,7 +603,6 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "history_persist",
 ];
 
-/// What a user accepts by granting the authority capabilities, shown before trust and in status.
 pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
@@ -651,7 +648,6 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     exposure
 }
 
-/// The bounded install-profile label reported for an `OMD_INSTALL_PROFILE` value.
 pub fn install_profile(value: &str) -> &'static str {
     match value {
         "full" => "full",
@@ -1196,7 +1192,6 @@ fn source_use(
     {
         capabilities.insert("store".to_owned());
     }
-    // SDK helpers call host operations on the mod's behalf.
     for (call, capability) in [
         (".time.", "events"),
         (".session(", "inventory"),
@@ -1455,7 +1450,6 @@ pub struct ModAgent {
     pub offer: bool,
 }
 
-/// A registered agent definition with the package source that registered it.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct ModAgentDefinition {
     pub owner: String,
@@ -1479,7 +1473,6 @@ pub fn host_namespace(operation: &str, arguments: &Value) -> String {
     }
 }
 
-/// `*` matches any run of characters in a namespace pattern.
 pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == namespace,
@@ -2158,7 +2151,6 @@ fn setting_value(value: &Value, definition: &serde_json::Map<String, Value>) -> 
             .is_none_or(|values| values.contains(value))
 }
 
-/// Explicit settings over the schema's `default` values.
 pub fn effective_settings(
     schema: Option<&Value>,
     settings: &BTreeMap<String, Value>,
@@ -2173,7 +2165,6 @@ pub fn effective_settings(
     effective
 }
 
-/// Merges `values` into a mod's stored settings (`null` removes one) and saves them schema-checked.
 pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
     let values = values
         .as_object()
@@ -2277,7 +2268,6 @@ impl ModPackage {
     }
 }
 
-/// Refuses secret-like `exec_environment` names the user did not trust by name.
 pub(crate) fn check_secret_environment(package: &ModPackage, trusted: &[String]) -> Result<()> {
     match package
         .secret_environment()
@@ -2330,7 +2320,6 @@ impl ModConfiguration {
     }
 }
 
-/// Active and failed mod counts from a host status: failed covers erroring and rejected mods.
 pub fn mod_counts(status: &Value) -> (usize, usize) {
     let mods = status["mods"].as_array().map_or(&[][..], Vec::as_slice);
     let failed = mods.iter().filter(|item| !item["error"].is_null()).count();
@@ -2526,8 +2515,6 @@ static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 
-/// Clears a store's UI states once per explicit reload, whether this process made it or a host
-/// noticed another process's.
 fn reset_ui_states(root: &Path, revision: u64) {
     if UI_RESETS.lock().map_or(true, |mut resets| {
         resets.insert(root.to_path_buf(), revision) == Some(revision)
@@ -2793,7 +2780,6 @@ struct Invocation {
     node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
-    /// Older thread or checkout state to migrate before the callback, outside the runtime lock.
     migrate: bool,
 }
 
@@ -2833,7 +2819,6 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
 
 const SLEEP_LIMIT_MS: u64 = 60_000;
 
-/// Callbacks documented to run without host operations.
 fn hostless(event: &str, payload: &Value) -> bool {
     matches!(event, "terminal" | "component")
         || event == "intercept"
@@ -3161,7 +3146,6 @@ impl ModHost {
         Self::open_with(root, tool_validator, None, &|| true)
     }
 
-    /// Opens the host for a session repository so checkout-scoped state is known at registration.
     pub fn open_in(
         root: PathBuf,
         tool_validator: fn(&Value) -> Result<()>,
@@ -3299,7 +3283,6 @@ impl ModHost {
         self.refresh_authority()
     }
 
-    /// Refresh package authority without resetting UI state when configuration is unchanged.
     pub fn refresh_authority(&mut self) -> Result<bool> {
         self.reload_guarded(&|| true)
     }
@@ -3345,7 +3328,6 @@ impl ModHost {
                 .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
     }
 
-    /// Whether a refresh would re-read the configuration and authority instead of keeping them.
     pub fn refresh_due(&self) -> bool {
         !self.current(configuration_stamp(&self.store.root.join("mods.json")))
     }
@@ -3632,7 +3614,6 @@ impl ModHost {
                     loaded.unused_grants = unused_grants;
                     loaded.unused_environment = unused_environment;
                 }
-                // A mod without a working previous version fails alone instead of blocking the reload.
                 Err(error) => fail(
                     initial
                         || self
@@ -3788,7 +3769,6 @@ impl ModHost {
         }
     }
 
-    /// Applicable managed targets without a successfully inspected instance: ID, granted capabilities and why.
     fn unserved_targets(&self, user: &str) -> Vec<(String, Vec<String>, String)> {
         let Some(managed) = &self.managed else {
             return Vec::new();
@@ -3824,8 +3804,7 @@ impl ModHost {
             .collect()
     }
 
-    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json`
-    /// changes or the last answer is older than `BROKER_REFRESH`.
+    /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
     fn authority(&mut self, digest: &str) -> Result<Authority> {
         let _profile = Profile::new("authority");
         if let Some((at, cached, authority)) = &self.brokered
@@ -3849,7 +3828,6 @@ impl ModHost {
         Ok(authority)
     }
 
-    /// Reads administrator policy from `file`, trusting `owner` besides root, as `user`; for isolated hosts.
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
         self.store.set_managed_policy(file, owner, user);
         self.brokered = None;
@@ -3886,8 +3864,7 @@ impl ModHost {
             .collect()
     }
 
-    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence;
-    /// the first `administered` selections come from the policy.
+    /// Trusted, enabled selections keyed by mod ID after administrator policy and scope precedence; the first `administered` selections come from the policy.
     fn select(
         selections: &[ModSelection],
         administered: usize,
@@ -4178,7 +4155,6 @@ impl ModHost {
         dependencies
     }
 
-    /// Resolves declared dependencies and returns the activation order.
     fn resolve_dependencies(
         next: &mut BTreeMap<String, Loaded>,
         lenient: &dyn Fn(&str) -> bool,
@@ -4910,8 +4886,7 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        // A reload that keeps this package binding (such as the callback's own
-        // `packages.apply`) must not discard a result whose host calls already ran.
+        // A reload that keeps this package binding (such as the callback's own `packages.apply`) must not discard a result whose host calls already ran.
         let thread = invocation.thread.as_deref();
         if generation != self.generation
             && self.loaded.get(id).is_none_or(|current| {
@@ -5686,7 +5661,6 @@ impl ModHost {
         Ok((root, files))
     }
 
-    /// Keeps the latest structured-access receipts (HTTP, external files, MCP) for status.
     pub fn record_access(&mut self, receipt: Value) {
         self.access.push(receipt);
         if self.access.len() > 32 {
@@ -5729,7 +5703,6 @@ impl ModHost {
         })
     }
 
-    /// Agent definitions registered by active mods, in load order.
     pub fn agent_definitions(&self) -> Vec<ModAgentDefinition> {
         self.active()
             .flat_map(|(id, m)| {
@@ -5745,7 +5718,6 @@ impl ModHost {
             .collect()
     }
 
-    /// The mod holding the exclusive replacement slot for a decision point.
     pub fn replacement_owner(&self, point: &str) -> Option<String> {
         self.active()
             .find(|(_, m)| m.registrations.replacements.iter().any(|p| p == point))
@@ -5794,7 +5766,6 @@ impl ModHost {
         })
     }
 
-    /// Read-only launch identity for `Events.terminal.input.identity`.
     pub fn identity(
         &self,
         codex_version: &str,

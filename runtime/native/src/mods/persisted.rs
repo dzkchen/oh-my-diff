@@ -2,8 +2,7 @@ use super::*;
 use codex_extension_api::PersistedTextInput;
 use codex_extension_api::PersistedTextRewrite;
 
-/// Runs `history_persist` interceptors off the async runtime; when the persist runtime itself
-/// fails, a required interceptor withholds every entry.
+/// Runs `history_persist` interceptors off the async runtime; a required one withholds every entry if the persist runtime fails.
 pub(super) async fn rewrite(
     runtime: Arc<Mutex<ModHost>>,
     required: Arc<Mutex<Vec<&'static str>>>,

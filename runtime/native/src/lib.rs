@@ -207,7 +207,6 @@ pub fn install(
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
-/// Leaves mods inactive and records why, so clients can report it and offer a state reset.
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
     let status = serde_json::json!({"activation_error": error, "mods": [], "rejected": []});
     persist_view(root, "mod-status.json", status.to_string().as_bytes())
@@ -271,14 +270,12 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
     }
 }
 
-/// A lead route a request may switch to: the thread's provider, or another one with its own credential.
 fn lead_candidate(route: &Route, provider: &str) -> bool {
     route.roles.contains(&config::RouteRole::Lead)
         && (route.provider == provider || route.credential.is_some())
 }
 
 impl Host {
-    /// The same host serving a linked worktree of the launch repository as its own checkout.
     fn for_worktree(&self, repository: PathBuf) -> Host {
         self.route_config();
         let routes = self
@@ -320,7 +317,6 @@ impl Host {
         (table.config.clone(), table.error.clone())
     }
 
-    /// Applies an edited host.json to a running session's ledger limits and captured routes.
     fn refresh_session(&self, session: &Session) -> Result<(), String> {
         let config = self.route_config().0;
         let limits = session

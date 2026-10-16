@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
-/// Accepts bounded input without blocking the UI thread.
 pub type Sink = Arc<dyn Fn(Value) -> bool + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,7 +280,6 @@ fn bound() -> std::sync::MutexGuard<'static, Bound> {
     BOUND.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A managed process bound to its thread's owned components; dropping it unbinds them.
 pub struct Binding {
     components: Vec<(Key, Role)>,
     sink: Sink,
@@ -406,7 +404,6 @@ fn key(thread: Option<&str>, owner: &str, component: &str) -> Key {
     )
 }
 
-/// The role `component` is bound in when `owner` owns the binding in `thread`.
 pub fn role(thread: Option<&str>, owner: &str, component: &str) -> Option<Role> {
     bound()
         .get(&key(thread, owner, component))
@@ -420,7 +417,6 @@ pub fn target(thread: Option<&str>, owner: &str, component: &str) -> Option<(Rol
         .map(|(_, role, sink, serial)| (*role, *serial, sink.clone()))
 }
 
-/// Identifies the process bound to `owner`'s `component`; a restarted process has a new one.
 pub fn serial(thread: Option<&str>, owner: &str, component: &str) -> Option<u64> {
     bound()
         .get(&key(thread, owner, component))
@@ -428,7 +424,6 @@ pub fn serial(thread: Option<&str>, owner: &str, component: &str) -> Option<u64>
         .map(|(_, _, _, serial)| *serial)
 }
 
-/// The keys component bound to the same process as `owner`'s raster `component`.
 pub fn keys(thread: Option<&str>, owner: &str, component: &str) -> Option<String> {
     let table = bound();
     let (_, role, _, serial) = table
@@ -441,7 +436,6 @@ pub fn keys(thread: Option<&str>, owner: &str, component: &str) -> Option<String
         .map(|(keys, _)| keys.2.clone())
 }
 
-/// Writes `message` to the process bound to `owner`'s `component`; false when none is bound or it stopped.
 pub fn send(thread: Option<&str>, owner: &str, component: &str, message: Value) -> bool {
     let sink = bound()
         .get(&key(thread, owner, component))

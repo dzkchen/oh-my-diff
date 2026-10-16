@@ -379,7 +379,6 @@ struct Hub {
 
 static SCREEN: Mutex<Option<&'static str>> = Mutex::new(None);
 
-/// Records whether the terminal client draws on the alternate screen (`fullscreen`) or `inline`.
 pub fn set_screen(screen: &'static str) {
     *SCREEN
         .lock()
@@ -761,8 +760,6 @@ const MANAGED_SOURCES: &[&str] = &[
     "legacyManagedConfigTomlFromMdm",
 ];
 
-/// Config rows for `config.describe`: host-writable Codex keys from a `config/read` result plus mod settings.
-/// `packages` is a `packages.list` result; its enabled mods' settings become `mods.<id>.<name>` rows.
 pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
     let mut rows = Vec::new();
     for package in packages["packages"].as_array().into_iter().flatten() {
@@ -976,7 +973,6 @@ pub fn call_classified(
     Ok(answer)
 }
 
-/// The caller's scoped resource store, bound to its active package from `mod-status.json`.
 pub fn resource_host(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -1013,7 +1009,6 @@ pub fn resource_host(
     .map_err(|error| error.to_string())
 }
 
-/// Writes a referenced image resource under `<store>/attachments` and returns its path.
 pub fn materialize(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -1052,7 +1047,6 @@ pub fn materialize(
     Ok(path)
 }
 
-/// Rewrites `app.request` params: `localImage` resource references become materialized paths.
 pub fn translate_images(
     store: &std::path::Path,
     repository: &std::path::Path,
@@ -1116,7 +1110,6 @@ pub enum NoticeRequest<'a> {
     },
 }
 
-/// `terminal.notice` arguments as every surface must accept them.
 pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
     let invalid = || "terminal_notice_invalid".to_owned();
     let one_of = |key: &str, values: &[&'static str]| match &arguments[key] {
@@ -1283,7 +1276,6 @@ pub fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
         .map_err(|_| "image_invalid_or_too_large".into())
 }
 
-/// Truecolor half-block rows of `image`, aspect-fit into `width`×`height` cells.
 pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<Vec<BlitCell>> {
     let _stage = crate::frame_metrics::stage("half_block");
     let pixels = image
@@ -1312,7 +1304,6 @@ pub fn half_block(image: &image::DynamicImage, width: u16, height: u16) -> Vec<V
         .collect()
 }
 
-/// The image frame of mirrored `terminal.blit` arguments as a cells blit over the whole `size` raster.
 pub fn frame_cells(arguments: &Value, size: (u16, u16)) -> Option<Value> {
     let image = arguments.get("image")?;
     let bytes = STANDARD.decode(image["base64"].as_str()?).ok()?;

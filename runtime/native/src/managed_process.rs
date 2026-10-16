@@ -198,7 +198,6 @@ pub(super) struct ProcessNotice {
 
 pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
 
-/// Draws one `terminal.blit` for the process's owner while `active` holds.
 pub(super) type BlitSink =
     Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, codex_omd::client_surface::BlitError> + Send + Sync>;
 
@@ -1642,7 +1641,6 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             self.call("process.start", arguments)
         }
 
-        /// Exchanges until the session ends, returning every message and the ending error.
         fn drain(&self, session: &str, mut send: Value) -> (Vec<Value>, String) {
             let mut messages = Vec::new();
             loop {

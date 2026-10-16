@@ -357,7 +357,6 @@ pub enum ModDirection {
     Row,
 }
 
-/// Cells around a box: one value for every side, or `[vertical, horizontal]`.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ModSpacing {
@@ -431,7 +430,6 @@ impl ModBoxStyle {
         self.valid() && self.hover.is_none() && self.focus.is_none()
     }
 
-    /// Fields set here win over `base`.
     pub fn over(self, base: Self) -> Self {
         Self {
             border: self.border.or(base.border),
@@ -768,7 +766,6 @@ impl ModComponent {
         }
     }
 
-    /// Pushes this component and every descendant, parents first.
     pub fn descendants<'a>(&'a self, into: &mut Vec<&'a ModComponent>) {
         into.push(self);
         if let Self::Box { children, .. }
@@ -1146,7 +1143,6 @@ impl ModView {
         Some((width?, height?))
     }
 
-    /// The declared width and height of raster `id`; a side that fills its layout region is `None`.
     pub fn raster_declared(&self, id: &str) -> Option<(Option<u16>, Option<u16>)> {
         fn find(components: &[ModComponent], id: &str) -> Option<(Option<u16>, Option<u16>)> {
             components.iter().find_map(|component| match component {
@@ -1167,7 +1163,6 @@ impl ModView {
             .find_map(|site| find(&site.components, id))
     }
 
-    /// The registered module and props a `module` component `id` mounts.
     pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
         let mut found = Vec::new();
         for site in self.sites.values() {
@@ -1217,7 +1212,6 @@ pub fn mod_key_name(key: &str) -> bool {
     key_name(key, false)
 }
 
-/// A key name a `composer_key` handler may produce: a bindable key or an unmodified named key.
 pub fn composer_key_name(key: &str) -> bool {
     key_name(key, true)
 }
@@ -1742,7 +1736,6 @@ fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>) -> Option<String> {
     })
 }
 
-/// Every component id rendered in these sites, including nested children.
 pub fn site_component_ids(sites: &BTreeMap<String, ModRenderSite>) -> BTreeSet<String> {
     component_ids_of(sites.values().flat_map(|site| &site.components))
 }

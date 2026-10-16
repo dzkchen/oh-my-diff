@@ -159,7 +159,6 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });
 
-// The remaining tests run the mod in one interactive runner against an in-process host, with a fake server per scenario.
 const digest = text => typeof text === 'string' ? createHash('sha256').update(text).digest('hex') : null;
 const failure = message => new Error(message);
 const harness = message => Object.assign(new Error(message), { crash: true });
@@ -253,7 +252,6 @@ function viewServer() {
   };
 }
 
-// A real language server over stdio: Content-Length framing through FIFOs, read without blocking so `exchange` can wait up to `wait_ms`.
 // Within `patience` of a request, waits block until a message arrives so a slow server still answers in the mod's loop.
 function spawnServer(command, cwd, patience = 30_000) {
   const directory = mkdtempSync(join(tmpdir(), 'omd-lsp-'));
@@ -304,7 +302,6 @@ function spawnServer(command, cwd, patience = 30_000) {
   };
 }
 
-// In-process host: `server` is a factory for the single Python session; `intercept(call)` may answer or fail a call first.
 function createHost({ files = {}, server = null, repository = '/repo', binary = { path: '/bin/pylsp', sha256: digest('pylsp') } } = {}) {
   const host = {
     repository, files: { ...files }, server, thread: 'thread-a', store: {}, backups: {}, operations: [], sent: [], published: [],

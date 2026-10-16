@@ -842,7 +842,6 @@ struct CompleteCache {
     through: Value,
 }
 
-/// Completion and fork options layered on an ordinary worker spawn.
 #[derive(Default)]
 struct Shape {
     system: Option<String>,
@@ -1373,7 +1372,6 @@ impl Agents {
         }
     }
 
-    /// Ends the inventory record of a worker stopped before its job reported.
     fn stopped(&self, handle: &str, agent: &Agent, reason: &str) {
         if let (Some(core), Some(thread)) = (
             self.notifier.core.upgrade(),

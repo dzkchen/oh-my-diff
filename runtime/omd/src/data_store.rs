@@ -133,7 +133,6 @@ fn newest_change(path: &Path) -> Option<std::time::SystemTime> {
     Some(newest)
 }
 
-/// Removes directories in which nothing changed for 30 days, except those `keep` names.
 pub fn prune_thread_directories(directory: &Path, keep: impl Fn(&str) -> bool) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
