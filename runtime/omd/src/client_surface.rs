@@ -48,6 +48,7 @@ pub fn current_generation() -> Option<u64> {
 
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
+    "app.respond",
     "credentials.request",
     "terminal.notify",
     "terminal.show_thread",
@@ -738,21 +739,7 @@ pub fn app_request(
         confirm,
         active,
     )?;
-    if method == "config/read" {
-        if let Some(config) = value.get_mut("config") {
-            redact_config(config);
-        }
-        for layer in value
-            .get_mut("layers")
-            .and_then(Value::as_array_mut)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(config) = layer.get_mut("config") {
-                redact_config(config);
-            }
-        }
-    }
+    redact_result(&method, &mut value);
     if matches!(method.as_str(), "thread/start" | "thread/fork")
         && let Some(created) = value["thread"]["id"].as_str()
         && let Ok(mut visible) = VISIBLE.lock()
@@ -817,48 +804,89 @@ pub fn config_rows(read: &Value, packages: &Value) -> Vec<Value> {
     rows
 }
 
+fn redact_result(method: &str, value: &mut Value) {
+    match method {
+        "config/read" => {
+            if let Some(config) = value.get_mut("config") {
+                redact_config(config);
+            }
+            for layer in value
+                .get_mut("layers")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(config) = layer.get_mut("config") {
+                    redact_config(config);
+                }
+            }
+        }
+        "hooks/list" => scrub_secrets(value, ""),
+        _ => {}
+    }
+}
+
 fn redact_config(config: &mut Value) {
-    for (table, maps, values, url) in [
-        (
-            "mcp_servers",
-            &["env", "http_headers"][..],
-            &["/bearer_token", "/oauth/client_secret"][..],
-            "url",
-        ),
-        (
-            "model_providers",
-            &["http_headers", "query_params"][..],
-            &["/experimental_bearer_token"][..],
-            "base_url",
-        ),
-    ] {
-        for entry in config
+    for (table, url) in [("mcp_servers", "url"), ("model_providers", "base_url")] {
+        for value in config
             .get_mut(table)
             .and_then(Value::as_object_mut)
             .into_iter()
             .flat_map(|entries| entries.values_mut())
+            .filter_map(|entry| entry.get_mut(url))
         {
-            for map in maps {
-                for value in entry
-                    .get_mut(*map)
-                    .and_then(Value::as_object_mut)
-                    .into_iter()
-                    .flat_map(|map| map.values_mut())
-                {
-                    *value = Value::from("<redacted>");
-                }
-            }
-            for pointer in values {
-                if let Some(value) = entry.pointer_mut(pointer).filter(|value| !value.is_null()) {
-                    *value = Value::from("<redacted>");
-                }
-            }
-            if let Some(value) = entry.get_mut(url)
-                && let Some(redacted) = value.as_str().map(redact_url)
-            {
+            if let Some(redacted) = value.as_str().map(redact_url) {
                 *value = Value::from(redacted);
             }
         }
+    }
+    if let Some(set) = config.pointer_mut("/shell_environment_policy/set") {
+        redact_all(set);
+    }
+    scrub_secrets(config, "");
+}
+
+/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines.
+fn scrub_secrets(value: &mut Value, name: &str) {
+    match value {
+        Value::Object(map) => {
+            let launches = map.contains_key("command");
+            for (key, value) in map.iter_mut() {
+                if key.ends_with("headers")
+                    || matches!(key.as_str(), "env" | "query_params")
+                    || (launches && key == "args")
+                {
+                    redact_all(value);
+                } else {
+                    scrub_secrets(value, key);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|item| scrub_secrets(item, name)),
+        Value::String(text) => {
+            let mut segments = name.rsplit(['_', '-']);
+            let last = segments.next().unwrap_or_default();
+            let named = match segments.next() {
+                Some(previous) if last == "key" => format!("{previous}_key"),
+                _ => last.to_owned(),
+            };
+            let redacted = crate::resource_data::redact(text);
+            if crate::resource_data::contains_secret(&format!("{named}=x")) {
+                *value = Value::from("<redacted>");
+            } else if redacted != *text {
+                *value = Value::from(redacted.replace("[redacted]", "<redacted>"));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_all(value: &mut Value) {
+    match value {
+        Value::Object(map) => map.values_mut().for_each(redact_all),
+        Value::Array(items) => items.iter_mut().for_each(redact_all),
+        Value::Null => {}
+        _ => *value = Value::from("<redacted>"),
     }
 }
 

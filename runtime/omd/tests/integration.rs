@@ -161,7 +161,7 @@ fn colliding_tool_slots_and_contested_replacements_disable_only_the_claimants() 
 }
 
 #[test]
-fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
+fn composed_key_bindings_run_only_their_owners_commands() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
     let ui = written(
@@ -213,6 +213,15 @@ fn terminal_patches_bind_keys_that_may_target_another_mods_command() {
         .map(|(id, command)| (id, command.name))
         .collect();
     assert_eq!(commands, [("helper".to_string(), "ping".to_string())]);
+    let composed = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
+    assert!(!composed.view.keybindings.contains_key("F6"));
+    assert_eq!(
+        composed.view.keybindings["F7"],
+        codex_omd::ModKeyAction::Command {
+            command: "ui:ping".into(),
+            args: String::new()
+        }
+    );
     assert_eq!(
         runtime
             .invoke(

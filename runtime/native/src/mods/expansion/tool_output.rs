@@ -8,26 +8,8 @@ const HEAD_BYTES: usize = 48 * 1024;
 const TAIL_BYTES: usize = 16 * 1024;
 const APPEND_BYTES: usize = 4096;
 
-fn bounded(text: &str, limit: usize) -> &str {
-    if text.len() <= limit {
-        return text;
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
-fn tail(text: &str, limit: usize) -> Option<&str> {
-    if text.len() <= HEAD_BYTES {
-        return None;
-    }
-    let mut start = text.len() - limit;
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    Some(&text[start..])
+fn bounded(text: &str) -> &str {
+    &text[..text.floor_char_boundary(HEAD_BYTES)]
 }
 
 async fn original(
@@ -94,7 +76,7 @@ impl ToolOutputContributor for Mods {
                 self.views
                     .diagnostic(&self.host, "tool_output", Some(message));
             };
-            let executed = json!({"output": bounded(input.text, HEAD_BYTES), "success": input.success,
+            let executed = json!({"output": bounded(input.text), "success": input.success,
                 "truncated": input.text.len() > HEAD_BYTES});
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
@@ -172,13 +154,14 @@ impl ToolOutputContributor for Mods {
                 .arguments
                 .map(|raw| {
                     serde_json::from_str::<Value>(raw)
-                        .unwrap_or_else(|_| Value::String(bounded(raw, HEAD_BYTES).to_owned()))
+                        .unwrap_or_else(|_| Value::String(bounded(raw).to_owned()))
                 })
                 .unwrap_or(Value::Null);
             let payload = |text: &str| {
                 json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
                     "arguments": arguments, "success": input.success,
-                    "text": bounded(text, HEAD_BYTES), "tail": tail(text, TAIL_BYTES),
+                    "text": bounded(text),
+                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
                     "bytes": text.len()})
             };
             let mut appended = String::new();

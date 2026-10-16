@@ -154,6 +154,42 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_auto_continue",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Declines an unanswered approval or answers an unanswered question after two minutes so a turn keeps going while you are away",
+      "source": "mods/first-party/omd_auto_continue",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_respond_v1; timers_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_idle_compact",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Compacts a large idle conversation just before the provider prompt cache expires, including while a turn waits on an approval or question",
+      "source": "mods/first-party/omd_idle_compact",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.162.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1; timers_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.162.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_statusline",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

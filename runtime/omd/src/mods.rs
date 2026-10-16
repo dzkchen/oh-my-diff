@@ -76,6 +76,7 @@ pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
+pub use view::owned_command;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
@@ -117,8 +118,6 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
 fn profiling() -> bool {
     static PROFILING: OnceLock<bool> = OnceLock::new();
@@ -357,6 +356,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_lists_v1",
     "adapters_v1",
     "app_v1",
+    "app_respond_v1",
     "approval_v1",
     "unrestricted_process_v1",
     "delegated_approval_v1",
@@ -470,6 +470,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "sidecars.status",
     "sidecars.stop",
     "app.request",
+    "app.respond",
     "app.routes",
     "workspace.watch",
     "workspace.unwatch",
@@ -2707,6 +2708,7 @@ pub struct ModHost {
     service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
     virtual_time_ms: Option<u64>,
+    tier_selections: BTreeMap<String, ModSelection>,
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
@@ -2915,9 +2917,7 @@ fn invoke(
     let thread = state_thread(&payload);
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+    let now_ms = crate::peers::now_ms();
     let mut replay: Vec<Value> = Vec::new();
     loop {
         let replaying = !replay.is_empty();
@@ -3089,6 +3089,7 @@ fn read_only_receipt(receipt: &Value) -> bool {
                     .as_str()
                     .is_none_or(|network| network == "none")
                 && arguments["unix_sockets"].is_null()
+                && arguments["sandbox"].is_null()
         }
         _ => false,
     }
@@ -3202,6 +3203,7 @@ impl ModHost {
             service_calls: Vec::new(),
             tool_validator,
             virtual_time_ms: None,
+            tier_selections: BTreeMap::new(),
             dynamic_tools: BTreeMap::new(),
             checkout: None,
             valid_views: BTreeMap::new(),
@@ -4586,6 +4588,7 @@ impl ModHost {
             None => Vec::new(),
         };
         let mut administered = selections.len();
+        let configured = self.tier_selections.get(&loaded.package.id).unwrap_or(&loaded.selection);
         let (configuration_sha256, configuration) = self.callback_configuration();
         let hash = format!("{}:{}:{}:{}:{}",
             configuration_sha256,
@@ -4599,7 +4602,7 @@ impl ModHost {
             Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
                 config.mods.iter().filter(|selection| !unchanged || selection.path == loaded.selection.path).cloned(),
             ),
-            _ if loaded.selection.scope == MANAGED_SCOPE && managed.is_some() => (),
+            _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
             _ => return Err(failure("callback_authority_changed")),
         }
         if unchanged {
@@ -4616,9 +4619,9 @@ impl ModHost {
         let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
             return Err(failure("callback_authority_changed"));
         };
-        if selection.path != loaded.selection.path
-            || selection.scope != loaded.selection.scope
-            || store::grant(&json!(selection)) != store::grant(&json!(loaded.selection))
+        if selection.path != configured.path
+            || selection.scope != configured.scope
+            || store::grant(&json!(selection)) != store::grant(&json!(configured))
         {
             return Err(failure("callback_authority_changed"));
         }

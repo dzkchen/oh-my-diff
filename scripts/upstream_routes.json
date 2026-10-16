@@ -778,6 +778,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "_meta",
     "arguments",
@@ -809,6 +810,7 @@
     "event"
    ],
    "note": "untrusted external content",
+   "scope": "root",
    "fields": [
     "connectorId",
     "originCallId",
@@ -1752,6 +1754,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "cursor",
     "limit",
@@ -1766,6 +1769,7 @@
     "user",
     "event"
    ],
+   "scope": "visible",
    "fields": [
     "beforeThreadId",
     "sectionId",

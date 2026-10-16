@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -95,8 +95,11 @@ function minimalScenarios(name) {
   };
 }
 
+const pretty = value => `${JSON.stringify(value, null, 2)}\n`;
+const print = value => process.stdout.write(pretty(value));
+
 async function writeJson(path, value) {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+  await writeFile(path, pretty(value));
 }
 
 async function writeProjectFiles(directory, name, scenarios) {
@@ -125,7 +128,6 @@ async function createProject(directory, name) {
 async function copyExample(directory, name) {
   if (!publicExamples.includes(name)) fail(`unknown_example: ${name}`);
   const source = join(sdkRoot, 'examples', name);
-  if (!statSync(source).isDirectory()) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
   const { id } = JSON.parse(readFileSync(join(directory, 'mod.json'), 'utf8'));
@@ -265,7 +267,7 @@ function runScenario(directory, file) {
     copyDeclarations(store, directory);
     checkProject(directory);
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  print(result);
 }
 
 function runTests(directory) {
@@ -302,7 +304,7 @@ async function packageProject(directory) {
   const packaged = engineJson(['inspect', target]);
   if (packaged.sha256 !== inspected.sha256) fail('package_integrity_changed');
   await writeJson(join(target, 'package-report.json'), { api: apiVersion, sha256: packaged.sha256, source_maps: sourceMaps, manifest: packaged.manifest });
-  process.stdout.write(`${JSON.stringify({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) }, null, 2)}\n`);
+  print({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) });
 }
 
 function watchProject(directory, store, once) {
@@ -362,10 +364,10 @@ async function main() {
     case 'debug': return runScenario(directory, 'debug.test.json');
     case 'package': return packageProject(directory);
     case 'watch': return watchProject(directory, resolve(nameOrStore || fail('watch requires STORE')), extra === '--once');
-    case 'report': process.stdout.write(`${JSON.stringify(engineJson(['report', directory]), null, 2)}\n`); return;
-    case 'events': process.stdout.write(`${JSON.stringify(engineJson(['events', directory]), null, 2)}\n`); return;
-    case 'diagnostics': process.stdout.write(`${JSON.stringify(engineJson(['diagnostics', directory, resolve(nameOrStore || 'omd-diagnostics.json')]), null, 2)}\n`); return;
-    case 'explain': process.stdout.write(`${JSON.stringify(engineJson(['explain', rawDirectory]), null, 2)}\n`); return;
+    case 'report':
+    case 'events': return print(engineJson([action, directory]));
+    case 'diagnostics': return print(engineJson(['diagnostics', directory, resolve(nameOrStore || 'omd-diagnostics.json')]));
+    case 'explain': return print(engineJson(['explain', rawDirectory]));
     default: fail('usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL');
   }
 }

@@ -1260,6 +1260,15 @@ fn key_name(key: &str, bare: bool) -> bool {
             || (parts == ["Shift"] || bare && parts.is_empty()) && named)
 }
 
+/// A view action runs only its owner's commands: a bare name is the owner's, another mod's is refused.
+pub fn owned_command(owner: &str, command: &str) -> Option<String> {
+    match command.split_once(':') {
+        Some((id, _)) if id != owner => None,
+        Some(_) => Some(command.to_owned()),
+        None => Some(format!("{owner}:{command}")),
+    }
+}
+
 pub fn mod_command_reference(value: &str) -> bool {
     match value.split_once(':') {
         Some((id, name)) => identifier(id) && id.len() <= 24 && identifier(name),
@@ -2009,10 +2018,16 @@ impl ModViewPatch {
             candidate.sites.insert(name, composed);
         }
         let composed = site_component_ids(&candidate.sites);
-        for (key, action) in self.keybindings {
+        for (key, mut action) in self.keybindings {
             // A focus key into a site this patch lost has nothing to focus.
             if matches!(&action, ModKeyAction::Focus { focus } if !composed.contains(focus)) {
                 continue;
+            }
+            if let ModKeyAction::Command { command, .. } = &mut action {
+                let Some(owned) = owned_command(id, command) else {
+                    continue;
+                };
+                *command = owned;
             }
             if claim(format!("keybindings.{key}")) {
                 candidate.keybindings.insert(key, action);
@@ -2142,13 +2157,6 @@ impl ModView {
 }
 
 impl ModViewSnapshot {
-    pub fn clock() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or_default()
-    }
-
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;

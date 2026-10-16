@@ -231,6 +231,7 @@ pub use mods::load_managed;
 pub use mods::load_managed_from;
 pub use mods::managed;
 pub use mods::mod_command_reference;
+pub use mods::owned_command;
 pub use mods::mod_component_id;
 pub use mods::mod_counts;
 pub use mods::mod_key_name;

@@ -156,8 +156,17 @@ fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() 
 
 #[test]
 fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
-    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
-    let (temp, _, _) = fixture(source, &["commands", "store"]);
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : key === 'os' ? api.host.tryCall('exec.run', { program: '/bin/echo', argv: [`${value}`], sandbox: 'none' }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let capabilities = ["commands", "store", "exec", "os"];
+    let path = package(&root, "fixture", source, &capabilities);
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    manifest["os_access"] = json!({"programs": ["/bin/echo"]});
+    std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &capabilities);
     let mut first = host(&temp);
     let mut second = host(&temp);
     let count = |runtime: &mut ModHost| {
@@ -182,7 +191,11 @@ fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
                     },
                 )
             });
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            // The slow callback has read its state once it makes its host call.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             count(second).unwrap();
             slow.join().unwrap()
         });
@@ -204,6 +217,15 @@ fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
     );
     assert_eq!(calls, 1);
     assert_eq!(count(&mut second).unwrap(), json!(207));
+    let (result, calls) = race(&mut first, &mut second, "os");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .starts_with("state_conflict")
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(count(&mut second).unwrap(), json!(209));
     assert!(first.status()["mods"][0]["error"].is_null());
 }
 
@@ -3629,6 +3651,57 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
     assert_eq!(result["steps"][6]["value"]["input"]["text"], "HELLO");
     assert_eq!(result["steps"][11]["value"]["generation"], 2);
+}
+
+#[test]
+fn offline_timers_fire_in_the_thread_that_scheduled_them() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let capabilities = ["commands", "events", "lifecycle", "store"];
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => { api.on('start', ({thread_id}) => { api.state.set(thread_id); api.host.call('events.schedule', {key:'tick',delay_ms:100}); }); \
+         api.on('timer', () => api.state.set(`${api.state.get()} fired`)); api.command('read', () => api.state.get()); \
+         api.command('arm', () => { api.state.set('t3'); api.host.call('events.schedule', {key:'tick',delay_ms:100}); return 'armed'; }); }",
+        &capabilities,
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["state_scope"] = json!("thread");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &capabilities);
+    let plain = package(
+        &root,
+        "plain",
+        "export default api => { api.on('start', () => api.host.call('events.schedule', {key:'tick',delay_ms:100})); \
+         api.command('stop', () => api.host.call('events.cancel', {key:'tick'})); }",
+        &capabilities,
+    );
+    trust(&store, &plain, &capabilities);
+    let mut runtime = host(&temp);
+    let result = runtime
+        .offline_test(json!({
+            "schema": 1,
+            "virtual_time_ms": 1000,
+            "steps": [
+                {"type": "event", "event": "start", "payload": {"thread_id": "t1"}},
+                {"type": "event", "event": "start", "payload": {"thread_id": "t2"}},
+                {"type": "invoke", "mod": "plain", "event": "command", "name": "stop", "expect": {"cancelled": true}},
+                {"type": "advance_time", "ms": 200, "expect": {"now_ms": 1200, "timers": [
+                    {"mod": "fixture", "key": "tick", "at_ms": 1100}, {"mod": "fixture", "key": "tick", "at_ms": 1100}]}},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t1"}, "expect": "t1 fired"},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t2"}, "expect": "t2 fired"},
+                {"type": "wait_until", "max_ms": 1000, "until": "armed",
+                    "check": {"type": "invoke", "mod": "fixture", "event": "command", "name": "arm", "payload": {"thread_id": "t3"}}},
+                {"type": "advance_time", "ms": 200},
+                {"type": "invoke", "mod": "fixture", "event": "command", "name": "read", "payload": {"thread_id": "t3"}, "expect": "t3 fired"}
+            ]
+        }))
+        .unwrap();
+    assert_eq!(result["steps"].as_array().unwrap().len(), 9);
 }
 
 #[test]

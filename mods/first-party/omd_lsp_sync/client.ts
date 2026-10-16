@@ -1,5 +1,5 @@
 import type { Json, ModAPI } from '../../api.d.ts';
-import { ADAPTERS, ORDER, adapterFor, doc, fail, fileUri, languageId, message, number, object, ok, OBSERVED_REPOSITORY_KEY, pathFromUri, serializedBytes, size, state, string, uri } from './protocol.ts';
+import { ADAPTERS, ORDER, adapterFor, doc, fail, fileUri, languageId, number, object, ok, OBSERVED_REPOSITORY_KEY, pathFromUri, serializedBytes, size, state, string, uri } from './protocol.ts';
 import type { Message, Result, State } from './protocol.ts';
 
 const CALL_BUDGET = 28;
@@ -42,7 +42,7 @@ export function createClient(api: ModAPI) {
   const exchange = (s: State, outgoing: Json[], wait_ms: number): Result<Message[]> => {
     const result = budget({ session: s.adapter, send: outgoing, wait_ms }, a => api.host.tryCall('process.exchange', a));
     if (!result.ok) return result;
-    const messages = result.value.messages.map(message);
+    const messages = result.value.messages.map(object);
     return messages.every(Boolean) ? ok(messages as Message[]) : fail('invalid_server_message');
   };
   const replies = (messages: Message[]): Message[] => messages.flatMap(item => {

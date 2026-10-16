@@ -15,6 +15,14 @@ use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn open(root: &str) -> io::Result<ModStore> {
+    ModStore::open(PathBuf::from(root).canonicalize()?)
+}
+
+fn json(value: impl serde::Serialize) -> io::Result<Value> {
+    serde_json::to_value(value).map_err(io::Error::other)
+}
+
 fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
@@ -172,7 +180,7 @@ fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
             Ok(summary(load_managed()?))
         }
         ("explain", [root, project @ ..]) if project.len() <= 1 => {
-            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let store = open(root)?;
             let project = project
                 .first()
                 .map(|project| PathBuf::from(project).canonicalize())
@@ -220,61 +228,49 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, codex, home, id, candidate] if command == "plugin-preview" => {
             plugin_preview(codex, home, id, candidate)
         }
-        [command, root, request] if command == "package-plan" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
-                .and_then(|plan| serde_json::to_value(plan).map_err(io::Error::other))
-        }
-        [command, root, request, confirmation] if command == "package-apply" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_apply(
-                    serde_json::from_str::<ModInstallRequest>(request)?,
-                    confirmation,
-                )
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-        }
-        [command, root] if command == "package-lock" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_lock()
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-        }
+        [command, root, request] if command == "package-plan" => open(root)?
+            .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
+            .and_then(json),
+        [command, root, request, confirmation] if command == "package-apply" => open(root)?
+            .package_apply(
+                serde_json::from_str::<ModInstallRequest>(request)?,
+                confirmation,
+            )
+            .and_then(json),
+        [command, root] if command == "package-lock" => open(root)?.package_lock().and_then(json),
         [command, root, id] if command == "package-disable" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_disable(id)
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+            open(root)?.package_disable(id).and_then(json)
         }
         [command, root, id] if command == "package-enable" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_enable(id)
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+            open(root)?.package_enable(id).and_then(json)
         }
         [command, root, id]
             if command == "package-rollback-plan" || command == "package-uninstall-plan" =>
         {
-            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let store = open(root)?;
             let plan = if command == "package-rollback-plan" {
                 store.package_rollback_plan(id)?
             } else {
                 store.package_uninstall_plan(id)?
             };
-            serde_json::to_value(plan).map_err(io::Error::other)
+            json(plan)
         }
         [command, root, id, confirmation]
             if command == "package-rollback" || command == "package-uninstall" =>
         {
-            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let store = open(root)?;
             let lock = if command == "package-rollback" {
                 store.package_rollback(id, confirmation)?
             } else {
                 store.package_uninstall(id, confirmation)?
             };
-            serde_json::to_value(lock).map_err(io::Error::other)
+            json(lock)
         }
         [command, user, project] if command == "discover" => {
             ModStore::discover(&PathBuf::from(user), &PathBuf::from(project))
         }
         [command, root, path, settings] if command == "settings" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.settings(
+            open(root)?.settings(
                 &PathBuf::from(path).canonicalize()?,
                 serde_json::from_str(settings)?,
             )?;
@@ -283,12 +279,10 @@ fn run(args: &[String]) -> io::Result<Value> {
             ))
         }
         [command, root, path] if command == "migrate" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .migrate(&PathBuf::from(path).canonicalize()?)
+            open(root)?.migrate(&PathBuf::from(path).canonicalize()?)
         }
         [command, root, path, backup] if command == "rollback" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
+            open(root)?.rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
         }
         [command, root, node] if command == "init" => {
             ModStore::create(PathBuf::from(root), PathBuf::from(node))?;
@@ -332,16 +326,14 @@ fn run(args: &[String]) -> io::Result<Value> {
                 .map(str::to_string)
                 .collect();
             let exposure = codex_omd::authority_exposure(&capabilities);
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(vec![
-                codex_omd::Trust {
-                    path: PathBuf::from(path).canonicalize()?,
-                    sha256: sha.clone(),
-                    capabilities,
-                    scope: scope.clone(),
-                    secret_environment: secrets,
-                    expires_at,
-                },
-            ])?;
+            open(root)?.trust_all(vec![codex_omd::Trust {
+                path: PathBuf::from(path).canonicalize()?,
+                sha256: sha.clone(),
+                capabilities,
+                scope: scope.clone(),
+                secret_environment: secrets,
+                expires_at,
+            }])?;
             Ok(json!({
                 "status": format!("trusted in the {scope} scope; disabled until explicitly enabled"),
                 "expires_at": expires_at,
@@ -353,24 +345,20 @@ fn run(args: &[String]) -> io::Result<Value> {
                 Ok(path) if target.contains('/') => path.display().to_string(),
                 _ => target.clone(),
             };
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.revoke(&target)?;
+            open(root)?.revoke(&target)?;
             Ok(Value::String(
                 "disabled and every grant dropped; owned work stops at the next reload; trust or install again to renew".into(),
             ))
         }
-        [command, root, id, reason @ ..] if command == "package-quarantine" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_quarantine(id, &reason.join(" "))
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
-        }
+        [command, root, id, reason @ ..] if command == "package-quarantine" => open(root)?
+            .package_quarantine(id, &reason.join(" "))
+            .and_then(json),
         [command, root, id] if command == "package-unblock" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .package_unblock(id)
-                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+            open(root)?.package_unblock(id).and_then(json)
         }
-        [command, root] if command == "security-events" => Ok(Value::Array(
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.security_events()?,
-        )),
+        [command, root] if command == "security-events" => {
+            Ok(Value::Array(open(root)?.security_events()?))
+        }
         [command, root, packages] if command == "trust-all" => {
             let packages: Vec<Value> = serde_json::from_str(packages)?;
             let packages = packages
@@ -393,13 +381,13 @@ fn run(args: &[String]) -> io::Result<Value> {
                 })
                 .collect::<io::Result<Vec<_>>>()?;
             let count = packages.len();
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(packages)?;
+            open(root)?.trust_all(packages)?;
             Ok(Value::String(format!(
                 "trusted {count} packages; disabled until explicitly enabled"
             )))
         }
         [command, root, rest @ ..] if command == "broker-grants-import" && rest.len() <= 1 => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.broker_grants_import(
+            open(root)?.broker_grants_import(
                 rest.first()
                     .map(|snapshot| serde_json::from_str(snapshot))
                     .transpose()?,
@@ -407,8 +395,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root, path] if command == "enable" || command == "disable" => {
             let path = PathBuf::from(path);
-            ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .enable(&path.canonicalize().unwrap_or(path), command == "enable")?;
+            open(root)?.enable(&path.canonicalize().unwrap_or(path), command == "enable")?;
             Ok(Value::String(
                 "selection saved; takes effect at the next turn boundary".into(),
             ))
@@ -439,13 +426,13 @@ fn run(args: &[String]) -> io::Result<Value> {
                 .visible("")?,
         )),
         [command, root] if command == "reload" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.reload()?;
+            open(root)?.reload()?;
             Ok(Value::String(
                 "reload queued for the next turn boundary".into(),
             ))
         }
         [command, root, name] if command == "reset" => {
-            let aside = ModStore::open(PathBuf::from(root).canonicalize()?)?.reset(name)?;
+            let aside = open(root)?.reset(name)?;
             Ok(json!({"reset": name, "aside": aside}))
         }
         [command, root] if command == "status" => {
@@ -463,12 +450,10 @@ fn run(args: &[String]) -> io::Result<Value> {
                 "conflicts": terminal.conflicts, "diagnostics": terminal.diagnostics});
             Ok(status)
         }
-        [command, root] if command == "selection-status" => {
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
-        }
+        [command, root] if command == "selection-status" => open(root)?.selection_status(),
         [command, action, rest @ ..] if command == "policy" => policy(action, rest),
         [command, root, flags @ ..] if command == "package-sync" && flags.len() <= 1 => {
-            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let store = open(root)?;
             match flags {
                 [] => store.package_sync(false),
                 [flag] if flag == "--offline" => store.package_sync(true),

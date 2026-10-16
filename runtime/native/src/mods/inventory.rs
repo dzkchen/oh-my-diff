@@ -1,4 +1,5 @@
 use super::*;
+use codex_omd::peers::now_ms;
 use std::collections::BTreeSet;
 
 const ANSWER_CHARS: usize = 4096;
@@ -8,12 +9,6 @@ const FINISHED_LIMIT: usize = 64;
 #[derive(Default)]
 pub(super) struct Inventory {
     records: Mutex<BTreeMap<String, Value>>,
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 impl Inventory {

@@ -205,6 +205,38 @@ fn thread_scope_binds_current_and_visible_threads() {
         "app_thread_out_of_scope"
     );
     assert_eq!(f.code("thread/start", json!({}), User), "ok");
+    let fixture = fixture(&["threads"]);
+    let move_before = |before: &str| {
+        fixture.code(
+            "thread/section/move",
+            json!({"threadId": "current", "sectionId": "s", "beforeThreadId": before}),
+            Event,
+        )
+    };
+    assert_eq!(move_before("other"), "ok");
+    assert_eq!(move_before("stranger"), "app_thread_out_of_scope");
+}
+
+#[test]
+fn every_thread_addressed_route_has_a_scope() {
+    let unscoped: Vec<_> = TABLE
+        .requests
+        .iter()
+        .filter(|(method, route)| {
+            route.fields.iter().any(|field| field.ends_with("ThreadId") || field == "threadId")
+                && route.scope.is_none()
+                && !method.starts_with("app/")
+                && !matches!(
+                    method.as_str(),
+                    "account/usage/read"
+                        | "experimentalFeature/list"
+                        | "mcpServerStatus/list"
+                        | "thread/list"
+                )
+        })
+        .map(|(method, _)| method.as_str())
+        .collect();
+    assert_eq!(unscoped, Vec::<&str>::new());
 }
 
 #[test]
@@ -296,6 +328,37 @@ fn config_writes_refuse_authority_and_unknown_keys() {
     assert_eq!(write("tui.unknown_key"), "app_config_key_refused");
     assert_eq!(write("not_a_key"), "app_config_key_refused");
     assert_eq!(write("tui..theme"), "app_config_key_refused");
+    let table = |key: &str, value: Value| {
+        f.code(
+            "config/value/write",
+            json!({"keyPath": key, "value": value, "mergeStrategy": "upsert"}),
+            User,
+        )
+    };
+    assert_eq!(write("features.goals"), "ok");
+    assert_eq!(table("features", json!({"goals": true})), "app_config_key_refused");
+    assert_eq!(
+        table("agents", json!({"reviewer": {"config_file": "/tmp/role.toml"}})),
+        "app_config_key_refused"
+    );
+    assert_eq!(table("agents", json!({"max_depth": 2})), "ok");
+    assert_eq!(table("tui", json!({"theme": "x"})), "ok");
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "tui", "value": {"theme": "x", "keymap": {"global": {"copy": "c"}}}}]}),
+            User
+        ),
+        "ok"
+    );
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "agents", "value": {"enabled": true, "r": {"config_file": "x"}}}]}),
+            User
+        ),
+        "app_config_key_refused"
+    );
     assert_eq!(
         f.code(
             "config/value/write",
@@ -424,4 +487,80 @@ fn session_roots_include_linked_worktrees() {
     assert_eq!(roots[0], repository);
     assert!(roots.contains(&base.join("linked")));
     assert_eq!(session_roots(&base), vec![base.clone()]);
+}
+
+#[test]
+fn mod_responses_never_grant_authority() {
+    let allowed = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline"}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "cancel"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "decline", "content": null}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["No reply; use your judgment."]}}}),
+        ),
+    ];
+    for (method, result) in allowed {
+        assert_eq!(response_allowed(method, &result), Ok(()), "{method}");
+    }
+    let refused = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "acceptForSession"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline", "extra": 1}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {"network": {"enabled": true}}}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}, "scope": "session"}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "accept", "content": {}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": [1]}}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["x".repeat(20_000)]}}}),
+        ),
+        ("thread/start", json!({})),
+    ];
+    for (method, result) in refused {
+        assert!(
+            response_allowed(method, &result)
+                .unwrap_err()
+                .starts_with("app_response_refused"),
+            "{method} {result}"
+        );
+    }
 }

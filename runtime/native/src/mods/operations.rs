@@ -132,13 +132,6 @@ fn workspace_guard(
         .transpose()
 }
 
-pub(super) fn now() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default()
-}
-
 fn notify_contract(core: &Core, payload: Value) {
     let runtime = core.runtime.clone();
     tokio::task::spawn_blocking(move || {
@@ -225,7 +218,7 @@ async fn submit_receipt(
         findings: input.findings,
         resolves: input.resolves,
         submitted_by: caller.id.to_owned(),
-        at: now(),
+        at: u128::from(codex_omd::peers::now_ms()),
     };
     receipt.validate()?;
     let value = serde_json::to_value(&receipt).map_err(|e| e.to_string())?;
@@ -293,7 +286,7 @@ async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, S
         .map_err(|_| "contract_lock_poisoned")?
         .status();
     lead.session.evidence(
-        &format!("completion-{current}-{}.json", now()),
+        &format!("completion-{current}-{}.json", codex_omd::peers::now_ms()),
         &json!({"candidate_sha256": current, "contract": status}),
     )?;
     Ok(json!({"status": "completed", "receipts": status["receipts"]}))
@@ -616,7 +609,7 @@ async fn run(
         "session.info" => {
             let account = host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_err(|_| "account lock poisoned")?
                 .get(&lead.thread.to_string())

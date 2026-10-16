@@ -7,8 +7,12 @@ struct OfflineHost {
     calls: Vec<Value>,
     violations: Vec<String>,
     now_ms: u64,
-    /// Keyed by the scheduling thread, owner and key, like live timers.
+    /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
     timers: BTreeMap<(Option<String>, String, String), u64>,
+    /// The state thread of the callback in flight.
+    thread: Option<String>,
+    /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
+    thread_scoped: std::collections::BTreeSet<String>,
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
@@ -106,6 +110,10 @@ impl OfflineHost {
         Ok(())
     }
 
+    fn timer_thread(&self, caller: &str) -> Option<String> {
+        self.thread.clone().filter(|_| self.thread_scoped.contains(caller))
+    }
+
     fn call(&mut self, caller: &str, call: ModHostCall) -> Result<Value> {
         self.calls.push(
             json!({"at_ms":self.now_ms,"caller":caller,"operation":call.operation,
@@ -164,11 +172,11 @@ impl OfflineHost {
                     .filter(|delay| (16..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
                 let deadline = self.now_ms.checked_add(delay).ok_or_else(|| failure("offline_time_overflow"))?;
-                self.timers.insert((bound_thread(), caller.to_owned(), key.clone()), deadline);
+                self.timers.insert((self.timer_thread(caller), caller.to_owned(), key.clone()), deadline);
                 return Ok(json!({"key": key, "delay_ms": delay}));
             }
             (true, "events.cancel") => {
-                let cancelled = self.timers.remove(&(bound_thread(), caller.to_owned(), key)).is_some();
+                let cancelled = self.timers.remove(&(self.timer_thread(caller), caller.to_owned(), key)).is_some();
                 return Ok(json!({"cancelled": cancelled}));
             }
             _ => {}
@@ -297,7 +305,9 @@ impl ModHost {
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
+        self.tier_selections = tiers.iter().map(|(id, (_, selection))| (id.clone(), selection.clone())).collect();
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        self.tier_selections.clear();
         process::detach(&host.owner);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
@@ -351,6 +361,12 @@ impl ModHost {
                 .unwrap_or(false);
             self.virtual_time_ms = Some(*now_ms);
             host.now_ms = *now_ms;
+            host.thread_scoped = self
+                .loaded
+                .iter()
+                .filter(|(_, loaded)| loaded.package.state_scope == "thread")
+                .map(|(id, _)| id.clone())
+                .collect();
             let result = self.offline_step(kind, step, !cancelled, host, now_ms);
             let output = match result {
                 Ok(value) => {
@@ -398,6 +414,7 @@ impl ModHost {
     ) -> Result<Value> {
         let payload = step.get("payload").cloned().unwrap_or(Value::Null);
         let _thread = StateThread::enter(state_thread(&payload));
+        host.thread = bound_thread();
         match kind {
             "advance_time" => {
                 let delta = step
@@ -422,7 +439,8 @@ impl ModHost {
                     host.timers.remove(&(thread.clone(), owner.clone(), key.clone()));
                     (*now_ms, host.now_ms) = (due, due);
                     self.virtual_time_ms = Some(due);
-                    let _thread = StateThread::enter(thread);
+                    host.thread = thread.clone().or_else(bound_thread);
+                    let _thread = StateThread::enter(host.thread.clone());
                     let value = self.invoke_scoped_with(
                         &owner,
                         self.generation,

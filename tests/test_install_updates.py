@@ -486,6 +486,13 @@ class UpdateSelection(unittest.TestCase):
         finally:
             os.environ["PATH"] = environment["PATH"]
 
+    def test_installer_ignores_modules_in_the_working_directory(self):
+        planted = self.root / "planted.txt"
+        (self.root / "argparse.py").write_text(f"open({str(planted)!r}, 'w').close()\n")
+        result = subprocess.run(["sh", ROOT / "install.sh", "--help"], cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(planted.exists())
+
     def test_session_markers_count_only_live_codex_processes(self):
         sessions = self.root / "sessions"
         sessions.mkdir()

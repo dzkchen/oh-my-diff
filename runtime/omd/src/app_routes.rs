@@ -158,6 +158,83 @@ pub fn server_request_routed(method: &str) -> bool {
     TABLE.server_requests.contains(method)
 }
 
+/// Checks a mod's answer to a pending server request: approvals and elicitations may only be
+/// declined or cancelled (approving stays with the `approve` grant), permissions only granted
+/// nothing, and `requestUserInput` only answered with bounded text.
+pub fn response_allowed(method: &str, result: &Value) -> Result<(), String> {
+    let refused = |reason: &str| Err(format!("app_response_refused: {reason}"));
+    let object = result
+        .as_object()
+        .ok_or_else(|| "app_response_refused: result must be an object".to_owned())?;
+    let only = |keys: &[&str]| object.keys().all(|key| keys.contains(&key.as_str()));
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            if only(&["decision"])
+                && matches!(
+                    object.get("decision").and_then(Value::as_str),
+                    Some("decline" | "cancel")
+                )
+            {
+                Ok(())
+            } else {
+                refused("approvals accept only {decision: 'decline' | 'cancel'}")
+            }
+        }
+        "item/permissions/requestApproval" => {
+            if only(&["permissions"])
+                && object
+                    .get("permissions")
+                    .and_then(Value::as_object)
+                    .is_some_and(|value| value.is_empty())
+            {
+                Ok(())
+            } else {
+                refused("permission requests accept only {permissions: {}}")
+            }
+        }
+        "mcpServer/elicitation/request" => {
+            let empty = |key: &str| object.get(key).is_none_or(Value::is_null);
+            if only(&["action", "content", "_meta"])
+                && matches!(
+                    object.get("action").and_then(Value::as_str),
+                    Some("decline" | "cancel")
+                )
+                && empty("content")
+                && empty("_meta")
+            {
+                Ok(())
+            } else {
+                refused("elicitations accept only {action: 'decline' | 'cancel'}")
+            }
+        }
+        "item/tool/requestUserInput" => {
+            let answers = object.get("answers").and_then(Value::as_object);
+            let valid = only(&["answers"])
+                && answers.is_some_and(|answers| {
+                    answers.len() <= 16
+                        && answers.values().all(|answer| {
+                            answer.as_object().is_some_and(|answer| {
+                                answer.len() == 1
+                                    && answer.get("answers").and_then(Value::as_array).is_some_and(
+                                        |items| {
+                                            items.len() <= 16 && items.iter().all(Value::is_string)
+                                        },
+                                    )
+                            })
+                        })
+                });
+            if !valid {
+                refused("requestUserInput accepts only {answers: {id: {answers: string[]}}}")
+            } else if result.to_string().len() > 16_384 {
+                refused("answers exceed 16384 bytes")
+            } else {
+                Ok(())
+            }
+        }
+        _ => refused("method is not answerable"),
+    }
+}
+
 pub fn notification_patterns_match(pattern: &str) -> bool {
     let patterns = [pattern.to_owned()];
     TABLE
@@ -198,6 +275,13 @@ pub fn authorize(
         return Err(denied("app_param_refused", field));
     }
     check_thread(route.scope, object.get("threadId"), caller)?;
+    if route.scope.is_some() {
+        for (_, thread) in object.iter().filter(|(field, value)| {
+            field.ends_with("ThreadId") && *field != "threadId" && !value.is_null()
+        }) {
+            check_thread(Some(ThreadScope::Visible), Some(thread), caller)?;
+        }
+    }
     for field in &route.root {
         if let Some(value) = object.get(field.as_str()).filter(|v| !v.is_null()) {
             check_root(value, caller.roots)?;
@@ -290,26 +374,23 @@ fn check_route_fields(
 
 fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Result<Vec<String>> {
     let invalid = || denied("app_params_invalid", spec);
+    let edit = |edit: Option<&serde_json::Map<String, Value>>| {
+        let edit = edit.ok_or_else(invalid)?;
+        let key = edit.get("keyPath").and_then(Value::as_str).ok_or_else(invalid)?;
+        let mut keys = leaf_keys(key.to_owned(), edit.get("value"));
+        keys.push(key.to_owned());
+        Ok::<_, io::Error>(keys)
+    };
     Ok(match spec {
-        "keyPath" => vec![
-            object
-                .get("keyPath")
-                .and_then(Value::as_str)
-                .ok_or_else(invalid)?
-                .to_owned(),
-        ],
+        "keyPath" => edit(Some(object))?,
         "edits[].keyPath" => object
             .get("edits")
             .and_then(Value::as_array)
             .ok_or_else(invalid)?
             .iter()
-            .map(|edit| {
-                edit.get("keyPath")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .ok_or_else(invalid)
-            })
-            .collect::<io::Result<_>>()?,
+            .map(|entry| edit(entry.as_object()))
+            .collect::<io::Result<Vec<_>>>()?
+            .concat(),
         "enablement{}" => object
             .get("enablement")
             .and_then(Value::as_object)
@@ -319,6 +400,16 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
             .collect(),
         _ => return Err(invalid()),
     })
+}
+
+fn leaf_keys(key: String, value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Object(table)) if !table.is_empty() => table
+            .iter()
+            .flat_map(|(name, value)| leaf_keys(format!("{key}.{name}"), Some(value)))
+            .collect(),
+        _ => vec![key],
+    }
 }
 
 pub fn writable_config_keys() -> impl Iterator<Item = &'static str> {
@@ -348,10 +439,15 @@ pub fn check_config_key(key: &str) -> io::Result<()> {
             Err(denied("app_config_key_refused", key))
         };
     }
+    let parent = format!("{key}.");
     if table.authority_config.contains(&first)
         || second
             .as_ref()
             .is_some_and(|second| table.authority_config.contains(second))
+        || table
+            .authority_config
+            .iter()
+            .any(|authority| authority.starts_with(&parent))
     {
         return Err(denied("app_config_key_refused", key));
     }

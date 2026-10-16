@@ -1171,10 +1171,7 @@ pub fn access_receipt(
     result: std::result::Result<&Value, String>,
 ) -> Option<Value> {
     let arguments = &call.arguments;
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default();
+    let at = crate::peers::now_ms();
     let mut receipt = json!({"mod": caller, "operation": call.operation, "at": at});
     match call.operation.as_str() {
         "http.request" | "http.open" => {

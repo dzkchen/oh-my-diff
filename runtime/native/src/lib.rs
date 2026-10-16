@@ -329,7 +329,7 @@ impl Host {
             .map_err(|error| format!("host_limits_not_applied: {error}"));
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         for account in accounts
@@ -536,7 +536,7 @@ impl Host {
         };
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         if accounts.insert(thread.to_string(), account).is_some() {

@@ -197,14 +197,17 @@ export default function activate(api: ModAPI) {
     if (!object(contract.finding_ledger)) throw new Error('finding_ledger_required');
     return contract;
   };
+  const observedLead = () => {
+    const thread = api.host.call('task.status', null).ledger.thread_id;
+    const state = api.state.get();
+    return object(state) && object(state[thread]) ? state[thread] : null;
+  };
   const route = (setting: string, fallback: string) => {
     const name = typeof api.settings[setting] === 'string' ? api.settings[setting] as string : fallback;
     const available = api.host.call('routes.list', null);
     let found: RouteInfo | undefined;
     if (name === 'opposite_lead') {
-      const thread = api.host.call('task.status', null).ledger.thread_id;
-      const state = api.state.get();
-      const observed = object(state) && object(state[thread]) ? state[thread] : null;
+      const observed = observedLead();
       const original = available.find(value => value.available && value.roles.includes('lead') && value.roles.includes('worker')
         && value.model === observed?.model && value.provider === observed?.provider);
       found = original && available.find(value => value.available && value.roles.includes('lead') && value.roles.includes('worker')
@@ -237,9 +240,7 @@ export default function activate(api: ModAPI) {
   const reviewPlan = (kind: string, snapshot: ResourceRef, checkpoint: Checkpoint, reviewer?: RouteInfo) => {
     const target = reviewer ? currentRoute(reviewer) : route(kind === 'adversarial_verification' ? 'verify_route' : 'review_route', kind === 'adversarial_verification' ? 'verifier' : 'reviewer');
     if (kind !== 'contribution_review') {
-      const thread = api.host.call('task.status', null).ledger.thread_id;
-      const state = api.state.get();
-      const lead = object(state) && object(state[thread]) ? state[thread] : null;
+      const lead = observedLead();
       if (!lead || target.model === lead.model && target.provider === lead.provider) throw new Error('distinct_review_route_required');
     }
     const ledger = selected().finding_ledger;
@@ -564,7 +565,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     return { display: task ? [`Workflow task: ${task.status} (revision ${task.revision})`, `Objective: ${task.objective}`, 'Remaining:', ...task.remaining_work.map(item => `  - ${item}`),
       ...(task.pending ? [`Running: ${task.pending.kind}`] : [])].join('\n') : 'No workflow task in this thread; the agent records one with mod_omd_workflow_begin after you select a contract with /omd_workflow:contract reviewed_omd@1 (or solo_evidence@1) and start a new session.' };
   }, { description: 'Show this thread\'s workflow task, status and remaining work' });
-  api.on('context', ({ thread_id }) => {
+  api.on('context', () => {
     const entry = api.host.call('store.get', TASK);
     if (!entry) return { text: 'The workflow mod is enabled. The user selects a contract with /omd_workflow:contract; then use mod_omd_workflow_begin to record the user task and its acceptance criteria. No work is delegated automatically.' };
     return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(object(entry.value) ? { status: entry.value.status, revision: entry.value.revision, remaining_work: entry.value.remaining_work, failed_hypotheses: entry.value.failed_hypotheses } : {}).slice(0, 200)}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };

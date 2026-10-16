@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from scripts.check_native_ownership import first_party, inspect, literals, production
+from scripts.check_native_ownership import first_party, identifiers, inspect, literals, production
 
 
 class NativeOwnershipTests(unittest.TestCase):
@@ -66,11 +66,11 @@ class NativeOwnershipTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             package.parent.mkdir(parents=True)
             package.write_text('{"id": "omd_sample"}')
-            path.write_text('fn before() { let _ = "workflow"; }\n'
+            path.write_text('fn before() { let _ = "sample_mode"; }\n'
                             '#[cfg(test)]\nmod tests { fn fixture() { let _ = "omd_sample"; } }\n'
-                            'fn after() { let _ = ("review", "omd_sample"); }\n')
-            self.assertEqual([(f['name'], f['line']) for f in literals(root)],
-                             [('workflow', 1), ('review', 4)])
+                            'fn after() { let _ = ("claude_billing", "omd_sample"); }\n')
+            self.assertEqual([(f['name'], f['line']) for f in literals(root, identifiers(root))],
+                             [('sample_mode', 1), ('claude_billing', 4), ('omd_sample', 4)])
             self.assertEqual([(f['name'], f['line']) for f in first_party(root)],
                              [('omd_sample', 4)])
 
@@ -87,23 +87,25 @@ class NativeOwnershipTests(unittest.TestCase):
             root = Path(temporary)
             mod = root / "runtime/omd/src/mods.rs"
             config = root / "runtime/native/src/config.rs"
-            mod.parent.mkdir(parents=True)
-            config.parent.mkdir(parents=True)
+            package = root / "mods/first-party/omd_privacy_view/mod.json"
+            for path in (mod, config, package):
+                path.parent.mkdir(parents=True)
+            package.write_text('{"id": "omd_privacy_view"}')
             mod.write_text("\n".join(
                 f'pub const {surface}: &[&str] = &["{value}"];'
                 for surface, value in (
-                    ("MOD_HOST_FEATURES", "graph_cache_v1"),
+                    ("MOD_HOST_FEATURES", "privacy_cache_v1"),
                     ("MOD_HOST_OPERATIONS", "git.stage"),
-                    ("MOD_CAPABILITIES", "review"),
-                    ("MOD_EVENTS", "workflow"),
-                    ("MOD_REPLACEMENT_POINTS", "checkpoint"),
-                    ("MOD_MIDDLEWARE_EVENTS", "agent"),
+                    ("MOD_CAPABILITIES", "lsp"),
+                    ("MOD_EVENTS", "claude_turn"),
+                    ("MOD_REPLACEMENT_POINTS", "anthropic"),
+                    ("MOD_MIDDLEWARE_EVENTS", "view"),
                 )
             ))
-            config.write_text("struct HostConfig {\n    pub pi_user: Option<String>,\n}\n")
+            config.write_text("struct HostConfig {\n    pub privacy_rules: Vec<String>,\n}\n")
             findings = inspect(root)
             self.assertEqual({item["name"] for item in findings},
-                             {"graph_cache_v1", "git.stage", "review", "workflow", "checkpoint", "pi_user"})
+                             {"privacy_cache_v1", "git.stage", "lsp", "claude_turn", "anthropic", "privacy_rules"})
 
     def test_literals_runner_names_and_first_party_ids_are_reported_outside_tests(self):
         with TemporaryDirectory() as temporary:
@@ -118,13 +120,13 @@ class NativeOwnershipTests(unittest.TestCase):
                 "MOD_HOST_FEATURES", "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS",
                 "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")))
             config.write_text(
-                'struct HostConfig {\n}\nfn f() { let _ = ("authorized_presets", "git", "omd_sample"); }\n'
-                '#[cfg(test)]\nfn t() { let _ = "workflow_fixture"; }\n')
-            runner.write_text("const piText = 1; const ok = 'fine';\n")
+                'struct HostConfig {\n}\nfn f() { let _ = ("sample_rules", "git", "omd_sample"); }\n'
+                '#[cfg(test)]\nfn t() { let _ = "sample_fixture"; }\n')
+            runner.write_text("const sampleText = 1; const ok = 'fine';\n")
             package.write_text('{"id": "omd_sample"}')
             findings = {(item["surface"], item["name"]) for item in inspect(root)}
-            self.assertEqual(findings, {("literal", "authorized_presets"), ("runner", "piText"),
-                                        ("first_party_id", "omd_sample")})
+            self.assertEqual(findings, {("literal", "sample_rules"), ("literal", "omd_sample"),
+                                        ("runner", "sampleText"), ("first_party_id", "omd_sample")})
 
     def test_added_patch_lines_are_scanned_outside_tests_and_mirrors(self):
         with TemporaryDirectory() as temporary:
