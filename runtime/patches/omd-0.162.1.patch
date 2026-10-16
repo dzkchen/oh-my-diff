@@ -41939,10 +41939,10 @@ index 000000000..e946f406b
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_surface_tests.rs b/codex-rs/app-server/src/omd_surface_tests.rs
 new file mode 100644
-index 000000000..61eb65205
+index 000000000..d0811c291
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface_tests.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,171 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingMessageSender;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
@@ -42009,6 +42009,7 @@ index 000000000..61eb65205
 +        validity: client_surface::Validity(Arc::new(|| true)),
 +        authority: None,
 +        lifetime: client_surface::CallLifetime::default(),
++        depth: 0,
 +        caller: "demo".to_string(),
 +        operation: operation.to_string(),
 +        arguments,
@@ -86201,10 +86202,10 @@ index 000000000..074c134f7
 +
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..c05f29462
+index 000000000..f17108e43
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1496 @@
+@@ -0,0 +1,1516 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -86478,6 +86479,23 @@ index 000000000..c05f29462
 +    }
 +}
 +
++thread_local! {
++    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
++pub struct DepthGuard(usize);
++
++/// Surface calls submitted from this thread run inside `depth` others until the guard drops.
++pub fn nest(depth: usize) -> DepthGuard {
++    DepthGuard(DEPTH.replace(depth))
++}
++
++impl Drop for DepthGuard {
++    fn drop(&mut self) {
++        DEPTH.set(self.0);
++    }
++}
++
 +#[derive(Debug, Clone)]
 +pub struct SurfaceCall {
 +    pub validity: Validity,
@@ -86492,6 +86510,8 @@ index 000000000..c05f29462
 +    pub confirm: Option<String>,
 +    pub reply: Reply,
 +    pub lifetime: CallLifetime,
++    /// How many surface calls this one runs inside, as set by `nest`.
++    pub depth: usize,
 +}
 +
 +impl SurfaceCall {
@@ -86859,6 +86879,7 @@ index 000000000..c05f29462
 +            confirm,
 +            reply,
 +            lifetime: lifetime.clone(),
++            depth: DEPTH.get(),
 +        })
 +        .map_err(BlitError::retryable)?;
 +    Ok(PendingReply { receiver, lifetime })
@@ -87703,10 +87724,10 @@ index 000000000..c05f29462
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..e225f3f42
+index 000000000..a68f87f31
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,591 @@
+@@ -0,0 +1,610 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -87716,7 +87737,7 @@ index 000000000..e225f3f42
 +impl ClientSurface for Echo {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        let value = json!({"operation": call.operation, "caller": call.caller,
-+            "confirm": call.confirm, "arguments": call.arguments,
++            "confirm": call.confirm, "arguments": call.arguments, "depth": call.depth,
 +            "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "source": authority.source, "configuration": authority.configuration}))});
 +        call.reply
 +            .send(Ok(value))
@@ -87786,6 +87807,25 @@ index 000000000..e225f3f42
 +        .starts_with("client_surface_unavailable")
 +    );
 +    let registration = register(Arc::new(Echo));
++    let depth = || {
++        call(
++            "m",
++            "composer.read",
++            Value::Null,
++            InvocationContext::User,
++            false,
++            None,
++            None,
++            Arc::new(active),
++        )
++        .unwrap()["depth"]
++            .clone()
++    };
++    {
++        let _nested = nest(3);
++        assert_eq!(depth(), 3);
++    }
++    assert_eq!(depth(), 0);
 +    let authority = Authority {
 +        epoch: 7,
 +        admission: 11,
@@ -137320,10 +137360,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..64ea54b8c
+index 000000000..19bd66435
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2114 @@
+@@ -0,0 +1,2118 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -138510,6 +138550,7 @@ index 000000000..64ea54b8c
 +                        confirm: None,
 +                        reply,
 +                        lifetime: lifetime.clone(),
++                        depth: 0,
 +                    }), None));
 +                })],
 +                dismiss_on_select: true,
@@ -139286,6 +139327,7 @@ index 000000000..64ea54b8c
 +                confirm: None,
 +                reply,
 +                lifetime: Default::default(),
++                depth: 0,
 +            };
 +            crate::mod_surface::bind_test_call(&mut call);
 +            app.run_mod_surface_call(&mut tui, &mut server, call, None)
@@ -139345,6 +139387,7 @@ index 000000000..64ea54b8c
 +                confirm: None,
 +                reply,
 +                lifetime: Default::default(),
++                depth: 0,
 +            };
 +            if confirmed {
 +                let id = crate::mod_surface::hold(call);
@@ -139378,6 +139421,7 @@ index 000000000..64ea54b8c
 +                confirm: None,
 +                reply,
 +                lifetime: Default::default(),
++                depth: 0,
 +            })
 +            .unwrap()
 +            .is_some()
@@ -140181,10 +140225,10 @@ index 000000000..f58dbf131
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
-index 000000000..bd0ab3622
+index 000000000..d09c2e94a
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
-@@ -0,0 +1,177 @@
+@@ -0,0 +1,234 @@
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyEventKind;
@@ -140195,11 +140239,15 @@ index 000000000..bd0ab3622
 +use ratatui::text::Line;
 +use ratatui::widgets::Paragraph;
 +use ratatui::widgets::Widget;
++use unicode_width::UnicodeWidthChar;
++use unicode_width::UnicodeWidthStr;
 +
 +use super::CancellationEvent;
 +use super::bottom_pane_view::BottomPaneView;
 +use super::bottom_pane_view::ViewCompletion;
++use crate::mod_ui::glyph;
 +use crate::render::renderable::Renderable;
++use crate::wrapping::word_wrap_lines;
 +
 +const SECRET_CHARS: usize = 512;
 +
@@ -140240,6 +140288,19 @@ index 000000000..bd0ab3622
 +        if let Some(on_done) = self.on_done.take() {
 +            on_done(value);
 +        }
++    }
++
++    fn header(&self, width: u16) -> Vec<Line<'static>> {
++        let width = usize::from(width.max(1));
++        let title = self
++            .title
++            .split('\n')
++            .map(|line| Line::from(line.to_owned()).bold());
++        let note = self
++            .note
++            .split('\n')
++            .map(|line| Line::from(line.to_owned()).dim());
++        word_wrap_lines(title.chain(note), width)
 +    }
 +
 +    fn push(&mut self, text: &str) {
@@ -140307,22 +140368,36 @@ index 000000000..bd0ab3622
 +
 +impl Renderable for SecretPromptView {
 +    fn render(&self, area: Rect, buf: &mut Buffer) {
-+        let masked = if self.masked {
-+            "•".repeat(self.value.chars().count().min(64))
++        let value = if self.masked {
++            glyph("•", "*").repeat(self.value.chars().count().min(64))
 +        } else {
 +            self.value.clone()
 +        };
-+        Paragraph::new(vec![
-+            Line::from(self.title.clone()).bold(),
-+            Line::from(self.note.clone()).dim(),
-+            Line::from(format!("› {masked}")),
-+            Line::from("enter to save · esc to cancel").dim(),
-+        ])
-+        .render(area, buf);
++        let prompt = glyph("› ", "> ");
++        // The input keeps its end, where typing happens, in view.
++        let mut room = usize::from(area.width).saturating_sub(prompt.width());
++        let start = value
++            .char_indices()
++            .rev()
++            .take_while(|(_, character)| {
++                let width = character.width().unwrap_or(0);
++                let fits = width <= room;
++                room = room.saturating_sub(width);
++                fits
++            })
++            .last()
++            .map_or(value.len(), |(start, _)| start);
++        let mut lines = self.header(area.width);
++        lines.truncate(usize::from(area.height.saturating_sub(2)));
++        lines.push(Line::from(format!("{prompt}{}", &value[start..])));
++        lines.push(Line::from(format!("enter to save {} esc to cancel", glyph("·", "-"))).dim());
++        Paragraph::new(lines).render(area, buf);
 +    }
 +
-+    fn desired_height(&self, _width: u16) -> u16 {
-+        4
++    fn desired_height(&self, width: u16) -> u16 {
++        u16::try_from(self.header(width).len())
++            .unwrap_or(u16::MAX)
++            .saturating_add(2)
 +    }
 +}
 +
@@ -140361,13 +140436,39 @@ index 000000000..bd0ab3622
 +            vec![Some("sk-test".to_owned()), None, None]
 +        );
 +    }
++
++    #[test]
++    fn long_messages_wrap_and_the_input_keeps_its_end_in_view() {
++        let words = (0..50).map(|n| format!("word{n:02}")).collect::<Vec<_>>();
++        let message = [&words[..17], &words[17..34], &words[34..]]
++            .map(|line| line.join(" "))
++            .join("\n");
++        let mut view = SecretPromptView::new("Title".into(), message, Box::new(|_| {})).plain();
++        view.handle_paste(format!("{}tail", "x".repeat(60)));
++        let height = view.desired_height(40);
++        let area = Rect::new(0, 0, 40, height);
++        let mut buffer = Buffer::empty(area);
++        view.render(area, &mut buffer);
++        let rows = (0..height)
++            .map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect::<String>())
++            .collect::<Vec<_>>();
++        let screen = rows.join("\n");
++        assert!(
++            words.iter().all(|word| screen.contains(word.as_str())),
++            "{screen}"
++        );
++        assert!(
++            rows[usize::from(height) - 2].trim_end().ends_with("xtail"),
++            "{screen}"
++        );
++    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..ff0f0dc8f
+index 000000000..2dbe93eba
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,602 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -140777,9 +140878,7 @@ index 000000000..ff0f0dc8f
 +
 +    pub(crate) fn mod_invoke_command(&mut self, call: codex_omd::client_surface::SurfaceCall) {
 +        use crate::slash_command::SlashCommand;
-+        use std::sync::atomic::AtomicUsize;
 +        use std::sync::atomic::Ordering;
-+        static DEPTH: AtomicUsize = AtomicUsize::new(0);
 +        let name = call.arguments["command"]
 +            .as_str()
 +            .unwrap_or_default()
@@ -140814,7 +140913,7 @@ index 000000000..ff0f0dc8f
 +                .send(Err(format!("command_invoke_refused: {name}")));
 +            return;
 +        }
-+        if DEPTH.load(Ordering::Acquire) >= 4 {
++        if call.depth >= 4 {
 +            let _ = call.reply.send(Err(
 +                "command_recursion_limit: at most 4 nested commands".into()
 +            ));
@@ -140829,7 +140928,7 @@ index 000000000..ff0f0dc8f
 +                let _ = call.reply.send(Err(error));
 +                return;
 +            }
-+            DEPTH.fetch_add(1, Ordering::AcqRel);
++            let _nested = codex_omd::client_surface::nest(call.depth + 1);
 +            let dispatch = tx.clone();
 +            let queued = std::sync::atomic::AtomicBool::new(false);
 +            let result = crate::mod_runtime::run_command(
@@ -140858,7 +140957,6 @@ index 000000000..ff0f0dc8f
 +                    None => Err(format!("command_invoke_refused: {name}")),
 +                },
 +            );
-+            DEPTH.fetch_sub(1, Ordering::AcqRel);
 +            match result {
 +                Ok(result) => {
 +                    if target.is_some() || !queued.load(Ordering::Acquire) {
@@ -140975,10 +141073,10 @@ index 000000000..ff0f0dc8f
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..ee0dca97f
+index 000000000..e3708d8a7
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,266 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -141009,6 +141107,7 @@ index 000000000..ee0dca97f
 +
 +fn mod_entries(root: PathBuf) -> Result<Vec<ModEntry>, String> {
 +    let runtime = crate::omd::mod_status();
++    let terminal = crate::mod_runtime::terminal_failures();
 +    let status = ModStore::open(root)
 +        .and_then(|store| store.selection_status())
 +        .map_err(|error| error.to_string())?;
@@ -141018,23 +141117,26 @@ index 000000000..ee0dca97f
 +        .flatten()
 +        .filter_map(|selection| {
 +            let path = PathBuf::from(selection["path"].as_str()?);
-+            let failure = runtime.as_ref().and_then(|runtime| {
-+                runtime["rejected"]
-+                    .as_array()
-+                    .into_iter()
-+                    .flatten()
-+                    .find(|item| item["path"] == selection["path"])
-+                    .and_then(|item| item["reason"].as_str())
-+                    .or_else(|| {
-+                        runtime["mods"]
-+                            .as_array()
-+                            .into_iter()
-+                            .flatten()
-+                            .find(|item| item["id"] == selection["id"])
-+                            .and_then(|item| item["error"].as_str())
-+                    })
-+                    .map(first_line)
-+            });
++            let failure = runtime
++                .as_ref()
++                .and_then(|runtime| {
++                    runtime["rejected"]
++                        .as_array()
++                        .into_iter()
++                        .flatten()
++                        .find(|item| item["path"] == selection["path"])
++                        .and_then(|item| item["reason"].as_str())
++                        .or_else(|| {
++                            runtime["mods"]
++                                .as_array()
++                                .into_iter()
++                                .flatten()
++                                .find(|item| item["id"] == selection["id"])
++                                .and_then(|item| item["error"].as_str())
++                        })
++                })
++                .or_else(|| terminal.get(selection["id"].as_str()?).map(String::as_str))
++                .map(first_line);
 +            Some(ModEntry {
 +                id: selection["id"]
 +                    .as_str()
@@ -142458,10 +142560,10 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..9af55c46e
+index 000000000..17f4036a1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,689 @@
+@@ -0,0 +1,685 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -143037,11 +143139,7 @@ index 000000000..9af55c46e
 +    }
 +    let window = document.view.window(total, height);
 +    let selection = document.view.selection();
-+    let marker = if crate::omd::ligatures_enabled() {
-+        "› "
-+    } else {
-+        "> "
-+    };
++    let marker = crate::mod_ui::glyph("› ", "> ");
 +    let matches = document
 +        .view
 +        .find
@@ -146084,7 +146182,7 @@ index 000000000..06d459066
 +}
 diff --git a/codex-rs/tui/src/mod_render.rs b/codex-rs/tui/src/mod_render.rs
 new file mode 100644
-index 000000000..8ade71c95
+index 000000000..bca2734eb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_render.rs
 @@ -0,0 +1,675 @@
@@ -146316,7 +146414,7 @@ index 000000000..8ade71c95
 +        .iter()
 +        .filter(|notice| calls.contains(&notice.call_id.as_str()))
 +        .map(|notice| {
-+            let mut spans = vec!["  ↳ ".dim()];
++            let mut spans = vec![crate::mod_ui::glyph("  ↳ ", "  -> ").dim()];
 +            spans.extend(crate::history_cell::notice_spans(notice.kind, &notice.text));
 +            spans.push(format!(" ({})", notice.owner).dark_gray());
 +            HyperlinkLine {
@@ -146901,10 +146999,10 @@ index 000000000..ef92b4ed0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..f61453ce7
+index 000000000..57da48433
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1563 @@
+@@ -0,0 +1,1564 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -146914,7 +147012,6 @@ index 000000000..f61453ce7
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use serde_json::Value;
 +use std::collections::BTreeMap;
-+use std::io::Write;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::str::FromStr;
@@ -147713,9 +147810,7 @@ index 000000000..f61453ce7
 +    let runtime = shared_host().ok()?;
 +    let mut runtime = runtime.locked();
 +    reload(&mut runtime);
-+    let result = run(&mut runtime, &paths);
-+    record_status(&runtime, &paths);
-+    result
++    run(&mut runtime, &paths)
 +}
 +
 +const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
@@ -147739,23 +147834,28 @@ index 000000000..f61453ce7
 +    };
 +    let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
 +    reload(&mut runtime);
-+    let result = run(&mut runtime, &paths);
-+    record_status(&runtime, &paths);
-+    result
++    run(&mut runtime, &paths)
 +}
 +
-+fn record_status(runtime: &ModHost, paths: &crate::omd::ModPaths) {
-+    let status = runtime.status();
-+    if status["mods"]
-+        .as_array()
-+        .is_some_and(|mods| mods.iter().any(|item| item["error"].is_string()))
-+        && let Ok(bytes) = serde_json::to_vec(&status)
-+        && bytes.len() <= 262_144
-+        && let Ok(mut file) = tempfile::NamedTempFile::new_in(&paths.evidence)
-+        && file.write_all(&bytes).is_ok()
-+    {
-+        let _ = file.persist(paths.evidence.join("mod-status.json"));
-+    }
++/// Mods the terminal's own host has failed; `mod-status.json` belongs to the session's host and never lists them.
++pub(crate) fn terminal_failures() -> BTreeMap<String, String> {
++    (|| {
++        let runtime = lock_within(&HOST, LOCK_WAIT)?.clone()?;
++        let status = lock_within(&runtime, LOCK_WAIT)?.status();
++        Some(
++            status["mods"]
++                .as_array()?
++                .iter()
++                .filter_map(|item| {
++                    Some((
++                        item["id"].as_str()?.to_owned(),
++                        item["error"].as_str()?.to_owned(),
++                    ))
++                })
++                .collect(),
++        )
++    })()
++    .unwrap_or_default()
 +}
 +
 +pub(crate) fn invoke_event(id: &str, event: &str, payload: Value) -> Option<Result<Value, String>> {
@@ -147844,7 +147944,6 @@ index 000000000..f61453ce7
 +    );
 +    let snapshot = {
 +        let mut runtime = runtime.locked();
-+        record_status(&runtime, &paths);
 +        reload(&mut runtime);
 +        let changed = runtime.state(id) != before.0.as_ref()
 +            || runtime.configuration_sha256() != before.1
@@ -150218,10 +150317,10 @@ index 000000000..cdf77f1bd
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..653ef0f89
+index 000000000..98b5a8250
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,872 @@
+@@ -0,0 +1,874 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -150787,6 +150886,7 @@ index 000000000..653ef0f89
 +            confirm: Some("held".into()),
 +            reply,
 +            lifetime: Default::default(),
++            depth: 0,
 +        })
 +        .unwrap();
 +    let AppEvent::ModSurfaceCall(queued, _) = receiver.try_recv().unwrap() else {
@@ -151011,6 +151111,7 @@ index 000000000..653ef0f89
 +                confirm: None,
 +                reply,
 +                lifetime,
++                depth: 0,
 +            },
 +            answer,
 +        )
@@ -151096,10 +151197,10 @@ index 000000000..653ef0f89
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..8e5710981
+index 000000000..f483b789b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4609 @@
+@@ -0,0 +1,4643 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -151239,6 +151340,8 @@ index 000000000..8e5710981
 +    selected: BTreeMap<String, usize>,
 +    collapsed: BTreeMap<String, bool>,
 +    scroll: BTreeMap<String, u16>,
++    /// The last offset at which a pane's final rows still fill its window, from its last draw.
++    scroll_limits: BTreeMap<String, u16>,
 +    owners: Vec<String>,
 +    component_owners: BTreeMap<String, String>,
 +    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
@@ -151365,6 +151468,23 @@ index 000000000..8e5710981
 +    .unwrap_or_default()
 +}
 +
++/// `OMD_TUI_ASCII=1`, a non-UTF-8 locale and the theme's `icons: ascii` each select ASCII glyphs.
++fn unicode(look: (ModBorder, ModIcons)) -> bool {
++    look.1 != ModIcons::Ascii && crate::omd::unicode_supported()
++}
++
++fn glyph_in(
++    look: (ModBorder, ModIcons),
++    unicode: &'static str,
++    ascii: &'static str,
++) -> &'static str {
++    if self::unicode(look) { unicode } else { ascii }
++}
++
++pub(crate) fn glyph(unicode: &'static str, ascii: &'static str) -> &'static str {
++    glyph_in(look(), unicode, ascii)
++}
++
 +fn card(border: ModBorder) -> ModBoxStyle {
 +    ModBoxStyle {
 +        border: Some(match border {
@@ -151422,9 +151542,7 @@ index 000000000..8e5710981
 +            look,
 +            border: match border {
 +                ModBoxBorder::None => None,
-+                _ if look.1 == ModIcons::Ascii || !crate::omd::unicode_supported() => {
-+                    Some(ASCII_BORDER)
-+                }
++                _ if !unicode(look) => Some(ASCII_BORDER),
 +                ModBoxBorder::Plain => Some(ratatui::symbols::border::PLAIN),
 +                ModBoxBorder::Rounded => Some(ratatui::symbols::border::ROUNDED),
 +                ModBoxBorder::Double => Some(ratatui::symbols::border::DOUBLE),
@@ -151904,6 +152022,7 @@ index 000000000..8e5710981
 +
 +const PASTE_BYTES: usize = 64 * 1024;
 +const RASTER_HEIGHT: u16 = 12;
++const PANE_ROWS: usize = 8;
 +
 +static CACHE: RwLock<Option<Cache>> = RwLock::new(None);
 +static INTERACTION: Mutex<Interaction> = Mutex::new(Interaction {
@@ -151919,6 +152038,7 @@ index 000000000..8e5710981
 +    selected: BTreeMap::new(),
 +    collapsed: BTreeMap::new(),
 +    scroll: BTreeMap::new(),
++    scroll_limits: BTreeMap::new(),
 +    owners: Vec::new(),
 +    component_owners: BTreeMap::new(),
 +    pty_bindings: BTreeMap::new(),
@@ -152342,6 +152462,7 @@ index 000000000..8e5710981
 +    interaction.checked.retain(|id, _| ids.contains(id));
 +    interaction.collapsed.retain(|id, _| ids.contains(id));
 +    interaction.scroll.retain(|id, _| ids.contains(id));
++    interaction.scroll_limits.retain(|id, _| ids.contains(id));
 +    interaction.seeds.retain(|id, _| ids.contains(id));
 +    interaction.echoes.retain(|id, _| ids.contains(id));
 +    interaction.hovered.retain(|id, _| ids.contains(id));
@@ -152620,7 +152741,7 @@ index 000000000..8e5710981
 +    let mut panels = Vec::new();
 +    if let Some(progress) = &snapshot.progress {
 +        panels.push(ModPanel {
-+            title: format!("Progress · {}", progress.title),
++            title: format!("Progress {} {}", glyph("·", "-"), progress.title),
 +            lines: progress.lines.clone(),
 +        });
 +    }
@@ -153113,7 +153234,12 @@ index 000000000..8e5710981
 +                    let at = cursor
 +                        .and_then(|cursor| current.char_indices().nth(cursor))
 +                        .map_or(current.len(), |(byte, _)| byte);
-+                    format!("{}▏{}", &current[..at], &current[at..])
++                    format!(
++                        "{}{}{}",
++                        &current[..at],
++                        glyph_in(look, "▏", "|"),
++                        &current[at..]
++                    )
 +                } else if current.is_empty() {
 +                    placeholder.clone()
 +                } else {
@@ -153146,12 +153272,15 @@ index 000000000..8e5710981
 +                let shown = options
 +                    .get(*selected)
 +                    .map(|option| option.label.as_str())
-+                    .unwrap_or("—");
++                    .unwrap_or(glyph_in(look, "—", "-"));
 +                rows.push(ComponentRow {
 +                    id: Some(id.clone()),
 +                    label: Some(label.clone()),
 +                    links: Vec::new(),
-+                    line: Line::from(format!("{label}: ‹ {shown} ›")),
++                    line: Line::from(match unicode(look) {
++                        true => format!("{label}: ‹ {shown} ›"),
++                        false => format!("{label}: < {shown} >"),
++                    }),
 +                    target: Some(ComponentTarget::Select {
 +                        action: action.clone(),
 +                        options: options
@@ -153286,8 +153415,7 @@ index 000000000..8e5710981
 +                    interaction.hovered.contains_key(id),
 +                    focus_within(component, interaction),
 +                );
-+                let unicode = crate::omd::ligatures_enabled() && look.1 != ModIcons::Ascii;
-+                let marker = match (collapsed, unicode) {
++                let marker = match (collapsed, unicode(look)) {
 +                    (true, true) => "▸",
 +                    (true, false) => ">",
 +                    (false, true) => "▾",
@@ -153309,10 +153437,16 @@ index 000000000..8e5710981
 +                    for row in &mut nested {
 +                        row.take_columns(&mut head.columns);
 +                    }
-+                    let offset =
-+                        usize::from(*interaction.scroll.entry(id.clone()).or_insert(*scroll))
-+                            .min(nested.len().saturating_sub(1));
-+                    nested.into_iter().skip(offset).take(8).collect()
++                    let limit =
++                        u16::try_from(nested.len().saturating_sub(PANE_ROWS)).unwrap_or(u16::MAX);
++                    interaction.scroll_limits.insert(id.clone(), limit);
++                    let offset = interaction.scroll.entry(id.clone()).or_insert(*scroll);
++                    *offset = (*offset).min(limit);
++                    nested
++                        .into_iter()
++                        .skip(usize::from(*offset))
++                        .take(PANE_ROWS)
++                        .collect()
 +                };
 +                let start = rows.len();
 +                rows.extend(framed(&frame, width, Some(head), body));
@@ -153375,11 +153509,7 @@ index 000000000..8e5710981
 +                let start = (current + 1)
 +                    .saturating_sub(window)
 +                    .min(items.len().saturating_sub(window));
-+                let marker = if crate::omd::ligatures_enabled() {
-+                    "› "
-+                } else {
-+                    "> "
-+                };
++                let marker = glyph_in(look, "› ", "> ");
 +                for (index, item) in items.iter().enumerate().skip(start).take(window) {
 +                    let chosen = index == current;
 +                    let lead = (if chosen { marker } else { "  " }).to_owned();
@@ -155387,9 +155517,14 @@ index 000000000..8e5710981
 +            }
 +        }
 +        ComponentTarget::Pane => {
++            let limit = interaction
++                .scroll_limits
++                .get(&id)
++                .copied()
++                .unwrap_or(u16::MAX);
 +            let scroll = interaction.scroll.entry(id).or_default();
 +            *scroll = if forward {
-+                scroll.saturating_add(1)
++                scroll.saturating_add(1).min(limit)
 +            } else {
 +                scroll.saturating_sub(1)
 +            };
@@ -155961,10 +156096,10 @@ index 000000000..7a295af43
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..d4bc10fda
+index 000000000..1e0770b99
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1886 @@
+@@ -0,0 +1,1965 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -156412,7 +156547,10 @@ index 000000000..d4bc10fda
 +    assert_eq!(interaction.focused.as_deref(), Some("details"));
 +    assert_eq!(interaction.input_values["review"], "seedx");
 +    assert_eq!(interaction.selected["side"], 1);
-+    assert_eq!(interaction.scroll["details"], 1);
++    assert_eq!(
++        interaction.scroll["details"], 0,
++        "a pane whose rows fit its window does not scroll"
++    );
 +    drop(interaction);
 +
 +    let copy = INTERACTION
@@ -156977,6 +157115,48 @@ index 000000000..d4bc10fda
 +    assert_eq!(interaction.scroll["results"], 3);
 +    assert_eq!(interaction.focused.as_deref(), Some("results"));
 +    drop(interaction);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn pane_scroll_stops_when_its_last_rows_fill_the_window() {
++    let children = (0..10)
++        .map(|n| serde_json::json!({"type":"text","id":format!("row{n}"),"label":"Row","text":format!("row {n}")}))
++        .collect::<Vec<_>>();
++    let snapshot = snapshot(serde_json::json!({"sites":{"sidebar":{"components":[
++        {"type":"pane","id":"log","label":"Log","children":children}
++    ]}},"sidebar_width":30}));
++    let area = Rect::new(0, 0, 80, 24);
++    sync_interaction(&snapshot.view);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    assert!(focus("log"));
++    let scroll = || {
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .scroll["log"]
++    };
++    let mut offsets = Vec::new();
++    for _ in 0..20 {
++        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
++        offsets.push(scroll());
++    }
++    offsets.dedup();
++    assert_eq!(
++        offsets,
++        [1, 2],
++        "only moves that change the window are recorded"
++    );
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    let drawn = rows(&buffer, area);
++    assert!(
++        drawn.contains("row 2") && drawn.contains("row 9") && !drawn.contains("row 1"),
++        "{drawn}"
++    );
++    input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
++    assert_eq!(scroll(), 1);
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -157770,6 +157950,40 @@ index 000000000..d4bc10fda
 +    let drawn = rows(&buffer, area);
 +    assert!(drawn.contains("HEAD") && drawn.contains("-----"), "{drawn}");
 +    assert!(!drawn.contains('─'), "{drawn}");
++    let controls = self::snapshot(
++        serde_json::json!({"theme": {"icons": "ascii"}, "sites": {"sidebar": {"components": [
++            {"type": "input", "id": "name", "label": "Name", "value": "ab", "action": {"command": "fixture:name"}},
++            {"type": "select", "id": "side", "label": "Side", "value": "left",
++                "options": [{"value": "left", "label": "Left"}], "action": {"command": "fixture:side"}},
++            {"type": "list", "id": "items", "label": "Items", "rows": [{"value": "a", "label": "Alpha"}],
++                "action": {"command": "fixture:items"}},
++            {"type": "pane", "id": "log", "label": "Log", "title": "Log", "children": []}
++        ]}}}),
++    );
++    preview(controls.clone());
++    let area = Rect::new(0, 0, 40, 12);
++    let mut buffer = Buffer::empty(area);
++    let mut interaction = Interaction {
++        focused: Some("name".to_owned()),
++        ..Interaction::default()
++    };
++    render_site(
++        area,
++        &controls.view.sites["sidebar"].components,
++        Style::default(),
++        &mut buffer,
++        &mut interaction,
++        Frame::new(ModBoxStyle::default(), look(), false, false),
++        None,
++    );
++    let drawn = rows(&buffer, area);
++    assert!(
++        drawn.contains("Name: ab|")
++            && drawn.contains("Side: < Left >")
++            && drawn.contains("> Alpha"),
++        "{drawn}"
++    );
++    assert!(drawn.is_ascii(), "{drawn}");
 +    preview(ModViewSnapshot::default());
 +}
 +
@@ -157976,10 +158190,10 @@ index 000000000..fdbccb32c
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..7b73cc91c
+index 000000000..b59fd6f4c
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,702 @@
+@@ -0,0 +1,698 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -158336,10 +158550,6 @@ index 000000000..7b73cc91c
 +        .map(|value| codex_omd::install_profile(&value))
 +}
 +
-+pub(crate) fn ligatures_enabled() -> bool {
-+    terminal_active() && unicode_supported()
-+}
-+
 +pub(crate) fn unicode_supported() -> bool {
 +    std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1") && locale_supports_unicode()
 +}
@@ -158684,7 +158894,7 @@ index 000000000..7b73cc91c
 +}
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
 new file mode 100644
-index 000000000..c1c65cecf
+index 000000000..fd74692fb
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
 @@ -0,0 +1,14 @@
@@ -158692,19 +158902,19 @@ index 000000000..c1c65cecf
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, area)"
 +---
-+┌ v Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
++┌ ▾ Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 +│ ╭ CPU ───────────────────────────────╮ ╔ Memory ═══════════════════════════════════════════════════════════════════╗ │
 +│ │ 12%                                │ ║[ Free memory ]                                                            ║ │
 +│ ╰────────────────────────────────────╯ ╚═══════════════════════════════════════════════════════════════════════════╝ │
 +└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 +                                                                                                                        
-+ v Flat                                                                                                                 
++ ▾ Flat                                                                                                                 
 + [ Go ]                                                                                                                 
 +                                                                                                                        
 +hover me
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap
 new file mode 100644
-index 000000000..8364360ba
+index 000000000..808365949
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_200.snap
 @@ -0,0 +1,14 @@
@@ -158712,40 +158922,39 @@ index 000000000..8364360ba
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, area)"
 +---
-+┌ v Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
++┌ ▾ Card ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 +│ ╭ CPU ──────────────────────────────────────────────────────────╮ ╔ Memory ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗ │
 +│ │ 12%                                                           │ ║[ Free memory ]                                                                                                                 ║ │
 +│ ╰───────────────────────────────────────────────────────────────╯ ╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝ │
 +└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 +                                                                                                                                                                                                        
-+ v Flat                                                                                                                                                                                                 
++ ▾ Flat                                                                                                                                                                                                 
 + [ Go ]                                                                                                                                                                                                 
 +                                                                                                                                                                                                        
 +hover me
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap
 new file mode 100644
-index 000000000..921d92c9c
+index 000000000..fb98104c7
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_60.snap
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,14 @@
 +---
 +source: tui/src/mod_ui_tests.rs
-+assertion_line: 2138
 +expression: "rows(&buffer, area)"
 +---
-+┌ v Card ──────────────────────────────────────────────────┐
++┌ ▾ Card ──────────────────────────────────────────────────┐
 +│ ╭ CPU ───────────╮ ╔ Memory ═══════════════════════════╗ │
 +│ │ 12%            │ ║[ Free memory ]                    ║ │
 +│ ╰────────────────╯ ╚═══════════════════════════════════╝ │
 +└──────────────────────────────────────────────────────────┘
 +                                                            
-+ v Flat                                                     
++ ▾ Flat                                                     
 + [ Go ]                                                     
 +                                                            
 +hover me
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap
 new file mode 100644
-index 000000000..b5a571dc8
+index 000000000..fdeb5e2ef
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_80.snap
 @@ -0,0 +1,14 @@
@@ -158753,13 +158962,13 @@ index 000000000..b5a571dc8
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, area)"
 +---
-+┌ v Card ──────────────────────────────────────────────────────────────────────┐
++┌ ▾ Card ──────────────────────────────────────────────────────────────────────┐
 +│ ╭ CPU ──────────────────╮ ╔ Memory ════════════════════════════════════════╗ │
 +│ │ 12%                   │ ║[ Free memory ]                                 ║ │
 +│ ╰───────────────────────╯ ╚════════════════════════════════════════════════╝ │
 +└──────────────────────────────────────────────────────────────────────────────┘
 +                                                                                
-+ v Flat                                                                         
++ ▾ Flat                                                                         
 + [ Go ]                                                                         
 +                                                                                
 +hover me
@@ -158794,7 +159003,7 @@ index 000000000..ca94e07b3
 +──────────────────────────────────────────────────────────────────────────────────────────
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 new file mode 100644
-index 000000000..4950f39d4
+index 000000000..36ead6161
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 @@ -0,0 +1,7 @@
@@ -158802,12 +159011,12 @@ index 000000000..4950f39d4
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, area)"
 +---
-+┌ v Agents ────────────┐Build                                                             
++┌ ▾ Agents ────────────┐Build                                                             
 +│ 2 running            │main · clean                                                      
 +└──────────────────────┘──────────────────────────────────────────────────────────────────
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 new file mode 100644
-index 000000000..6087ba9da
+index 000000000..a57559717
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 @@ -0,0 +1,12 @@
@@ -158815,7 +159024,7 @@ index 000000000..6087ba9da
 +source: tui/src/mod_ui_tests.rs
 +expression: "rows(&buffer, area)"
 +---
-+                                                            ┌ v Worker ──────────────────┐
++                                                            ┌ ▾ Worker ──────────────────┐
 +                                                            │ running                    │
 +                                                            └────────────────────────────┘
 +                                                                                          

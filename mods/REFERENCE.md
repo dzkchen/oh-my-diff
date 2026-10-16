@@ -1934,7 +1934,7 @@ as `sidebar_style`, the sidebar:
 - `border`: `none`, `plain`, `rounded`, `double` or `thick`; a title sits in
   the top edge. Under the theme's `icons: 'ascii'`, `OMD_TUI_ASCII=1`, or a
   non-Unicode locale, every border draws as
-  `+`, `-` and `|`.
+  `+`, `-` and `|`, and markers, cursors and separators draw in ASCII too.
 - `padding` and `margin`: cells on every side, or `[vertical, horizontal]`,
   each 0–4. `gap` (0–4) separates children: rows in a column, cells in a row.
 - `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color
@@ -1992,7 +1992,8 @@ Operations:
 - `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
   update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
-  focuses, scrolls (`offset`) or reveals one of the caller's own panes,
+  focuses, scrolls (`offset`; a pane shows 8 rows and stops scrolling once
+  its last row is in view) or reveals one of the caller's own panes,
   dialogs or controls; another mod's component is `terminal_pane_not_owned`.
 - `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as
   `{panes: [{id, visible, collapsed, focused, scroll}]}`; a pane is `visible`

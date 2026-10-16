@@ -271,6 +271,23 @@ impl Drop for AuthorityGuard {
     }
 }
 
+thread_local! {
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub struct DepthGuard(usize);
+
+/// Surface calls submitted from this thread run inside `depth` others until the guard drops.
+pub fn nest(depth: usize) -> DepthGuard {
+    DepthGuard(DEPTH.replace(depth))
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        DEPTH.set(self.0);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SurfaceCall {
     pub validity: Validity,
@@ -285,6 +302,8 @@ pub struct SurfaceCall {
     pub confirm: Option<String>,
     pub reply: Reply,
     pub lifetime: CallLifetime,
+    /// How many surface calls this one runs inside, as set by `nest`.
+    pub depth: usize,
 }
 
 impl SurfaceCall {
@@ -652,6 +671,7 @@ fn submit_bound(
             confirm,
             reply,
             lifetime: lifetime.clone(),
+            depth: DEPTH.get(),
         })
         .map_err(BlitError::retryable)?;
     Ok(PendingReply { receiver, lifetime })
