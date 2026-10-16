@@ -199,7 +199,6 @@ fn selection_status_explains_precedence_and_changed_source() {
             .unwrap();
         store.enable(path, true).unwrap();
     }
-    // Exercise ordered parallel inspection alongside the conflicting selections.
     for index in 0..4 {
         let path = mod_package(&user, &format!("extra{index}"), "1.2.0", &[], json!([]));
         let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
@@ -1456,7 +1455,6 @@ fn npm_mod(version: &str, capabilities: &[&str]) -> Vec<(String, Vec<u8>)> {
     ]
 }
 
-/// Publishes `versions` of `@fixture/omd-npm` with `latest` as the newest.
 fn publish(origin: &str, routes: &Routes, versions: &[(&str, Vec<u8>)]) {
     let mut metadata = json!({"name":"@fixture/omd-npm","dist-tags":{},"versions":{}});
     let mut routes = routes.lock().unwrap();

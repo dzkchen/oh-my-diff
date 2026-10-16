@@ -213,7 +213,7 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     engine('init', store, process.execPath);
     const trust = { packages: { fixture: { capabilities: manifest.capabilities, dependencies: true }, dependency: { capabilities: [] } } };
     install({ source: { kind: 'local', path: project }, scope: 'user', index, trust });
-    // Seed inconsistent dependency scopes directly: installing a second scope now fails before watch runs.
+    // Seed inconsistent dependency scopes directly: installing a second scope fails before watch runs.
     const mixedScopes = engine('package-lock', store);
     mixedScopes.packages.dependency.scope = 'project';
     writeFileSync(join(store, 'packages.lock.json'), JSON.stringify(mixedScopes));

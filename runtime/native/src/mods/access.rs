@@ -117,7 +117,6 @@ async fn cancelled(flag: &AtomicBool) {
     }
 }
 
-/// Bounds a future by the request deadline and the callback's cancellation.
 async fn bounded<T>(
     future: impl std::future::Future<Output = Result<T, String>>,
     deadline: tokio::time::Instant,
@@ -367,7 +366,6 @@ fn response_headers(response: &reqwest::Response) -> Value {
     Value::Object(headers)
 }
 
-/// The length without a trailing incomplete UTF-8 character, when that leaves valid text.
 fn text_end(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
         Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => error.valid_up_to(),
@@ -375,7 +373,6 @@ fn text_end(bytes: &[u8]) -> usize {
     }
 }
 
-/// Text when the bytes are UTF-8, otherwise base64.
 pub(crate) fn content(field: &str, bytes: &[u8]) -> (String, Value) {
     match std::str::from_utf8(bytes) {
         Ok(text) => (field.to_owned(), json!(text)),
@@ -704,7 +701,6 @@ async fn mcp(
     Ok(json!({"server": name, "connected": connect, "tool_prefix": format!("mcp__{name}__")}))
 }
 
-/// Adds or removes one MCP server on the lead thread through the engine's own MCP refresh.
 async fn reconfigure(
     lead: &Lead,
     name: &str,
@@ -763,7 +759,6 @@ async fn reconfigure(
     Err("mcp_config_stale".into())
 }
 
-/// Disconnects MCP servers whose owner is gone or reloaded; `owner` limits it to one mod.
 pub(super) async fn release_servers(lead: &Lead, generation: u64, owner: Option<&str>) {
     let Ok(_mutation) = lead.session.access.mcp_mutation.acquire().await else {
         return;

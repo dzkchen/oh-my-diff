@@ -218,7 +218,6 @@ impl HostConfig {
         Ok(())
     }
 
-    /// The provider-billed service route rates for `provider`, from any grant or only `mod_id`'s.
     pub(crate) fn billed_rates(&self, provider: &str, mod_id: Option<&str>) -> Option<&Rates> {
         self.services
             .iter()

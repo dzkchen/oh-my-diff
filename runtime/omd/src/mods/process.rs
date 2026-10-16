@@ -53,8 +53,7 @@ fn stop(mut child: Child) {
     let _ = child.wait();
 }
 
-/// Trims the warm pool back to one runner once callbacks have been idle for five seconds, and
-/// stops render runners unused for a minute.
+/// Trims the warm pool to one runner after five idle seconds and stops render runners unused for a minute.
 fn reap() {
     static REAPER: std::sync::Once = std::sync::Once::new();
     REAPER.call_once(|| {
@@ -158,7 +157,6 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
     (lines, reader)
 }
 
-/// Sends one request and answers its host calls until the runner writes its result line.
 fn converse(
     stdin: &mut ChildStdin,
     lines: &mpsc::Receiver<Vec<u8>>,
@@ -213,8 +211,7 @@ struct Warm {
     errors: std::thread::JoinHandle<Vec<u8>>,
     used: Instant,
     serve: bool,
-    /// A mounted component's runner and its owner (`""` for the terminal, else the client): never
-    /// idle-retired or evicted, only unmounted or retired by a newer package identity.
+    /// A mounted component's runner and its owner (`""` for the terminal, else the client): never idle-retired or evicted, only unmounted or retired by a newer package identity.
     pinned: Option<String>,
     born: Instant,
     /// Bytes of the activation request outside its serve fields.
@@ -318,8 +315,7 @@ impl Drop for Stepping {
     }
 }
 
-/// Registers a new pinned runner, refusing a fifth for its owner and retiring the owner's runner of
-/// the same instance under an older package identity.
+/// Registers a new pinned runner, refusing a fifth for its owner and retiring the owner's runner of the same instance under an older package identity.
 fn mount(owner: &str, key: &str) -> Result<()> {
     let instance = key.rsplit_once(':').map_or(key, |(instance, _)| instance);
     for stale in retire_warm(|runner| {
@@ -380,9 +376,7 @@ fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
     })
 }
 
-/// Evaluates a render callback in a runner that stays activated for later renders with the same
-/// `key`: the package, its settings and state, everything except the render's own input. Other
-/// callbacks reuse a runner only of the same package identity, each in a fresh context.
+/// Warm render runners are reused for the same `key` (package, settings and state, everything except the render's own input); other callbacks reuse a runner only of the same package identity, each in a fresh context.
 pub(super) fn evaluate_warm<R>(
     node: &Path,
     key: &str,
@@ -477,9 +471,7 @@ where
     Ok(value)
 }
 
-/// Keeps one warm callback runner per active package with a `terminal` handler, so view refreshes
-/// don't evict each other's runners and a command finds its package's runner warm. Every host in
-/// the process shares the pool, so it fits the host with the most handlers; `None` forgets a host.
+/// Keeps one warm callback runner per active package with a `terminal` handler; every host in the process shares the pool, so it fits the host with the most handlers (`None` forgets a host).
 pub(super) fn size_reused_pool(host: u64, terminal_handlers: Option<usize>) {
     let mut sizes = REUSED_POOL.lock().unwrap_or_else(PoisonError::into_inner);
     match terminal_handlers {
@@ -507,8 +499,7 @@ fn retire_warm(retire: impl FnMut(&mut Warm) -> bool) -> Vec<Warm> {
         .unwrap_or_default()
 }
 
-/// Returns a runner to the pool, stopping the least recently used ones of its kind beyond that
-/// kind's size, or stopping it if it was unmounted while out of the pool.
+/// Returns a runner to the pool, stopping the least recently used of its kind beyond that kind's size, or stopping it if unmounted while out of the pool.
 fn pool(mut runner: Warm) {
     runner.used = Instant::now();
     let kind = (runner.serve, runner.pinned.clone());

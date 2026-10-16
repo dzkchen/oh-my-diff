@@ -1,6 +1,5 @@
 import type { ModAPI } from '../../api.d.ts';
 
-// Suggests the rest of a recent prompt that starts with the current draft.
 export default function activate(api: ModAPI) {
   const recent = api.atom<string[]>('recent', []);
   api.middleware('prompt', event => {

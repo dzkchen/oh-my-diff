@@ -46,7 +46,6 @@ export type Chain = { result: Json; input: Json; answered_by: string | null; tra
 export type ViewMatch = string | Record<string, Json> | ((node: TerminalComponent) => boolean);
 export type PointerEvent = { column: number; row: number; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; half?: 0 | 1 | null; button?: 'left' | 'right' | 'middle' | null };
 export type InteractOptions = StepOptions & { payload?: Json };
-/** The value of a `component` step. */
 export type ComponentFrame = { tree: TerminalComponent[]; post: { data: Json } | null; next_ms: number | null };
 
 export function clock(virtualTimeMs: number): ScenarioPart;

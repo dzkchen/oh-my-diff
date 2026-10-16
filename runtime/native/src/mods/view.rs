@@ -14,7 +14,6 @@ struct State {
 
 pub(super) struct Views {
     state: Mutex<State>,
-    /// The snapshot as last persisted; `None` until the first publish.
     published: Mutex<Option<Arc<ModViewSnapshot>>>,
     /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
     pub(super) quiet: AtomicBool,
@@ -193,7 +192,6 @@ mod tests {
             views.presentation("thread-a", Some("fresh"))["phase"],
             "fresh"
         );
-        // A view refresh, reload, or rejected submission does not supply an accepted phase.
         assert_eq!(views.presentation("thread-a", None)["phase"], "fresh");
         views.presentation("thread-a", Some("started"));
         assert_eq!(views.presentation("thread-a", None)["phase"], "started");

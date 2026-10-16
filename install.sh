@@ -128,8 +128,7 @@ def environment(upstream, bin_dir):
     return values
 
 
-# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a
-# recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
+# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
 def first_passing(candidates, accept):
     errors = []
     for candidate in candidates:

@@ -37,15 +37,13 @@ pub struct Rates {
     pub provider_billed: bool,
 }
 
-/// Minimum spacing between `task-cost.json` snapshots written on the request path.
 const COST_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Per snapshot path: when it was last written and whether a later change is still unwritten.
 static COST_SNAPSHOTS: Mutex<BTreeMap<std::path::PathBuf, (Instant, bool)>> =
     Mutex::new(BTreeMap::new());
 
-/// The append-only task journal is the durable record; this snapshot of it is rewritten in full,
-/// so request-path updates are coalesced to one write a second and flushed at turn end.
+/// The append-only task journal is the durable record; this snapshot is rewritten in full, so request-path writes coalesce to one a second and flush at turn end.
 fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
     let due = COST_SNAPSHOTS.lock().map_or(true, |mut snapshots| {
         match snapshots.get_mut(&account.cost_capture) {
@@ -65,7 +63,6 @@ fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
     Ok(())
 }
 
-/// Writes a snapshot a coalesced update left behind, durably, and forgets the path.
 fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
     let dirty = COST_SNAPSHOTS
         .lock()
@@ -135,9 +132,7 @@ const REQUEST_HEADER: &str = "x-omd-request-id";
 const SYNTHETIC_HEADER: &str = "x-omd-synthetic";
 const CACHE_HEADER: &str = "x-omd-cache-breakpoint";
 
-/// The last cacheable `input[item].content[part]`: for `"system"` the end of the last developer
-/// message before the turn's user message (the worker instructions holding `system`), else that
-/// user message's context block.
+/// The last cacheable `input[item].content[part]`: for `"system"` the last developer message before the turn's user message, else that user message's context block.
 fn cache_breakpoint(input: &Value, through: &Value) -> Option<(usize, usize)> {
     let items = input.as_array()?;
     let user = items
@@ -227,7 +222,6 @@ pub fn global() -> Arc<Accounts> {
 
 pub type ModDispatcher = codex_omd::host::SessionDispatcher;
 
-/// Delivers an observer event to mods outside the transport thread.
 pub type ModNotifier = Arc<dyn Fn(&'static str, Value) + Send + Sync>;
 
 type RequiredSurfaces = Arc<Mutex<Vec<&'static str>>>;
@@ -292,7 +286,6 @@ impl Accounts {
         )
     }
 
-    /// Applies a provider's late settlement to a provider-billed request whose route `owns` accepts.
     pub(crate) fn settle_provider(
         &self,
         request_id: &str,
@@ -367,7 +360,6 @@ impl Accounts {
         }
     }
 
-    /// Keeps the `model_response` records of a thread until `take_responses`.
     pub fn collect(&self, thread: &str) {
         if let Ok(mut state) = self.requests.lock() {
             state.responses.insert(thread.to_owned(), Vec::new());
@@ -388,7 +380,6 @@ impl Accounts {
         }
     }
 
-    /// Drops the per-thread request state a closed thread can no longer use.
     pub fn forget_thread(&self, thread: &str) {
         if let Ok(mut state) = self.requests.lock() {
             state.retries.remove(thread);
@@ -1817,7 +1808,6 @@ impl Attempt {
         Ok(())
     }
 
-    /// Records a provider-billed request's own cost, or leaves it awaiting `ledger.settle` under its request id.
     fn provider_reported(
         &mut self,
         admission: &Admission,
@@ -1989,7 +1979,6 @@ impl Attempt {
         events
     }
 
-    /// Runs the stream chunk chain; returns a stop control when a handler stopped the response.
     fn transform(&mut self, event: &mut Value) -> Result<Option<Value>, TransportError> {
         let index = event["output_index"].as_u64();
         if index.is_none()
@@ -2136,7 +2125,6 @@ impl Attempt {
         Ok(None)
     }
 
-    /// Keeps the visible text per output item as streamed, replaced by the recorded text once the item completes.
     fn summarize(&mut self, event: &Value) {
         let index = event["output_index"].as_u64().unwrap_or_default();
         let item = &event["item"];

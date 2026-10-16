@@ -4,7 +4,6 @@ use super::*;
 pub const PERSIST_CHUNK_BYTES: usize = 49_152;
 pub const PERSIST_WITHHELD: &str = "[withheld: a required history_persist interceptor failed]";
 
-/// Replacement texts in entry order and who supplied them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PersistedRewrite {
     pub texts: Vec<String>,
@@ -19,8 +18,7 @@ fn escaped(c: char) -> usize {
     }
 }
 
-/// Where a chunk of `text` ends: within `budget` JSON-escaped bytes, after the last whitespace
-/// there so a token stays whole, and after at least one character.
+/// Where a chunk of `text` ends: within `budget` JSON-escaped bytes, after the last whitespace there so a token stays whole, and after at least one character.
 pub fn persist_cut(text: &str, budget: usize) -> usize {
     let mut size = 0;
     let end = text
@@ -41,8 +39,7 @@ pub fn persist_cut(text: &str, budget: usize) -> usize {
         .map_or(end, |at| at + 1)
 }
 
-/// Entries (`{kind, role, call_id, text}`) in callbacks of at most `PERSIST_CHUNK_BYTES` of JSON;
-/// a longer text arrives as consecutive entries with the same index.
+/// Entries (`{kind, role, call_id, text}`) in callbacks of at most `PERSIST_CHUNK_BYTES` of JSON; a longer text arrives as consecutive entries with the same index.
 pub fn persist_chunks(entries: &[Value]) -> Vec<Vec<(usize, Value)>> {
     let mut chunks: Vec<Vec<(usize, Value)>> = vec![Vec::new()];
     let mut size = 0;
@@ -74,9 +71,7 @@ pub fn persist_chunks(entries: &[Value]) -> Vec<Vec<(usize, Value)>> {
     chunks
 }
 
-/// Mods whose link changed the entries: what it passed down or returned differs from its
-/// downstream's, or, answering alone, its result differs from its input. Every mod that ran
-/// when a truncated trace shows no such link.
+/// Mods whose link changed the entries: what it passed down or returned differs from its downstream's, or, answering alone, its result differs from its input; every mod that ran when a truncated trace shows no such link.
 pub fn persist_changed_by(trace: &[Value]) -> Vec<String> {
     let ran = |entry: &&Value| entry.get("returned").is_some();
     let links = trace
@@ -108,10 +103,7 @@ pub fn persist_changed_by(trace: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// Runs `history_persist` interceptors over `entries` in chunks that fit one callback: `None`
-/// when none is installed or nothing changed; a required interceptor's failure withholds its
-/// entries. `Err` means the runtime itself was unusable, so the caller decides from the
-/// published requirement.
+/// `None` when no interceptor is installed or nothing changed; a required interceptor's failure withholds its entries. `Err` means the runtime itself was unusable, so the caller decides from the published requirement.
 pub fn persist_texts(
     runtime: &Mutex<ModHost>,
     thread: &str,

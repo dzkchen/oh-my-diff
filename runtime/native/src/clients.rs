@@ -151,7 +151,6 @@ fn owner<'a>(snapshot: &'a ModViewSnapshot, component: &str) -> Result<&'a str, 
         .ok_or_else(|| format!("view_stale: {component}"))
 }
 
-/// The published view, or `None` while mods are inactive or before the host publishes its first one.
 pub fn published() -> Option<Arc<ModViewSnapshot>> {
     core().ok()?.views.published()
 }
@@ -228,8 +227,6 @@ fn event_payload(event: &Value) -> Result<serde_json::Map<String, Value>, String
         .collect())
 }
 
-/// A client's module instance: the owner and module the view gave it, the size it last rendered it
-/// at, and whether a newer view revoked it.
 struct Module {
     owner: String,
     module: String,
@@ -237,7 +234,6 @@ struct Module {
     revoked: Arc<AtomicBool>,
 }
 
-/// Each client's module instances by client and view component.
 static MODULES: Mutex<BTreeMap<(String, String), Module>> = Mutex::new(BTreeMap::new());
 
 fn instance(client: &str, component: &str) -> String {
@@ -273,8 +269,7 @@ pub(super) fn reconcile(views: &view::Views, snapshot: &ModViewSnapshot) {
 static POSTS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
 static POSTING: Coalesce = Coalesce::new();
 
-/// Steps this client's own instance of a component module, delivering `events` and any due ticks
-/// at the size given or last rendered (80 columns and rows 0, the auto height a terminal node without `height` gets).
+/// Defaults to 80 columns and rows 0 (the auto height a terminal node without `height` gets) when no size was given or rendered.
 fn module_step(
     client: &str,
     component: &str,
@@ -341,7 +336,6 @@ fn module_step(
     Ok(step)
 }
 
-/// Delivers queued posts to their owners' `component_post` hooks off the client's request.
 fn deliver_posts() {
     while let Some((owner, payload)) = POSTS
         .lock()
@@ -371,7 +365,6 @@ fn deliver_posts() {
     }
 }
 
-/// Unmounts a detached client's module instances.
 pub fn detached(client: &str) {
     if let Ok(mut modules) = MODULES.lock() {
         modules.retain(|(owner, _), module| {
@@ -423,7 +416,6 @@ pub fn component_event(client: &str, component: &str, event: Value) -> Result<Va
     Ok(json!({"delivered": true}))
 }
 
-/// The action token was issued for `(epoch, revision)`; a newer view makes it stale.
 fn current(snapshot: &ModViewSnapshot, epoch: u64, revision: u64) -> Result<(), String> {
     if (snapshot.epoch, snapshot.revision) == (epoch, revision) {
         Ok(())
@@ -615,7 +607,6 @@ pub fn resource(reference: &str) -> Result<(String, Vec<u8>), String> {
     Err(last)
 }
 
-/// The running host's store, or the configured one when mods failed to start.
 fn store() -> Result<(PathBuf, codex_omd::ModStore), String> {
     let root = match core() {
         Ok(core) => core.host.root.clone(),

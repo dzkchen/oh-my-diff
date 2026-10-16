@@ -65,7 +65,6 @@ fn local(value: &Value) -> Option<std::path::PathBuf> {
         .or_else(|| value.as_str().map(std::path::PathBuf::from))
 }
 
-/// Checks a mod approval against its current delegated grant: kind, tool, roots and hosts.
 pub(super) fn within_grant(
     grants: Option<&codex_omd::ModGrants>,
     kind: &str,

@@ -61,7 +61,6 @@ struct IndexArguments {
     query: String,
 }
 
-/// Searches the requested or the store's curated package index.
 pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
     let arguments: IndexArguments = serde_json::from_value(arguments)
         .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
@@ -151,7 +150,6 @@ struct ListArguments {
     fields: Vec<String>,
 }
 
-/// `packages.list`: [`list`], keeping only the requested `fields` of each package.
 pub fn list_fields(
     store: &ModStore,
     runtime: Option<&Value>,
@@ -174,7 +172,6 @@ pub fn list_fields(
     Ok(listed)
 }
 
-/// Lists every store selection; `runtime` is the serving session's mod status.
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let selections = selections(store)?;
     let Selections {

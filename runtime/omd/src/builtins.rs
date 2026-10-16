@@ -17,7 +17,6 @@ pub const PROTECTED_COMMANDS: &[&str] = &[
 pub const PROTECTED_MODES: &[&str] = &["default"];
 pub const SURFACES: &[&str] = &["status_line"];
 
-/// The store file holding the built-in controls of the sessions in one repository.
 pub fn builtins_snapshot(repository: &Path) -> String {
     let repository = repository
         .canonicalize()
