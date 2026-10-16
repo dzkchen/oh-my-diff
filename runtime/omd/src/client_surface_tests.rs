@@ -7,7 +7,7 @@ struct Echo;
 impl ClientSurface for Echo {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         let value = json!({"operation": call.operation, "caller": call.caller,
-            "confirm": call.confirm, "arguments": call.arguments,
+            "confirm": call.confirm, "arguments": call.arguments, "depth": call.depth,
             "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "source": authority.source, "configuration": authority.configuration}))});
         call.reply
             .send(Ok(value))
@@ -77,6 +77,25 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         .starts_with("client_surface_unavailable")
     );
     let registration = register(Arc::new(Echo));
+    let depth = || {
+        call(
+            "m",
+            "composer.read",
+            Value::Null,
+            InvocationContext::User,
+            false,
+            None,
+            None,
+            Arc::new(active),
+        )
+        .unwrap()["depth"]
+            .clone()
+    };
+    {
+        let _nested = nest(3);
+        assert_eq!(depth(), 3);
+    }
+    assert_eq!(depth(), 0);
     let authority = Authority {
         epoch: 7,
         admission: 11,
