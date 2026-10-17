@@ -478,21 +478,35 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     })
 }
 
-pub fn unrestricted_program(access: &crate::ModOsAccess, name: &str) -> Result<PathBuf, String> {
+/// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
+/// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
+pub fn unrestricted_program(
+    access: &crate::ModOsAccess,
+    name: &str,
+    repository: &Path,
+) -> Result<PathBuf, String> {
     let path = Path::new(name);
     let resolved = if path.is_absolute() {
         path.canonicalize().ok()
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths)
-                .find_map(|directory| directory.join(name).canonicalize().ok())
+            std::env::split_paths(&paths).find_map(|directory| {
+                let candidate = directory.join(name).canonicalize().ok()?;
+                (!candidate.starts_with(repository)).then_some(candidate)
+            })
         })
     } else {
         None
     }
     .filter(|path| path.is_file())
     .ok_or("exec_program_unavailable")?;
-    if !access.allows(name, &resolved) && !access.allows(name, path) {
+    let listed = access
+        .programs
+        .iter()
+        .any(|allowed| Path::new(allowed) == resolved || Path::new(allowed) == path);
+    if resolved.starts_with(repository) && !listed
+        || !access.allows(name, &resolved) && !access.allows(name, path)
+    {
         return Err(format!("os_access_denied: {name}"));
     }
     Ok(resolved)
@@ -1084,7 +1098,7 @@ impl Host<'_> {
             .map(|name| inherited_socket(name, &repository).ok_or("exec_socket_unavailable"))
             .collect::<Result<Vec<_>, _>>()?;
         let program = match unrestricted {
-            Some(access) => unrestricted_program(access, &input.program)?,
+            Some(access) => unrestricted_program(access, &input.program, &repository)?,
             None => {
                 resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?
             }

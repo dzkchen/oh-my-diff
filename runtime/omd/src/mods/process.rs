@@ -28,6 +28,7 @@ fn command(node: &Path) -> Result<Command> {
         return Err(failure("unsupported_platform: mods require macOS Seatbelt"));
     }
     let node = node.canonicalize()?;
+    super::store::check_runner(&node)?;
     let literal = serde_json::to_string(&node)?;
     let profile = format!(
         "(version 1)(deny default)(allow process-exec (literal {literal}))(allow process-info* (target self))(allow sysctl-read)(allow signal (target self))(allow file-read* (literal \"/\")(literal {literal})(subpath \"/System/Library\")(subpath \"/usr/lib\")(literal \"/dev/null\")(literal \"/dev/urandom\")(literal \"/dev/random\"))(allow file-write* (literal \"/dev/null\"))"
