@@ -1,95 +1,70 @@
 # Install Oh My Diff
 
-This page covers installing, updating and removing OMD.
-
 ## Before you begin
 
-You need:
-
-- An Apple Silicon Mac. Linux and Intel Macs aren't supported.
-- Codex `0.163.x`. Check with `codex --version`; install it with `npm install -g @openai/codex@0.163`. OMD follows
-  the latest stable Codex, so don't update Codex until an OMD release supports the new version.
-- Node 24.18 or later 24.x, installed with [mise](https://mise.jdx.dev): `mise use -g node@24`.
-- Python 3.12 or later. macOS ships 3.9; install a newer one with `brew install python@3.12`.
+- Apple Silicon Mac (no Linux or Intel).
+- Codex `0.163.x` (`codex --version`). Install: `npm install -g @openai/codex@0.163`. Don't update Codex until OMD
+  supports the new version.
+- Node 24.18+ (24.x): `mise use -g node@24` with [mise](https://mise.jdx.dev).
+- Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
 
 ## Install
-
-Run:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-`--profile full` installs **OMD+**: OMD plus its [mod collection](collection.md). A few useful mods are on; the
-rest are installed but off until you turn them on.
+- `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
+  with `/mods`.
+- `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
 
-For the minimal install, use `--profile platform` instead. That installs **OMD Core**: OMD, the mod manager and
-update notices, ready for mods you choose yourself.
+Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
+sign-in and sessions aren't touched.
 
-The installer checks the release's signature and the download's checksum before installing, and updates do the
-same. It adds `codex`, `omd`, `omd-package`, `omd-mod`,
-`omd-mod-author` and `omd-contract` to `~/.local/bin`. Your Codex settings, sign-in and sessions aren't changed.
-
-## Check that it works
-
-```sh
-omd update status
-```
-
-It prints the installed version and profile. Then run `codex` and type `/mods` to see your mods.
+Check it: `omd update status`, then run `codex` and type `/mods`.
 
 ## Update
 
 ```sh
-omd update
+omd update            # install the newest release
+omd update rollback   # undo the last update
+omd update enable     # install updates automatically
 ```
 
-This installs the newest release. If other OMD sessions are open, the update waits and installs the next time you
-start `codex`. Your mods, settings and sign-in are kept.
+With other OMD sessions open, the update waits for your next `codex` start. Mods, settings and sign-in are kept.
 
-OMD checks for updates in the background and tells you when one is ready. To update automatically instead, run
-`omd update enable`.
+## Switch profile
 
-To undo the last update:
-
-```sh
-omd update rollback
-```
-
-## Switch between OMD+ and OMD Core
-
-Run the install command again with the other `--profile`. Each profile remembers its own mod choices.
+Rerun the install command with the other `--profile`. Each profile keeps its own mod choices.
 
 ## Uninstall
-
 
 ```sh
 sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
 ```
 
-This removes OMD, removes OMD's plugins from Codex if you added them, and puts back any commands it moved aside. Your Codex data is kept, and so are your mod
-settings in `~/.local/share/oh-my-diff/stores`. Delete that folder too if you want them gone.
+Removes OMD and its Codex plugins and restores commands it moved aside. Codex data stays. If you deployed the
+authority broker, run `omd-package broker uninstall` first. Mod settings stay in `~/.local/share/oh-my-diff/stores`;
+delete it to remove them.
 
 ## Troubleshooting
 
 | Message | Fix |
 | --- | --- |
-| `Python 3.12 or newer is required` | Install a newer Python, then rerun the install command. |
-| `upstream Codex 0.163.x is required` | Install Codex `0.163.x`, or pass its path with `--upstream /path/to/codex`. |
-| `move the upstream codex out of ~/.local/bin` | OMD's `codex` goes in `~/.local/bin`. Move your Codex elsewhere and pass `--upstream`. |
-| `codex on PATH is ..., not the OMD launcher` | Add the `export PATH=...` line it prints to your shell profile and open a new shell. |
+| `Python 3.12 or newer is required` | Install a newer Python and rerun. |
+| `upstream Codex 0.163.x is required` | Install Codex `0.163.x`, or pass `--upstream /path/to/codex`. |
+| `move the upstream codex out of ~/.local/bin` | Move your Codex elsewhere and pass `--upstream`. |
+| `codex on PATH is ..., not the OMD launcher` | Add the printed `export PATH=...` line to your shell profile; open a new shell. |
 | `Node 24.18 or a later 24.x is required` | Install Node with mise, or pass `--node /path/to/node`. |
-| `No terminal is available` | Add `--profile full` or `--profile platform` to the command. |
-| A mod breaks `codex` | Run `omd mods disable ID`. See [Install and manage mods](manage-mods.md#when-a-mod-misbehaves). |
+| `No terminal is available` | Add `--profile full` or `--profile platform`. |
+| A mod breaks `codex` | `omd mods disable ID` ([more](manage-mods.md#when-a-mod-misbehaves)). |
 
-## More options
+## More
 
-- **Release candidates and nightly builds:** add `--channel beta` or `--channel nightly` to the install command, or
-  run `omd update channel beta`. Switch back with `omd update channel stable`.
-- **Update settings:** `omd update status` shows them. Change them with `omd update checks on|off`,
-  `omd update cadence daily|weekly`, `omd update pin VERSION|none` and `omd update enable|disable` (automatic installs), or in `/update`.
-- **Install locations:** `--root DIR` (default `~/.local/share/oh-my-diff`) and `--bin-dir DIR` (default
-  `~/.local/bin`). If a command OMD installs already exists there, OMD renames it to `NAME.before-omd` and restores it
-  when you uninstall.
-- **Status and rollback without `omd`:** the uninstall command above also takes `status` and `rollback`.
-- **Build from source:** see [CONTRIBUTING.md](../CONTRIBUTING.md).
+- **Beta or nightly builds:** `--channel beta|nightly` on install, or `omd update channel beta|nightly|stable`.
+- **Update settings:** `omd update checks on|off`, `cadence daily|weekly`, `pin VERSION|none`, `enable|disable`, or
+  `/update`.
+- **Locations:** `--root DIR` (default `~/.local/share/oh-my-diff`), `--bin-dir DIR` (default `~/.local/bin`). An
+  existing command there becomes `NAME.before-omd` and comes back on uninstall.
+- **Without `omd`:** the uninstall command also takes `status` and `rollback`.
+- **From source:** [CONTRIBUTING.md](../CONTRIBUTING.md).

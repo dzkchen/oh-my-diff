@@ -27,7 +27,8 @@ See [Mods, plugins and hooks](../mods/REFERENCE.md#mods-plugins-and-hooks) for w
 ```sh
 command -v omd-mod-author omd-mod omd
 node --version                  # v24.18 or later 24.x
-pnpm --version
+pnpm --version                  # 11.14 or later
+NODE="$(mise which node 2>/dev/null || command -v node)"   # a real node binary, not a version-manager shim
 ```
 
 If `omd-mod-author` is missing, OMD isn't installed: see [Install](install.md).
@@ -159,7 +160,8 @@ Where to look things up:
 
 Rules that trip agents up:
 
-- No `import` statements except types from `@oh-my-diff/mod-api`; the whole mod is one entrypoint of at most 64 KiB.
+- Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
+  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
   there, and the source check refuses them.
 - Name host operations literally: `api.host.call('store.get', …)`, not a variable.
@@ -190,10 +192,10 @@ Replace `mod.test.json`:
 ```
 
 ```sh
+rm debug.test.json   # it calls the scaffold's /hello, which step 4 replaced
 pnpm check       # syntax and types
 pnpm test        # mod.test.json, plus any *.test.ts or *.test.mjs files
 pnpm run run     # the same scenario, printing each step
-pnpm debug       # debug.test.json calls the scaffold's /hello; edit or delete it after step 4
 ```
 
 `settings` sets each mod's settings for the scenario. A host call the scenario doesn't mock fails the test. Mock
@@ -206,25 +208,28 @@ one with `host_operations`, an ordered list of results per operation; see
 Use a scratch store so the user's real mods are untouched:
 
 ```sh
-omd-mod init /tmp/notes-store "$(mise which node)"
+omd-mod init /tmp/notes-store "$NODE"
 pnpm watch /tmp/notes-store --once
 ```
 
 `watch` inspects, trusts and turns on the mod in that store, queues a reload for a running `codex`, and copies type
-declarations into `.omd/`. Drop `--once` to reload on every save. `node` must be a real Node binary, not a
-version-manager shim.
+declarations into `.omd/`. Drop `--once` to reload on every save.
 
 Try a command or the test scenario against the store, without `codex`:
 
 ```sh
 omd-mod command /tmp/notes-store notes clear null      # {"display": "Notes cleared"}
+omd-mod settings /tmp/notes-store "$PWD" '{"max_notes":2}'
 omd-mod test /tmp/notes-store mod.test.json
 ```
 
-Then the user starts `codex` on that store and tries it:
+Against a store, `test` uses the store's settings and saved notes instead of the scenario's `settings`, hence the
+first two commands.
+
+Then the user starts `codex` on that store and tries it (from a source checkout, use the archive's `codex`):
 
 ```sh
-OMD_MODE=omd OMD_MOD_STORE=/tmp/notes-store OMD_NODE="$(mise which node)" ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
+OMD_MODE=omd OMD_MOD_STORE=/tmp/notes-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
 ```
 
 To see what the host did:
@@ -249,7 +254,7 @@ omd mods disable notes       # off, data kept
 omd mods remove notes
 ```
 
-To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store "$(mise which node)"` and
+To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store "$NODE"` and
 add `--store /tmp/install-store` to each command (use a different store from
 step 6, where `watch` already turned the mod on). In a non-interactive shell, `--yes` answers the prompt; pass it
 only after the user agrees. `omd install --scope project ./notes` installs it for the current project only; it
@@ -302,6 +307,10 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 
 - **Installed and on:** the default OMD+ mods in [the collection](collection.md).
 - **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
-- **Experimental:** the whole mod API until `1.0.0`, and in particular the `workspace` and `process`
-  capabilities, raster and `terminal.blit` frames, and `omd/*` external-client methods.
+- **Frozen or experimental:** the API version is pre-1.0. Entries that
+  [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
+  including raster and `terminal.blit` frames and `omd/*` external-client methods.
+- **Authority:** a mod gets only the capabilities its manifest lists and the user trusts. Codex and the host keep
+  the sandbox, approvals and credentials; permissions the user grants (`os`, network, `approve`, secrets) run with
+  the user's authority. See [Composition and safety](../mods/REFERENCE.md#composition-and-safety).
 - **Not supported:** anything not in `api.d.ts`, calling another mod directly, and Linux or Intel macOS.

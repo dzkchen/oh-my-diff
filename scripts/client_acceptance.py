@@ -101,7 +101,6 @@ def main():
     parser = argparse.ArgumentParser(description="External-client acceptance: two author examples drive patched codex hosts "
                                                  "over omd-client/1 with a scripted provider (local, no paid calls).")
     parser.add_argument("--binaries", type=Path, required=True, help="directory with the patched codex and omd-mod")
-    parser.add_argument("--hop-only", action="store_true", help="check the command-to-channel hop before the first provider turn")
     args = parser.parse_args()
     codex, manager = (args.binaries / name for name in ["codex", "omd-mod"])
     base = fresh("client")
@@ -125,29 +124,6 @@ def main():
     call([manager, "settings", store, mods / "external_client", json.dumps({
         "listen_url": f"unix://{base / 'tui.sock'}", "token_file": "", "client_path": str(ROOT / "mods/examples/external_client/client.mjs")})], ROOT)
     env = environment(base, args.binaries, repo, store, url)
-    if args.hop_only:
-        started = time.monotonic()
-        tui = Session(codex, repo, env, args=("--listen", f"unix://{base / 'tui.sock'}"))
-        try:
-            assert tui.ready(), "TUI did not start"
-            results["tui_ready_s"] = round(time.monotonic() - started, 2)
-            mark = len(tui.raw)
-            typed = time.monotonic()
-            tui.keys(b"draft-marker", settle=0)
-            while time.monotonic() - typed < 3 and "draft-marker" not in tui.text(mark):
-                tui.pump(0.005)
-            assert "draft-marker" in tui.text(mark), "release TUI did not render typed input"
-            results["typeable_input_ms"] = round((time.monotonic() - typed) * 1000)
-            tui.keys(b"\x15")
-            results["mod_launched_client"] = launch_client(tui, store)
-            assert not server.RequestHandlerClass.requests, "hop check must precede every provider turn"
-            results["provider_requests"] = 0
-        finally:
-            tui.close(base / "tui.trace")
-            server.shutdown()
-        (base / "results.json").write_text(json.dumps(results, indent=2))
-        print(json.dumps(results, indent=2))
-        return
 
     empty = base / "store-empty"
     store_with(manager, empty, [])

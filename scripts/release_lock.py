@@ -27,6 +27,7 @@ SOURCES = (
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "docs/install.md", "install.sh",
+    "LICENSE", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md",
     "scripts/mods_lock.py", "runtime/mods.lock.json",
 ) + mods_lock.sources()
 
