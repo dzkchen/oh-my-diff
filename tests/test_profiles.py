@@ -94,7 +94,7 @@ enabled = true
                 config.write_text(text.replace(drop, ""))
 
             record = {"shared_state": {"codex_home": str(home)}, "binary": {"installed_path": "/omd/codex"}}
-            with patch.object(profiles.subprocess, "run", side_effect=run):
+            with patch.object(profiles.support, "run", side_effect=run):
                 self.assertEqual(profiles.remove_plugins(record, prefix), ["omd-anchored-edit@oh-my-diff"])
             self.assertEqual(calls, [["plugin", "remove", "omd-anchored-edit@oh-my-diff"],
                                      ["plugin", "marketplace", "remove", "oh-my-diff"]])

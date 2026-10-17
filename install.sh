@@ -382,6 +382,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
     check_links(root, args.bin_dir)
     if current:
         status(current, Path(upstream["path"]), args.bin_dir)
+    previous = receipt(current) if current else {}
+    releases_url = release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         payload = extract(archive, Path(temporary) / "unpacked")
         generation = root / "releases" / uuid.uuid4().hex
@@ -399,14 +401,13 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             command.append("--attach-store")
         if current:
             command += ["--previous", current / "prefix"]
-        previous = receipt(current) if current else {}
         try:
             run(command, cwd=payload, env=environment(Path(upstream["path"]), args.bin_dir))
             installed = json.loads((generation / "prefix/install.json").read_text())
             record = {"schema": 1, "generation": generation.name, "profile": profile, "version": installed["version"],
                       "asset_url": url, "asset_sha256": expected, "bin_dir": str(args.bin_dir),
                       "upstream": upstream | {"sha256": digest(Path(upstream["path"]))},
-                      "releases_url": release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL),
+                      "releases_url": releases_url,
                       "previous": current.name if current else None}
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
@@ -505,7 +506,8 @@ def remove_generation(generation, upstream, bin_dir, *flags):
         prefix.rmdir()
     for name in LINKS:
         (generation / "bin" / name).unlink(missing_ok=True)
-    (generation / "receipt.json").unlink(missing_ok=True)
+    for name in ("receipt.json", RELEASE_MANIFEST, RELEASE_SIGNATURE):
+        (generation / name).unlink(missing_ok=True)
     for directory in (generation / "bin", generation):
         if directory.is_dir():
             directory.rmdir()

@@ -54,7 +54,7 @@ def cdhash(path):
 
 
 def signed_hashes(manifests):
-    hashes = set()
+    hashes = {}
     for manifest in map(Path, manifests):
         signature = Path(f"{manifest}.sig")
         if not manifest.is_file() or not signature.is_file():
@@ -69,14 +69,16 @@ def signed_hashes(manifests):
                                            check=False).returncode == 0
         if not verified:
             raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
-        hashes.update(json.loads(body)["artifacts"].values())
+        for name, value in json.loads(body)["artifacts"].items():
+            hashes.setdefault(name, set()).add(value)
     return hashes
 
 
-def signed_bytes(path, hashes):
+def signed_bytes(path, hashes, role=None):
     data = Path(path).read_bytes()
-    if hashlib.sha256(data).hexdigest() not in hashes:
-        raise ValueError(f"{path} is not listed in a signed Oh My Diff release manifest")
+    accepted = hashes.get(role, set()) if role else set().union(*hashes.values())
+    if hashlib.sha256(data).hexdigest() not in accepted:
+        raise ValueError(f"{path} is not listed{f' as {role}' if role else ''} in a signed Oh My Diff release manifest")
     return data
 
 
@@ -141,7 +143,7 @@ def write_pins(binaries, manifests, add=False):
 
 def install(helper, tooling, binaries, manifests):
     hashes = signed_hashes(manifests)
-    helper_data, tooling_data = signed_bytes(helper, hashes), signed_bytes(tooling, hashes)
+    helper_data, tooling_data = signed_bytes(helper, hashes, "omd-broker"), signed_bytes(tooling, hashes, "authority_broker.py")
     signed_cdhashes([helper], hashes)
     pins = sorted(set(signed_cdhashes(binaries, hashes)))
     create_account()
@@ -249,7 +251,10 @@ def main(argv=None):
             arguments.append(f"--tooling={args.tooling}")
         script = COPY if trusted(COPY) else Path(__file__).resolve()
         elevated = subprocess.run(["/usr/bin/sudo", "/usr/bin/python3", "-I", str(script), *map(str, arguments)],
-                                  check=True, stdout=subprocess.PIPE)
+                                  stdout=subprocess.PIPE)
+        if elevated.returncode:
+            raise ValueError(f"privileged broker step failed (exit {elevated.returncode}); it runs /usr/bin/python3, "
+                             "which needs the Xcode Command Line Tools (xcode-select --install)")
         return json.loads(elevated.stdout)
     if args.command == "install":
         return install(args.helper.resolve(), args.tooling.resolve(), [path.resolve() for path in args.pin], args.manifest)

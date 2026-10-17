@@ -322,12 +322,14 @@ def publish(directory, notes=None, dry_run=False):
                          "Apple Silicon archive installs either OMD Core or OMD+.\n\n"
                          "Opt in with `sh install.sh --channel nightly` or `omd update channel nightly`. "
                          "Stable releases remain tag-only.\n")
-        title, latest = f"Nightly {version}", ["--prerelease", "--latest=false"]
+        title = f"Nightly {version}"
     else:
-        title, latest = f"Oh My Diff {version}", ["--prerelease", "--latest=false"] if "-" in version else ["--latest"]
+        title = f"Oh My Diff {version}"
+    prerelease = "-" in version
     create = ["gh", "release", "create", tag, *assets, "--repo", os.environ["GITHUB_REPOSITORY"],
-              "--target", provenance["commit"], "--title", title, "--notes-file", notes, "--draft", *latest]
-    edit = ["gh", "release", "edit", tag, "--repo", os.environ["GITHUB_REPOSITORY"], "--draft=false", latest[-1]]
+              "--target", provenance["commit"], "--title", title, "--notes-file", notes, "--draft",
+              *(["--prerelease"] if prerelease else [])]
+    edit = ["gh", "release", "edit", tag, "--repo", os.environ["GITHUB_REPOSITORY"], "--draft=false", "--latest=false" if prerelease else "--latest"]
     if dry_run:
         print("dry run verified", ", ".join(path.name for path in assets))
         print(*map(str, create))
