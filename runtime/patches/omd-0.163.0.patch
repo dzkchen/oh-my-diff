@@ -30149,7 +30149,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 8c42d78f1..bf143652a 100644
+index 8c42d78f1..9a3be1302 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -65,8 +65,9 @@ impl App {
@@ -30230,7 +30230,7 @@ index 8c42d78f1..bf143652a 100644
          let bottom =
              chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
                  max_height: Some(max_composer_height),
-@@ -156,38 +169,25 @@ impl App {
+@@ -156,20 +169,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
          let bottom_height = if dashboard_visible {
@@ -30255,10 +30255,9 @@ index 8c42d78f1..bf143652a 100644
          let mut rendered_cursor = None;
          let mut footer_height_changed = false;
          let mut feedback_tick = None;
-         let mut blossom_tick = None;
-         let mut transcript_bottom = available.saturating_sub(u16::from(composer_gap.is_none()));
+@@ -178,16 +184,11 @@ impl App {
          tui.draw(screen_size.height, |frame| {
--            chat_widget.rendered_selection.borrow_mut().areas.clear();
+             chat_widget.rendered_selection.borrow_mut().areas.clear();
              ratatui::widgets::Clear.render(
 -                Rect::new(/*x*/ 0, /*y*/ 0, screen_size.width, available),
 +                Rect::new(area.x, area.y, area.width, available),
@@ -30275,7 +30274,7 @@ index 8c42d78f1..bf143652a 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -228,45 +228,44 @@ impl App {
+@@ -228,45 +229,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -30347,7 +30346,7 @@ index 8c42d78f1..bf143652a 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -279,8 +278,8 @@ impl App {
+@@ -279,8 +279,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -30358,7 +30357,7 @@ index 8c42d78f1..bf143652a 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -301,16 +300,22 @@ impl App {
+@@ -301,16 +301,22 @@ impl App {
                  .rendered_selection
                  .borrow_mut()
                  .render(frame.buffer);
@@ -30388,7 +30387,7 @@ index 8c42d78f1..bf143652a 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -321,12 +326,14 @@ impl App {
+@@ -321,12 +327,14 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
