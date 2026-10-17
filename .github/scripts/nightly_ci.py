@@ -292,7 +292,7 @@ def publish(directory, notes=None, dry_run=False):
     if not notes:
         notes = directory.parent / "notes.md"
         notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"
-                         f"[Hosted validation]({provenance['run_url']}) passed on macOS and Linux. "
+                         f"[Hosted validation]({provenance['run_url']}) passed on macOS. "
                          "Apple Silicon archive installs either OMD Core or OMD+.\n\n"
                          "Opt in with `sh install.sh --channel nightly` or `omd update channel nightly`. "
                          "Stable releases remain tag-only.\n")
@@ -311,36 +311,9 @@ def publish(directory, notes=None, dry_run=False):
     command(*edit)
 
 
-def report():
-    repo, run_id = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]
-    jobs = json.loads(command("gh", "api", f"repos/{repo}/actions/runs/{run_id}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"))["jobs"]
-    failures = [job for job in jobs if job["conclusion"] in ("failure", "timed_out", "action_required")]
-    title = f"[nightly] Failed run {run_id}"
-    issues = json.loads(command("gh", "issue", "list", "--repo", repo, "--state", "all", "--search", f"{run_id} in:title", "--json", "number,title,state"))
-    issue = next((item for item in issues if item["title"] == title), None)
-    if not failures:
-        if issue and os.environ.get("NIGHTLY_VALIDATION_RESULT") == os.environ.get("NIGHTLY_PUBLICATION_RESULT") == "success":
-            command("gh", "issue", "close", issue["number"], "--repo", repo)
-        return
-    body = Path("nightly-failure.md")
-    lines = [f"Commit: `{os.environ['GITHUB_SHA']}`", "", f"[Run and downloadable logs](https://github.com/{repo}/actions/runs/{run_id})", ""]
-    for job in failures:
-        steps = ", ".join(step["name"] for step in job.get("steps", []) if step["conclusion"] == "failure")
-        lines.append(f"- [{job['name']}]({job['html_url']}): {steps or job['conclusion']}")
-    for path in sorted(Path("reports").rglob("report.md")):
-        lines += ["", f"### {path.relative_to('reports').parts[0]}", "", path.read_text()[-12_000:]]
-    body.write_text("\n".join(lines) + "\n")
-    if issue:
-        command("gh", "issue", "edit", issue["number"], "--repo", repo, "--body-file", body)
-        if issue["state"] == "CLOSED":
-            command("gh", "issue", "reopen", issue["number"], "--repo", repo)
-    else:
-        command("gh", "issue", "create", "--repo", repo, "--title", title, "--body-file", body)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
-    parser.add_argument("command", choices=("validate", "v8", "tests", "package", "publish", "report"))
+    parser.add_argument("command", choices=("validate", "v8", "tests", "package", "publish"))
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core"))
     parser.add_argument("--version", help="package this stable release version instead of a nightly")
@@ -358,7 +331,7 @@ def main():
             parser.error("tests requires --suite")
         cargo_tests(args.suite)
     else:
-        {"v8": v8, "report": report}[args.command]()
+        v8()
 
 
 if __name__ == "__main__":

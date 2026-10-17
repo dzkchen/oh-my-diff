@@ -12,8 +12,8 @@ the store also generates `tool-types.d.ts` for the tools the host actually has
 The launch surface is frozen at this API version, with support through
 `2027-03-20`. [The conformance registry](conformance/contract.json) classifies every public operation,
 event, capability, replacement, interceptor, component, render site, view field,
-classic hook and author command. Frozen entries name a retained consumer and
-executable evidence. Explicitly experimental entries remain outside the freeze;
+classic hook and author command. Frozen entries name a retained consumer.
+Explicitly experimental entries remain outside the freeze;
 the package itself retains its pre-release compatibility label. The freeze is
 a contract boundary, not a public-release or provider qualification.
 Before the release freeze names the API `1.0.0`, only safety fixes and the
