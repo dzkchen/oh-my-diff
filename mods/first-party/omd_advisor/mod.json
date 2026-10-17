@@ -50,7 +50,7 @@
       },
       "route": {
         "type": "string",
-        "default": "astra"
+        "default": ""
       },
       "mode": {
         "type": "string",

@@ -27,10 +27,10 @@ omd-package mod disable omd_plan_panel
 
 | Key or command | What it does |
 | --- | --- |
-| `Alt+p` | Collapse the panel to its heading, or expand it again |
+| `Alt+p` or `/todos toggle` | Collapse the panel to its heading, or expand it again |
 | `/todos` | Switch between the row limit and every step |
 
-Both apply to the current thread and reset when OMD restarts.
+Both apply to the current thread and reset when OMD restarts. On macOS, `Alt+p` needs Option-as-Alt in Kitty (`macos_option_as_alt`) and Ghostty (`macos-option-as-alt`); otherwise Option+p types `π`.
 
 ## Settings
 

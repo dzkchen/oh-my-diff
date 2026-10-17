@@ -17,7 +17,7 @@ function invoke(payload, host, extra = {}) {
   return reply;
 }
 
-const advisorOptions = { event: 'turn_end', name: '', settings: { every_turn: true } };
+const advisorOptions = { event: 'turn_end', name: '', settings: { every_turn: true, route: 'astra' } };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };
 const completed = { turn_id: 'turn-1', outcome: 'completed', evidence: reference };
@@ -96,7 +96,7 @@ function consultHost(overrides = {}) {
     throw new Error(`unexpected host operation ${call.operation}`);
   } };
 }
-const consultOptions = settings => ({ ...advisorOptions, settings, state: null });
+const consultOptions = settings => ({ ...advisorOptions, settings: { route: 'astra', ...settings }, state: null });
 const prompt = fixture => fixture.calls.find(call => call.operation === 'model.complete')?.arguments.prompt;
 
 test('advisor ask sends a bounded, redacted prompt limited to shared sources and skips the lead model', () => {
@@ -118,3 +118,16 @@ test('advisor ask sends a bounded, redacted prompt limited to shared sources and
   assert.match(command.submit, /mod_omd_advisor_ask tool now with question: check the migration/);
 });
 
+test('advisor without a route names the worker routes instead of calling a model', () => {
+  const routes = [{ name: 'lead', roles: ['lead'], available: true }, { name: 'reviewer', roles: ['worker'], available: true }, { name: 'offline', roles: ['worker'], available: false }];
+  const unset = { ...advisorOptions, settings: { every_turn: true }, state: null };
+  const fixture = advisorHost({ 'routes.list': () => routes });
+  assert.equal(invoke({ question: 'Safe?' }, fixture.host, { ...unset, event: 'tool', name: 'ask' }).value, 'Advisor unavailable: set the omd_advisor route setting to a worker route (reviewer).');
+  const reviewed = invoke(completed, fixture.host, unset).state;
+  assert.equal(reviewed.status, 'unavailable');
+  assert.equal(reviewed.reason, 'set the omd_advisor route setting to a worker route (reviewer)');
+  assert.match(invoke({}, advisorHost().host, { ...unset, event: 'tool', name: 'status' }).value.reason, /host.json lists none this mod may use/);
+  assert.ok(!fixture.calls.some(call => ['model.complete', 'agents.spawn', 'evidence.read'].includes(call.operation)));
+  const observing = { ...unset, settings: { every_turn: true, observe: true }, state: { ...reviewed, observer: { status: 'unavailable', reason: reviewed.reason } } };
+  assert.deepEqual(invoke({ event: 'idle' }, () => assert.fail('terminal host call'), { ...observing, event: 'terminal' }).value.status, ['Advisor: no route set']);
+});

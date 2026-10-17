@@ -10,7 +10,7 @@ It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 omd-package mod enable omd_advisor
 ```
 
-It runs on the model route in `route` (default `astra`). That route needs its own model access and allowance.
+It runs on the worker route you set in `route`, which has no default. That route needs its own model access and allowance. Until `route` names a worker route from `host.json`, the advisor reports `unavailable` with the routes it can use, and the status segment reads `Advisor: no route set`.
 
 ## Use it
 
@@ -25,7 +25,7 @@ It runs on the model route in `route` (default `astra`). That route needs its ow
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `route` | `astra` | Model route the advisor runs on |
+| `route` | none | Worker route the advisor runs on |
 | `triggers` | `[]` | Consult automatically on `failure` (same call failed twice), `loop` (same output three times) or `completion` (turns that changed files) |
 | `every_turn` | `false` | Review every completed lead turn |
 | `mode` | `advisory` | `blocking` also needs a workflow contract with an advisor review gate |
