@@ -2,7 +2,6 @@
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `pull-request.yml` | pull requests | Changelog and Markdown link check |
 | `validate.yml` | called by nightly and release | Full hosted validation and the verified Apple Silicon package |
 | `nightly.yml` | **Run workflow** (daily once the repository is public) | Validates; on `main` publishes a nightly prerelease and reports failures |
 | `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags, **Run workflow** (dry run) | Checks versions, validates, publishes the GitHub Release |
