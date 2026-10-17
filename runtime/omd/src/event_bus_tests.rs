@@ -229,4 +229,3 @@ fn slow_subscribers_drop_oldest_and_see_the_count() {
     assert_eq!(bus.pending("slow"), 1);
     assert_eq!(bus.drain("slow", usize::MAX)[0].dropped, 0);
 }
-

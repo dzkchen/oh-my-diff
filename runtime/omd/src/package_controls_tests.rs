@@ -279,4 +279,3 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
         "reload"
     );
 }
-

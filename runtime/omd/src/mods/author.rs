@@ -1074,12 +1074,18 @@ mod mock_boundary_tests {
         });
         redact_value(&mut bundle, None, &[("/store".into(), "$STORE".into())]);
         let encoded = bundle.to_string();
-        for secret in ["gho_abc123", "AKIAABCDEFGHIJKLMNOP", "MIIEsecretbody", "k1", "k2", "k3"] {
+        for secret in [
+            "gho_abc123",
+            "AKIAABCDEFGHIJKLMNOP",
+            "MIIEsecretbody",
+            "k1",
+            "k2",
+            "k3",
+        ] {
             assert!(!encoded.contains(secret), "{encoded}");
         }
         assert!(encoded.contains("at $STORE/x"), "{encoded}");
         assert_eq!(bundle["settings"]["enabled"], true);
         assert_eq!(bundle["settings_keys"], json!(["theme"]));
     }
-
 }

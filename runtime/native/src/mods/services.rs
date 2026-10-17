@@ -866,5 +866,4 @@ mod tests {
         .unwrap();
         assert_eq!(output["stdout"], "denied");
     }
-
 }

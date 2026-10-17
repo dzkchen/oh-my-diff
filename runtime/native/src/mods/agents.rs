@@ -441,7 +441,6 @@ mod history_tests {
         assert!(selected_history(items[..2].iter().cloned(), Some(&["one".into()])).is_err());
         assert!(selected_history(items.into_iter(), Some(&["missing".into()])).is_err());
     }
-
 }
 
 type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
