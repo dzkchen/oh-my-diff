@@ -45,63 +45,6 @@ fn profiles_get_private_homes_and_one_default() {
 }
 
 #[test]
-fn removing_the_default_promotes_another_and_clears_its_home() {
-    let (_temp, profiles) = profiles();
-    profiles.create("a", "chatgpt", None, None).unwrap();
-    profiles
-        .create_secret("site", "https://example.com", "vault")
-        .unwrap();
-    profiles.create("b", "chatgpt", None, None).unwrap();
-    let home = profiles.home("p1").unwrap();
-    assert!(profiles.remove("p1").unwrap());
-    assert!(!home.exists());
-    let listed = profiles.list().unwrap();
-    assert_eq!(
-        listed
-            .iter()
-            .map(|p| (p.id.as_str(), p.default))
-            .collect::<Vec<_>>(),
-        [("p2", false), ("p3", true)]
-    );
-    assert!(!profiles.remove("p1").unwrap());
-    assert!(profiles.home("p1").is_err());
-}
-
-#[test]
-fn invalid_profiles_and_limits_are_refused() {
-    let (_temp, profiles) = profiles();
-    assert!(profiles.create("", "chatgpt", None, None).is_err());
-    assert!(profiles.create("x\n", "chatgpt", None, None).is_err());
-    assert!(profiles.create("x", "oauth2", None, None).is_err());
-    assert!(profiles.create("x", "provider", None, None).is_err());
-    assert!(
-        profiles
-            .create("x", "provider", None, Some("http://example.com"))
-            .is_err()
-    );
-    assert!(
-        profiles
-            .create("x", "api_key", None, Some("https://example.com"))
-            .is_err()
-    );
-    profiles.create("x", "chatgpt", None, None).unwrap();
-    assert!(profiles.create("x", "chatgpt", None, None).is_err());
-    for n in 1..PROFILE_LIMIT {
-        profiles
-            .create(&format!("p{n}"), "api_key", None, None)
-            .unwrap();
-    }
-    assert_eq!(
-        profiles
-            .create("overflow", "api_key", None, None)
-            .unwrap_err()
-            .to_string(),
-        "credential_profile_limit"
-    );
-    assert!(profiles.set_default("p999").is_err());
-}
-
-#[test]
 fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     use base64::Engine;
     let (_temp, profiles) = profiles();

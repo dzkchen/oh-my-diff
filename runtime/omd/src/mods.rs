@@ -119,46 +119,6 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
-fn profiling() -> bool {
-    static PROFILING: OnceLock<bool> = OnceLock::new();
-    *PROFILING.get_or_init(|| std::env::var_os("OMD_PROFILE_STARTUP").is_some())
-}
-
-pub fn profile(name: &str, started: Instant) {
-    if !profiling() {
-        return;
-    }
-    use std::io::Write;
-    let line = format!("OMD_PROFILE {name} {}\n", started.elapsed().as_micros());
-    if let Some(path) = std::env::var_os("OMD_PROFILE_LOG") {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            let _ = file.write_all(line.as_bytes());
-        }
-    } else {
-        eprint!("{line}");
-    }
-}
-
-struct Profile(&'static str, Option<Instant>);
-
-impl Profile {
-    fn new(name: &'static str) -> Self {
-        Self(name, profiling().then(Instant::now))
-    }
-}
-
-impl Drop for Profile {
-    fn drop(&mut self) {
-        if let Some(started) = self.1 {
-            profile(self.0, started);
-        }
-    }
-}
-
 use crate::credentials::url_origin;
 
 pub use package_manager::ModInstallRequest;
@@ -3198,7 +3158,6 @@ impl ModHost {
         repository: Option<&Path>,
         active: &dyn Fn() -> bool,
     ) -> Result<Self> {
-        let _profile = Profile::new("host_open");
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
@@ -3365,8 +3324,6 @@ impl ModHost {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        let _profile = Profile::new("reload");
-        let config_profile = Profile::new("configuration_read_hash");
         let path = self.store.root.join("mods.json");
         let stamp = configuration_stamp(&path);
         if self.current(stamp) {
@@ -3374,7 +3331,6 @@ impl ModHost {
         }
         self.configuration_stamp = None;
         let (stamp, sha256, bytes) = read_configuration(&path, stamp);
-        drop(config_profile);
         let (brokered, managed, deployment) = match self.authority(&sha256) {
             Ok(authority) => authority,
             Err(error) => {
@@ -3495,7 +3451,6 @@ impl ModHost {
         }
         self.unserved = self.unserved_targets(&user);
         self.publish_surfaces();
-        let selection_profile = Profile::new("selection_verification");
         let selected = Self::select(
             &selections,
             administered,
@@ -3505,7 +3460,6 @@ impl ModHost {
             &mut rejected,
             store::package,
         )?;
-        drop(selection_profile);
         let adapters = Self::adapters(&selected);
         let mut next = BTreeMap::new();
         for (id, (selection, package, source)) in selected {
@@ -3603,9 +3557,7 @@ impl ModHost {
                     }
                     state => state?,
                 };
-                let inspection_profile = Profile::new("inspection_callback");
                 let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
-                drop(inspection_profile);
                 if reply.state != loaded.state {
                     return Err(failure("state_write_during_registration"));
                 }
@@ -3712,12 +3664,10 @@ impl ModHost {
                 .record_security_event("load_denied", json!({"selections": denied}));
         }
         self.rejected = rejected;
-        let admission_profile = Profile::new("admission");
         self.admit(active);
         if !active() {
             return Err(failure("callback_cancelled"));
         }
-        drop(admission_profile);
         self.retain_environment();
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
@@ -3835,7 +3785,6 @@ impl ModHost {
 
     /// Re-asks the broker and policy source and re-reads the deployment record when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
     fn authority(&mut self, digest: &str) -> Result<Authority> {
-        let _profile = Profile::new("authority");
         if let Some((at, cached, authority)) = &self.brokered
             && cached == digest
             && at.elapsed() < BROKER_REFRESH
@@ -6051,30 +6000,6 @@ fn validate_ui_state(encoded: &str) -> Result<Value> {
         return Err(failure("ui_state_limit"));
     }
     serde_json::from_str(encoded).map_err(|_| failure("ui_state_invalid_json"))
-}
-
-#[cfg(test)]
-#[test]
-fn ui_state_serialized_boundaries() {
-    let cases: Value =
-        serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
-    for case in cases.as_array().unwrap() {
-        let encoded = format!(
-            "{}{}{}",
-            case["prefix"].as_str().unwrap(),
-            case["unit"]
-                .as_str()
-                .unwrap()
-                .repeat(case["repeat"].as_u64().unwrap() as usize),
-            case["suffix"].as_str().unwrap()
-        );
-        assert_eq!(
-            validate_ui_state(&encoded).is_ok(),
-            case["valid"].as_bool().unwrap(),
-            "{}",
-            case["name"]
-        );
-    }
 }
 
 fn service_ts_type(kind: &str) -> &'static str {

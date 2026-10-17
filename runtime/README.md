@@ -2,8 +2,7 @@
 
 The patched `rust-v0.163.0` host accepts `OMD_MODE=omd` for the generic mod host
 and `OMD_MODE=upstream_direct` for the pinned upstream task flow; with no mode
-selected it runs upstream-style direct. `OMD_MODE=enabled`, `OMD_MODE=platform`
-and `OMD_CONTROLLED_MANIFEST` fail closed. The single artifact is
+selected it runs upstream-style direct; any other `OMD_MODE` fails closed. The single artifact is
 `patches/omd-0.163.0.patch`; `runtime/omd` and `runtime/native` mirror its
 `codex-rs/omd` and `codex-rs/ext/omd` crates byte for byte, and
 `runtime/native/src/request_observer.rs` mirrors the patched

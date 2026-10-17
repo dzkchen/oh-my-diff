@@ -11,8 +11,7 @@ on `PATH` and ships the `@oh-my-diff/mod-api@0.2.0-experimental.5` SDK with it;
 the SDK is not published to npm. See
 [REFERENCE.md](REFERENCE.md#api-02-host-primitives) for current generic API
 operations and command documentation. The current host accepts `OMD_MODE=omd`
-or `OMD_MODE=upstream_direct`; it rejects `OMD_MODE=enabled`,
-`OMD_MODE=platform`, and `OMD_CONTROLLED_MANIFEST`. Point the mod host at an
+or `OMD_MODE=upstream_direct` and rejects any other value. Point the mod host at an
 external store with `OMD_MOD_STORE=/absolute/external/mod-store`. Trusting and
 enabling a package does not grant a provider, select a workflow contract, or
 authorize spending.

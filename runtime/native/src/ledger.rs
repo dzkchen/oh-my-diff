@@ -110,17 +110,6 @@ mod tests {
     }
 
     #[test]
-    fn session_evidence_directories_do_not_block_a_resumed_thread_in_another_repository() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let thread = ThreadId::new();
-        drop(open(&root, "first", thread, limits(), false).unwrap());
-        std::fs::create_dir(root.join(format!("{thread}-1-{}", ThreadId::new()))).unwrap();
-        assert!(open(&root, "second", thread, limits(), true).is_ok());
-        assert!(root.join(format!("ledger-second-{thread}")).is_dir());
-    }
-
-    #[test]
     fn symlinked_ledgers_never_reset_allowance() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();

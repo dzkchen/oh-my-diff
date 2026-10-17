@@ -40,7 +40,7 @@ UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta", "nightly"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
-RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
+RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 UPSTREAM_MINOR = "0.163"
@@ -286,6 +286,14 @@ def set_links(root, bin_dir):
     return displaced
 
 
+def path_warning(bin_dir):
+    located = shutil.which("codex")
+    if located and Path(located).parent.resolve() == bin_dir:
+        return None
+    return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
+            f"add this line to your shell profile and open a new shell: export PATH=\"{bin_dir}:$PATH\"")
+
+
 def restore_displaced(bin_dir):
     for name in LINKS:
         aside = bin_dir / f"{name}.before-omd"
@@ -309,6 +317,8 @@ def status(generation, upstream, bin_dir):
 
 
 def install(args, root, current):
+    if bool(args.asset_url) != bool(args.asset_sha256):
+        fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("This release candidate supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
@@ -425,7 +435,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                 "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
                 "pruned": pruned, "prune_failures": failures,
-                **({"authority_broker": pinned} if pinned else {})}
+                **({"authority_broker": pinned} if pinned else {}),
+                **({"path_warning": warning} if (warning := path_warning(args.bin_dir)) else {})}
 
 
 def restore_store(generation, upstream, bin_dir):

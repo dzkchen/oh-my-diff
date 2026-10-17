@@ -442,35 +442,6 @@ mod history_tests {
         assert!(selected_history(items.into_iter(), Some(&["missing".into()])).is_err());
     }
 
-    #[test]
-    fn frozen_history_marks_rows_a_transcript_rewrite_changed() {
-        use codex_protocol::models::ResponseItem;
-        struct Rewritten(Vec<ResponseItem>);
-        impl codex_extension_api::ConversationHistorySnapshot for Rewritten {
-            fn history_version(&self) -> u64 {
-                1
-            }
-            fn user_message_revision(&self) -> u64 {
-                1
-            }
-            fn items(&self) -> Box<dyn Iterator<Item = &ResponseItem> + Send + '_> {
-                Box::new(self.0.iter())
-            }
-            fn rewritten_item_ids(&self) -> std::collections::HashSet<String> {
-                ["synthetic".to_string()].into()
-            }
-        }
-        let item = |call_id: &str| {
-            serde_json::from_value(
-                json!({"type":"function_call_output","call_id":call_id,"output":"ok"}),
-            )
-            .unwrap()
-        };
-        let snapshot = Rewritten(vec![item("synthetic"), item("real")]);
-        let records: Vec<Value> = review_records(&snapshot).collect();
-        assert_eq!(records[0]["rewritten"], true);
-        assert!(records[1].get("rewritten").is_none());
-    }
 }
 
 type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;

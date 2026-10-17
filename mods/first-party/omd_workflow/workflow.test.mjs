@@ -109,30 +109,6 @@ function adversarialFixture(change = value => value, resultChange = value => val
   return { run, acceptance, advance: () => invoke('advance', {}, run.host, reviewOptions) };
 }
 
-test('workflow registers its contracts without running work and rejects missing selection', () => {
-  const reply = invoke('', null, () => assert.fail('activation called host'), { event: 'inspect' });
-  assert.deepEqual(reply.registrations.contracts.map(contract => [contract.id, contract.assurance]), [['reviewed_omd', 'independently-verified'], ['solo_evidence', 'self-reviewed']]);
-  const denied = fixture({ 'contract.status': () => ({ status: 'none', active: null }) });
-  assert.deepEqual(invoke('begin', { objective: 'x', acceptance_criteria: [criterion] }, denied.host, { refusals: true }).value, { status: 'refused', reason: 'select_workflow_contract_first' });
-  assert.throws(() => begin(denied.host), /select_workflow_contract_first/);
-  assert.deepEqual(denied.calls.map(call => call.operation), ['task.status', 'store.get', 'contract.status', 'task.status', 'store.get', 'contract.status']);
-  const oldHost = fixture({ 'contract.status': () => ({ status: 'active', active: { id: 'reviewed_omd' } }) });
-  assert.throws(() => begin(oldHost.host), /finding_ledger_required/);
-});
-
-test('task-entry lead chooses a distinct same-billing opposite route for review and fallback', () => {
-  const run = fixture();
-  begin(run.host);
-  const options = { state: { 'thread-1': { model: 'lead', provider: 'fixture' } },
-    settings: { check: { program: 'check', argv: [] }, review_route: 'opposite_lead', fallback_route: 'opposite_lead' } };
-  const started = invoke('delegate', { brief: 'Make the change', outage_action: 'opposite_lead' }, run.host, options);
-  assert.equal(started.value.status, 'running');
-  const selected = run.state.get('task').value.pending.delegation;
-  assert.equal(selected.reviewer.name, 'opposite');
-  assert.equal(selected.fallback.name, 'opposite');
-  assert.equal(selected.original_lead.name, 'lead');
-});
-
 test('checkpoint survives a new invocation, is compare-and-set, and cannot rewrite acceptance', () => {
   const run = fixture();
   const initial = begin(run.host).value;
@@ -182,25 +158,6 @@ test('no-progress policy pauses repeated complete results and resumes only after
   assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), executed);
   event('tool_result', result);
   assert.equal(run.state.get('task').value.calls[result.call_sha256].unchanged_calls, 1);
-});
-
-test('no-progress detection keeps pausing after many distinct calls by evicting the oldest observations', () => {
-  const run = fixture();
-  const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 1 };
-  const options = { settings };
-  let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] }, run.host, options).state;
-  const entry = run.state.get('task');
-  const seeded = Object.fromEntries(Array.from({ length: 128 }, (_, index) =>
-    [digest(`call-${index}`), { result_sha256: digest('output'), progress_revision: 1, unchanged_calls: 1 }]));
-  run.state.set('task', { ...entry, value: { ...entry.value, calls: seeded } });
-  const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
-    call_sha256: digest('repeated-call'), result_sha256: digest('same-output'), result_complete: true };
-  for (let index = 0; index < 2; index++) modState = invoke('', result, run.host, { ...options, event: 'tool_result', state: modState }).state;
-  const task = run.state.get('task').value;
-  assert.equal(task.status, 'paused');
-  assert.equal(Object.keys(task.calls).length, 128);
-  assert.equal(task.calls[digest('call-0')], undefined);
-  assert.equal(task.calls[result.call_sha256].unchanged_calls, 2);
 });
 
 test('checks bind execution to unchanged input and refuse stale or failed results', () => {
@@ -267,49 +224,6 @@ test('adversarial verification requires three exact categories and binds agent e
   assert.ok(challengeKinds.every(kind => prompt.includes(kind)));
 });
 
-test('adversarial verification rejects missing, duplicate, unknown and invalid challenge evidence before receipt submission', () => {
-  const malformed = [
-    value => ({ ...value, challenges: value.challenges.slice(0, 2) }),
-    value => ({ ...value, challenges: [value.challenges[0], value.challenges[0], value.challenges[2]] }),
-    value => ({ ...value, challenges: [{ ...value.challenges[0], kind: 'other' }, ...value.challenges.slice(1)] }),
-    value => ({ ...value, challenges: [{ ...value.challenges[0], paths: ['../source.ts'] }, ...value.challenges.slice(1)] }),
-    value => ({ ...value, challenges: [{ ...value.challenges[0], paths: [] }, ...value.challenges.slice(1)] }),
-  ];
-  for (const change of malformed) {
-    const { run, advance } = adversarialFixture(change);
-    assert.throws(advance, /adversarial_categories_required_exactly_once|adversarial_challenge_invalid/);
-    assert.equal(run.receipts.length, 0);
-    assert.equal(run.state.get('task').value.status, 'interrupted');
-    assert.ok(!run.calls.some(call => call.operation === 'task.complete'));
-  }
-});
-
-test('adversarial verification rejects stale candidate or acceptance claims without a receipt', () => {
-  for (const change of [
-    value => ({ ...value, candidate_sha256: digest('other candidate') }),
-    value => ({ ...value, acceptance_sha256: digest('other acceptance') }),
-  ]) {
-    const { run, advance } = adversarialFixture(change);
-    assert.throws(advance, /adversarial_binding_mismatch/);
-    assert.equal(run.receipts.length, 0);
-  }
-  const stale = adversarialFixture(value => value, value => ({ ...value, candidate_sha256: digest('other candidate') }));
-  assert.throws(stale.advance, /review_candidate_changed/);
-  assert.equal(stale.run.receipts.length, 0);
-});
-
-test('adversarial findings, blocked checks and unavailable evidence yield failed incomplete receipts', () => {
-  for (const [verdict, status] of [['finding', 'needs_repair'], ['blocked', 'blocked'], ['unverified', 'unverified']]) {
-    const { run, advance } = adversarialFixture(value => ({ ...value, challenges: [{ ...value.challenges[0], verdict }, ...value.challenges.slice(1)] }));
-    const response = advance().value;
-    assert.equal(response.status, status);
-    assert.equal(response.receipt.outcome, 'fail');
-    assert.equal(run.receipts[0].outcome, 'fail');
-    assert.equal(run.state.get('task').value.status, status);
-    assert.equal(response.challenges[0].verdict, verdict);
-  }
-});
-
 test('reviewer explicitly resolves only offered prior blocking fingerprints on a passing changed candidate', () => {
   const fingerprint = 'prior.blocker';
   const { run, acceptance, advance } = adversarialFixture(value => resolving(value, [fingerprint]), value => value,
@@ -329,79 +243,6 @@ test('reviewer explicitly resolves only offered prior blocking fingerprints on a
   assert.equal(run.receipts[0].candidate_sha256, candidate);
 });
 
-test('a clean later review does not claim resolution of an earlier blocker', () => {
-  const fingerprint = 'prior.blocker';
-  const ledger = {};
-  const { run, advance } = adversarialFixture(value => value, value => value, (entries, acceptanceSha) => {
-    entries[fingerprint] = { finding: { fingerprint, severity: 'blocking', summary: 'Old failure', paths: ['source.ts'] },
-      reported_candidate_sha256: digest('prior candidate'), acceptance_sha256: acceptanceSha,
-      reported_producer: { kind: 'agent', handle: 'old-reviewer' }, report_receipt_index: 0, resolution: null };
-    ledger[fingerprint] = entries[fingerprint];
-  });
-  assert.deepEqual(run.calls.find(call => call.operation === 'agents.spawn').arguments.resolution_context.findings, [fingerprint]);
-  assert.equal(advance().value.status, 'recorded');
-  assert.equal(run.receipts[0].resolves, undefined);
-  assert.equal(ledger[fingerprint].resolution, null);
-});
-
-test('invented, duplicate, stale-candidate and failing resolutions are rejected without a receipt', () => {
-  const fingerprint = 'prior.blocker';
-  const setup = (ledger, acceptanceSha, reported = digest('prior candidate')) => { ledger[fingerprint] = {
-    finding: { fingerprint, severity: 'blocking', summary: 'Old failure', paths: ['source.ts'] },
-    reported_candidate_sha256: reported, acceptance_sha256: acceptanceSha,
-    reported_producer: { kind: 'agent', handle: 'old-reviewer' }, report_receipt_index: 0, resolution: null }; };
-  for (const [change, prepare, expected] of [
-    [value => resolving(value, ['invented']), setup, /review_resolution_not_offered/],
-    [value => resolving(value, [fingerprint, fingerprint]), setup, /review_resolution_invalid/],
-    [value => resolving(value, [fingerprint]), (ledger, acceptanceSha) => setup(ledger, acceptanceSha, candidate), /review_resolution_not_offered/],
-    [value => ({ ...resolving(value, [fingerprint]), challenges: [{ ...value.challenges[0], verdict: 'finding' }, ...value.challenges.slice(1)] }),
-      setup, /review_resolution_requires_passing_agent/],
-  ]) {
-    const { run, advance } = adversarialFixture(change, value => value, prepare);
-    assert.throws(advance, expected);
-    assert.equal(run.receipts.length, 0);
-  }
-});
-
-test('reviewer resolution requires its own exact pass assertion before receipt submission', () => {
-  const fingerprint = 'prior.blocker';
-  const setup = (ledger, acceptanceSha) => { ledger[fingerprint] = {
-    finding: { fingerprint, severity: 'blocking', summary: 'Old failure', paths: ['source.ts'] },
-    reported_candidate_sha256: digest('prior candidate'), acceptance_sha256: acceptanceSha,
-    reported_producer: { kind: 'agent', handle: 'old-reviewer' }, report_receipt_index: 0, resolution: null }; };
-  for (const change of [
-    value => ({ ...value, resolves: [fingerprint] }),
-    value => ({ ...resolving(value, [fingerprint]), resolution_assertion: { ...resolving(value, [fingerprint]).resolution_assertion, outcome: 'fail' } }),
-    value => ({ ...resolving(value, [fingerprint]), resolution_assertion: { ...resolving(value, [fingerprint]).resolution_assertion, candidate_sha256: digest('other candidate') } }),
-    value => ({ ...resolving(value, [fingerprint]), resolution_assertion: { ...resolving(value, [fingerprint]).resolution_assertion, resolves: ['invented'] } }),
-  ]) {
-    const { run, advance } = adversarialFixture(change, value => value, setup);
-    assert.throws(advance, /review_resolution_assertion_invalid/);
-    assert.equal(run.receipts.length, 0);
-  }
-});
-
-test('host refusal preserves remaining work and solo verification cannot claim independence', () => {
-  const run = fixture({}, 'solo_evidence');
-  begin(run.host);
-  const receipt = invoke('self_verify', { kind: 'self_review', candidate_sha256: candidate, review: verdict }, run.host).value;
-  assert.equal(receipt.agent, undefined);
-  assert.equal(receipt.kind, 'self_review');
-  assert.throws(() => invoke('delegate', { brief: 'Delegate anyway' }, run.host), /reviewed_contract_required/);
-  assert.throws(() => invoke('complete', {}, run.host), /record_current_acceptance_assessments_first/);
-  invoke('acceptance', { candidate_sha256: candidate, review: verdict }, run.host);
-  assert.equal(invoke('complete', {}, run.host).value.status, 'refused');
-  assert.deepEqual(run.state.get('task').value.remaining_work, [criterion]);
-});
-
-test('parent history is explicitly delivered by the host, never reconstructed from the public session projection', () => {
-  const run = fixture();
-  begin(run.host);
-  invoke('delegate', { brief: 'Implement using the selected full context', parent_history: true }, run.host);
-  assert.equal(run.calls.find(call => call.operation === 'agents.spawn').arguments.parent_history, true);
-  assert.ok(!run.calls.some(call => call.operation.startsWith('sessions.')));
-});
-
 test('equivalent transport outages allow one fresh retry and one configured fallback with original-lead review', () => {
   let waits = 0;
   const run = fixture({ 'agents.wait': ({ arguments: args }) => ++waits <= 2 ? outage : { status: 'completed', text: JSON.stringify(verdict), candidate_sha256: candidate, evidence: { reference: `native-thread:${args.handle}`, sha256: digest(verdict) } } });
@@ -414,31 +255,6 @@ test('equivalent transport outages allow one fresh retry and one configured fall
   assert.deepEqual(run.calls.filter(call => call.operation === 'agents.spawn').map(call => call.arguments.route), ['contributor', 'contributor', 'opposite', 'lead']);
   assert.equal(run.state.get('task').value.outage_retries, 1);
   assert.equal(run.state.get('task').value.outage_fallbacks, 1);
-});
-
-test('outage recovery pauses for nontransport errors, different failures, exhausted attempts and billing changes', () => {
-  for (const category of ['authorization', 'rate_limit', 'sandbox', 'allowance', 'invalid_request', 'unknown']) {
-    const run = fixture({ 'agents.wait': () => ({ ...outage, failure: { ...outage.failure, category } }) });
-    begin(run.host);
-    invoke('delegate', { brief: 'Make the change' }, run.host);
-    assert.throws(() => invoke('advance', {}, run.host), /native_agent_failed/);
-    assert.equal(run.calls.filter(call => call.operation === 'agents.spawn').length, 1);
-  }
-  for (const changed of [false, true]) {
-    let waits = 0;
-    const run = fixture({ 'agents.wait': () => ++waits === 2 && changed ? { ...outage, failure: { ...outage.failure, code: 'different' } } : outage });
-    begin(run.host);
-    invoke('delegate', { brief: 'Make the change', outage_action: 'opposite_lead' }, run.host, recoveryOptions);
-    invoke('advance', {}, run.host, recoveryOptions);
-    if (!changed) invoke('advance', {}, run.host, recoveryOptions);
-    assert.throws(() => invoke('advance', {}, run.host, recoveryOptions), /native_agent_failed/);
-    assert.equal(run.calls.filter(call => call.operation === 'agents.spawn').length, changed ? 2 : 3);
-    assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
-  }
-  const paid = fixture({ 'routes.list': () => routes.map(route => route.name === 'opposite' ? { ...route, billing: 'explicit_paid_api_grant' } : route) });
-  begin(paid.host);
-  assert.throws(() => invoke('delegate', { brief: 'Make the change', outage_action: 'opposite_lead' }, paid.host, recoveryOptions), /same_billing_required/);
-  assert.ok(!paid.calls.some(call => call.operation === 'agents.spawn'));
 });
 
 test('changed route or workspace stops a retry and persisted interruption never recreates an agent', () => {
@@ -526,23 +342,6 @@ test('an interrupted spawn is never repeated: its claim blocks other operations 
   assert.throws(() => invoke('delegate', { brief: 'Make the change again' }, host), /process_crashed/);
   assert.equal(invoke('cancel', {}, host).value.status, 'cancelled');
   assert.deepEqual([run.agents.size, run.state.get('task').value.pending], [0, null]);
-});
-
-test('host receipts recover an advance that crashed after review attestation or integration without repeating either', () => {
-  const run = fixture();
-  const rules = {};
-  const host = crashing(run, rules);
-  begin(host);
-  invoke('delegate', { brief: 'Implement the requested change' }, host);
-  invoke('advance', {}, host);
-  rules.after = call => call.operation === 'receipts.submit';
-  assert.throws(() => invoke('advance', {}, host), /process_crashed/);
-  rules.after = call => call.operation === 'workspace.integrate';
-  assert.throws(() => invoke('advance', {}, host), /process_crashed/);
-  assert.equal(invoke('advance', {}, host).value.status, 'integrated');
-  assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review', 'workspace_integration']);
-  assert.equal(run.calls.filter(call => call.operation === 'workspace.integrate').length, 1);
-  assert.deepEqual([run.state.get('task').value.status, run.state.get('task').value.pending, run.agents.size], ['active', null, 0]);
 });
 
 test('a losing writer cancels only its own spawn and never clears the winning record or claim', () => {

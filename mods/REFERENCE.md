@@ -61,8 +61,7 @@ The host is feature-agnostic: every operation, event and capability below is
 available to any trusted mod on equal terms, and none of them names a product
 feature. `OMD_MODE=omd` runs the mod host in the default session;
 `OMD_MODE=upstream_direct` (or no `OMD_MODE`) runs pinned upstream behavior
-without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
-`OMD_CONTROLLED_MANIFEST` are rejected with a message naming `OMD_MODE=omd`.
+without mods. Any other `OMD_MODE` value is rejected.
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
@@ -1810,6 +1809,8 @@ with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`). Every `component_event` carries the
 `thread_id` of the session thread it came from (null before the session has one),
 and a `state_scope: "thread"` owner's callback runs with that thread's state.
+These events wait in order behind a slow callback; beyond 256 waiting events new ones are dropped and the next delivered
+event reports the count as `dropped`.
 
 Component modules (experimental, required feature `component_modules_v1`,
 which `mod_host_check.py --static` requires of any package that calls
@@ -1934,7 +1935,7 @@ as `sidebar_style`, the sidebar:
 - `border`: `none`, `plain`, `rounded`, `double` or `thick`; a title sits in
   the top edge. Under the theme's `icons: 'ascii'`, `OMD_TUI_ASCII=1`, or a
   non-Unicode locale, every border draws as
-  `+`, `-` and `|`.
+  `+`, `-` and `|`, and markers, cursors and separators draw in ASCII too.
 - `padding` and `margin`: cells on every side, or `[vertical, horizontal]`,
   each 0–4. `gap` (0–4) separates children: rows in a column, cells in a row.
 - `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color
@@ -1992,7 +1993,8 @@ Operations:
 - `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
   update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
-  focuses, scrolls (`offset`) or reveals one of the caller's own panes,
+  focuses, scrolls (`offset`; a pane shows 8 rows and stops scrolling once
+  its last row is in view) or reveals one of the caller's own panes,
   dialogs or controls; another mod's component is `terminal_pane_not_owned`.
 - `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as
   `{panes: [{id, visible, collapsed, focused, scroll}]}`; a pane is `visible`
@@ -2718,8 +2720,7 @@ reject cancellation, changed source, originating generation or client context.
 An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
-failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`
-when a mod provides it.
+failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path.
 
 ### Dynamic tools (`dynamic_tools_v1`)
 

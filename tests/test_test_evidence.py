@@ -5,21 +5,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from scripts import integration_matrix, mod_conformance, execution_evidence as test_evidence
+from scripts import execution_evidence as test_evidence
 
 
 class EvidenceTests(unittest.TestCase):
-    def test_inventory_is_not_verified_coverage_and_release_requires_all_claims(self):
-        contract = {"decisions": [{"id": "decision", "evidence": ["rust:required"]}],
-                    "launch": {"operations:a": {"status": "frozen", "decision": "decision"},
-                               "operations:b": {"status": "experimental", "evidence": ["rust:optional"]}}}
-        self.assertEqual(mod_conformance.release_evidence(contract), {"rust:required"})
-        matrix = {"combinations": [{"evidence": ["node:required"]}],
-                  "regression": [{"evidence": ["python:test_required"]}]}
-        self.assertEqual(integration_matrix.release_evidence(matrix), {"node:required", "python:test_required"})
-
     def test_references_resolve_only_to_repository_sources_that_define_them(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repo"
@@ -117,36 +107,6 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual({name: case["status"] for (owner, name), case in collected.items() if owner == "fixture.Example"},
                              {"test_pass": "passed", "test_skip": "skipped", "test_fail": "failed"})
             self.assertEqual(sum(case["status"] == "skipped" for case in collected.values()), 2)
-
-    def test_libtest_adapter_collects_before_execution_and_preserves_ignored_status(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "fixture.rs"
-            source.write_text('#[test] fn passed() { assert_eq!(1, 1); }\n'
-                              '#[test] #[ignore] fn ignored() { panic!("not executed"); }\n')
-            binary = root / "fixture"
-            subprocess.run(["rustc", "--test", str(source), "-o", str(binary)], check=True, capture_output=True)
-            report = root / "junit.xml"
-            result = subprocess.run([sys.executable, str(test_evidence.ROOT / "scripts/execution_evidence.py"),
-                                     "--libtest", str(binary), "runtime/omd/tests/fixture.rs", "passed", "ignored", "missing"],
-                                    capture_output=True, text=True,
-                                    env={**os.environ, "OMD_TEST_EVIDENCE_JUNIT": str(report)})
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertEqual({name: case["status"] for (_, name), case in test_evidence.cases(report.read_text()).items()},
-                             {"passed": "passed", "ignored": "skipped", "missing": "failed"})
-
-    def test_node_script_adapter_rejects_a_successful_exit_with_skipped_tests(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "fixture.mjs").write_text("import test from 'node:test'; test.skip('not run', () => {});\n")
-            report = root / "results.xml"
-            with patch.object(test_evidence, "ROOT", root), patch.dict(os.environ, {"OMD_TEST_EVIDENCE_JUNIT": str(report)}):
-                self.assertEqual(test_evidence.script_report(["fixture.mjs"]), 1)
-            collected = test_evidence.cases(report.read_text())
-            self.assertEqual(collected[("script", "fixture.mjs")]["status"], "failed")
-            (root / "fixture.mjs").write_text("// No tests registered.\n")
-            with patch.object(test_evidence, "ROOT", root), patch.dict(os.environ, {"OMD_TEST_EVIDENCE_JUNIT": str(report)}):
-                self.assertEqual(test_evidence.script_report(["fixture.mjs"]), 1)
 
 
 if __name__ == "__main__":

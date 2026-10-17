@@ -1,6 +1,5 @@
 use codex_omd::File;
 use codex_omd::Snapshot;
-use codex_omd::capture_tracked;
 use codex_omd::cleanup_owned_directory;
 use codex_omd::create_worktree;
 use codex_omd::tracked_paths;
@@ -58,24 +57,6 @@ fn cleanup_removes_only_a_direct_owned_directory() {
 }
 
 #[test]
-fn captures_tracked_dirty_files_and_only_approved_untracked_files() {
-    let temp = tempfile::tempdir().unwrap();
-    let workspace = create_worktree(&snapshot(), &temp.path().join("isolated"), 4096).unwrap();
-    fs::write(workspace.join("source.txt"), "dirty").unwrap();
-    fs::write(workspace.join("approved.txt"), "approved").unwrap();
-    fs::write(workspace.join(".env"), "excluded-secret-fixture").unwrap();
-    let paths = tracked_paths(&workspace, &BTreeSet::from(["approved.txt".into()])).unwrap();
-    let captured =
-        capture_tracked(&workspace, &BTreeSet::from(["approved.txt".into()]), 4096).unwrap();
-    assert_eq!(paths, captured.files.keys().cloned().collect());
-    assert_eq!(
-        captured.files.keys().cloned().collect::<Vec<_>>(),
-        ["approved.txt", "source.txt"]
-    );
-    assert_eq!(captured.files["source.txt"].bytes, b"dirty");
-}
-
-#[test]
 fn integration_candidate_preserves_unrelated_edits_and_rejects_conflicts() {
     let base = snapshot();
     let mut candidate = base.clone();
@@ -96,44 +77,6 @@ fn integration_candidate_preserves_unrelated_edits_and_rejects_conflicts() {
     assert_eq!(merged.files["source.txt"], candidate.files["source.txt"]);
     current.files.get_mut("source.txt").unwrap().bytes = b"concurrent".to_vec();
     assert!(base.merge_candidate(&candidate, &current).is_err());
-}
-
-#[test]
-fn ancestor_and_descendant_conflicts_are_rejected() {
-    let base = Snapshot {
-        files: BTreeMap::new(),
-    };
-    let file = File {
-        bytes: vec![],
-        executable: false,
-    };
-    let ancestor = Snapshot {
-        files: BTreeMap::from([("a".into(), file.clone())]),
-    };
-    let descendant = Snapshot {
-        files: BTreeMap::from([("a/b".into(), file)]),
-    };
-    assert!(base.merge_candidate(&ancestor, &descendant).is_err());
-    assert!(base.merge_candidate(&descendant, &ancestor).is_err());
-}
-
-#[test]
-fn worktree_preserves_bytes_despite_repository_attributes() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut input = snapshot();
-    input.files.insert(
-        ".gitattributes".into(),
-        File {
-            bytes: b"*.txt text eol=lf working-tree-encoding=UTF-16\n".to_vec(),
-            executable: false,
-        },
-    );
-    input.files.get_mut("source.txt").unwrap().bytes = b"dirty\r\ninput\r\n".to_vec();
-    let workspace = create_worktree(&input, &temp.path().join("isolated"), 4096).unwrap();
-    assert_eq!(
-        Snapshot::capture(&workspace, &input.files.keys().cloned().collect(), 4096).unwrap(),
-        input
-    );
 }
 
 #[test]

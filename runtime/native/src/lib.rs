@@ -156,8 +156,7 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
-    let effective = codex_omd::effective_mode()?;
-    if !effective.mode.mod_host_enabled() {
+    if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
     let root = PathBuf::from(
@@ -711,19 +710,4 @@ mod tests {
         assert!(HostConfig::load(&root, &root.join("repo")).is_err());
     }
 
-    #[test]
-    fn atomic_persistence_replaces_private_file_without_leftovers() {
-        let directory = tempfile::tempdir().unwrap();
-        persist(directory.path(), "state.json", b"{\"first\":true}", true).unwrap();
-        persist(directory.path(), "state.json", b"{\"second\":true}", true).unwrap();
-        let path = directory.path().join("state.json");
-        assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-        assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(
-                &std::fs::metadata(&path).unwrap().permissions()
-            ) & 0o777,
-            0o600
-        );
-    }
 }

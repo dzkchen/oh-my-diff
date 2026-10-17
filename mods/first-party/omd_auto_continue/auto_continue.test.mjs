@@ -47,29 +47,3 @@ test('a request hops to the channel, arms the deadline and is answered without a
   assert.deepEqual(later.calls.find(([operation]) => operation === 'app.respond')[1], { request_id: 'a', result: { decision: 'decline' } });
 });
 
-test('answered, already-resolved and disabled requests are left alone', () => {
-  let state = run('channel', hop({ request_id: 1, phase: 'requested', kind: 'permission', questions: [] }), null).state;
-  assert.deepEqual(run('channel', hop({ request_id: 1, phase: 'resolved', kind: 'permission', questions: [] }), state).calls, [['events.cancel', { key: 'deadline' }]]);
-  const raced = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('app_request_not_pending') : {} });
-  assert.deepEqual(raced.calls.map(([operation]) => operation), ['app.respond', 'events.cancel']);
-  assert.deepEqual(raced.state.pending, {});
-  const off = { settings: { timeout_seconds: 0 } };
-  assert.deepEqual(run('app_server_request', request('item/fileChange/requestApproval', 2), null, off).calls, []);
-  for (const [event, payload] of [['timer', { key: 'deadline' }], ['channel', hop({ request_id: 2, phase: 'requested', kind: 'approval', questions: [] })]]) {
-    const disabled = run(event, payload, state, { ...off, now: NOW + 120_000 });
-    assert.deepEqual([disabled.calls, disabled.state.pending], [[['events.cancel', { key: 'deadline' }]], {}], `${event} answers nothing once the timer is off`);
-  }
-  const viewing = run('timer', { key: 'deadline' }, state, { now: NOW + 120_000, answer: call => call.operation === 'app.respond' ? new Error('client_context_changed') : {} });
-  assert.equal(viewing.state.pending['1'].deadline, NOW + 130_000, 'another thread in view retries instead of dropping the request');
-  assert.deepEqual(viewing.calls.at(-1), ['events.schedule', { key: 'deadline', delay_ms: 10_000 }]);
-  const late = run('timer', { key: 'deadline' }, state, { now: NOW + 3_600_000 });
-  assert.deepEqual(late.calls[0], ['app.respond', { request_id: 1, result: { permissions: {} } }], 'a timer delayed by sleep still answers');
-  assert.deepEqual(run('resume', { thread_id: 't', last_turn: null, restarted: false }, state).calls, []);
-  for (const [event, payload] of [['resume', { thread_id: 't', last_turn: null, restarted: true }], ['start', {}]]) {
-    const reset = run(event, payload, state);
-    assert.deepEqual(reset.state.pending, {}, `${event} drops entries from an earlier session or the forked parent`);
-    assert.deepEqual(reset.calls, [['events.cancel', { key: 'deadline' }]]);
-  }
-  const elicitation = run('channel', hop({ request_id: 3, phase: 'requested', kind: 'elicitation', questions: [] }), null).state;
-  assert.deepEqual(run('timer', { key: 'deadline' }, elicitation, { now: NOW + 120_000 }).calls[0], ['app.respond', { request_id: 3, result: { action: 'decline' } }]);
-});

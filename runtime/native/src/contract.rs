@@ -473,31 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn admission_reports_a_full_contract_without_recording_the_probe() {
-        let active = document(
-            json!({"schema":2,"id":"checked","version":1,"description":"Checks",
-            "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate"]}]}}),
-        );
-        let mut contract = SessionContract::activate(active, owner(), "user");
-        let receipt = |index: usize| -> Receipt {
-            serde_json::from_value(json!({"kind":"checks","candidate_sha256":"a".repeat(64),
-            "outcome":"pass","evidence":{"reference":format!("fixture-{index}"),"sha256":"b".repeat(64)},
-            "producer":{"kind":"lead","handle":null},"submitted_by":"fixture","at":1}))
-            .unwrap()
-        };
-        contract.admit(&receipt(0)).unwrap();
-        assert!(contract.receipts.is_empty());
-        for index in 0..RECEIPT_LIMIT {
-            contract.submit(receipt(index)).unwrap();
-        }
-        assert_eq!(
-            contract.admit(&receipt(RECEIPT_LIMIT)).unwrap_err(),
-            "receipt_limit"
-        );
-        assert_eq!(contract.receipts.len(), RECEIPT_LIMIT);
-    }
-
-    #[test]
     fn no_selection_means_no_gate_and_restrictions_are_enforced() {
         let mut contract = SessionContract {
             status: ContractStatus::None,

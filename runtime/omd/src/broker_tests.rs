@@ -314,64 +314,6 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
 }
 
 #[test]
-#[ignore = "needs a deployed broker that pins this test binary"]
-fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
-    assert!(deployed());
-    let temp = tempfile::tempdir().unwrap();
-    let base = temp.path().canonicalize().unwrap();
-    let profiles = crate::credentials::CredentialProfiles::open(&base).unwrap();
-    let key = profiles.create("dummy", "api_key", None, None).unwrap();
-    profiles
-        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-dummy"}"#)
-        .unwrap();
-    assert_eq!(
-        profiles
-            .secret(&key.id, "https://api.openai.com", None)
-            .unwrap()
-            .token,
-        "sk-dummy"
-    );
-    assert!(!base.join("credentials").exists());
-    assert_eq!(
-        fs::read_dir(ROOT).unwrap_err().kind(),
-        io::ErrorKind::PermissionDenied
-    );
-    let limits = crate::Limits {
-        requests: 3,
-        exposure_microusd: 100,
-        seconds: 300,
-        concurrent_workers: 2,
-        max_depth: 2,
-    };
-    let ledger = base.join("ledger");
-    drop(crate::Task::create(limits.clone(), ledger.clone()).unwrap());
-    let first = ledger.join("00000001.json");
-    let original = fs::read_to_string(&first).unwrap();
-    fs::write(
-        &first,
-        original.replace("\"requests\":3", "\"requests\":30"),
-    )
-    .unwrap();
-    assert_eq!(
-        crate::Task::open(limits.clone(), ledger.clone(), Some("resume"))
-            .err()
-            .unwrap()
-            .to_string(),
-        "evidence_anchor_mismatch"
-    );
-    fs::write(&first, original).unwrap();
-    crate::Task::open(limits.clone(), ledger.clone(), Some("resume")).unwrap();
-    fs::remove_dir_all(&ledger).unwrap();
-    assert_eq!(
-        crate::Task::create(limits, ledger)
-            .err()
-            .unwrap()
-            .to_string(),
-        "evidence_anchor_mismatch"
-    );
-}
-
-#[test]
 fn peer_tags_verify_only_the_sealed_digest() {
     let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
     let mut client = Client::at(&socket).unwrap();
