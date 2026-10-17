@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import json
-import sys
 from pathlib import Path
 
 from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
-DOCUMENT = ROOT / "mods/EXTENSION_TYPES.md"
 ROLES = {"bundled", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
 PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party")
@@ -80,64 +78,11 @@ def check(registry):
     return problems
 
 
-def table(rows, headers):
-    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
-    lines.extend("| " + " | ".join(value.replace("|", "\\|") for value in row) + " |" for row in rows)
-    return "\n".join(lines)
-
-
-def render(registry):
-    packages = identified(registry)
-    out = [
-        "# Extension types",
-        "",
-        "<!-- Generated from mods/extension-types.json by python3 -m scripts.mod_extension_types --write. -->",
-        "",
-        registry["rule"],
-        "",
-        "A conformance fixture is retained source and executable coverage, not a package offered",
-        "to users. The author SDK packs only author examples. The first-party mod lock",
-        "(`runtime/mods.lock.json`) pins only the packages labeled `bundled` below.",
-        "",
-    ]
-    sections = (
-        ("Bundled packages", "bundled"),
-        ("Author examples", "author_example"),
-        ("Conformance fixtures", "conformance_fixture"),
-    )
-    for title, role in sections:
-        rows = [
-            (f"`{package['id']}@{package['version']}`", f"`{package['extension_type']}`", f"`{package['path']}`", package["why_mod"])
-            for package in packages
-            if package["role"] == role
-        ]
-        out.extend([f"## {title}", "", table(rows, ["Package", "Extension type", "Source", "Why a mod is required for this behavior"]), ""])
-    out.extend([
-        "## Synthetic conformance fixtures",
-        "",
-        table(
-            [
-                (f"`{fixture['name']}`", f"`{fixture['extension_type']}`", f"`{fixture['location']}`", fixture["reason"])
-                for fixture in registry["synthetic_fixtures"]
-            ],
-            ["Fixture", "Extension type", "Location", "Boundary"],
-        ),
-        "",
-        "The small context, counter, guard, interception, service, reader, and tool cases remain",
-        "available to repository conformance checks. They are not copied by `omd-mod-author examples`,",
-        "not packed as SDK examples, and not part of the first-party mod lock.",
-        "",
-    ])
-    return "\n".join(out)
-
-
 def main():
     registry = json.loads(REGISTRY.read_text())
     problems = check(registry)
     if problems:
         raise SystemExit("\n".join(problems))
-    support.check_or_write(DOCUMENT, render(registry), "--write" in sys.argv[1:],
-                           "mods/EXTENSION_TYPES.md is stale; rerun python3 -m scripts.mod_extension_types --write")
     print(f"extension types: {len(registry['packages'])} packages and {len(registry['synthetic_fixtures'])} synthetic fixtures")
 
 

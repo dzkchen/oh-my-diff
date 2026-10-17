@@ -13,7 +13,6 @@ from scripts.build_provenance import BINARIES
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/release.lock.json"
-VERSION = "0.1.0-alpha.1"
 TARGET = "aarch64-apple-darwin"
 HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
 ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
@@ -27,7 +26,7 @@ SOURCES = (
     "upstream.lock.json", "runtime/patches/manifest.json", "runtime/plugins.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
-    "INSTALL.md", "install.sh",
+    "docs/install.md", "install.sh",
     "scripts/mods_lock.py", "runtime/mods.lock.json",
 ) + mods_lock.sources()
 
@@ -60,7 +59,7 @@ SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
 def build(artifact_dir, package_mode=False, version=None):
-    product_version = VERSION if version is None else version
+    product_version = json.loads(OUTPUT.read_text())["version"] if version is None else version
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", product_version):
         raise ValueError("invalid release version")
     provenance = build_provenance.verify(artifact_dir)

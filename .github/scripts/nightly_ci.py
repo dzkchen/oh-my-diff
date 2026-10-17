@@ -14,7 +14,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
 import nightly
-from scripts import package as release_package, profile_acceptance, release_lock
+from scripts import authority_broker, package as release_package, profile_acceptance, release_lock
 
 
 def command(*args):
@@ -65,13 +65,23 @@ def cargo_tests(suite):
     raise SystemExit(int(failed))
 
 
-def package():
+def nightly_version(frozen):
+    base, _, prerelease = frozen.partition("-")
+    if not prerelease:
+        major, minor, patch = base.split(".")
+        base = f"{major}.{minor}.{int(patch) + 1}"
+    return f"{base}-nightly.{datetime.datetime.now(datetime.UTC):%Y%m%d%H%M%S}.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
+
+
+def package(version=None):
     batch = build.batch_dir(nightly.BATCH)
     shutil.rmtree(batch / "target")
     artifact_dir = batch / "artifacts"
-    frozen = json.loads(release_lock.OUTPUT.read_text())
-    base = frozen["version"].split("-", 1)[0]
-    version = f"{base}-nightly.{datetime.datetime.now(datetime.UTC):%Y%m%d%H%M%S}.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
+    frozen = json.loads(release_lock.OUTPUT.read_text())["version"]
+    if version is None:
+        version = nightly_version(frozen)
+    elif version != frozen:
+        raise ValueError(f"release {version} does not match the committed release lock version {frozen}")
     command(sys.executable, "-m", "scripts.release_lock", "--artifact-dir", artifact_dir, "--write", "--version", version)
     output = nightly.WORK / "release"
     output.mkdir(parents=True, exist_ok=True)
@@ -94,7 +104,10 @@ def package():
                   "upstream_commit": pin["commit"], "upstream_tag": pin["tag"],
                   "patch_sha256": json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["patch"]["sha256"], "profile": "release",
                   "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"}
-    (output / "nightly-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    shutil.copy2("install.sh", output / "install.sh")
+    command("git", "archive", "--format=tar.gz", f"--prefix=oh-my-diff-{version}/",
+            "--output", output / f"oh-my-diff-{version}-source.tar.gz", "HEAD")
     checksums = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in sorted(output.iterdir()) if path.is_file()]
     (output / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
 
@@ -129,32 +142,60 @@ def archive_acceptance(archive, upstream):
                 raise ValueError("archive installation changed shared Codex configuration")
 
 
-def publish(directory):
-    provenance = json.loads((directory / "nightly-provenance.json").read_text())
+def sign(manifest):
+    key = os.environ.get("OMD_RELEASE_SIGNING_KEY")
+    if not key:
+        raise ValueError("OMD_RELEASE_SIGNING_KEY is required to sign omd-release.json")
+    with tempfile.TemporaryDirectory() as temporary:
+        private = Path(temporary) / "key"
+        private.write_text(key.strip() + "\n")
+        private.chmod(0o600)
+        command("ssh-keygen", "-Y", "sign", "-q", "-f", private, "-n", authority_broker.SIGNING_NAMESPACE, manifest)
+    authority_broker.signed_hashes([manifest])
+    return manifest.with_name(manifest.name + ".sig")
+
+
+def publish(directory, notes=None, dry_run=False):
+    provenance = json.loads((directory / "provenance.json").read_text())
     manifest = json.loads((directory / "omd-release.json").read_text())
-    if (provenance["commit"] != os.environ["GITHUB_SHA"] or provenance["version"] != manifest["version"]
-            or not re.fullmatch(r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.\d+", manifest["version"])
+    version = manifest["version"]
+    pattern = r"\d+\.\d+\.\d+(?:-rc\.\d+)?" if notes else r"\d+\.\d+\.\d+-nightly\.\d+\.\d+\.\d+"
+    if (provenance["commit"] != os.environ["GITHUB_SHA"] or provenance["version"] != version
+            or not re.fullmatch(pattern, version)
             or provenance["profile"] != "release" or manifest["target"] != "aarch64-apple-darwin"
             or Path(manifest["archive"]).name != manifest["archive"]):
-        raise ValueError("nightly provenance does not match the validated workflow commit")
-    for line in (directory / "SHA256SUMS").read_text().splitlines():
+        raise ValueError("release provenance does not match the validated workflow commit")
+    tag = "v" + version
+    if notes and not dry_run and os.environ.get("GITHUB_REF") != f"refs/tags/{tag}":
+        raise ValueError(f"release {version} must be published from tag {tag}")
+    sums = (directory / "SHA256SUMS").read_text().splitlines()
+    for line in sums:
         digest, name = line.split("  ", 1)
         if Path(name).name != name or hashlib.sha256((directory / name).read_bytes()).hexdigest() != digest:
-            raise ValueError(f"nightly asset checksum mismatch: {name}")
+            raise ValueError(f"release asset checksum mismatch: {name}")
     if hashlib.sha256((directory / manifest["archive"]).read_bytes()).hexdigest() != manifest["sha256"]:
-        raise ValueError("nightly archive disagrees with the installer manifest")
-    notes = directory.parent / "notes.md"
-    notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"
-                     f"[Hosted validation]({provenance['run_url']}) passed on macOS and Linux. "
-                     "Apple Silicon archive installs either OMD Core or OMD+.\n\n"
-                     "Opt in with `sh install.sh --channel nightly` or `omd update channel nightly`. "
-                     "Stable releases remain tag-only.\n")
-    tag = "v" + manifest["version"]
-    assets = [directory / manifest["archive"], directory / "omd-release.json", directory / "nightly-provenance.json", directory / "SHA256SUMS"]
-    command("gh", "release", "create", tag, *assets, "--repo", os.environ["GITHUB_REPOSITORY"],
-            "--target", provenance["commit"], "--title", f"Nightly {manifest['version']}",
-            "--notes-file", notes, "--draft", "--prerelease", "--latest=false")
-    command("gh", "release", "edit", tag, "--repo", os.environ["GITHUB_REPOSITORY"], "--draft=false")
+        raise ValueError("release archive disagrees with the installer manifest")
+    assets = [directory / line.split("  ", 1)[1] for line in sums] + [directory / "SHA256SUMS", sign(directory / "omd-release.json")]
+    if not notes:
+        notes = directory.parent / "notes.md"
+        notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"
+                         f"[Hosted validation]({provenance['run_url']}) passed on macOS and Linux. "
+                         "Apple Silicon archive installs either OMD Core or OMD+.\n\n"
+                         "Opt in with `sh install.sh --channel nightly` or `omd update channel nightly`. "
+                         "Stable releases remain tag-only.\n")
+        title, latest = f"Nightly {version}", ["--prerelease", "--latest=false"]
+    else:
+        title, latest = f"Oh My Diff {version}", ["--prerelease", "--latest=false"] if "-" in version else ["--latest"]
+    create = ["gh", "release", "create", tag, *assets, "--repo", os.environ["GITHUB_REPOSITORY"],
+              "--target", provenance["commit"], "--title", title, "--notes-file", notes, "--draft", *latest]
+    edit = ["gh", "release", "edit", tag, "--repo", os.environ["GITHUB_REPOSITORY"], "--draft=false", latest[-1]]
+    if dry_run:
+        print("dry run verified", ", ".join(path.name for path in assets))
+        print(*map(str, create))
+        print(*map(str, edit))
+        return
+    command(*create)
+    command(*edit)
 
 
 def report():
@@ -185,19 +226,24 @@ def report():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Provision verified build inputs and publish passing hosted nightlies")
+    parser = argparse.ArgumentParser(description="Provision verified build inputs and publish passing hosted nightlies and tagged releases")
     parser.add_argument("command", choices=("v8", "tests", "package", "publish", "report"))
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core"))
+    parser.add_argument("--version", help="package this stable release version instead of a nightly")
+    parser.add_argument("--notes", type=Path, help="publish a stable release with these notes")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.command == "publish":
-        publish(args.directory)
+        publish(args.directory, args.notes, args.dry_run)
+    elif args.command == "package":
+        package(args.version)
     elif args.command == "tests":
         if not args.suite:
             parser.error("tests requires --suite")
         cargo_tests(args.suite)
     else:
-        {"v8": v8, "package": package, "report": report}[args.command]()
+        {"v8": v8, "report": report}[args.command]()
 
 
 if __name__ == "__main__":

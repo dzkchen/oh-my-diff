@@ -1,23 +1,43 @@
-# Workflow policy
+# omd_workflow
 
-`omd_workflow` implements task checkpoints, reviewed contributions and completion policy through API `0.2.0-experimental.5`. It registers two schema-2 contract documents: `reviewed_omd@1` requires a checkpoint, host-attested integration, milestone review, host-recorded checks, independent final review and adversarial verification; `solo_evidence@1` requires a checkpoint, host-recorded checks and evidence-backed self-review and self-verification, and disallows child agents and integration. The host enforces the document the user selects with `/omd_workflow:contract ID@VERSION` (a native confirmation through `contract.select`) or `omd-package contract select`; activation does not select or weaken it.
+Keeps long tasks on track: the agent saves a checkpoint, and a task counts as done only after the checks and reviews your chosen contract asks for.
 
-After trusting and enabling the package, configure `check` as `{ "program": "/absolute/executable", "argv": [] }` and select available `worker_route`, `review_route` and `verify_route` names from `host.json`. Worker routes require explicit host grants and share the task allowance. The final reviewer and verifier must differ from the observed lead model/provider. This package does not grant provider access or enable paid fallback.
+## Turn it on
 
-Start with `mod_omd_workflow_begin` and immutable `objective` and `acceptance_criteria`. `checkpoint` preserves remaining work and failed hypotheses; `acceptance` records source-backed assessments of every criterion for the current candidate. `delegate` starts an isolated contribution. Call `advance` to validate its result, run executable checks against its frozen snapshot, obtain independent review, and request host-gated conflict-checked integration. Each call advances bounded work and persists its state. Missing handles after a restart are reported as interrupted and never silently respawned.
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
-Every mutating tool and the `checkpoint` and `delegate` service methods take an `operation_id` and the task `expected_revision` (0 before `begin`; each result reports the new `revision`). The ID is bound to the thread, working directory, arguments and expected revision, and the task record keeps the newest 16 receipts (at most 32 KiB). Repeating a committed call returns its recorded result; reusing the ID with other arguments or from another thread or checkout is refused as `operation_id_conflict`, and an old revision as `stale_revision`, so a retry whose receipt was evicted never runs twice. The task change and its receipt are one compare-and-set write; the checkpoint contract receipt follows it, and a retry resubmits it only if it was missed. Before spawning an agent the mod records a claim: other operations are refused with `operation_in_progress` until a retry of the claiming operation, or `cancel`, records it as interrupted and cancels this thread's workflow agents instead of spawning again. An `advance` that stopped after a review receipt or an integration resumes from the host's receipts instead of submitting or integrating twice. External effects are not promised to run exactly once.
+```sh
+omd-package mod enable omd_workflow
+```
 
-Use `check`, `review` (`milestone_review`, `final_review` or `adversarial_verification`), and `advance` for reviewed completion. The solo contract instead uses `self_verify` for `self_review` and `self_verification`. `complete` requires current full acceptance assessments and asks the host to validate all selected contract receipts. A failed or stale receipt cannot approve a different candidate or acceptance document. `/omd_workflow:progress` reports the persisted checkpoint.
+## Use it
 
-Adversarial verification must return the exact candidate and acceptance SHA-256 values in its prompt and one challenge each for `missing_wiring`, `test_weakening` and `negative_cases`. Each challenge reports `passed`, `finding`, `blocked` or `unverified`, with a summary and inspected relative paths; a passing challenge needs at least one path. Missing, duplicate, malformed or stale challenge evidence is rejected before receipt submission. Findings and unavailable checks submit a failed, candidate-bound receipt and leave completion incomplete.
+| Command | What it does |
+| --- | --- |
+| `/omd_workflow:contract` | List the contracts. |
+| `/omd_workflow:contract reviewed_omd@1` | Require checks, an independent review and an independent verification. |
+| `/omd_workflow:contract solo_evidence@1` | Require checks and a self-review with evidence. No other agents. |
+| `/omd_workflow:progress` | Show this thread's task, its status and the work left. |
 
-Independent reviews receive open blocking findings from the host ledger. A reviewer may put an offered fingerprint in `resolves` only after verifying its fix on a changed candidate. The host requires a passing agent receipt, the original acceptance digest and a different reviewer from the one that reported the finding. Omission and later clean receipts leave earlier blockers open; completion refuses while any remain. The workflow requires the host ledger field and rejects invented or duplicate resolution IDs.
+From a shell, `omd-package contract select ID@VERSION` picks a contract too.
 
-Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to select an available lead-and-worker route with the same billing class and a different model or provider from the current lead. This supports either fixed or task-entry lead selection without changing the selected contract.
+## Settings
 
-A known transport outage permits one same-route retry per task. A further equivalent transport failure permits at most one fallback only when `delegate` explicitly selects `outage_action: "opposite_lead"` and `fallback_route` is configured and authorized. The original lead route must independently review fallback work. Authentication, allowance, permission, rate-limit, invalid-request, unknown and task failures pause without fallback. Route, billing class, candidate or failure-category changes also pause. Reservations survive restart and cancellation does not recover spent allowance.
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `check` | `{}` | The check to run, as `{ "program": "/absolute/path", "argv": [] }`. |
+| `worker_route` | `contributor` | Route for agents that do the work. |
+| `review_route` | `reviewer` | Route for the independent review. |
+| `verify_route` | `verifier` | Route for the independent verification. |
+| `fallback_route` | empty | Route to use if the first one is down. |
+| `initial_task` | `{}` | Start with a task already recorded: an objective and acceptance criteria. |
+| `max_no_progress_calls` | `0` | Limit on workflow calls that make no progress (0 to 32). `0` means no limit. |
 
-Runner tests cover bounded orchestration, outages and acceptance; native snapshot and restart fixtures are separate host evidence. Tools, services and commands return expected refusals as `{status: 'refused', reason}` values instead of throwing. The task checkpoint lives in thread-scoped storage, so a forked session keeps it, and `/omd_workflow:progress` shows it from the terminal. `acceptance` and `self_verify` publish the full `review` schema to the model. No live-provider qualification or work-saving claim is made.
+Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to use a route with a different model or provider than your current one.
 
-A trusted launcher may set `initial_task` to an objective and acceptance-criteria object. The mod initializes that task once at `turn_start`; subsequent turns and resume preserve the existing checkpoint. With this setting absent, initialization remains the explicit `begin` tool.
+## Needs and limits
+
+- Nothing is delegated until you pick a contract and the agent starts a task.
+- Routes must exist in `host.json`. This mod doesn't grant provider access or turn on paid fallback.
+- The final reviewer and verifier must differ from the model you are using.
+- A contract you pick applies from your next session.

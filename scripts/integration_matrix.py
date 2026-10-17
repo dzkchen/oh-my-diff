@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Check the integration source inventory; optionally require release execution receipts."""
-import argparse
 import json
 import re
 import sys
@@ -8,10 +7,10 @@ from pathlib import Path
 
 from scripts import profiles, install_support, execution_evidence
 from scripts.execution_evidence import resolve
+from scripts.mod_compatibility import array_constant, host_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
-DOCUMENT = ROOT / "INTEGRATION.md"
 AREAS = {
     "host": "Host and public API",
     "first_party_mod": "First-party mods",
@@ -26,15 +25,14 @@ COMPONENT_FIELDS = ("id", "area", "name", "owner", "version", "status", "fixture
 def sources():
     host = (ROOT / "runtime/omd/src/mods.rs").read_text()
     lsp = (ROOT / "mods/first-party/omd_lsp_sync/protocol.ts").read_text()
-    coverage = (ROOT / "mods/COVERAGE.md").read_text()
 
     def constant(name):
-        return re.search(rf"{name}: &\[[^]]*\] =\s*&\[(.*?)\];", host, re.S).group(1)
+        return array_constant(host, name)
 
     servers = {language: re.findall(r"name: '([\w-]+)'", block)
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
-    api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
+    contract = host_contract()
     plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
     mods = install_support.mods_lock()
@@ -46,16 +44,14 @@ def sources():
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
         "mods": mods,
         "plugin": plugin,
-        "api": api,
+        "api": contract["current_api"],
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
-        "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
+        "features": contract["features"],
         "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[([^\]]*)\]\s*\.contains\(&name\)', site_validation).group(1)),
-        "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
-                    for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
-                                      ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),
-                                      ("installed_contract_types", "INSTALLED_CONTRACT_TYPES_VERSION"))},
+        "schemas": {"package": contract["package_schemas"][0], "state_storage": contract["state_storage_schema"],
+                    "installed_contract_types": contract["installed_contract_types"]},
         "terminal_operations": [name for name in re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))
                                 if name.startswith(("terminal.", "composer.", "builtins."))],
         "first_party_packages": {name: {key: packages[name][key] for key in ("version", "source")}
@@ -65,12 +61,8 @@ def sources():
                                                                  & set(profiles.DEFAULT_ACTIVE)),
                             "plugin_sources": plugins if name == "full" else []}
                      for name, label in profiles.PROFILE_LABELS.items()},
-        "apis": [
-            api if row == "MOD_API_VERSION" else row.strip('"')
-            for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
-        ],
+        "apis": [entry["version"] for entry in contract["apis"]],
         "languages": servers,
-        "hooks": re.findall(r"`([a-z_]+)`", re.search(r"and hooks for (.*?)\.\nA hook", coverage, re.S).group(1)),
     }
 
 
@@ -133,7 +125,6 @@ def check(matrix):
     claim("omd_host", "version", f"{source['compatibility']['host']['omd']} on Codex {source['compatibility']['host']['codex']}")
     claim("omd_host", "features", source["features"])
     claim("omd_host", "schemas", source["schemas"])
-    claim("upstream_hooks", "hooks", source["hooks"])
     for plugin_id, plugin in source["plugin"]["plugins"].items():
         component = plugin_id.replace("-", "_")
         claim(component, "version", plugin["version"])
@@ -244,182 +235,14 @@ def launch_problems(entries, source):
     return problems
 
 
-def table(rows, headers):
-    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
-    lines += ["| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |" for row in rows]
-    return "\n".join(lines)
-
-
-DETAILS = ("extension_type", "versions", "supported_versions", "capabilities", "features", "hooks", "operations", "terminal_operations", "sites", "schemas")
-
-
-def listed(value):
-    if isinstance(value, dict):
-        return ", ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return ", ".join(str(item) for item in value)
-    return str(value)
-
-
-def version(component):
-    detail = [f"{key.replace('_', ' ')}: {listed(component[key])}" for key in DETAILS if key in component]
-    return " — ".join([listed(component["version"]), *detail])
-
-
-def references(values):
-    return " · ".join(f"`{value}`" for value in values)
-
-
-def render(matrix):
-    release = matrix["release"]
-    out = [
-        "# Integration coverage",
-        "",
-        "<!-- Generated from integration/matrix.json by python3 -m scripts.integration_matrix --write. -->",
-        "",
-        f"Accumulated integration coverage for the {release['upstream_tag']} pinned runtime as of",
-        f"{matrix['as_of']}. Each component names its owner, version, retained fixtures, limits,",
-        "and removal path. Fixture references are cumulative; this source check does not rerun",
-        "them or verify test discovery, execution, assertions, or the full release candidate.",
-        "Release qualification requires `--release --executed-evidence RECEIPT` for all",
-        "combination and regression evidence at the clean validated revision; see `integration/EVIDENCE.md`.",
-        "The matrix is checked against the",
-        "shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language",
-        "or evidence reference that disagrees with the runtime fails the check.",
-        "",
-        f"**Qualification:** {matrix['qualification']}",
-        "",
-        "Combinations below are representative, not exhaustive. Exercising every possible",
-        "combination of mods, adapters and optional integrations is not promised; the untested",
-        "section names what is deliberately out of scope.",
-        "",
-        "## Release",
-        "",
-        table(
-            [(key.replace("_", " "), f"`{value}`") for key, value in release.items()],
-            ["Field", "Value"],
-        ),
-        "",
-    ]
-    out += [
-        "## Selected source inventory", "",
-        "This is the current package source selection, not proof of an installed or active session.",
-        "Opt-in mods remain disabled; plugin sources and their nested skills/hooks require separate installation and activation.", "",
-        table([(profile["label"], f"`{selector}`", ", ".join(profile["first_party_installed"]),
-                ", ".join(profile["first_party_default_active"]), ", ".join(profile["plugin_sources"]) or "none")
-               for selector, profile in matrix["profiles"].items()],
-              ["Profile", "Selector", "Installed mod sources", "Fresh-install default selection", "Inactive plugin sources"]), "",
-        table([(f"`{name}`", package["version"], f"`{package['source']}`")
-               for name, package in matrix["first_party_packages"].items()], ["Selected mod", "Version", "Source"]), "",
-    ]
-    out += [
-        "## Launch collection", "",
-        table([(f"`{entry['id']}`", entry["kind"], entry["tier"],
-                " + ".join(profiles.PROFILE_LABELS[profile] for profile in entry["profiles"]), f"`{entry['path']}`")
-               for entry in matrix["launch"]], ["Package", "Kind", "Tier", "Profiles", "Path"]), "",
-    ]
-    for area, title in AREAS.items():
-        rows = [
-            (
-                f"**{component['name']}**",
-                component["owner"],
-                version(component),
-                component["status"].replace("_", " "),
-                references(component["fixtures"]),
-                component["limitations"],
-                component["removal"],
-            )
-            for component in matrix["components"]
-            if component["area"] == area
-        ]
-        out += [
-            f"## {title}",
-            "",
-            table(rows, ["Component", "Owner", "Version", "Status", "Fixtures", "Limitations", "Removal or migration"]),
-            "",
-        ]
-    out += [
-        "## Shared resource and event boundaries",
-        "",
-        table(
-            [(f"**{boundary['id']}**", boundary["title"], boundary["shared_resource"]) for boundary in matrix["boundaries"]],
-            ["Boundary", "What it covers", "Shared resource or event"],
-        ),
-        "",
-        "## Combination evidence inventory",
-        "",
-        table(
-            [
-                (
-                    f"**{entry['id']}**",
-                    ", ".join(entry["components"]),
-                    ", ".join(entry["boundaries"]),
-                    entry["result"],
-                    references(entry["evidence"]),
-                )
-                for entry in matrix["combinations"]
-            ],
-            ["Combination", "Components", "Boundaries", "Recorded result (not verified here)", "Source evidence inventory"],
-        ),
-        "",
-        "## Retained regression cases",
-        "",
-        table(
-            [
-                (
-                    f"**{entry['id']}**",
-                    ", ".join(entry["retained_for"]),
-                    entry["case"],
-                    references(entry["evidence"]),
-                )
-                for entry in matrix["regression"]
-            ],
-            ["Case", "Retained for", "Claimed behavior", "Source evidence inventory"],
-        ),
-        "",
-        "## Inventoried versus untested",
-        "",
-        f"Inventoried: {len(matrix['combinations'])} combinations across {len(matrix['boundaries'])} shared boundaries and "
-        f"{len(matrix['components'])} maintained components, plus {len(matrix['regression'])} regression cases "
-        "retained across versions.",
-        "",
-        "Untested and not claimed:",
-        "",
-    ]
-    out += [f"- **{entry['combination']}** — {entry['reason']}" for entry in matrix["untested"]] + [""]
-    out += [
-        "## Reproducing the evidence",
-        "",
-        "`rust:` a test in the pinned runtime crates · `patch:` a test added by the shipped runtime",
-        "patch · `node:` `mods/runner.test.mjs` · `python:` `tests/` · `script:` a repository checker.",
-        "",
-        "```sh",
-    ]
-    out += matrix["commands"] + ["```", ""]
-    return "\n".join(out)
-
-
 def main(argv=()):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--write", action="store_true")
-    parser.add_argument("--release", action="store_true")
-    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
-    args = parser.parse_args(argv)
     matrix = json.loads(MATRIX.read_text())
-    problems = check(matrix)
-    if args.release or args.executed_evidence:
-        problems += execution_evidence.verify(release_evidence(matrix), args.executed_evidence)
-    if problems:
-        raise SystemExit("\n".join(problems))
-    install_support.check_or_write(DOCUMENT, render(matrix), args.write,
-                                   "INTEGRATION.md is stale; rerun python3 -m scripts.integration_matrix --write")
-    print(
+    execution_evidence.report(
+        argv, __doc__, check(matrix), release_evidence(matrix),
         f"integration matrix {matrix['as_of']}: {len(matrix['components'])} maintained components, "
         f"{len(matrix['combinations'])} inventoried combinations over {len(matrix['boundaries'])} shared "
         f"boundaries, {len(matrix['regression'])} retained regression cases, "
-        f"{len(matrix['untested'])} recorded untested combinations; "
-        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
-    )
+        f"{len(matrix['untested'])} recorded untested combinations")
 
 
 if __name__ == "__main__":

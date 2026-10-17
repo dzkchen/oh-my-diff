@@ -1,27 +1,41 @@
 # omd_update
 
-Tells you when a newer Oh My Diff release is out and controls how OMD updates itself. It is active in OMD Core and OMD+.
+Tells you when a newer Oh My Diff release is out and lets you control how OMD updates.
 
-The installer does the work: the OMD launcher runs a bounded background check against the GitHub releases of
-`dzkchen/oh-my-diff` at most once per cadence, caches the result and passes it to this mod as `OH_MY_DIFF_UPDATE`.
-The mod never reaches the network and never replaces a running session.
+## Turn it off
 
-- A fresh session's welcome area shows a newer compatible release once a day until you choose **Remind me in a week**
-  or **Skip this version**, plus one line after an update succeeded or failed. The host draws no welcome area in
-  `--no-alt-screen` sessions; `/update` works there.
-- `/update` shows the installed and available versions, the release notes, the `omd update` command and incompatible
-  user mods, and has buttons for update checks, automatic updates, the channel (stable, beta or nightly) and the cadence (daily
-  or weekly). **Update now** queues the release for the next start, because a running session keeps its host and mods.
-- The same settings, plus an exact version `pin`, are editable in `/mods` and with `omd update checks|channel|cadence|pin`
-  and `omd update enable|disable` in a shell.
+It is on by default in OMD+ and OMD Core. Turn it off in `/mods`, or run:
 
-Updates install only when OMD starts while no other OMD session is open, through the installer's verified transaction
-(checksum, compatibility preflight, atomic switch, automatic rollback on failure). Automatic updates are off by default,
-stop retrying a release that failed once, and never update mods you installed yourself. See `INSTALL.md`.
+```sh
+omd-package mod disable omd_update
+```
 
-At launch, staged releases must still match the current pin, channel and runtime requirements.
-Automatic staging also rechecks automatic-update policy and enabled user-mod compatibility.
-Explicit manual updates still apply with automatic updates disabled.
+## Use it
 
-Nightly is opt-in and includes only nightly prereleases that passed hosted validation. Stable and beta never
-offer nightlies. Use `omd update channel nightly` or `/update channel nightly` to select it.
+| Command | What it does |
+| --- | --- |
+| `/update` | Show the installed and newest versions and the release notes. Change the update settings. |
+| **Update now** (in `/update`) | Queue the update for the next start. |
+| `omd update` | Install the newest release from a shell. |
+
+A fresh session mentions a newer release once a day until you pick **Remind me in a week** or **Skip this version**.
+
+## Settings
+
+Also available from `omd update` in a shell. See [Update](../../../docs/install.md#update).
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `checks` | `on` | Check for new releases (`on` or `off`). |
+| `auto` | `off` | Install updates automatically (`on` or `off`). |
+| `channel` | `stable` | `stable`, `beta` or `nightly`. |
+| `cadence` | `daily` | Check `daily` or `weekly`. |
+| `pin` | empty | Stay on an exact version. |
+
+## Needs and limits
+
+- A running session is never replaced. Updates install when OMD next starts with no other session open.
+- Automatic updates skip mods you installed yourself.
+- An update that fails once isn't retried automatically.
+- Nightly is opt-in. Stable and beta never offer it.
+- `--no-alt-screen` sessions show no welcome notice. `/update` still works.

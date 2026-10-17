@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "api": "0.2.0-experimental.5",
-  "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
+  "note": "scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "launch": {
     "capabilities:account": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/mod.json","snippet":"\"account\""},"decision":"coordination.app_bridge"},
     "capabilities:agents": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"agents\""},"decision":"coordination.agents"},
@@ -355,7 +355,7 @@
     "author_commands:report": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author report STORE"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
     "author_commands:run": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm run run"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
     "author_commands:test": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm test"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:watch": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm watch -- STORE"},"evidence":["node:tests/mod_author_package.test.mjs:watch updates an installed local package without changing its grants, scope or disabled choice"]}
+    "author_commands:watch": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm watch STORE"},"evidence":["node:tests/mod_author_package.test.mjs:watch updates an installed local package without changing its grants, scope or disabled choice"]}
   },
   "decisions": [
     {

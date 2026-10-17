@@ -1,80 +1,37 @@
 # omd_usage
 
-Opt-in provider usage HUD, installed inactive in OMD+ (`omd-package mod enable
-omd_usage`). It adds a usage line above the prompt box, a Usage dialog
-(Alt+a or `/omd_usage:hud`) and publishes cache, quota and spend summaries
-on `omd_usage/hud`. `/omd_usage:budget 5` sets an optional
-soft budget in USD (`0` removes it) and `/omd_usage:categories on` adds the
-request category drilldown; both apply from the next turn. Settings:
-`categories` and `budget_usd`.
+Shows what your session is using: context, cache, cost and quota, in a row above the prompt and a Usage dialog.
 
-- **Ledger.** Every `model_response` (lead, sub-agent and mod worker attempts)
-  becomes one record keyed by request ID and attempt, with thread, turn, agent,
-  provider, credential profile, route, requested and served model, the native
-  ledger request number, tokens (input, cache read, cache write, output,
-  reasoning), cost basis, the adapter's reported cost and the observation time.
-  A repeated delivery is a no-op; a correction replaces the record only when it
-  is at least as complete (measured usage, settled cost) and counts a revision,
-  and `task.status` settles unsettled records by ledger request number. Records
-  are ordered by observation time, so late deliveries never become the latest
-  reading. State is per session thread (forks keep the parent's records and
-  label them inherited); 120 records are kept and the dialog says how many
-  older ones were dropped, so totals are retained totals, not lifetime spend.
-- **Context.** Model, provider, route and reasoning effort, then the last lead
-  response's input and output against the session's effective window
-  (`thread/tokenUsage/updated`), with reserve and headroom from
-  `model_auto_compact_token_limit` when configured (no built-in reserves).
-  Workers never count toward it. The reading is marked stale after an installed
-  compaction, a rewind or a model or provider switch. Observed growth per
-  request and an approximate "requests before auto-compact" scenario appear once
-  there are enough requests. `categories` adds a `model_request` observer that
-  splits the assembled lead request by role (system, context, user, tool output)
-  from section byte sizes (bytes ÷ 4, labeled approximate); it runs on the
-  request path, so it is off by default. Compaction shows started versus
-  installed, so a vetoed or failed one is visible.
-- **Cache.** Cache read share of input (the adapters report input including
-  cache reads and writes, so one denominator holds for every provider), cache
-  writes when the provider reports them, and expiry only when the adapter
-  reports a provider TTL (`omd_cache_ttl_seconds`, Anthropic's 5-minute or
-  1-hour entries), counted from the last request that used the cache and
-  labeled a projection; a generation-owned one-minute timer redraws that
-  countdown until it passes and then stops (it records no observation).
-  Otherwise expiry is "unavailable"; the HUD never claims a warm cache and sends
-  no keepalive requests.
-- **Cost.** Each record is billed (provider-reported, such as OpenRouter's
-  `usage.cost`), a configured-rate estimate, unsettled, included subscription use (with the
-  Claude CLI's list-equivalent estimate when reported), unknown (missing cost is
-  not zero) or none (synthetic). Lead, workers and inherited records are totaled
-  separately, and unknown subscription overage is said so.
-- **Quota.** `account/rateLimits/read` at start and `account/rateLimits/updated`
-  give each reported window (its own duration, used share, reset time and
-  extra-usage credits). These readings belong to the signed-in Codex account
-  and are labeled accordingly. The endpoint provides no account-to-route binding,
-  so current-route quota is unavailable. Changing the lead provider never relabels
-  Codex quota as that provider's quota. Account changes clear old readings. Identical repeated
-  readings only refresh their observation time. A projection at reset needs two
-  readings in the current period spanning at least 5 minutes or a tenth of the
-  window; otherwise it says the data is insufficient. After the reset time
-  passes the window reads stale until a new reading arrives.
-- **Surfaces.** The line above the prompt (the `above_composer` site, a
-  two-column row box) shows cache, quota windows, spend, the paid allowance
-  bar from `task.status` limits and the soft budget on the left, and plan
-  progress, running sub-agents and running tools on the right while any run.
-  The dialog's Expanded view adds a tokens-per-request sparkline and the 40
-  most recent records. The summary is published on `omd_usage/hud`. Glyphs
-  are ASCII so the HUD reads the same without color or Unicode.
-- **Budget.** Spend at 80% of the soft budget turns the cost segment to
-  attention and at 100% to failure. It is a warning only: the host's limits
-  remain the spending authority.
+## Turn it on
 
-Provider coverage comes from the route adapters: Codex subscription and API
-(native Responses usage), the Claude CLI subscription (`omd_claude_cli`: served
-model, cache read/write, TTL, list-equivalent cost), Claude API and OpenRouter
-through `omd_profiles` (served model, cache writes, raw usage, OpenRouter's
-billed cost, Anthropic TTL). Live routes are not exercised by the tests.
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
-Capabilities: `agents` (`task.status`), `commands`, `store`, `terminal`,
-`events`, `model` (`model_response`), `lifecycle`, `middleware` (`agent` and
-`tool_call` events, the category observer), `threads` (notifications),
-`config` (`config/read`), `account` (`account/rateLimits/read`) and
-`inventory` (`session.info`).
+```sh
+omd-package mod enable omd_usage
+```
+
+## Use it
+
+| Command or key | What it does |
+| --- | --- |
+| `Alt+a` or `/omd_usage:hud` | Open or close the Usage dialog. Its expanded view lists recent requests. |
+| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD. `0` removes the budget. |
+| `/omd_usage:categories on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
+
+Changes apply from your next message.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `budget_usd` | `0` | Soft budget in USD. `0` means no budget. |
+| `categories` | `false` | Show the request breakdown by role. It runs on every request, so it is off by default. |
+
+## Needs and limits
+
+- Costs come from what each provider reports. A cost the provider doesn't report shows as unknown, not zero.
+- Totals cover the last 120 requests in the session, not lifetime spend.
+- Quota windows belong to the signed-in Codex account, not to another provider you switch to.
+- Cache expiry shows only when the provider reports how long its cache lasts.
+- The budget is a warning. OMD's spending limits still decide what runs.
+- Claude and OpenRouter usage need `omd_claude_cli` or `omd_profiles`.

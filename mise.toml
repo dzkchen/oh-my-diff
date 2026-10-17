@@ -1,4 +1,5 @@
 [tools]
+git-cliff = "2.14.2"
 node = "24.18.0"
 
 [tasks."mods:check"]
@@ -28,3 +29,12 @@ run = "python3 -m scripts.integration_matrix"
 [tasks."release:evidence"]
 description = "Require current-revision execution receipts for all release-critical evidence"
 run = "python3 -m scripts.execution_evidence --release"
+
+[tasks."release"]
+run = "python3 scripts/release.py prepare"
+
+[tasks."release:check"]
+run = "python3 scripts/release.py check"
+
+[tasks."github:settings"]
+run = "python3 scripts/github_settings.py"

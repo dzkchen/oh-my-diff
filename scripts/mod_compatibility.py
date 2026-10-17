@@ -25,6 +25,13 @@ def numeric_constant(source, name):
     return int(match.group(1))
 
 
+def array_constant(source, name):
+    match = re.search(rf"{name}: &\[[^]]*\] =\s*&\[(.*?)\];", source, re.S)
+    if not match:
+        raise ValueError(f"missing host constant {name}")
+    return match.group(1)
+
+
 def host_contract():
     source = HOST.read_text()
     cargo = CARGO.read_text()
@@ -39,7 +46,6 @@ def host_contract():
             "stability": stability,
             "support_until": until,
         })
-    feature_block = re.search(r"pub const MOD_HOST_FEATURES: &\[&str\] = &\[(.*?)\];", source, re.S).group(1)
     return {
         "codex": quoted_constant(source, "CODEX_HOST_RELEASE"),
         "omd": omd,
@@ -47,7 +53,7 @@ def host_contract():
         "package_schemas": [numeric_constant(source, "MOD_PACKAGE_SCHEMA_VERSION")],
         "state_storage_schema": numeric_constant(source, "MOD_STATE_STORAGE_SCHEMA_VERSION"),
         "installed_contract_types": numeric_constant(source, "INSTALLED_CONTRACT_TYPES_VERSION"),
-        "features": re.findall(r'"([^"]+)"', feature_block),
+        "features": re.findall(r'"([^"]+)"', array_constant(source, "MOD_HOST_FEATURES")),
         "apis": supported,
     }
 

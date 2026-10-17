@@ -1,0 +1,23 @@
+name: Mod or API request
+description: Ask for a mod, an API surface or a host primitive a mod needs
+labels: ["type: mod-api", "status: triage"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What do you want to build or change
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: What the current API cannot do
+      description: The operation, event or terminal surface you tried in the API reference, and where it falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: A sketch of the mod code you would write if the API existed.
+      render: ts

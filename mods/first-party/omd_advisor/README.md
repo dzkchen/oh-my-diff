@@ -1,34 +1,43 @@
-# Independent turn advisor
+# omd_advisor
 
-`omd_advisor` is an opt-in API `0.2.0-experimental.5` mod. It owns cadence, triggers, evidence selection, redaction, reviewer prompts, typed findings, citation validation, duplicate suppression and presentation. Generic host operations own isolated agents, one-shot completions, permissions, allowance, snapshots and contract receipts.
+A second model gives you an independent opinion on a decision, a stalled attempt or a claimed completion, and can flag output you should know about.
 
-OMD+ installs the package inactive. No setting grants model access or allowance: every request uses the configured worker `route` (default `astra`) under the host's admission, allowance and ledger.
+## Turn it on
 
-## Modes
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
-- **On demand.** The lead can call `mod_omd_advisor_ask {question?, draft?, files?}` for a consequential decision, a stalled attempt or before declaring completion; the user can type `/advisor [focus]`, which asks the lead to call it. The tool runs one `model.complete` and returns the advice to the lead.
-- **Triggers** (`triggers`, default none). `failure` consults the advisor after the same tool call (same tool and arguments) fails twice without succeeding in between. `loop` consults it after the same call returns the same output three times in a row; `Chunk ID`, `Wall time` and token-count lines are ignored, and polls of a still-running process never count. The advice is appended to the triggering tool output (at most 4 KiB) before the lead continues. `completion` runs the independent review below for completed turns that changed files.
-- **Every turn** (`every_turn: true`) reviews completed lead turns, subject to the common `skip_same_model` check before collecting evidence or spawning work.
-- **Observer** (`observe: true`, default off) flags what the user should know in the lead's visible output; see below.
+```sh
+omd-package mod enable omd_advisor
+```
 
-On-demand and triggered advice is always advisory. The prompt is at most 8 KB: the question, draft or triggering call, then the newest conversation history (`sessions.snapshot` tail), `git diff HEAD` and named files up to 24 KB each, in that order until the budget is used. `share` (default `conversation`, `diff`, `files`) limits which sources are sent; withheld sources are named in the prompt. Private keys, bearer tokens, credential assignments, URL credentials and AWS key ids are redacted before truncation; this is a pattern filter, not data classification. `skip_same_model` (default true) skips consultations and completion reviews when the advisor route's model equals the lead thread's model. The `status` tool reports the modes and the last consultation.
+It uses the model route in `route` (default `astra`), so that route needs its own model access and allowance. Each request goes through the usual admission and spending limits.
 
-## Reviews
+## Use it
 
-Every-turn and completion reviewers receive a bounded visible turn excerpt and a frozen candidate, with no tools or parent history. Hidden reasoning and tool-output bodies are excluded. The mod reads at most 48 KiB of evidence, selects a 6 KiB excerpt and accepts at most eight findings with exact supporting quotes.
+| Command or key | What it does |
+| --- | --- |
+| `/advisor [focus]` | Ask the lead model to consult the advisor, optionally about one focus. The advice goes to the lead, which decides what to adopt. |
+| `/observations` | With `observe` on, list the notes under "You should know" and the observer state. |
+| `/observations N` | Open note N with its detail and source. `Alt+m` then Enter does the same from the list above the prompt. |
+| `/observations dismiss N` or `all` | Dismiss a note, or every note. |
 
-`mode: advisory` converts blocking proposals to warnings. `mode: blocking` requires the user to select a contract whose completion gate requires a separate-agent `advisor_review` receipt and rejects blocking findings. The mod cannot select that contract or weaken its requirements. Findings are recorded through `receipts.submit`; generic receipt limits apply. Advice does not replace the workflow's independent final review or verification.
+## Settings
 
-`turn_end` starts review and `agent_end` validates its result. The next completed turn cancels any superseded review. Candidate changes hide previous advice and prevent stale receipt submission or context reuse. Session exit can interrupt unfinished review; resume never automatically relaunches it. Invalid results, permission denials and cancellation remain explicit unreviewed outcomes.
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `route` | `astra` | The model route the advisor runs on. |
+| `triggers` | `[]` | Consult automatically: `failure` (same call failed twice), `loop` (same output three times) or `completion` (review turns that changed files). |
+| `every_turn` | `false` | Review every completed lead turn. |
+| `mode` | `advisory` | `blocking` also requires a workflow contract with an advisor review gate. |
+| `share` | `conversation`, `diff`, `files` | What the advisor may see. |
+| `skip_same_model` | `true` | Skip consultations when the advisor and the lead use the same model. |
+| `observe` | `false` | Flag behavior changes, unresolved failures and decisions needed in the lead's visible output. |
 
-Fullscreen presentation shows up to three notes above the composer; inline mode shows bounded status. The status tool rechecks evidence access before showing provenance. Context receives findings only for the same thread and unchanged candidate: each as its severity, complete summary and up to three paths, blocking first, then warnings, then advice, every one that fits in about 1,200 characters, then the number omitted. Without every-turn or completion review there are no review lifecycle or context callbacks, and without `failure` or `loop` there is no tool-output callback.
+## Needs and limits
 
-## Observer
+- Advice is a second opinion, not an approval, and does not replace your own review or verification.
+- The prompt is capped at 8 KB. Private keys, bearer tokens, credential assignments, URL credentials and AWS key ids are redacted first. That is a pattern filter, not a guarantee.
+- Reviews cite exact quotes. A finding whose quote isn't in the evidence is dropped.
+- Observer notes are for you only. They never reach the lead and never block anything.
 
-At each lead turn end that has turn evidence (completed, aborted or failed), the observer selects the same bounded visible excerpt as reviews (the newest user and assistant messages and tool-call names, at most 6 KiB; hidden reasoning and tool-output bodies are never in turn evidence, so neither are browser pages or other tool results), redacts it again and spawns one asynchronous read-only worker on `route` with no tools. Turns with under 200 characters of assistant text are skipped. The worker returns at most three notes, each a behavior change, an overlooked uncertainty, an unresolved failure or a decision needed, with a one-sentence implication, short detail and an exact quote. A note whose quote is not in an assistant message of the excerpt is dropped and counted; a malformed result is `invalid_result`. Each note is anchored to its turn and message and fingerprinted by kind and quote, so a note shown or dismissed before is not shown again.
-
-Notes appear above the composer under "You should know" (a list, `Alt+m` then Enter inspects) and in the status segment; `/observations` lists them with the observer state, `/observations N` opens a dialog with the detail, source anchor and a Dismiss button, and `/observations dismiss N|all` dismisses. A new observation of the same candidate keeps undismissed notes; a changed workspace candidate clears them, a new turn cancels an unfinished observation (`superseded`), and a start or resume cancels it and marks it `interrupted` without relaunching. Admission or allowance refusals show as `unavailable` with the host's reason. The worker's usage (requests, tokens, micro-USD as settled by host accounting) and duration are kept with the observation and shown by the `status` tool. Observer notes are user-facing only: they are never added to the lead's context, never submitted as receipts and never block, review or decide anything. Without `observe` there are no observer callbacks, commands or presentation.
-
-When using the review-policy plugin, `OMD_REVIEW_CADENCE_OWNER=advisor` selects advisor cadence rather than duplicate manual reminders. This does not bypass the selected contract.
-
-On-demand and trigger modes are ported from [`pi-advisor-flow`](https://pi.dev/packages/pi-advisor-flow) 0.9.0 (Philip Brembeck, MIT); see `THIRD_PARTY_NOTICES.md`. Image review, curated "scout" history and model whitelists are not ported. Local fixtures cover the prompt bounds, redaction, sharing limits, same-model skipping, trigger thresholds and the completion filter, and the observer's citation rejection, deduplication, superseded and stale notes, denial, restart and disabled registration; real advice quality and cost remain unqualified. The observer follows the "You should know" behavior of the Claude Code 2.1.287 important-output observer; no code is shared.
+Credit: ask and trigger modes based on [pi-advisor-flow](https://pi.dev/packages/pi-advisor-flow) by Philip Brembeck (MIT); the observer follows the "You should know" behavior of Claude Code 2.1.287. No code copied.

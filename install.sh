@@ -35,6 +35,10 @@ import uuid
 
 RELEASES_URL = "https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20"
 RELEASE_MANIFEST = "omd-release.json"
+RELEASE_SIGNATURE = RELEASE_MANIFEST + ".sig"
+RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
+SIGNING_NAMESPACE = "oh-my-diff-release"
+RELEASE_HOSTS = ("api.github.com", "localhost", "127.0.0.1")
 TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
@@ -188,9 +192,9 @@ def profile_choice(args):
     try:
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff\n"
-                           "1) OMD Core: patched Codex, mod manager, typed author tools; the logo, mod manager and update mods are active.\n"
-                           "2) OMD+: OMD Core plus the first-party mod collection and bundled plugins.\n"
-                           "   Its default mods are active on a fresh install; the rest require your explicit activation (see INSTALL.md).\n"
+                           "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
+                           "2) OMD+: also the first-party mod collection and bundled plugins.\n"
+                           "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()
@@ -229,11 +233,16 @@ def download(url, expected, destination):
         fail("release asset SHA-256 mismatch; no profile was activated")
 
 
-def fetch_json(url, limit):
+def fetch_bytes(url, limit):
     with opened(url, 15) as response:
         body = response.read(limit + 1)
     if len(body) > limit:
         fail("release metadata exceeds its size limit")
+    return body
+
+
+def fetch_json(url, limit):
+    body = fetch_bytes(url, limit)
     try:
         return json.loads(body)
     except ValueError:
@@ -326,7 +335,7 @@ def install(args, root, current):
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
     manifest = None
     if not url:
-        candidates = [item for item in releases(args.releases_url or RELEASES_URL, channel=channel) if on_channel(channel, item)]
+        candidates = [item for item in releases(release_source(args.releases_url or RELEASES_URL), channel=channel) if on_channel(channel, item)]
         if not candidates:
             fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
         manifest = release_manifest(candidates[0])
@@ -340,7 +349,7 @@ def install(args, root, current):
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
         download(url, expected, archive)
-        result = transaction(args, root, current, archive, url, expected, profile, upstream, node)
+        result = transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest)
         _, record, store = installation(root, pointer(root, "current"))
         if policy(store)["channel"] != channel:
             set_policy(root, record, "channel", channel)
@@ -366,7 +375,10 @@ def journaled(root, generation, own, created=None):
         raise
 
 
-def transaction(args, root, current, archive, url, expected, profile, upstream, node):
+def transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest=None):
+    if manifest and not (signed(manifest.get("body", "").encode(), manifest.get("signature", "").encode())
+                         and json.loads(manifest["body"]).get("sha256") == expected):
+        fail("the release manifest no longer verifies; run omd update check")
     check_links(root, args.bin_dir)
     if current:
         status(current, Path(upstream["path"]), args.bin_dir)
@@ -376,6 +388,9 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
         generation.mkdir(parents=True)
+        if manifest:
+            (generation / RELEASE_MANIFEST).write_text(manifest["body"])
+            (generation / RELEASE_SIGNATURE).write_text(manifest["signature"])
         command = [sys.executable, "-m", "scripts.package", "install",
                    "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
@@ -391,7 +406,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             record = {"schema": 1, "generation": generation.name, "profile": profile, "version": installed["version"],
                       "asset_url": url, "asset_sha256": expected, "bin_dir": str(args.bin_dir),
                       "upstream": upstream | {"sha256": digest(Path(upstream["path"]))},
-                      "releases_url": args.releases_url or previous.get("releases_url") or RELEASES_URL,
+                      "releases_url": release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL),
                       "previous": current.name if current else None}
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
@@ -706,17 +721,46 @@ def channel_newer(channel, version, installed):
     return candidate > current
 
 
+def signed(body, signature):
+    if not RELEASE_KEY:
+        return False
+    with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
+        signers, detached = Path(temporary) / "signers", Path(temporary) / "manifest.sig"
+        signers.write_text(f'release namespaces="{SIGNING_NAMESPACE}" {RELEASE_KEY}\n')
+        detached.write_bytes(signature)
+        return subprocess.run(["/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
+                               "-n", SIGNING_NAMESPACE, "-s", detached], input=body, capture_output=True).returncode == 0
+
+
 def release_manifest(release):
-    record = fetch_json(str(release["assets"][RELEASE_MANIFEST].get("browser_download_url")), 65_536)
+    if RELEASE_SIGNATURE not in release["assets"]:
+        fail(f"release {release['version']} is unsigned")
+    body = fetch_bytes(str(release["assets"][RELEASE_MANIFEST].get("browser_download_url")), 65_536)
+    signature = fetch_bytes(str(release["assets"][RELEASE_SIGNATURE].get("browser_download_url")), 4096)
+    if not signed(body, signature):
+        fail(f"release {release['version']} manifest signature does not verify against the Oh My Diff release key")
+    try:
+        record = json.loads(body)
+    except ValueError:
+        fail(f"release {release['version']} has a malformed {RELEASE_MANIFEST}")
     archive = release["assets"].get(record.get("archive")) if isinstance(record, dict) else None
     if (not archive or record.get("schema") != 1 or record.get("version") != release["version"]
             or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256")))
-            or not all(isinstance(record.get(name), str) for name in ("target", "upstream_tag", "mod_api", "node"))):
+            or not all(isinstance(record.get(name), str) for name in ("target", "upstream_tag", "mod_api", "node"))
+            or not isinstance(record.get("artifacts"), dict)):
         fail(f"release {release['version']} has a malformed {RELEASE_MANIFEST}")
     if archive.get("digest") not in (None, f"sha256:{record['sha256']}"):
         fail(f"release {release['version']} archive digest disagrees with its manifest")
     return {key: record[key] for key in ("version", "target", "upstream_tag", "mod_api", "node", "sha256")} | {
-        "url": str(archive.get("browser_download_url"))}
+        "url": str(archive.get("browser_download_url")), "body": body.decode(), "signature": signature.decode()}
+
+
+def release_source(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in RELEASE_HOSTS or (
+            parsed.hostname == "api.github.com" and not re.fullmatch(r"/repos/[^/]+/[^/]+/releases/?", parsed.path)):
+        fail("--releases-url must be the GitHub releases API or a loopback test server")
+    return url
 
 
 def minor_of(manifest):
@@ -788,7 +832,7 @@ def probe(args, root, current):
     result = {"available": None, "blocked": None, "error": None}
     try:
         pin = str(settings.get("pin") or "").strip()
-        listed = releases(details.get("releases_url") or RELEASES_URL, channel=settings["channel"], pin=pin)
+        listed = releases(release_source(details.get("releases_url") or RELEASES_URL), channel=settings["channel"], pin=pin)
         if pin and not any(item["version"] == pin for item in listed):
             result["error"] = f"pinned version {pin} is not published"
         candidates = ([item for item in listed if item["version"] == pin != record["version"]] if pin else
@@ -889,7 +933,7 @@ def apply(args, root, current, available):
                 archive = stage(root, available)
         upstream = upstream_binary(args, current, minor_of(manifest))
         node = node_binary(args, manifest["node"], record["author"]["node"])
-        result = transaction(args, root, current, archive, manifest["url"], manifest["sha256"], details["profile"], upstream, node)
+        result = transaction(args, root, current, archive, manifest["url"], manifest["sha256"], details["profile"], upstream, node, manifest)
     except SessionsOpen:
         raise
     except BaseException as error:
@@ -941,9 +985,12 @@ def manual(args, root, current):
         return set_policy(root, record, "pin", "" if value == "none" else value)
     if action == "status":
         saved = state(root)
+        available = saved.get("available")
         return {"installed": record["version"], "profile": details["profile"], "policy": policy(store),
                 "open_sessions": len(sessions(root, None))} | {
-            key: saved.get(key) for key in ("checked_at", "available", "blocked", "error", "pending", "failed", "held", "last")}
+            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last")} | {
+            "available": available and available | {"manifest": {key: value for key, value in available["manifest"].items()
+                                                                 if key not in ("body", "signature")}}}
     result = check(args, root, current)
     if action == "check":
         return result

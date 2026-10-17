@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 LABEL = "dev.ohmydiff.broker"
@@ -16,6 +18,10 @@ SOCKET = "/var/run/dev.ohmydiff.broker.sock"
 ROOT = Path("/Library/Application Support/OhMyDiff/broker")
 POLICY = ROOT.parent / "policy.json" if sys.platform == "darwin" else Path("/etc/oh-my-diff/policy.json")
 HELPER = Path("/Library/PrivilegedHelperTools/dev.ohmydiff.broker")
+TOOLS = ROOT.parent / "tools"
+COPY = TOOLS / "authority_broker.py"
+RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
+SIGNING_NAMESPACE = "oh-my-diff-release"
 ACCOUNT = "_omdbroker"
 RIGHTS = {
     "dev.ohmydiff.broker.grant": {
@@ -45,6 +51,48 @@ def cdhash(path):
     if not match:
         raise ValueError(f"{path} has no code directory hash")
     return match.group(1)
+
+
+def signed_hashes(manifests):
+    hashes = set()
+    for manifest in map(Path, manifests):
+        signature = Path(f"{manifest}.sig")
+        if not manifest.is_file() or not signature.is_file():
+            raise ValueError(f"{manifest.parent} has no signed omd-release.json; the authority broker accepts only "
+                             "installs from a signed release")
+        body = manifest.read_bytes()
+        with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
+            signers = Path(temporary) / "signers"
+            signers.write_text(f'release namespaces="{SIGNING_NAMESPACE}" {RELEASE_KEY}\n')
+            verified = RELEASE_KEY and run("/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
+                                           "-n", SIGNING_NAMESPACE, "-s", signature, stdin=body,
+                                           check=False).returncode == 0
+        if not verified:
+            raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
+        hashes.update(json.loads(body)["artifacts"].values())
+    return hashes
+
+
+def signed_bytes(path, hashes):
+    data = Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest() not in hashes:
+        raise ValueError(f"{path} is not listed in a signed Oh My Diff release manifest")
+    return data
+
+
+def signed_cdhashes(paths, hashes):
+    with tempfile.TemporaryDirectory(prefix="omd-pins-") as temporary:
+        copies = []
+        for index, path in enumerate(paths):
+            copy = Path(temporary) / str(index)
+            copy.write_bytes(signed_bytes(path, hashes))
+            copies.append(copy)
+        return [cdhash(copy) for copy in copies]
+
+
+def trusted(path):
+    return all(item.exists() and item.stat().st_uid == 0 and not item.stat().st_mode & 0o022
+               for item in (path, path.parent, path.parent.parent))
 
 
 def deployed():
@@ -82,8 +130,8 @@ def write_root(path, data, mode):
     os.replace(temporary, path)
 
 
-def write_pins(binaries, add=False):
-    pins = {cdhash(path) for path in binaries}
+def write_pins(binaries, manifests, add=False):
+    pins = set(signed_cdhashes(binaries, signed_hashes(manifests)))
     if add:
         pins.update(json.loads((ROOT / "pins.json").read_text())["cdhashes"])
     pins = sorted(pins)
@@ -91,16 +139,23 @@ def write_pins(binaries, add=False):
     return pins
 
 
-def install(helper, binaries):
-    cdhash(helper)
+def install(helper, tooling, binaries, manifests):
+    hashes = signed_hashes(manifests)
+    helper_data, tooling_data = signed_bytes(helper, hashes), signed_bytes(tooling, hashes)
+    signed_cdhashes([helper], hashes)
+    pins = sorted(set(signed_cdhashes(binaries, hashes)))
     create_account()
     ROOT.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    TOOLS.mkdir(mode=0o755, exist_ok=True)
+    os.chown(TOOLS, 0, 0)
+    os.chmod(TOOLS, 0o755)
+    write_root(COPY, tooling_data, 0o644)
     ROOT.mkdir(mode=0o700, exist_ok=True)
     shutil.chown(ROOT, ACCOUNT, ACCOUNT)
     os.chmod(ROOT, 0o700)
     HELPER.parent.mkdir(mode=0o755, exist_ok=True)
-    write_root(HELPER, Path(helper).read_bytes(), 0o755)
-    pins = write_pins(binaries)
+    write_root(HELPER, helper_data, 0o755)
+    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins}).encode(), 0o644)
     for name, rule in RIGHTS.items():
         run("/usr/bin/security", "authorizationdb", "write", name, stdin=plistlib.dumps(rule))
     daemon = {"Label": LABEL, "ProgramArguments": [str(HELPER)], "UserName": ACCOUNT, "GroupName": ACCOUNT,
@@ -122,6 +177,7 @@ def uninstall():
     run("/bin/launchctl", "bootout", f"system/{LABEL}", check=False)
     for path in (DAEMON, HELPER, Path(SOCKET)):
         path.unlink(missing_ok=True)
+    shutil.rmtree(TOOLS, ignore_errors=True)
     for name in RIGHTS:
         run("/usr/bin/security", "authorizationdb", "remove", name, check=False)
     shutil.rmtree(ROOT, ignore_errors=True)
@@ -169,9 +225,13 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     install_parser = commands.add_parser("install", help="create the broker account, daemon and rights (sudo)")
     install_parser.add_argument("--helper", type=Path, required=True)
+    install_parser.add_argument("--tooling", type=Path, default=Path(__file__).resolve(),
+                                help="authority_broker.py to install as the root-owned copy; must be in a signed manifest")
     pin_parser = commands.add_parser("pin", help="replace the pinned host binaries (sudo)")
     for command in (install_parser, pin_parser):
         command.add_argument("--pin", type=Path, action="append", required=True)
+        command.add_argument("--manifest", type=Path, action="append", required=True,
+                             help="signed omd-release.json listing the helper and pinned binaries")
     pin_parser.add_argument("--add", action="store_true", help="keep the existing pins")
     commands.add_parser("status", help="show whether the broker is deployed")
     commands.add_parser("reset", help="remove grants and evidence anchors, keep credentials (sudo)")
@@ -184,14 +244,17 @@ def main(argv=None):
     if args.command == "status":
         return status()
     if os.geteuid() != 0:
-        arguments = sys.argv[1:] if argv is None else argv
-        elevated = subprocess.run(["/usr/bin/sudo", sys.executable, str(Path(__file__).resolve()),
-                                   *map(str, arguments)], check=True, stdout=subprocess.PIPE)
+        arguments = [*(sys.argv[1:] if argv is None else argv)]
+        if args.command == "install":
+            arguments.append(f"--tooling={args.tooling}")
+        script = COPY if trusted(COPY) else Path(__file__).resolve()
+        elevated = subprocess.run(["/usr/bin/sudo", "/usr/bin/python3", "-I", str(script), *map(str, arguments)],
+                                  check=True, stdout=subprocess.PIPE)
         return json.loads(elevated.stdout)
     if args.command == "install":
-        return install(args.helper.resolve(), [path.resolve() for path in args.pin])
+        return install(args.helper.resolve(), args.tooling.resolve(), [path.resolve() for path in args.pin], args.manifest)
     if args.command == "pin":
-        return {"pins": write_pins([path.resolve() for path in args.pin], args.add)}
+        return {"pins": write_pins([path.resolve() for path in args.pin], args.manifest, args.add)}
     if args.command.startswith("policy-"):
         return policy(args.command, getattr(args, "source", None))
     return reset() if args.command == "reset" else uninstall()

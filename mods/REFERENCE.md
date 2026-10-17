@@ -10,7 +10,7 @@ the store also generates `tool-types.d.ts` for the tools the host actually has
 ([Typed tool declarations](#typed-tool-declarations)).
 
 The launch surface is frozen at this API version, with support through
-`2027-03-20`. [COVERAGE.md](COVERAGE.md) classifies every public operation,
+`2027-03-20`. [The conformance registry](conformance/contract.json) classifies every public operation,
 event, capability, replacement, interceptor, component, render site, view field,
 classic hook and author command. Frozen entries name a retained consumer and
 executable evidence. Explicitly experimental entries remain outside the freeze;
@@ -28,6 +28,30 @@ version and support-window rules.
 First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
 raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
 launch; outside authors can use the public client APIs.
+
+## Mods, plugins and hooks
+
+Use a skill for a procedure the model follows, a hook for a reaction to a lifecycle event, a plugin for tools or
+services, and a mod only to change how `codex` itself behaves or looks.
+
+Codex 0.163.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks (`pre_tool_use`,
+`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
+`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`) are external commands or MCP tools
+that return a decision: block a call, add context, or rewrite a tool's input. A hook can't hold state, stream,
+draw on screen, route a model or run an agent, and when two `pre_tool_use` hooks rewrite the same call the last
+one to finish wins. A mod runs inside the host, asks for only the permissions it needs, and composes with other
+mods by the [rules below](#composition-and-safety).
+
+Mods can't replace or bypass:
+
+- Workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace
+  integrity, evidence and final acceptance.
+- History beyond the documented rewrite points, reasoning or call/output pairs, the compaction engine, or prompts
+  for provider-side compaction.
+- Raw terminal escapes, arbitrary widgets or DOM/canvas access, approval key bindings, the transcript, or
+  clipboard authorization.
+- Arbitrary providers, runtime imports other than adapter-declared aliases, or a second scheduler.
+- Other mods: `requires` declares presence and order only; mods never call each other or share state.
 
 ## Host lifetime and callback authority
 
@@ -2869,7 +2893,7 @@ has no host maximum, so a provider's context window is configuration.
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
-| `pnpm watch -- STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
+| `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
@@ -2982,7 +3006,7 @@ conformance harness (`scripts/client_acceptance.py`) or a real terminal check.
 ### Watch and reload
 
 Interactive: while a mod is written, `omd-mod-author watch DIR STORE` (or
-`pnpm watch -- STORE`) inspects the directory, approves its current digest in
+`pnpm watch STORE`) inspects the directory, approves its current digest in
 `STORE` as the user would with `omd-mod trust`, then queues a reload of that
 store's host and refreshes `.omd/`; saving an entry point, asset or lifecycle
 file reloads again after 100 ms and reports a half-written file instead of
@@ -3568,9 +3592,11 @@ change carries a single-use broker challenge bound to its digest and a
 generation check, so a stale writer is refused. Broker policy values need an
 administrator (`dev.ohmydiff.broker.policy`).
 
-The trust boundary is the OS plus the pinned binaries. The broker doesn't
-protect against an administrator or root, or a user who re-pins a replaced
-binary with sudo. Same-user processes can still read every user-readable file
+The trust boundary is the OS plus the pinned binaries. Broker install and pin
+accept only the helper and binaries listed in a release manifest signed by the
+Oh My Diff release key, and later privileged steps run from a root-owned copy
+of the broker tooling, so a locally built or replaced binary can't be pinned.
+The broker doesn't protect against an administrator or root. Same-user processes can still read every user-readable file
 (for example `~/.codex/auth.json` or other secret files), edit the mod store
 (the host then rejects what the broker doesn't confirm) and drive OMD
 interactively, in which case the authentication dialog still appears, and use
@@ -3578,8 +3604,8 @@ enrolled credentials against their enrolled origins through OMD or a sidecar's
 gateway path. Credential tokens leave OMD only toward their enrolled origin, but
 a mod's own secrets (`OMD_SECRETS`) are placed in its sidecar's environment, and
 service grants in `host.json` are user-writable, so a same-user process that
-edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
-(one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
+edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks of signed releases pin
+their binaries (one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
 but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
 rights and all broker state, returning to same-user mode.
 
@@ -3716,7 +3742,7 @@ A plugin can contain `.codex-plugin/omd.json` with `{"schema":1,"component":"com
 
 `omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
 
-Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). Their fixture tests demonstrate shared interfaces; they are not production advisor, GitHub, memory, edit-anchor or report implementations, and they do not establish live model usefulness or release qualification.
+Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production implementations.
 
 Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each segment's records with its history revision. Compaction summaries do not replace those records. An unobserved history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and summarize a truncated packet.
 

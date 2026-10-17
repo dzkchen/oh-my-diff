@@ -1,0 +1,34 @@
+{
+  "labels": [
+    {"name": "type: bug", "color": "d73a4a", "description": "Something is broken"},
+    {"name": "type: feature", "color": "a2eeef", "description": "New capability or improvement"},
+    {"name": "type: mod-api", "color": "5319e7", "description": "Mod API, SDK or host primitive request"},
+    {"name": "type: docs", "color": "0075ca", "description": "Documentation"},
+    {"name": "area: installer", "color": "c5def5", "description": "curl installer, updates, profiles"},
+    {"name": "area: runtime", "color": "c5def5", "description": "Patched Codex host and native code"},
+    {"name": "area: mods", "color": "c5def5", "description": "First-party mods, SDK and author tools"},
+    {"name": "area: plugins", "color": "c5def5", "description": "Bundled plugins and skills"},
+    {"name": "status: triage", "color": "fbca04", "description": "Needs a maintainer decision"},
+    {"name": "status: accepted", "color": "0e8a16", "description": "Will be worked on"},
+    {"name": "status: blocked", "color": "b60205", "description": "Waiting on something external"},
+    {"name": "good first issue", "color": "7057ff", "description": "Good for newcomers"}
+  ],
+  "branch_protection": {
+    "branch": "main",
+    "required_status_checks": {"strict": false, "contexts": ["release-metadata"]},
+    "enforce_admins": false,
+    "required_pull_request_reviews": {"required_approving_review_count": 0},
+    "restrictions": null,
+    "required_linear_history": true,
+    "allow_force_pushes": false,
+    "allow_deletions": false
+  },
+  "repository": {
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "squash_merge_commit_title": "PR_TITLE",
+    "squash_merge_commit_message": "PR_BODY",
+    "delete_branch_on_merge": true
+  }
+}

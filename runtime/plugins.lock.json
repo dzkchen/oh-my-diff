@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "a7f5fece7c4c6992ac24c8c364c5d3549a102e24071a33db6659ad51cd5d89ec"
+    "sha256": "4ec1537892edd2c2038272f5631ef97d910d3b356fc9d06a09c7fe80247b9288"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -37,13 +37,13 @@
     ".agents/plugins/marketplace.json": "04b95b0e31386e9e08964a840210aced7a9b3191d56f3e1262944d6dd08a9d03",
     "plugins/omd-anchored-edit/.codex-plugin/omd.json": "05c1fa8fed6efdbc45835c6bf3af272253e56a8917672d8ae2ada634f51b0d1a",
     "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
-    "plugins/omd-anchored-edit/README.md": "5154b525e758773964fa90304e9527af32d22b9a01252decd65f68b7820fc98a",
+    "plugins/omd-anchored-edit/README.md": "e3f81a7a30664380fd198fa2e0638dd9ae878f3759ad0fccfdd539d38c071304",
     "plugins/omd-anchored-edit/mod/index.ts": "6bd5d24a3c4879fa375e9f766863916af8543f89881e29d893dfc048cc88e926",
     "plugins/omd-anchored-edit/mod/mod.json": "62069d26106713ee9d765453a550241016f0e14b86295c256f2bfa36dcaffa46",
     "plugins/omd-anchored-edit/skills/omd-anchored-edit/SKILL.md": "9a1fcb82de5db7bc9179e4b7383150c160f3757f3031cfa3d9d115cf7ffc9ae6",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "71ca7ba932d75ca645714ae1a2a7bd5ab69f54a68471c87d78d1bf0cfd620554",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "e4859e9126b144cfc79ba0f8e828939e7f3479a3f78ee76a300f9c9b62f166fe",
-    "plugins/omd-artifact-reading/README.md": "26cb7e01d969231f075f2366ef36b647f246669cee854a01dffcfcf956fe0207",
+    "plugins/omd-artifact-reading/README.md": "d6c9d94f33c76ada544cdbafe9a1b98865e0b28c08976a65d06b30a6ea72fefa",
     "plugins/omd-artifact-reading/mod/index.ts": "2764548cdde0f6a8d2c8961bb53e22ee18a86fa21f7adf0c7edc97cf24db436d",
     "plugins/omd-artifact-reading/mod/mod.json": "587e2b7c489f1006c9a08577367bdab74637d56276e7f8561eb992960fe645fd",
     "plugins/omd-artifact-reading/scripts/github_read.py": "a1b4afff9bc5f5db66280af6e93ac83b41e9518223ab0afd049b9146b9a21ad1",

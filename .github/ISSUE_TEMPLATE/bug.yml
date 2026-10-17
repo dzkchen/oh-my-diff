@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in Oh My Diff, a mod or the installer does not work
+labels: ["type: bug", "status: triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. omd ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: omd update status
+      description: Output of `omd update status` and `omd-package status`. Remove anything private.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options: ["OMD Core", "OMD+"]
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and macOS version
+      placeholder: Kitty 0.43, macOS 26.1
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or recovery output
+      description: For example `omd-mod-author diagnostics STORE OUT` or the `/omd` recovery screen. Remove secrets and private paths.
+      render: text
