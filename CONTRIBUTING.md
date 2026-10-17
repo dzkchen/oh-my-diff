@@ -58,7 +58,7 @@ Don't commit secrets, credentials or personal paths.
 ## Releases
 
 The maintainer runs `mise run release -- VERSION --summary "One sentence."`, merges the pull request it opens,
-then runs the same command again to tag the release. [.github/README.md](.github/README.md) has the details.
+then runs the same command again to tag the release. [.github/WORKFLOWS.md](.github/WORKFLOWS.md) has the details.
 
 ## License
 
