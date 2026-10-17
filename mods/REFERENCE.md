@@ -61,8 +61,7 @@ The host is feature-agnostic: every operation, event and capability below is
 available to any trusted mod on equal terms, and none of them names a product
 feature. `OMD_MODE=omd` runs the mod host in the default session;
 `OMD_MODE=upstream_direct` (or no `OMD_MODE`) runs pinned upstream behavior
-without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
-`OMD_CONTROLLED_MANIFEST` are rejected with a message naming `OMD_MODE=omd`.
+without mods. Any other `OMD_MODE` value is rejected.
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
@@ -2719,8 +2718,7 @@ reject cancellation, changed source, originating generation or client context.
 An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
-failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`
-when a mod provides it.
+failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path.
 
 ### Dynamic tools (`dynamic_tools_v1`)
 
