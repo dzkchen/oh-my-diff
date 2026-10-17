@@ -127,7 +127,8 @@ def release_entry(entries, version, summary):
     context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "cliff.toml"))
     grouped = {label: [] for label in LABELS}
     for item in (commit for release in context for commit in release["commits"]):
-        text = item["message"][:1].upper() + item["message"][1:]
+        line = item["message"].splitlines()[0]
+        text = line[:1].upper() + line[1:]
         if item["id"][:7] in commits and item.get("group") in grouped and text not in grouped[item["group"]]:
             grouped[item["group"]].append(text)
     return {"version": version, "date": f"{datetime.datetime.now(datetime.UTC):%Y-%m-%d}",

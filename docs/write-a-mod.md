@@ -29,8 +29,8 @@ This makes a folder with:
 pnpm test
 ```
 
-The test runs your mod offline, without calling a model, and prints each step. You should see
-`"display": "Hello author"`.
+The test runs your mod offline, without calling a model, and prints a long JSON report of each step. It exits 0
+when it passes; look for `"display": "Hello author"` near the top.
 
 To check types as well, add TypeScript once with `pnpm add -D typescript@5.9.3`, then run `pnpm check`.
 
@@ -64,6 +64,7 @@ your change.
 ## 4. Install it for real
 
 ```sh
+cd ..
 omd install ./my_mod
 omd mods enable my_mod
 ```
@@ -78,6 +79,8 @@ Build a release copy:
 ```sh
 pnpm run package
 ```
+
+To rebuild, delete `dist/` first or bump `version`.
 
 To publish on npm:
 

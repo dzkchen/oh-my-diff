@@ -40,6 +40,8 @@ You need an Apple Silicon Mac with Codex `0.163.x`, Node 24 and Python 3.12+ ([d
    codex
    ```
 
+   If this starts plain Codex, add the `export PATH=...` line the installer printed to your shell profile.
+
 3. Type `/mods` to see which mods are on and to turn others on.
 
 For the minimal install, other options, updates and removal, see [Install Oh My Diff](docs/install.md).
@@ -60,6 +62,7 @@ and a fuller OMD Core are coming in the next updates ([what's planned](docs/coll
 OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
 
 - **Something broke?** [Open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+- **Found a security problem?** Report it privately; see [SECURITY.md](SECURITY.md).
 - **A mod needs something the API can't do?** Open a
   [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or send a
   [pull request](CONTRIBUTING.md).

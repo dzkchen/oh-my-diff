@@ -325,6 +325,12 @@ class UpdateSelection(unittest.TestCase):
                 self.assertFalse((self.root / "update/staged").exists())
         self.signing = self.key
         self.assertEqual(self.check()["available"]["version"], "0.2.0")
+        manifest = self.check()["available"]["manifest"]
+        tampered = manifest | {"body": manifest["body"].replace('"a' , '"b', 1)}
+        for bad in (tampered, {key: value for key, value in manifest.items() if key != "signature"}):
+            with self.assertRaisesRegex(ValueError, "no longer verifies"):
+                self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
+                                        "platform", None, None, bad)
 
     def test_release_lists_come_only_from_github_or_a_loopback_server(self):
         for url in ("https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20", "https://127.0.0.1:8443/releases"):

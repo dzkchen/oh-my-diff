@@ -3582,9 +3582,11 @@ change carries a single-use broker challenge bound to its digest and a
 generation check, so a stale writer is refused. Broker policy values need an
 administrator (`dev.ohmydiff.broker.policy`).
 
-The trust boundary is the OS plus the pinned binaries. The broker doesn't
-protect against an administrator or root, or a user who re-pins a replaced
-binary with sudo. Same-user processes can still read every user-readable file
+The trust boundary is the OS plus the pinned binaries. Broker install and pin
+accept only the helper and binaries listed in a release manifest signed by the
+Oh My Diff release key, and later privileged steps run from a root-owned copy
+of the broker tooling, so a locally built or replaced binary can't be pinned.
+The broker doesn't protect against an administrator or root. Same-user processes can still read every user-readable file
 (for example `~/.codex/auth.json` or other secret files), edit the mod store
 (the host then rejects what the broker doesn't confirm) and drive OMD
 interactively, in which case the authentication dialog still appears, and use
@@ -3592,8 +3594,8 @@ enrolled credentials against their enrolled origins through OMD or a sidecar's
 gateway path. Credential tokens leave OMD only toward their enrolled origin, but
 a mod's own secrets (`OMD_SECRETS`) are placed in its sidecar's environment, and
 service grants in `host.json` are user-writable, so a same-user process that
-edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
-(one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
+edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks of signed releases pin
+their binaries (one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
 but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
 rights and all broker state, returning to same-user mode.
 

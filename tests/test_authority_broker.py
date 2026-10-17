@@ -43,14 +43,21 @@ class SignedReleaseAnchorTest(unittest.TestCase):
             with mock.patch.object(authority_broker, "RELEASE_KEY", public), \
                     mock.patch.object(authority_broker, "cdhash", side_effect=AssertionError("cdhash before the signature check")), \
                     mock.patch.object(authority_broker, "create_account", side_effect=AssertionError("deployed unsigned")):
-                authority_broker.require_signed([helper, codex], [manifest])
                 with self.assertRaisesRegex(ValueError, "stray is not listed"):
                     authority_broker.write_pins([codex, stray], [manifest])
                 with self.assertRaisesRegex(ValueError, "stray is not listed"):
-                    authority_broker.install(stray, [codex], [manifest])
-                for unsigned in (forged, missing):
-                    with self.assertRaisesRegex(ValueError, "not signed by the Oh My Diff release key"):
-                        authority_broker.install(helper, [codex], [unsigned])
+                    authority_broker.install(stray, helper, [codex], [manifest])
+                for unsigned, error in ((forged, "not signed by the Oh My Diff release key"),
+                                        (missing, "has no signed omd-release.json")):
+                    with self.assertRaisesRegex(ValueError, error):
+                        authority_broker.install(helper, helper, [codex], [unsigned])
+            hashed = []
+            with mock.patch.object(authority_broker, "RELEASE_KEY", public), \
+                    mock.patch.object(authority_broker, "ROOT", base), mock.patch("os.chown"), \
+                    mock.patch.object(authority_broker, "cdhash", side_effect=lambda path: hashed.append(path) or path.read_text()):
+                self.assertEqual(authority_broker.write_pins([codex, helper], [manifest]), ["codex", "omd-broker"])
+            self.assertNotIn(codex, hashed)
+            self.assertNotIn(helper, hashed)
 
     def test_installer_and_broker_pin_the_same_release_key(self):
         code = (Path(__file__).resolve().parents[1] / "install.sh").read_text()

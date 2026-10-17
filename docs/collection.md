@@ -10,7 +10,8 @@ omd-package mod enable omd_usage
 omd-package mod disable omd_usage
 ```
 
-Changes apply at your next message. No restart needed.
+Changes apply at your next message. No restart needed. The `omd-package` commands print the install record as
+JSON; `omd mods list` shows the result.
 
 ## On by default
 
@@ -43,7 +44,7 @@ OMD Core includes only the first three.
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
 | `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. Set up below. |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. Set up below. |
-| `omd_workflow` | Workflow checkpoints and completion checks | A contract: `omd-package contract select ID@VERSION` |
+| `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) explains its settings and limits.
@@ -59,7 +60,8 @@ omd-package claude --model sonnet
 
 The first command checks the Claude CLI and turns on `omd_claude_cli`. The second starts a session on Claude.
 
-To add an API key or another provider:
+To add an API key or another provider, first add the credential in a `codex` session with `/profile add api_key
+NAME` (or `chatgpt`, or `provider`). It prints the setup command, which looks like this:
 
 ```sh
 omd-package profiles --setup --add NAME --credential NAME --protocol responses --url URL --upstream-model MODEL
@@ -71,8 +73,8 @@ Replace the capitalized values with your provider's details. See the
 
 ## Plugins
 
-OMD+ also includes three Codex plugins: anchored edit, artifact reading and code execution. They aren't added to
-Codex until you add them; see [plugins/README.md](../plugins/README.md).
+OMD+ also includes three Codex plugins: anchored edit, artifact reading and code execution. `omd-package plugins` makes them
+available to Codex, and `codex plugin add NAME@oh-my-diff` adds one; see [plugins/README.md](../plugins/README.md).
 
 ## Not in this release
 

@@ -668,7 +668,11 @@ def pinned_binaries(record):
 
 
 def signed_manifest(prefix):
-    return Path(prefix).parent / "omd-release.json"
+    manifest = Path(prefix).parent / "omd-release.json"
+    if not manifest.is_file():
+        raise ValueError(f"{Path(prefix).parent} was not installed from a signed release; "
+                         "the authority broker pins only signed release binaries")
+    return manifest
 
 
 def broker(prefix, bin_dir, action, also=()):

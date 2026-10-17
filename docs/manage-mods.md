@@ -65,7 +65,7 @@ To run plain Codex behavior with no mods at all:
 omd-package activate direct
 ```
 
-Return with `omd-package activate full` (or `platform` for OMD Core).
+Return with `omd-package activate full` (or `platform` for OMD Core). These print the install record as JSON.
 
 For lower-level repairs, `omd-mod` works on the mod store directly. The store is
 `~/.local/share/oh-my-diff/stores/full` for OMD+ and `.../stores/platform` for OMD Core:

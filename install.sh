@@ -36,7 +36,7 @@ import uuid
 RELEASES_URL = "https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20"
 RELEASE_MANIFEST = "omd-release.json"
 RELEASE_SIGNATURE = RELEASE_MANIFEST + ".sig"
-RELEASE_KEY = ""
+RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
 SIGNING_NAMESPACE = "oh-my-diff-release"
 RELEASE_HOSTS = ("api.github.com", "localhost", "127.0.0.1")
 TARGET = "aarch64-apple-darwin"
@@ -376,6 +376,9 @@ def journaled(root, generation, own, created=None):
 
 
 def transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest=None):
+    if manifest and not (signed(manifest.get("body", "").encode(), manifest.get("signature", "").encode())
+                         and json.loads(manifest["body"]).get("sha256") == expected):
+        fail("the release manifest no longer verifies; run omd update check")
     check_links(root, args.bin_dir)
     if current:
         status(current, Path(upstream["path"]), args.bin_dir)
@@ -982,9 +985,12 @@ def manual(args, root, current):
         return set_policy(root, record, "pin", "" if value == "none" else value)
     if action == "status":
         saved = state(root)
+        available = saved.get("available")
         return {"installed": record["version"], "profile": details["profile"], "policy": policy(store),
                 "open_sessions": len(sessions(root, None))} | {
-            key: saved.get(key) for key in ("checked_at", "available", "blocked", "error", "pending", "failed", "held", "last")}
+            key: saved.get(key) for key in ("checked_at", "blocked", "error", "pending", "failed", "held", "last")} | {
+            "available": available and available | {"manifest": {key: value for key, value in available["manifest"].items()
+                                                                 if key not in ("body", "signature")}}}
     result = check(args, root, current)
     if action == "check":
         return result

@@ -187,6 +187,7 @@ class ProfileModeTests(unittest.TestCase):
         with patch.object(profiles, "load", return_value=record), \
                 patch.object(profiles, "check", return_value=(None, "/manager")), \
                 patch.object(profiles, "pinned_binaries", return_value=set()), \
+                patch.object(profiles, "signed_manifest", return_value=Path("/omd-release.json")), \
                 patch.object(profiles, "invoke", side_effect=invoke), \
                 patch.object(profiles.authority_broker, "main", return_value={"installed": True}):
             profiles.broker(Path("/prefix"), Path("/bin"), "install")

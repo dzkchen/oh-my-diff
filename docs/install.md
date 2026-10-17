@@ -7,8 +7,8 @@ This page covers installing, updating and removing OMD.
 You need:
 
 - An Apple Silicon Mac. Linux and Intel Macs aren't supported.
-- Codex `0.163.x`. Check with `codex --version`.
-- Node 24.18 or later 24.x, installed with [mise](https://mise.jdx.dev).
+- Codex `0.163.x`. Check with `codex --version`; install it with `npm install -g @openai/codex@0.163`.
+- Node 24.18 or later 24.x, installed with [mise](https://mise.jdx.dev): `mise use -g node@24`.
 - Python 3.12 or later. macOS ships 3.9; install a newer one with `brew install python@3.12`.
 
 ## Install
@@ -61,6 +61,9 @@ Run the install command again with the other `--profile`. Each profile remembers
 
 ## Uninstall
 
+If you added OMD's plugins to Codex, remove them first: `codex plugin remove NAME@oh-my-diff` for each, then
+`codex plugin marketplace remove oh-my-diff`. Then run:
+
 ```sh
 sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
 ```
@@ -85,7 +88,7 @@ settings in `~/.local/share/oh-my-diff/stores`. Delete that folder too if you wa
 - **Release candidates and nightly builds:** add `--channel beta` or `--channel nightly` to the install command, or
   run `omd update channel beta`. Switch back with `omd update channel stable`.
 - **Update settings:** `omd update status` shows them. Change them with `omd update checks on|off`,
-  `omd update cadence daily|weekly`, `omd update pin VERSION|none` or `omd update disable`, or in `/update`.
+  `omd update cadence daily|weekly`, `omd update pin VERSION|none` and `omd update enable|disable` (automatic installs), or in `/update`.
 - **Install locations:** `--root DIR` (default `~/.local/share/oh-my-diff`) and `--bin-dir DIR` (default
   `~/.local/bin`). If a command OMD installs already exists there, OMD renames it to `NAME.before-omd` and restores it
   when you uninstall.

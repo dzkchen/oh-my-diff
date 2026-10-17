@@ -193,7 +193,7 @@ Replace `mod.test.json`:
 pnpm check       # syntax and types
 pnpm test        # mod.test.json, plus any *.test.ts or *.test.mjs files
 pnpm run run     # the same scenario, printing each step
-pnpm debug       # debug.test.json: shows how a failing step is reported
+pnpm debug       # debug.test.json calls the scaffold's /hello; edit or delete it after step 4
 ```
 
 `settings` sets each mod's settings for the scenario. A host call the scenario doesn't mock fails the test. Mock
@@ -241,7 +241,7 @@ Ask the user before installing into their real store. Install, enable, update an
 permissions and ask `Proceed? [y/N]`; disable doesn't ask. Run from the folder that contains `notes/`:
 
 ```sh
-pnpm --dir notes run package # writes notes/dist/notes-0.1.0/
+pnpm --dir notes run package # writes notes/dist/notes-0.1.0/; delete dist/ to rebuild
 omd install ./notes          # installs it, still off
 omd mods enable notes        # turns it on from the next message
 omd mods update notes        # after changing the code
@@ -249,7 +249,8 @@ omd mods disable notes       # off, data kept
 omd mods remove notes
 ```
 
-To rehearse on a scratch store first, add `--store /tmp/install-store` to each command (use a different store from
+To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store "$(mise which node)"` and
+add `--store /tmp/install-store` to each command (use a different store from
 step 6, where `watch` already turned the mod on). In a non-interactive shell, `--yes` answers the prompt; pass it
 only after the user agrees. `omd install --scope project ./notes` installs it for the current project only; it
 overrides the same mod installed for the user.

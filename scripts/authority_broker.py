@@ -20,7 +20,7 @@ POLICY = ROOT.parent / "policy.json" if sys.platform == "darwin" else Path("/etc
 HELPER = Path("/Library/PrivilegedHelperTools/dev.ohmydiff.broker")
 TOOLS = ROOT.parent / "tools"
 COPY = TOOLS / "authority_broker.py"
-RELEASE_KEY = ""
+RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
 SIGNING_NAMESPACE = "oh-my-diff-release"
 ACCOUNT = "_omdbroker"
 RIGHTS = {
@@ -55,13 +55,17 @@ def cdhash(path):
 
 def signed_hashes(manifests):
     hashes = set()
-    for manifest in manifests:
-        body = Path(manifest).read_bytes()
+    for manifest in map(Path, manifests):
+        signature = Path(f"{manifest}.sig")
+        if not manifest.is_file() or not signature.is_file():
+            raise ValueError(f"{manifest.parent} has no signed omd-release.json; the authority broker accepts only "
+                             "installs from a signed release")
+        body = manifest.read_bytes()
         with tempfile.TemporaryDirectory(prefix="omd-signature-") as temporary:
             signers = Path(temporary) / "signers"
             signers.write_text(f'release namespaces="{SIGNING_NAMESPACE}" {RELEASE_KEY}\n')
             verified = RELEASE_KEY and run("/usr/bin/ssh-keygen", "-Y", "verify", "-f", signers, "-I", "release",
-                                           "-n", SIGNING_NAMESPACE, "-s", f"{manifest}.sig", stdin=body,
+                                           "-n", SIGNING_NAMESPACE, "-s", signature, stdin=body,
                                            check=False).returncode == 0
         if not verified:
             raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
@@ -69,11 +73,21 @@ def signed_hashes(manifests):
     return hashes
 
 
-def require_signed(paths, manifests):
-    hashes = signed_hashes(manifests)
-    for path in paths:
-        if hashlib.sha256(Path(path).read_bytes()).hexdigest() not in hashes:
-            raise ValueError(f"{path} is not listed in a signed Oh My Diff release manifest")
+def signed_bytes(path, hashes):
+    data = Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest() not in hashes:
+        raise ValueError(f"{path} is not listed in a signed Oh My Diff release manifest")
+    return data
+
+
+def signed_cdhashes(paths, hashes):
+    with tempfile.TemporaryDirectory(prefix="omd-pins-") as temporary:
+        copies = []
+        for index, path in enumerate(paths):
+            copy = Path(temporary) / str(index)
+            copy.write_bytes(signed_bytes(path, hashes))
+            copies.append(copy)
+        return [cdhash(copy) for copy in copies]
 
 
 def trusted(path):
@@ -117,8 +131,7 @@ def write_root(path, data, mode):
 
 
 def write_pins(binaries, manifests, add=False):
-    require_signed(binaries, manifests)
-    pins = {cdhash(path) for path in binaries}
+    pins = set(signed_cdhashes(binaries, signed_hashes(manifests)))
     if add:
         pins.update(json.loads((ROOT / "pins.json").read_text())["cdhashes"])
     pins = sorted(pins)
@@ -126,21 +139,23 @@ def write_pins(binaries, manifests, add=False):
     return pins
 
 
-def install(helper, binaries, manifests):
-    require_signed([helper], manifests)
-    cdhash(helper)
+def install(helper, tooling, binaries, manifests):
+    hashes = signed_hashes(manifests)
+    helper_data, tooling_data = signed_bytes(helper, hashes), signed_bytes(tooling, hashes)
+    signed_cdhashes([helper], hashes)
+    pins = sorted(set(signed_cdhashes(binaries, hashes)))
     create_account()
     ROOT.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     TOOLS.mkdir(mode=0o755, exist_ok=True)
     os.chown(TOOLS, 0, 0)
     os.chmod(TOOLS, 0o755)
-    write_root(COPY, Path(__file__).read_bytes(), 0o644)
+    write_root(COPY, tooling_data, 0o644)
     ROOT.mkdir(mode=0o700, exist_ok=True)
     shutil.chown(ROOT, ACCOUNT, ACCOUNT)
     os.chmod(ROOT, 0o700)
     HELPER.parent.mkdir(mode=0o755, exist_ok=True)
-    write_root(HELPER, Path(helper).read_bytes(), 0o755)
-    pins = write_pins(binaries, manifests)
+    write_root(HELPER, helper_data, 0o755)
+    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins}).encode(), 0o644)
     for name, rule in RIGHTS.items():
         run("/usr/bin/security", "authorizationdb", "write", name, stdin=plistlib.dumps(rule))
     daemon = {"Label": LABEL, "ProgramArguments": [str(HELPER)], "UserName": ACCOUNT, "GroupName": ACCOUNT,
@@ -210,6 +225,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     install_parser = commands.add_parser("install", help="create the broker account, daemon and rights (sudo)")
     install_parser.add_argument("--helper", type=Path, required=True)
+    install_parser.add_argument("--tooling", type=Path, default=Path(__file__).resolve(),
+                                help="authority_broker.py to install as the root-owned copy; must be in a signed manifest")
     pin_parser = commands.add_parser("pin", help="replace the pinned host binaries (sudo)")
     for command in (install_parser, pin_parser):
         command.add_argument("--pin", type=Path, action="append", required=True)
@@ -227,13 +244,15 @@ def main(argv=None):
     if args.command == "status":
         return status()
     if os.geteuid() != 0:
-        arguments = sys.argv[1:] if argv is None else argv
+        arguments = [*(sys.argv[1:] if argv is None else argv)]
+        if args.command == "install":
+            arguments.append(f"--tooling={args.tooling}")
         script = COPY if trusted(COPY) else Path(__file__).resolve()
         elevated = subprocess.run(["/usr/bin/sudo", "/usr/bin/python3", "-I", str(script), *map(str, arguments)],
                                   check=True, stdout=subprocess.PIPE)
         return json.loads(elevated.stdout)
     if args.command == "install":
-        return install(args.helper.resolve(), [path.resolve() for path in args.pin], args.manifest)
+        return install(args.helper.resolve(), args.tooling.resolve(), [path.resolve() for path in args.pin], args.manifest)
     if args.command == "pin":
         return {"pins": write_pins([path.resolve() for path in args.pin], args.manifest, args.add)}
     if args.command.startswith("policy-"):
