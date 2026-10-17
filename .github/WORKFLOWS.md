@@ -1,5 +1,7 @@
 # Workflows
 
+How CI, nightly builds and releases work.
+
 | Workflow | Trigger | Does |
 | --- | --- | --- |
 | `pull-request.yml` | pull requests | Changelog and Markdown link check |
@@ -7,63 +9,98 @@
 | `nightly.yml` | **Run workflow** (daily once the repository is public) | Validates; on `main` publishes a nightly prerelease and reports failures |
 | `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags, **Run workflow** (dry run) | Checks versions, validates, publishes the GitHub Release |
 
-## Validation
+## Releases
 
-`validate.yml` runs on standard `macos-15` (Apple Silicon) and `ubuntu-24.04`. It replays the exact upstream pin,
-verifies V8 artifacts against the upstream-tracked checksum manifest, checks fresh/second apply and tree parity,
-and runs native unit/integration/doc tests, Clippy on patched paths, Rustfmt, ownership, mods types/tests, Python,
-generated lock drift, offline host scenarios and scripted client acceptance. Core tests use an empty test
-home and exclude the recorded upstream `filtered_host_additional_permissions` baseline. Provider credentials and
-administrator broker deployment are not used.
+The version lives in `runtime/release.lock.json` and the entry in `changelog.json`. `CHANGELOG.md` and the release
+notes are generated from them.
 
-Hosted builds use a shallow upstream checkout, two Cargo workers, no incremental artifacts and no debug
-information. Rust test targets run serially and finished test executables are removed. No Cargo cache is restored:
-patch replay always starts clean.
+1. Start the release:
 
-The macOS job builds hardened signed release binaries once, removes the Cargo target, packages one archive for OMD
-Core and OMD+, exercises both profiles' install, reinstall, uninstall and recovery from the unpacked archive, and
-checks the installer's size limit. The `package` artifact holds
-the archive, `omd-release.json`, `provenance.json`, `install.sh`, a `git archive` source tarball and `SHA256SUMS`.
-Logs are in `validation-report-*` (14 days). Hosted orchestration lives in `.github/scripts/` and uses only
-tracked build inputs.
+   ```sh
+   mise run release -- 1.2.0 --summary "One sentence."
+   ```
+
+   This branches from `origin/main`, sets the version, adds a changelog entry from the Conventional Commits since
+   the last one (git-cliff), and opens a `chore(release): 1.2.0` pull request. To edit the entry, change it there,
+   then run `python3 scripts/release.py render`.
+2. Optional dry run. It builds, validates and verifies everything, and prints the publication commands without
+   publishing:
+
+   ```sh
+   gh workflow run release.yml --ref release/v1.2.0 -f version=1.2.0
+   ```
+
+3. Squash-merge the pull request, then run `mise run release -- 1.2.0` again. It tags the merged `main` commit and
+   pushes the tag.
+4. The tag runs `release.yml`. The tag must be on `main`, and the lock, changelog and links must agree. Then it
+   validates and packages, uploads every asset to a draft, and publishes it. Publishing moves the installer and
+   `omd update` to the new release.
+
+Release candidates (`-rc.N`) are prereleases on the beta channel.
+
+### Withdraw a bad release
+
+```sh
+python3 scripts/release.py rollback 1.2.0
+```
+
+This returns the release to draft, so the installer and `omd update` stop offering it, and marks the previous
+stable release as latest. Users who already updated run `omd update rollback`.
+
+### Versioning
+
+- A Codex pin advance that changes the required upstream minor: minor release.
+- A mod API major: major release.
+- A security fix: patch release on the current minor.
+
+Each release's `omd-release.json` and `provenance.json` record its pinned Codex version.
+
+### Signing
+
+Publication (nightly, release and dry run) signs `omd-release.json` as `omd-release.json.sig` with `ssh-keygen -Y
+sign` (namespace `oh-my-diff-release`) and the `OMD_RELEASE_SIGNING_KEY` repository secret. The result is checked
+against the public key pinned in `install.sh` and `scripts/authority_broker.py`.
+
+Installs, updates and broker deployment accept only manifests that verify. To rotate the key, change both pinned
+copies and the secret together.
 
 ## Nightly
 
-Only successful runs on `main` publish; branch dispatches validate without publication. Versions are `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`, where `NEXT` is the
-committed release version (its next patch once that version is released); tags are `vVERSION`, always prereleases
-and never GitHub's latest. A failed run opens one issue with its job/step names, report tails and log link; reruns
-update it and a successful rerun closes it.
+Only successful runs on `main` publish. Branch dispatches validate without publishing.
 
-## Releases
+- Version: `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`. `NEXT` is the committed release version, or its next patch
+  once that's released.
+- Tag: `vVERSION`. Always a prerelease, never GitHub's latest.
+- A failed run opens one issue with job and step names, report tails and a log link. A successful rerun closes it.
 
-The release version lives in `runtime/release.lock.json` and the entry in `changelog.json`; `CHANGELOG.md`
-and the release notes are generated from it. One command runs the whole flow:
+## Validation
 
-1. `mise run release -- 1.2.0 --summary "One sentence."` branches from `origin/main`, sets the version, adds a
-   changelog entry from the Conventional Commits since the last entry (git-cliff), and opens a
-   `chore(release): 1.2.0` pull request. Edit the entry there if needed, then `python3 scripts/release.py render`.
-2. Optional dry run: `gh workflow run release.yml --ref release/v1.2.0 -f version=1.2.0` builds, validates and
-   verifies everything and prints the publication commands without publishing.
-3. Squash-merge the pull request, then run `mise run release -- 1.2.0` again. It tags the merged `main` commit
-   and pushes the tag.
-4. The tag runs `release.yml`: the tag must be on `main`, the lock, changelog and links must agree, then validation
-   and packaging run. Publication uploads every asset to a draft and only then publishes it, which moves the
-   installer and `omd update` to it. Release candidates (`-rc.N`) are prereleases on the beta channel.
+`validate.yml` runs on `macos-15` (Apple Silicon) and `ubuntu-24.04`. It replays the exact upstream pin, then runs
+native tests, Clippy, Rustfmt, ownership checks, mods types and tests, Python tests, lock-drift checks, offline host
+scenarios and scripted client acceptance.
 
-Publication (nightly, release and dry run) signs `omd-release.json` as `omd-release.json.sig` with `ssh-keygen -Y
-sign` (namespace `oh-my-diff-release`) using the `OMD_RELEASE_SIGNING_KEY` repository secret, and checks the result
-against the public key pinned in `install.sh` and `scripts/authority_broker.py`. Installs, updates and broker
-deployment accept only manifests that verify. To rotate the key, change both pinned copies and the secret together.
+Core tests use an empty test home and skip the recorded upstream `filtered_host_additional_permissions` baseline.
+No provider credentials or broker deployment are used.
 
-Withdraw a bad release with `python3 scripts/release.py rollback 1.2.0`: it returns the release to draft, so the
-installer and `omd update` stop offering it, and marks the previous stable release as latest. Users who already
-updated run `omd update rollback`.
+Hosted builds are lean: shallow upstream checkout, two Cargo workers, no incremental artifacts or debug
+information, serial Rust tests and no Cargo cache.
 
-Versioning: a Codex pin advance that changes the required upstream minor is a minor release; a mod API major is a
-major release; a security fix is a patch release on the current minor. Each release's `omd-release.json` and
-`provenance.json` record its pinned Codex version.
+### The macOS package
+
+The macOS job builds hardened signed release binaries once and packages one archive for OMD Core and OMD+. From
+the unpacked archive it tests install, reinstall, uninstall and recovery for both profiles, and the installer's
+size limit.
+
+The `package` artifact holds the archive, `omd-release.json`, `provenance.json`, `install.sh`, a `git archive`
+source tarball and `SHA256SUMS`. Logs are in `validation-report-*` (14 days). Orchestration lives in
+`.github/scripts/`.
 
 ## Repository settings
 
-`.github/settings.json` holds labels, merge settings and `main` branch protection. Apply it with
-`mise run github:settings -- all` (`--dry-run` previews).
+`.github/settings.json` holds labels, merge settings and `main` branch protection. Apply it with:
+
+```sh
+mise run github:settings -- all
+```
+
+Add `--dry-run` to preview.

@@ -1,17 +1,17 @@
 # Mods included with OMD+
 
-OMD+ installs the mods below. Some are on from the start. The rest are installed but do nothing until you turn
-them on.
+What ships with OMD+, and which mods are on.
 
-To turn a mod on or off, type `/mods` in `codex`, or run:
+## Turn a mod on or off
+
+Type `/mods` in `codex`, or run:
 
 ```sh
 omd-package mod enable omd_usage
 omd-package mod disable omd_usage
 ```
 
-Changes apply at your next message. No restart needed. The `omd-package` commands print the install record as
-JSON; `omd mods list` shows the result.
+It applies at your next message. `omd mods list` shows the result.
 
 ## On by default
 
@@ -42,16 +42,16 @@ OMD Core includes only the first three.
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Shows the errors each edit introduces; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
-| `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. Set up below. |
-| `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. Set up below. |
+| `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. See [Claude](#claude). |
+| `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
 
-Each mod's README in [`mods/first-party`](../mods/first-party) explains its settings and limits.
+Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
 ## Use Claude or another provider
 
-To use Claude through the Claude CLI:
+### Claude
 
 ```sh
 omd-package claude --setup
@@ -60,28 +60,29 @@ omd-package claude --model sonnet
 
 The first command checks the Claude CLI and turns on `omd_claude_cli`. The second starts a session on Claude.
 
-To add an API key or another provider, first add the credential in a `codex` session with `/profile add api_key
-NAME` (or `chatgpt`, or `provider`). It prints the setup command, which looks like this:
+### An API key or another provider
 
-```sh
-omd-package profiles --setup --add NAME --credential NAME --protocol responses --url URL --upstream-model MODEL
-omd-package profiles --model NAME
-```
+1. In a `codex` session, add the credential with `/profile add api_key NAME` (or `chatgpt`, or `provider`).
+2. It prints a setup command like this one. Run it with your provider's details in place of the capitalized values:
 
-Replace the capitalized values with your provider's details. See the
-[`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
+   ```sh
+   omd-package profiles --setup --add NAME --credential NAME --protocol responses --url URL --upstream-model MODEL
+   omd-package profiles --model NAME
+   ```
+
+More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
 ## Plugins
 
-OMD+ also includes three Codex plugins: anchored edit, artifact reading and code execution. `omd-package plugins` makes them
-available to Codex, and `codex plugin add NAME@oh-my-diff` adds one; see [plugins/README.md](../plugins/README.md).
+OMD+ also includes three Codex plugins: anchored edit, artifact reading and code execution. To add them, see
+[plugins/README.md](../plugins/README.md).
 
 ## Not in this release
 
-These come back in later updates:
+Coming later:
 
-- First update after `1.0.0`: source knowledge, mini, cursor, programmable context, and an account switcher and
-  usage meter for `omd_profiles`.
-- Later: the other first-party mods and plugins, the browser and the bridge.
+- Right after `1.0.0`: source knowledge, mini, cursor, programmable context, and an account switcher and usage meter
+  for `omd_profiles`.
+- After that: the other first-party mods and plugins, the browser and the bridge.
 
 OMD has no desktop app, VS Code extension, Linux build or hosted service.

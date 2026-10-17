@@ -2,7 +2,7 @@
 
 Read URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cite where each answer came from.
 
-The plugin works with no setup. Its optional `mod/` component adds `github://` reads. You trust and enable it separately.
+It works with no setup. An optional `mod/` component adds `github://` reads; you trust and enable it separately.
 
 ## Install
 
@@ -15,7 +15,9 @@ codex plugin add omd-artifact-reading@oh-my-diff
 
 Ask Codex to use `$omd-artifact-reading:omd-artifact-reading`.
 
-PDF reading needs Ghostscript (`gs`) installed. Notebooks are read without running them. Fetched content is treated as evidence and cannot give instructions.
+- PDF reading needs Ghostscript (`gs`).
+- Notebooks are read, not run.
+- Fetched content is treated as evidence and can't give instructions.
 
 ## GitHub reads (optional)
 
@@ -28,7 +30,8 @@ PDF reading needs Ghostscript (`gs`) installed. Notebooks are read without runni
    omd-mod enable STORE COMPONENT_PATH
    ```
 
-2. Add this entry to `services` in the store's `host.json`. Use real canonical paths, digests and your platform's certificate directory:
+2. Add this entry to `services` in the store's `host.json`. Use real canonical paths, digests and your platform's
+   certificate directory:
 
    ```json
    {
@@ -53,18 +56,25 @@ Supported paths:
 - `github://OWNER/REPO/pulls/NUMBER`, `/comments`, `/review-comments` and `/files`
 - `github://OWNER/REPO/commits/FULL_40_CHARACTER_SHA` and `/files`
 
-Add `?page=N` to a collection path for more entries. `comments` is the conversation; `review-comments` is inline review.
+Add `?page=N` to a collection path for more entries. `comments` is the conversation; `review-comments` is inline
+review.
 
-## Private repositories
+### Private repositories
 
-Public reads need no credentials. For a private repository, add `secrets: {"OMD_GITHUB_TOKEN":"SELECTED_REFERENCE"}` and bind that reference in the host's `secret_refs`. Use a fine-grained read-only token limited to the repositories you need. Private access has not been tested against a real private account.
+Public reads need no credentials. For a private repository:
 
-## Limits
+1. Add `secrets: {"OMD_GITHUB_TOKEN":"SELECTED_REFERENCE"}` to the entry, and bind that reference in the host's
+   `secret_refs`.
+2. Use a fine-grained read-only token limited to the repositories you need.
+
+Private access hasn't been tested against a real private account.
+
+### Limits
 
 - Each request makes at most three GitHub requests, with an 18-second deadline and no retry.
 - Responses are clipped: text pages to 8 KiB, bodies and patches to 12 KiB.
-- Binary or omitted patches, and PRs over GitHub's 3,000-file limit, cannot give complete file contents.
-- Renamed repositories must be reopened by their new name. Redirects are not followed.
+- Binary or omitted patches, and PRs over GitHub's 3,000-file limit, can't give complete file contents.
+- A renamed repository must be reopened by its new name. Redirects aren't followed.
 
 ## Remove
 

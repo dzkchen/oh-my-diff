@@ -10,7 +10,10 @@ It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 omd-package mod enable omd_profiles
 ```
 
-You also need a profile. In a session, add its credential (`/profile add chatgpt work`), then add the profile from a terminal. `/profile add` prints the command to run.
+You also need a profile:
+
+1. In a session, add its credential: `/profile add chatgpt work`.
+2. Run the command `/profile add` prints, for example:
 
 ```sh
 omd-package profiles --setup --add work --credential work --protocol responses \
@@ -18,11 +21,14 @@ omd-package profiles --setup --add work --credential work --protocol responses \
 omd-package profiles --model work
 ```
 
-For a paid API key or provider, setup also needs `--paid INPUT_USD:OUTPUT_USD` (per million tokens) and `--allowance USD`. Add `--window TOKENS` if the model isn't in the Codex catalog. `--max-output TOKENS` and `--reasoning` are optional. `--text-only` marks a model that can't take images, so Codex
-sends a text note in place of each image. `--setup --remove NAME` drops a profile.
+Setup options:
 
-For Chat Completions providers that accept cache marks, such as OpenRouter, add `--cache-control`. It is off by
-default because strict servers reject that extra field. Anthropic profiles always receive cache marks.
+- Paid API key or provider: `--paid INPUT_USD:OUTPUT_USD` (per million tokens) and `--allowance USD` are required.
+- `--window TOKENS`: for a model that isn't in the Codex catalog.
+- `--max-output TOKENS` and `--reasoning`: optional.
+- `--text-only`: the model can't take images, so Codex sends a text note instead of each image.
+- `--cache-control`: for Chat Completions providers that accept cache marks, such as OpenRouter. Off by default because strict servers reject the extra field. Anthropic profiles always get cache marks.
+- `--setup --remove NAME`: drop a profile.
 
 ## Use it
 
