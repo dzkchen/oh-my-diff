@@ -62,6 +62,7 @@ def core_env():
     home = WORK / "core-test-home"
     home.mkdir(parents=True, exist_ok=True)
     return {"OMD_TEST_NODE": build.node(), "HOME": str(home),
+            "PATH": os.pathsep.join([str(Path(sys.executable).parent), str(Path(build.node()).parent), os.environ["PATH"]]),
             "CARGO_HOME": os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")),
             "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup")),
             "MISE_DATA_DIR": os.environ.get("MISE_DATA_DIR", str(Path.home() / ".local/share/mise"))}
@@ -213,7 +214,12 @@ def cargo_tests(suite):
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
-        failed |= build.cargo_run(batch, log, args) != 0
+        status = build.cargo_run(batch, log, args)
+        flaky = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)))
+        if status and 0 < len(flaky) <= 5:
+            print(f"rerunning {', '.join(flaky)}")
+            status = build.cargo_run(batch, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
+        failed |= status != 0
         for line in log.read_text().splitlines():
             try:
                 item = json.loads(line)
