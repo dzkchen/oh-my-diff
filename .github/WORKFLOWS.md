@@ -1,105 +1,49 @@
 # Workflows
 
-How CI, nightly builds and releases work.
-
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `validate.yml` | called by nightly and release | Full hosted validation and the verified Apple Silicon package |
-| `nightly.yml` | **Run workflow** (daily once the repository is public) | Validates; on `main` publishes a nightly prerelease and reports failures |
-| `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags, **Run workflow** (dry run) | Checks versions, validates, publishes the GitHub Release |
-
-## Releases
-
-The version lives in `runtime/release.lock.json` and the entry in `changelog.json`. `CHANGELOG.md` and the release
-notes are generated from them.
-
-1. Start the release:
-
-   ```sh
-   mise run release -- 1.2.0 --summary "One sentence."
-   ```
-
-   This branches from `origin/main`, sets the version, adds a changelog entry from the Conventional Commits since
-   the last one (git-cliff), and opens a `chore(release): 1.2.0` pull request. To edit the entry, change it there,
-   then run `python3 scripts/release.py render`.
-2. Optional dry run. It builds, validates and verifies everything, and prints the publication commands without
-   publishing:
-
-   ```sh
-   gh workflow run release.yml --ref release/v1.2.0 -f version=1.2.0
-   ```
-
-3. Squash-merge the pull request, then run `mise run release -- 1.2.0` again. It tags the merged `main` commit and
-   pushes the tag.
-4. The tag runs `release.yml`. The tag must be on `main`, and the lock, changelog and links must agree. Then it
-   validates and packages, uploads every asset to a draft, and publishes it. Publishing moves the installer and
-   `omd update` to the new release.
-
-Release candidates (`-rc.N`) are prereleases on the beta channel.
-
-### Withdraw a bad release
-
-```sh
-python3 scripts/release.py rollback 1.2.0
-```
-
-This returns the release to draft, so the installer and `omd update` stop offering it, and marks the previous
-stable release as latest. Users who already updated run `omd update rollback`.
-
-### Versioning
-
-- A Codex pin advance that changes the required upstream minor: minor release.
-- A mod API major: major release.
-- A security fix: patch release on the current minor.
-
-Each release's `omd-release.json` and `provenance.json` record its pinned Codex version.
-
-### Signing
-
-Publication (nightly, release and dry run) signs `omd-release.json` as `omd-release.json.sig` with `ssh-keygen -Y
-sign` (namespace `oh-my-diff-release`) and the `OMD_RELEASE_SIGNING_KEY` repository secret. The result is checked
-against the public key pinned in `install.sh` and `scripts/authority_broker.py`.
-
-Installs, updates and broker deployment accept only manifests that verify. To rotate the key, change both pinned
-copies and the secret together.
-
-## Nightly
-
-Only successful runs on `main` publish. Branch dispatches validate without publishing.
-
-- Version: `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`. `NEXT` is the committed release version, or its next patch
-  once that's released.
-- Tag: `vVERSION`. Always a prerelease, never GitHub's latest.
-- A failed run opens one issue with job and step names, report tails and a log link. A successful rerun closes it.
+| `validate.yml` | called by nightly and release | Full validation and the Apple Silicon package (`macos-15`) |
+| `nightly.yml` | **Run workflow** (daily once public) | Validates; on `main` publishes a nightly prerelease |
+| `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags; **Run workflow** = dry run | Checks versions, validates, publishes the release |
 
 ## Validation
 
-`validate.yml` runs on `macos-15` (Apple Silicon) and `ubuntu-24.04`. It replays the exact upstream pin, then runs
-native tests, Clippy, Rustfmt, ownership checks, mods types and tests, Python tests, lock-drift checks, offline host
-scenarios and scripted client acceptance.
+`.github/scripts/nightly_ci.py validate` replays the upstream pin (V8 checksums, fresh and second apply, tree
+parity), then runs native tests, Clippy on patched paths, Rustfmt, ownership, mod types and tests, Python, lock
+drift, host scenarios and client acceptance. It skips the recorded upstream `filtered_host_additional_permissions`
+baseline and uses no provider credentials or broker. Builds start clean (no Cargo cache).
 
-Core tests use an empty test home and skip the recorded upstream `filtered_host_additional_permissions` baseline.
-No provider credentials or broker deployment are used.
+Then it builds signed release binaries, packages one archive for both profiles, and tests install, reinstall,
+uninstall and recovery. The `package` artifact holds the archive, `omd-release.json`, `provenance.json`,
+`install.sh`, a source tarball and `SHA256SUMS`; logs are in `validation-report` (14 days).
 
-Hosted builds are lean: shallow upstream checkout, two Cargo workers, no incremental artifacts or debug
-information, serial Rust tests and no Cargo cache.
+## Nightly
 
-### The macOS package
+Only passing runs on `main` publish. Version: `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`, where `NEXT` is the
+committed release version (next patch once it's released). Always a prerelease, never latest. GitHub emails you
+when a run fails.
 
-The macOS job builds hardened signed release binaries once and packages one archive for OMD Core and OMD+. From
-the unpacked archive it tests install, reinstall, uninstall and recovery for both profiles, and the installer's
-size limit.
+## Releases
 
-The `package` artifact holds the archive, `omd-release.json`, `provenance.json`, `install.sh`, a `git archive`
-source tarball and `SHA256SUMS`. Logs are in `validation-report-*` (14 days). Orchestration lives in
-`.github/scripts/`.
+The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`.
+
+1. `mise run release -- 1.2.0 --summary "One sentence."` opens a `chore(release): 1.2.0` PR with the version and a
+   changelog entry from commits since the last one. Edit the entry if needed, then `python3 scripts/release.py render`.
+2. Optional dry run: `gh workflow run release.yml --ref release/v1.2.0 -f version=1.2.0` (validates, packages,
+   signs, prints the publish commands).
+3. Squash-merge, then run `mise run release -- 1.2.0` again to tag `main`.
+4. The tag runs `release.yml`: tag on `main`, versions and changelog agree, validate, then publish as a draft and
+   flip it live (moves the installer and `omd update`). `-rc.N` releases are prereleases on the beta channel.
+
+**Signing:** publication signs `omd-release.json` (`ssh-keygen -Y sign`, namespace `oh-my-diff-release`) with the
+`OMD_RELEASE_SIGNING_KEY` secret and checks it against the key pinned in `install.sh` and
+`scripts/authority_broker.py`. To rotate, change both pins and the secret together.
+
+**Withdraw:** `python3 scripts/release.py rollback 1.2.0` returns it to draft and re-marks the previous stable as
+latest. Users who updated run `omd update rollback`.
+
+**Versioning:** a new required Codex minor → minor release; a mod API major → major; a security fix → patch.
 
 ## Repository settings
 
-`.github/settings.json` holds labels, merge settings and `main` branch protection. Apply it with:
-
-```sh
-mise run github:settings -- all
-```
-
-Add `--dry-run` to preview.
+`.github/settings.json` records the labels, merge settings and `main` protection. The maintainer applies it.

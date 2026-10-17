@@ -14,15 +14,8 @@ run = "pnpm --dir mods test"
 [tasks."mods:host-check"]
 run = "python3 scripts/mod_host_check.py"
 
-[tasks."release:evidence"]
-description = "Require current-revision execution receipts for all release-critical evidence"
-run = "python3 -m scripts.execution_evidence --release"
-
 [tasks."release"]
 run = "python3 scripts/release.py prepare"
 
 [tasks."release:check"]
 run = "python3 scripts/release.py check"
-
-[tasks."github:settings"]
-run = "python3 scripts/github_settings.py"
