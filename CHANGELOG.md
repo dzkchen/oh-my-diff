@@ -2,6 +2,150 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
+
+Release candidate for Oh My Diff 1.0.0, the first public beta.
+
+### New
+
+- Managed mod policy, deployment sync, typed tools, author testing
+- Integrate author deployment, host fixes and release artifacts
+- Add tool-lines mod, tool_call rows and warm render runner
+- Composer key interception, token completion rows, mention reads
+- Multi-file mod packages, live continuations, component modules
+- Raw process streams, 48 KiB render text, test-kit state
+- Persisted history interception, session tool records, cache marks
+- Plan panel, continue, terminal view memoization and cached package listing
+- Native Claude subscription status, billing routes and CLI 2.1.296
+- Burn_meter, token_weather and blast_radius ports
+- Published mod index entries and preview thumbnail strip
+- Omd_statusline mod, below-composer site and native status-row control
+- Idle compaction before prompt cache expiry
+- Auto-continue for unanswered approvals and questions
+- Codex 0.163.0 pin, omd-mod schema validation, thread-bound component events
+- Release workflow, signed releases and launch docs (#27)
+
+### Changed
+
+- Cut the repository to the launch collection
+- Run the terminal acceptance harnesses on the 0.161.0 empty state
+- Return the app-server time provider directly
+- Pin to codex 0.162.0
+- 4 -> 1 🥹
+- Code review fixes
+- Code review fixes (clippy artifcts arent run)
+- UI changes
+- Create SECURITY.md for security policy
+- Freeze launch API prims + reconcile surface coverage
+- More fixes
+- Update to codex v0.162.1
+- Reuse identity-verified package digests in packages.list and warm them after mods-ready
+- Spare runner context and deadline-driven paste flush
+- Add raw frame transport and improve raster scheduling
+- Frame transport finalized + fixes
+- JIT raw frame acks + stale layout handles
+- Cleaning up some stuff
+- Not sure what this is
+- .
+- Drop backdrops and glass; narrower package listing
+- Shared script helpers, one evidence resolver, module invocation
+- Maintainer references, launch-cut inventory and stage narration removal
+- Author examples row, client Node range, model.complete route doc
+- Internal WebSocket framing helpers, reload-only client recovery type
+- First-party scope and no fixture narration in mods README
+- Plain names for release tooling, locks and products
+- One first-party mod lock for every bundled package
+- Plain feature labels in conformance and reference
+- Example-owned author scenarios and one example list
+- First-party READMEs without version strings
+- Mod reference and compatibility without API history
+- Environment.read value limit and discovery guidance
+- Shared clock, UTF-8 cut and lock helpers; CLI and mod cleanups
+- Native accounts fields, private dirs, session caches
+- Prune comments
+- Lean warm-runner requests, runner-side intrinsics freeze, review repairs
+
+### Fixed
+
+- Launch cut config + acceptance checks
+- Launch cut acceptance checks, uninstall compatibility and docs
+- Managed policy fails closed + review fixes
+- Managed policy enforcement, provenance and host regressions
+- Align installer pin and confirm attachment owner lookup
+- 4.5 early review fixes across host, mods, SDK and installer
+- Fixes
+- Mod author scaffolding and reload workflows
+- Launch mod recovery, profile switching and preview watches
+- Preserve managed watch scopes and prune evicted local snapshots
+- Per-package runner reuse, cancellation and UI-state invalidation
+- Fix mouse-look motion capture and release handling
+- Fix raw frame transport review findings
+- Raw frame retry, hidden raster backoff, shared ack timer
+- Esc closes mod completion popups on first press
+- Composer key budget, mention budget and completion edge cases
+- Component runner ownership, sleep refusal, client module sizing
+- Process exit drain, null stdin, live output cleanup, render caches
+- Cache-mark routing, ordered rollout appends, redaction boundaries
+- Review findings for history, process streams and modules
+- Clock-aware view reuse, live codex_config, opt-in /continue
+- Claude route extra usage, billing reruns and error mapping
+- Composer completion and mention handling
+- Ownership scans and test evidence gates
+- Enforce typed mod mocks and expand source validation
+- Preserve UI state and module lifetimes
+- Runtime authority and resource lifecycle
+- Native ownership and runtime authority contracts
+- Runtime validation and release integrity
+- Reconcile lifecycle contracts with main
+- Mod persistence and SDK efficiency
+- Integrate runtime ownership fixes
+- Integrate UI lifecycle with authority checks
+- Receipt budgets, stale LSP answers and safe preview output
+- Preview truncation notice, watch retries and frecency receipt budget
+- Host state, credential, fork and package lifecycle hardening
+- Module unmount race, fork precheck and shared helpers
+- Port walkthrough fixes for /burn, token usage and prompt text
+- Closer upstream parity for the Claude Code ports
+- Blast_radius measurement, UI state reload writes, published index checks and preview strip hints
+- Resumable uninstall, provider limits and tool-call validation
+- Uninstall recovery, chat output limits, text-only profiles
+- Installer profile prompt without a stale mod list
+- Status line review fixes, per-project built-ins, theme warm-up
+- Status line startup write without a thread
+- Status line refresh timing, editor reset, built-ins lookup
+- Transactional reloads, host-call stacks, prompt lines, test baselines
+- Request policy exposure text, status reason, grant phrases
+- Mod TUI helper duplication and duplicated patch pin fields
+- TUI test fixtures and hook render reuse
+- Shared install-profile selector, restored debug popup test
+- In-realm mod TextEncoder, session.info reads and leftover removals
+- Shared worker teardown, gate helpers, opt-in per-call host work
+- No footer status prefix in upstream-direct mode
+- Thread and checkout state migration on state_version changes
+- Offline timer thread binding, pylsp harness wait, redundant tests
+- Mod callback authority caching, preview preservation, runner encoder hardening
+- Preview progress, migrate-handler preview flag, callback config cache, encoder prefix
+- Mod realm containment, thread-scoped routes, config redaction and own-command keybindings
+- Session cache eviction, shared private path helper
+- Derive native-ownership vocabulary from first-party packages
+- Treat auto, compact and idle as host words
+- Reset pending requests on a new session instead of by wall clock
+- Share offline timers across threads for mods without thread state
+- Post-merge review repairs, runner memory watchdog, thread-scoped mods; Repairs from three reviews of the merged candidate: config reads keep env var names and writes refuse redacted values; the broker binds stores and evidence streams to their owner; a runner memory watchdog (512 MiB); the source scanner matches at identifier boundaries; offline scenarios validate terminal patches like the host; classic hooks answer only PermissionRequest; the runner clock covers Date() and Intl; boundary fixes for receipts and request lines; an interceptor ordering cycle disables only its declarers; refused receipts write no evidence. TUI: fail-closed command targets, modal dialogs, host diagnostics never clipped, cached attachment resources, completions that keep warm runners, and upstream behaviour in direct mode. Mods: advisor and lsp_sync state per thread, bounded lsp_sync resync with large-file and non-UTF-8 handling, statusline spans, plan panel, idle compaction retries, SDK reconnect. Docs and harness updated; release lock regenerated.
+- TUI startup preview, bounded event queues, profiling removal
+- Idle watchdog kills of stateful runners, dialog button hotkeys
+- Mod prompt wrapping, ASCII glyphs, pane scroll, status, nesting
+- Installer asset URL and SHA-256 required as a pair
+- Host-check surface lists, Node flag and mod toggle reopen
+- TUI per-frame path and document I/O, approval-gate docs
+- Private store files, owner-only component events, shared redaction
+- Sealed provider port hand-off nonce
+- Repository-safe unrestricted programs, protected runner, MCP approval gate
+- Installer channels, release lookup and nightly validation
+- Nightly lock format, action pin, clippy gate, test pruning
+- Installer warning when codex on PATH is not the launcher
+- Anchored-edit component digest and descriptor digest check
+
 ## 2026-10-08 — Launch scope and upstream pin
 
 A smaller launch collection, a planned API freeze and refreshed Codex.
