@@ -20,60 +20,42 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Oh My Diff (OMD) is a patched [Codex CLI](https://github.com/openai/codex). Mods can change its commands, tools,
-context and screen. OMD ships with a small set of mods, and you can write your own. You still start it with
-`codex`, and it keeps your Codex settings, sign-in and sessions.
+Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with TypeScript mods: new commands, tools, context
+and screens. You still run `codex`, with your settings, sign-in and sessions.
 
 ## Quickstart
 
-You need an Apple Silicon Mac with Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+Needs an Apple Silicon Mac, Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
-1. Install OMD with its mod collection:
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
+codex
+```
 
-   ```sh
-   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
-   ```
+Type `/mods` to see and turn on mods. Still plain Codex? Add the `export PATH=...` line the installer printed to
+your shell profile.
 
-2. Start it:
+## Docs
 
-   ```sh
-   codex
-   ```
+- [Install, update, remove](docs/install.md)
+- [Included mods](docs/collection.md) · [Manage mods](docs/manage-mods.md)
+- [Write a mod](docs/write-a-mod.md) · [API reference](mods/REFERENCE.md) · [Agent mod guide](docs/AGENT_MOD_GUIDE.md)
 
-   If this starts plain Codex, add the `export PATH=...` line the installer printed to your shell profile.
+## Status
 
-3. Type `/mods` to see which mods are on and to turn others on.
+**Beta:** not every planned feature is here yet; it isn't unstable. More mods are coming
+([planned](docs/collection.md#not-in-this-release)).
 
-For the minimal install, other options, updates and removal, see [Install Oh My Diff](docs/install.md).
+**Codex versions:** OMD tracks the latest stable Codex, one version line per release (now `0.163.x`). Turn off
+automatic Codex updates, and update Codex only after `omd update` supports the new version.
 
-## Learn more
+**Help:** OMD is a personal tool, not tested widely.
 
-- [Mods included with OMD+](docs/collection.md)
-- [Install and manage mods](docs/manage-mods.md)
-- [Write your first mod](docs/write-a-mod.md)
-- [Mod API reference](mods/REFERENCE.md)
-- [Agent mod guide](docs/AGENT_MOD_GUIDE.md): building a mod with a coding agent
-
-## Project status
-
-**OMD is in beta.** Beta means it doesn't have every planned feature yet, not that it's unstable. More OMD+ mods
-and a fuller OMD Core are coming in the next updates ([what's planned](docs/collection.md#not-in-this-release)).
-
-OMD follows the latest stable Codex CLI and moves to each new Codex release as soon as it can. Each OMD release
-supports one Codex version line (now `0.163.x`), so updating Codex on its own can stop OMD from working until OMD
-catches up. To stay safe, turn off automatic Codex updates and update Codex only after `omd update` brings an OMD
-release that supports it.
-
-OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
-
-- **Something broke?** [Open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
-- **Found a security problem?** Report it privately; see [SECURITY.md](SECURITY.md).
-- **A mod needs something the API can't do?** Open a
-  [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or send a
-  [pull request](CONTRIBUTING.md).
-
-OMD exists because small, everyday workflow improvements get less attention than bigger AI-lab priorities. If
-you'd like to help maintain it, get in touch.
+- Bug: [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose)
+- Security problem: [report privately](SECURITY.md)
+- Missing API for a mod: [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or
+  [send a PR](CONTRIBUTING.md)
+- Want to help maintain it? Get in touch.
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 

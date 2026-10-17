@@ -159,7 +159,8 @@ Where to look things up:
 
 Rules that trip agents up:
 
-- No `import` statements except types from `@oh-my-diff/mod-api`; the whole mod is one entrypoint of at most 64 KiB.
+- Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
+  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
   there, and the source check refuses them.
 - Name host operations literally: `api.host.call('store.get', …)`, not a variable.
