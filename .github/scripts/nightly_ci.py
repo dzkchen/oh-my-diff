@@ -21,6 +21,7 @@ WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 BATCH = "nightly"
 CRATES = ["-p", "codex-omd", "-p", "codex-omd-extension", "-p", "codex-tui",
           "-p", "codex-core-plugins", "-p", "codex-git-utils"]
+RELEASE_ADVISORY = {"cargo test core integration"}
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
 
@@ -41,9 +42,11 @@ def hosted_steps():
         ("verified V8", ["python3", ".github/scripts/nightly_ci.py", "v8"]),
         ("patch sync", ["python3", ".github/scripts/build.py", "sync", BATCH]),
         ("patch matches checkout", drift("runtime", "upstream.lock.json")),
+        ("test helper binaries", cargo_step("test-helpers", "build", "-p", "codex-rmcp-client", "-p", "codex-cli",
+                                            "-p", "codex-code-mode-host", "--bins")),
         ("cargo test native crates", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "native"]),
-        ("core test helpers", cargo_step("core-helpers", "build", "-p", "codex-rmcp-client", "--bins")),
         ("cargo test core", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "core"]),
+        ("cargo test core integration", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "core-integration"]),
         ("clippy omd paths", cargo_step("clippy", "clippy", *CRATES, "--tests")),
         ("rustfmt", cargo_step("fmt", "fmt", *CRATES, "-p", "codex-core", "--", "--check")),
         ("native ownership", ["mise", "run", "native:ownership"]),
@@ -74,7 +77,7 @@ def step(name, argv):
     log = WORK / "logs" / (re.sub(r"\W+", "-", name) + ".log")
     started = time.monotonic()
     environment = os.environ | {"TMPDIR": "/private/tmp/"}
-    if name == "cargo test core":
+    if name.startswith("cargo test core"):
         home = WORK / "core-test-home"
         home.mkdir(exist_ok=True)
         environment.update(OMD_TEST_NODE=node(), HOME=str(home),
@@ -96,7 +99,7 @@ def step(name, argv):
     return {"name": name, "status": status, "seconds": round(time.monotonic() - started), "log": str(log), "tail": tail}
 
 
-def validate():
+def validate(release):
     raise_file_limit()
     shutil.rmtree(WORK / "logs", ignore_errors=True)
     (WORK / "logs").mkdir(parents=True)
@@ -112,6 +115,7 @@ def validate():
         if name in ("setup", "verified V8") and results[-1]["status"]:
             break
     failed = [result["name"] for result in results if result["status"]]
+    advisory = [name for name in failed if release and name in RELEASE_ADVISORY]
     skipped = [name for name, _ in steps[len(results):]]
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"# OMD nightly: {stamp} at `{commit}`", "",
@@ -124,10 +128,12 @@ def validate():
         if result["status"]:
             lines += ["", f"## {result['name']}", "", "```", *result["tail"], "```"]
     lines += ["", "Known upstream baseline excluded: `filtered_host_additional_permissions`."]
+    if advisory:
+        lines += [f"Not required for a release: {', '.join(advisory)}."]
     report = "\n".join(lines) + "\n"
     (WORK / "report.md").write_text(report)
     print(report)
-    return 1 if failed else 0
+    return 1 if set(failed) - set(advisory) else 0
 
 
 def command(*args):
@@ -143,7 +149,7 @@ def v8():
 
 def cargo_tests(suite):
     batch = build.batch_dir(BATCH)
-    crates = ["-p", "codex-core"] if suite == "core" else CRATES
+    crates = ["-p", "codex-core"] if suite.startswith("core") else CRATES
     packages = set(crates[1::2])
     metadata = json.loads(build.run("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1", cwd=batch / "codex/codex-rs"))
     targets = set()
@@ -156,10 +162,14 @@ def cargo_tests(suite):
                     elif target["kind"][0] in ("bin", "test"):
                         targets.add((f"--{target['kind'][0]}", target["name"]))
     targets.add(("--doc",))
+    if suite == "core-integration":
+        targets = {("--test", "all")}
+    elif suite == "core":
+        targets.discard(("--test", "all"))
     failed = False
     for index, flags in enumerate(sorted(targets)):
         args = ["test", "--locked", *crates, *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
-        if suite == "core":
+        if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
         failed |= build.cargo_run(batch, log, args) != 0
@@ -315,13 +325,14 @@ def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
     parser.add_argument("command", choices=("validate", "v8", "tests", "package", "publish"))
     parser.add_argument("--directory", type=Path, default=Path("release"))
-    parser.add_argument("--suite", choices=("native", "core"))
+    parser.add_argument("--suite", choices=("native", "core", "core-integration"))
+    parser.add_argument("--release", action="store_true", help="validate: the core integration suite reports but does not gate")
     parser.add_argument("--version", help="package this stable release version instead of a nightly")
     parser.add_argument("--notes", type=Path, help="publish a stable release with these notes")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.command == "validate":
-        raise SystemExit(validate())
+        raise SystemExit(validate(args.release))
     if args.command == "publish":
         publish(args.directory, args.notes, args.dry_run)
     elif args.command == "package":

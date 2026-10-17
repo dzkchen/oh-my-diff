@@ -21431,7 +21431,7 @@ index d2599a4d5..f37165f05 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index a541c5529..6a551361c 100644
+index a541c5529..95dcf6197 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -259,6 +259,7 @@ mod mcp_prewarm;
@@ -21442,7 +21442,7 @@ index a541c5529..6a551361c 100644
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -554,7 +555,50 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -554,7 +555,55 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -21459,18 +21459,23 @@ index a541c5529..6a551361c 100644
 +            continue;
 +        }
 +        for path in std::iter::once(&selection.cwd).chain(&selection.workspace_roots) {
-+            let local = path
-+                .to_abs_path()
-+                .map_err(|_| std::io::Error::other("workspace_local_path_invalid"))?;
-+            paths.insert(canonical_workspace_path(&local).map_err(std::io::Error::other)?);
++            if let Ok(local) = path.to_abs_path() {
++                paths.extend(existing_workspace_path(&local)?);
++            }
 +        }
 +    }
 +    Ok(paths)
 +}
 +
-+fn canonical_workspace_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
-+    path.canonicalize()
-+        .map_err(|error| anyhow::anyhow!("Cannot initialize workspace {}: {error}", path.display()))
++fn existing_workspace_path(path: &std::path::Path) -> std::io::Result<Option<std::path::PathBuf>> {
++    match path.canonicalize() {
++        Ok(path) => Ok(Some(path)),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
++        Err(error) => Err(std::io::Error::new(
++            error.kind(),
++            format!("Cannot initialize workspace {}: {error}", path.display()),
++        )),
++    }
 +}
 +
  impl Session {
@@ -21493,7 +21498,7 @@ index a541c5529..6a551361c 100644
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1164,6 +1208,22 @@ impl SessionIo {
+@@ -1164,6 +1213,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -21516,7 +21521,7 @@ index a541c5529..6a551361c 100644
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1545,6 +1605,99 @@ impl Session {
+@@ -1545,6 +1610,99 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -21616,7 +21621,7 @@ index a541c5529..6a551361c 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -2006,6 +2159,20 @@ impl Session {
+@@ -2006,6 +2164,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -21625,9 +21630,9 @@ index a541c5529..6a551361c 100644
 +                    &self.services.turn_environments.environment_manager(),
 +                    &updated.environments,
 +                )?;
-+                paths.insert(updated.cwd().canonicalize()?.to_path_buf());
++                paths.extend(existing_workspace_path(updated.cwd())?);
 +                for root in &updated.runtime_workspace_roots {
-+                    paths.insert(root.canonicalize()?.to_path_buf());
++                    paths.extend(existing_workspace_path(root)?);
 +                }
 +                self.retain_workspace_paths(paths)
 +            };
@@ -21637,7 +21642,7 @@ index a541c5529..6a551361c 100644
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -3907,6 +4074,7 @@ impl Session {
+@@ -3907,6 +4079,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -21645,7 +21650,7 @@ index a541c5529..6a551361c 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3914,6 +4082,27 @@ impl Session {
+@@ -3914,6 +4087,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -21673,7 +21678,7 @@ index a541c5529..6a551361c 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4406,6 +4595,10 @@ impl Session {
+@@ -4406,6 +4600,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -21684,7 +21689,7 @@ index a541c5529..6a551361c 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4415,6 +4608,7 @@ impl Session {
+@@ -4415,6 +4613,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21692,7 +21697,7 @@ index a541c5529..6a551361c 100644
                  })
                  .await
              {
-@@ -4503,6 +4697,10 @@ impl Session {
+@@ -4503,6 +4702,10 @@ impl Session {
                  }
              }
          }
@@ -21703,7 +21708,7 @@ index a541c5529..6a551361c 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4512,6 +4710,7 @@ impl Session {
+@@ -4512,6 +4715,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21711,7 +21716,7 @@ index a541c5529..6a551361c 100644
                  })
                  .await
              {
-@@ -4709,7 +4908,7 @@ impl Session {
+@@ -4709,7 +4913,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -21774,7 +21779,7 @@ index 8c4203bf1..930f6ad99 100644
                  .map_err(std::io::Error::other)?;
          }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index a617d9367..d1f040473 100644
+index a617d9367..fb9c3e065 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,9 @@ type McpToolApprovalMetadataMap =
@@ -21808,9 +21813,9 @@ index a617d9367..d1f040473 100644
 +                &inherited.all_selections(),
 +            )?);
 +        }
-+        workspace_paths.insert(canonical_workspace_path(session_configuration.cwd())?);
++        workspace_paths.extend(existing_workspace_path(session_configuration.cwd())?);
 +        for root in &session_configuration.runtime_workspace_roots {
-+            workspace_paths.insert(canonical_workspace_path(root)?);
++            workspace_paths.extend(existing_workspace_path(root)?);
 +        }
 +        let workspace_leases = workspace_paths
 +            .into_iter()
@@ -69006,10 +69011,10 @@ index 000000000..61aa70f12
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..3579d3ea2
+index 000000000..3e927ec17
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4045 @@
+@@ -0,0 +1,4049 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -69549,6 +69554,10 @@ index 000000000..3579d3ea2
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let Some(mut fixture) = fixture(&[Package {
@@ -75484,10 +75493,10 @@ index 000000000..36f1dc61b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..5d6e38dca
+index 000000000..2d079ec35
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,874 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -76309,7 +76318,12 @@ index 000000000..5d6e38dca
 +    async fn endpoint_handoff_reads_only_the_granted_file() {
 +        let home = tempfile::tempdir().unwrap();
 +        let repository = tempfile::tempdir().unwrap();
-+        let store = tempfile::tempdir().unwrap();
++        let user_temp = std::process::Command::new("/usr/bin/getconf")
++            .arg("DARWIN_USER_TEMP_DIR")
++            .output()
++            .unwrap()
++            .stdout;
++        let store = tempfile::tempdir_in(String::from_utf8(user_temp).unwrap().trim()).unwrap();
 +        let root = repository.path().canonicalize().unwrap();
 +        let store = store.path().canonicalize().unwrap();
 +        let endpoint = store.join("pane.json");
@@ -128016,10 +128030,10 @@ index 000000000..8ef5a1e8f
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..007995135
+index 000000000..702578968
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4774 @@
+@@ -0,0 +1,4777 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131054,18 +131068,18 @@ index 000000000..007995135
 +#[test]
 +fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
 +    let (temp, _, _) = fixture(
-+        "export default api => { api.command('nap', () => api.time.sleep(300)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
++        "export default api => { api.command('nap', () => api.time.sleep(300)); api.command('doze', () => api.time.sleep(5000)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
 +        &["commands", "events", "composer"],
 +    );
 +    let runtime = std::sync::Mutex::new(host(&temp));
 +    let generation = runtime.lock().unwrap().generation();
-+    let nap = |active: &dyn Fn() -> bool| {
++    let nap = |name: &str, active: &dyn Fn() -> bool| {
 +        codex_omd::invoke_shared(
 +            &runtime,
 +            "fixture",
 +            generation,
 +            "command",
-+            "nap",
++            name,
 +            Value::Null,
 +            active,
 +            |_, _| Err(std::io::Error::other("unexpected host call")),
@@ -131073,7 +131087,7 @@ index 000000000..007995135
 +        )
 +    };
 +    std::thread::scope(|scope| {
-+        let sleeper = scope.spawn(|| nap(&|| true));
++        let sleeper = scope.spawn(|| nap("nap", &|| true));
 +        std::thread::sleep(std::time::Duration::from_millis(150));
 +        assert!(
 +            runtime.try_lock().is_ok(),
@@ -131086,11 +131100,14 @@ index 000000000..007995135
 +    });
 +    let checks = std::sync::atomic::AtomicUsize::new(0);
 +    let started = std::time::Instant::now();
-+    let woken = nap(&|| checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6).unwrap_err();
++    let woken = nap("doze", &|| {
++        checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6
++    })
++    .unwrap_err();
 +    assert!(woken.to_string().contains("callback_cancelled"), "{woken}");
 +    assert!(
-+        started.elapsed() < std::time::Duration::from_millis(300),
-+        "the sleep woke early"
++        started.elapsed() < std::time::Duration::from_secs(2),
++        "the sleep wakes on cancellation"
 +    );
 +    let held = runtime
 +        .lock()
@@ -144319,7 +144336,7 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..47708b591
+index 000000000..3b93aaa9c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,686 @@
@@ -144360,7 +144377,7 @@ index 000000000..47708b591
 +        codex_omd::resource_data::ResourceRef,
 +        Vec<String>,
 +        Option<String>,
-+        Option<Authority>,
++        Box<Option<Authority>>,
 +    ),
 +    Diff(String),
 +}
@@ -144762,7 +144779,7 @@ index 000000000..47708b591
 +            (*reference).clone(),
 +            owners.to_vec(),
 +            crate::mod_surface::current_thread(),
-+            authority(),
++            Box::new(authority()),
 +        )),
 +        _ => None,
 +    };
@@ -145011,7 +145028,7 @@ index 000000000..47708b591
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..49d330991
+index 000000000..227cc200e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
 @@ -0,0 +1,181 @@
@@ -145038,7 +145055,7 @@ index 000000000..49d330991
 +            reference.clone(),
 +            owners.clone(),
 +            crate::mod_surface::current_thread(),
-+            revoked,
++            Box::new(revoked),
 +        ),
 +    ] {
 +        documents().insert(
@@ -145167,7 +145184,7 @@ index 000000000..49d330991
 +                reference.clone(),
 +                Vec::new(),
 +                crate::mod_surface::current_thread(),
-+                authority(),
++                Box::new(authority()),
 +            ),
 +            lines: Arc::new(vec!["resolved document".into()]),
 +            spans: Arc::new(vec![vec![Span::raw("resolved document")]]),
@@ -148797,10 +148814,10 @@ index 000000000..d64019e63
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..690e9852a
+index 000000000..bc89c39e0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1566 @@
+@@ -0,0 +1,1565 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -149041,16 +149058,15 @@ index 000000000..690e9852a
 +    if active() {
 +        let prepared = snapshot.is_some();
 +        crate::mod_ui::startup_preview(snapshot, repository);
-+        if prepared {
-+            if let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
-+            {
-+                std::thread::spawn(move || {
-+                    let _ = codex_omd::ModStore::open(store).and_then(|store| {
-+                        store.verify_selections()?;
-+                        codex_omd::package_controls::list(&store, None)
-+                    });
++        if prepared
++            && let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
++        {
++            std::thread::spawn(move || {
++                let _ = codex_omd::ModStore::open(store).and_then(|store| {
++                    store.verify_selections()?;
++                    codex_omd::package_controls::list(&store, None)
 +                });
-+            }
++            });
 +        }
 +    }
 +}

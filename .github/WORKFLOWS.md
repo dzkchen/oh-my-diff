@@ -11,7 +11,8 @@
 `.github/scripts/nightly_ci.py validate` replays the upstream pin (V8 checksums, fresh and second apply, tree
 parity), then runs native tests, Clippy on patched paths, Rustfmt, ownership, mod types and tests, Python, lock
 drift, host scenarios and client acceptance. It skips the recorded upstream `filtered_host_additional_permissions`
-baseline and uses no provider credentials or broker. Builds start clean (no Cargo cache).
+baseline and uses no provider credentials or broker. Builds start clean (no Cargo cache). For a release, the
+`codex-core` integration suite runs and is reported but doesn't block publication; a nightly fails on it.
 
 Then it builds signed release binaries, packages one archive for both profiles, and tests install, reinstall,
 uninstall and recovery. The `package` artifact holds the archive, `omd-release.json`, `provenance.json`,

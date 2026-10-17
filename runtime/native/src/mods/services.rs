@@ -819,7 +819,12 @@ mod tests {
     async fn endpoint_handoff_reads_only_the_granted_file() {
         let home = tempfile::tempdir().unwrap();
         let repository = tempfile::tempdir().unwrap();
-        let store = tempfile::tempdir().unwrap();
+        let user_temp = std::process::Command::new("/usr/bin/getconf")
+            .arg("DARWIN_USER_TEMP_DIR")
+            .output()
+            .unwrap()
+            .stdout;
+        let store = tempfile::tempdir_in(String::from_utf8(user_temp).unwrap().trim()).unwrap();
         let root = repository.path().canonicalize().unwrap();
         let store = store.path().canonicalize().unwrap();
         let endpoint = store.join("pane.json");
