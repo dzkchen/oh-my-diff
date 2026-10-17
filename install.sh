@@ -285,6 +285,14 @@ def set_links(root, bin_dir):
     return displaced
 
 
+def path_warning(bin_dir):
+    located = shutil.which("codex")
+    if located and Path(located).parent.resolve() == bin_dir:
+        return None
+    return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
+            f"add this line to your shell profile and open a new shell: export PATH=\"{bin_dir}:$PATH\"")
+
+
 def restore_displaced(bin_dir):
     for name in LINKS:
         aside = bin_dir / f"{name}.before-omd"
@@ -414,7 +422,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                 "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
                 "pruned": pruned, "prune_failures": failures,
-                **({"authority_broker": pinned} if pinned else {})}
+                **({"authority_broker": pinned} if pinned else {}),
+                **({"path_warning": warning} if (warning := path_warning(args.bin_dir)) else {})}
 
 
 def restore_store(generation, upstream, bin_dir):

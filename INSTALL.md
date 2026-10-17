@@ -159,8 +159,7 @@ secrets and the PII rules you select become stable opaque placeholders in every
 provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
 shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
-`OMD_CONTROLLED_MANIFEST` fails closed on the current host. Configure routes and grants in
-the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
+Configure routes and grants in the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
 with `omd-contract`. Enabling the mod does not select a contract or grant a
 provider. The workflow has local synthetic coverage; installed-profile and
 live-provider qualification remain separate gates.
@@ -283,6 +282,15 @@ Permissions you deliberately grant (`os`/unsandboxed, network, approve, secrets)
 still run with that authority. Scanning, integrity checks, signatures and
 inclusion in the directory do not make a mod safe, and a trusted service
 provider acts with its own authority for any caller.
+
+## Installing with install.sh
+
+`sh install.sh --profile platform|full` (with `--asset-url` and `--asset-sha256` until a release is published)
+installs into `--root` (default `~/.local/share/oh-my-diff`) and links `codex`, `omd`, `omd-mod`, `omd-package`,
+`omd-mod-author` and `omd-contract` into `--bin-dir` (default `~/.local/bin`, which a default macOS `PATH` does not
+include). Keep the upstream `codex` (for example Homebrew's in `/opt/homebrew/bin`) outside `--bin-dir` and put
+`--bin-dir` before it on `PATH`, or `codex` keeps starting upstream. When it doesn't come first, the install result's
+`path_warning` gives the `export PATH=…` line to add to your shell profile.
 
 ## Updates
 
