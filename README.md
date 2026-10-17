@@ -20,45 +20,61 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with TypeScript mods: new commands, tools, context
-and screens. You still run `codex`, with your settings, sign-in and sessions.
+Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with a host for TypeScript mods: new commands,
+tools, context and screens. You still run `codex`, with your settings, sign-in and sessions.
 
-## Quickstart
+## Install
 
 Needs an Apple Silicon Mac, Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
+```
+
+`--profile full` is OMD+ (OMD plus the [mod collection](docs/collection.md)); `--profile platform` is OMD Core.
+[Update, switch profile and uninstall](docs/install.md).
+
+## First run
+
+```sh
 codex
 ```
 
-Type `/mods` to see and turn on mods. Still plain Codex? Add the `export PATH=...` line the installer printed to
-your shell profile.
+Type `/mods` to see which mods are on and turn others on or off. If `codex` is still plain Codex, add the
+`export PATH=...` line the installer printed to your shell profile and open a new shell. To check the install, run
+`omd update status`.
+
+## Status
+
+**Personal tool.** OMD is built for the creator's own workflow and has not been pressure-tested across other
+devices or workflows. If something breaks, [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+
+**Why it exists.** Small, everyday improvements to a developer's workflow get less attention than the larger priorities
+of frontier labs. OMD is a place for them.
+
+**Maintenance.** After release the creator expects to focus mainly on critical fixes. Anyone prepared to take over
+responsible maintenance is welcome to get in touch (open an issue).
+
+**Beta.** `1.0.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
+The mod API is still experimental ([compatibility](mods/COMPATIBILITY.md)).
+
+**Codex versions.** OMD follows the latest stable Codex; each release supports one version line, now `0.163.x`. Turn off automatic Codex updates,
+and update Codex only after `omd update` supports the new version.
+
+## Help and contributing
+
+- Bug or docs problem: [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+- Security problem: [report it privately](SECURITY.md), not in a public issue.
+- Missing API for a mod: [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml).
+- Code or docs change: see [CONTRIBUTING.md](CONTRIBUTING.md). New features are best written as mods.
 
 ## Docs
 
 - [Install, update, remove](docs/install.md)
-- [Included mods](docs/collection.md) · [Manage mods](docs/manage-mods.md)
-- [Write a mod](docs/write-a-mod.md) · [API reference](mods/REFERENCE.md) · [Agent mod guide](docs/AGENT_MOD_GUIDE.md)
-
-## Status
-
-**Beta:** not every planned feature is here yet; it isn't unstable. More mods are coming
-([planned](docs/collection.md#not-in-this-release)).
-
-**Codex versions:** OMD tracks the latest stable Codex, one version line per release (now `0.163.x`). Turn off
-automatic Codex updates, and update Codex only after `omd update` supports the new version.
-
-**Help:** OMD is a personal tool, not tested widely.
-
-- Bug: [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose)
-- Security problem: [report privately](SECURITY.md)
-- Missing API for a mod: [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or
-  [send a PR](CONTRIBUTING.md)
-- Want to help maintain it? Get in touch.
+- [Included mods](docs/collection.md) and [manage mods](docs/manage-mods.md)
+- [Write a mod](docs/write-a-mod.md), [API reference](mods/REFERENCE.md) and [agent mod guide](docs/AGENT_MOD_GUIDE.md)
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
-[MIT License](LICENSE) ([Codex patch notice](NOTICE)) ·
-[Third-party notices](THIRD_PARTY_NOTICES.md)
+[MIT License](LICENSE) ([Codex patch notice](NOTICE)) · [Third-party notices](THIRD_PARTY_NOTICES.md)

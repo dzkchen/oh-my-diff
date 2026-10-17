@@ -1,7 +1,7 @@
 # Contributing
 
-How to send a change to OMD. One person maintains it, mostly for critical fixes, so small, focused changes land
-fastest. For anything large, open an issue first.
+How to send a change to OMD. One person maintains it and, after release, expects to focus mainly on critical fixes, so
+small, focused changes fit best. For anything large, open an issue first.
 
 ## Where your change belongs
 
@@ -14,7 +14,7 @@ fastest. For anything large, open an issue first.
 
 ## Set up
 
-You need an Apple Silicon Mac with [mise](https://mise.jdx.dev) and [pnpm](https://pnpm.io).
+You need an Apple Silicon Mac with [mise](https://mise.jdx.dev) and [pnpm](https://pnpm.io) 11.14 or later.
 
 ```sh
 git clone https://github.com/dzkchen/oh-my-diff
@@ -29,7 +29,7 @@ Run only the checks for what you changed:
 
 | You changed | Run |
 | --- | --- |
-| A mod or the SDK | `mise run mods:check`, then that mod's tests: `node --test mods/first-party/ID/*.test.mjs` |
+| A mod or the SDK | `mise run mods:check`, then a related test file: `node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)) |
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
 
@@ -37,14 +37,17 @@ Add a test only for behavior nothing else covers. The full suite runs nightly on
 
 ### Change the patched Codex code
 
-Edit the patch in a scratch copy of upstream Codex, then save it back:
+Edit the patch in a scratch copy of upstream Codex at the pinned version, then save it back. `NAME` is any label for
+your scratch tree:
 
 ```sh
-python3 .github/scripts/build.py setup my-change    # creates /private/tmp/omd-bmy-change/codex
-python3 .github/scripts/build.py cargo my-change /private/tmp/omd-bmy-change/test.log test -p codex-omd FILTER
-python3 .github/scripts/build.py sync my-change     # writes runtime/patches and checks it applies
-python3 .github/scripts/build.py locks              # updates the generated lock files
+python3 .github/scripts/build.py setup NAME                       # prints the scratch tree path
+python3 .github/scripts/build.py cargo NAME LOG test -p codex-omd FILTER   # cargo in the tree; LOG is a log file path
+python3 .github/scripts/build.py sync NAME                        # writes runtime/patches and checks it applies
+python3 .github/scripts/build.py locks                            # updates the generated lock files
 ```
+
+Scratch trees live under `/private/tmp` unless `OMD_BATCH_ROOT` points elsewhere.
 
 ## Open a pull request
 
@@ -64,8 +67,7 @@ Don't commit secrets, credentials or personal paths.
 
 ## Releases
 
-The maintainer runs `mise run release -- VERSION --summary "One sentence."`, merges the pull request it opens, then
-runs the same command again to tag the release. Details are in [.github/WORKFLOWS.md](.github/WORKFLOWS.md).
+The maintainer cuts releases; the process is in [.github/WORKFLOWS.md](.github/WORKFLOWS.md).
 
 ## License
 

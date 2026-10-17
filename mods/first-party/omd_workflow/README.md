@@ -40,4 +40,4 @@ Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to use
 - Nothing is delegated until you pick a contract and the agent starts a task.
 - Routes must exist in `host.json`. This mod doesn't grant provider access or turn on paid fallback.
 - The final reviewer and verifier must differ from the model you are using.
-- A contract you pick applies from your next session.
+- A contract you pick applies to this repository from your next session.

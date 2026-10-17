@@ -329,7 +329,7 @@ def install(args, root, current):
     if bool(args.asset_url) != bool(args.asset_sha256):
         fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
-        fail("This release candidate supports Apple Silicon macOS only.")
+        fail("Oh My Diff supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
@@ -1104,7 +1104,7 @@ def main():
     if sys.version_info < (3, 12):
         fail("Python 3.12 or newer is required for verified archive extraction")
     parser = argparse.ArgumentParser(
-        description="Install, update and roll back the Apple Silicon Oh My Diff release candidate",
+        description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
                "omd update channel stable|beta|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
     parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "tick", "launch"),

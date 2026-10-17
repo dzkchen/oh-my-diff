@@ -1,14 +1,16 @@
-# Idle compaction
+# omd_idle_compact
 
-Compacts a large idle conversation just before the provider's prompt cache expires.
-
-If you come back later, the next request reprocesses a short summary instead of the whole uncached context. The trade-off: the conversation continues from a summary, not your full context.
+Compacts a large idle conversation just before the provider's prompt cache expires, so a later request reprocesses a short summary instead of the whole uncached context. The conversation then continues from that summary, not your full context.
 
 ## Turn it off
 
-It's on by default in OMD+. Turn it off in `/mods`.
+It is on by default in OMD+. Turn it off in `/mods`, or run:
 
-## How it works
+```sh
+omd-package mod disable omd_idle_compact
+```
+
+## Use it
 
 - After each model response, a timer is set for 90% of the cache lifetime.
 - When it fires, the thread is compacted if it is idle or waiting on you (an approval, a `request_user_input` question or an MCP elicitation).

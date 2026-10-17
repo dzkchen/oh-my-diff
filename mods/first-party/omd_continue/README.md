@@ -1,4 +1,4 @@
-# `/continue`
+# omd_continue
 
 Resumes interrupted work in the current session with `/continue [note]`.
 
@@ -6,7 +6,13 @@ It isn't `/resume` (which picks a session), and it never runs on its own.
 
 ## Turn it on
 
-OMD+ installs it disabled. Turn it on in `/mods`. It can also be installed explicitly in OMD Core.
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
+
+```sh
+omd-package mod enable omd_continue
+```
+
+OMD Core doesn't include it, but you can install it yourself.
 
 ## Use it
 
@@ -36,4 +42,3 @@ A line is left out when the host didn't record that fact.
 - Turns from before you enabled the mod have no summary.
 - While the mod is enabled, the host records turn activity and checks the workspace around every tool call.
 - It needs the `commands` and `sessions` permissions.
-- Changing the instruction needs a recorded reason.

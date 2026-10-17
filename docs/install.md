@@ -14,7 +14,8 @@
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-- `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). A few mods start on.
+- `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
+  with `/mods`.
 - `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
 
 Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
@@ -42,8 +43,9 @@ Rerun the install command with the other `--profile`. Each profile keeps its own
 sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
 ```
 
-Removes OMD and its Codex plugins and restores commands it moved aside. Codex data stays. Mod settings stay in
-`~/.local/share/oh-my-diff/stores`; delete it to remove them.
+Removes OMD and its Codex plugins and restores commands it moved aside. Codex data stays. If you deployed the
+authority broker, run `omd-package broker uninstall` first. Mod settings stay in `~/.local/share/oh-my-diff/stores`;
+delete it to remove them.
 
 ## Troubleshooting
 

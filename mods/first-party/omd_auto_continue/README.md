@@ -1,12 +1,16 @@
-# Auto-continue
+# omd_auto_continue
 
 Keeps a turn moving when nobody answers a prompt for two minutes.
 
 ## Turn it off
 
-It's on by default in OMD+. Turn it off in `/mods`.
+It is on by default in OMD+. Turn it off in `/mods`, or run:
 
-## How it works
+```sh
+omd-package mod disable omd_auto_continue
+```
+
+## Use it
 
 When an approval, permission request, `request_user_input` question or MCP elicitation appears, a toast shows how long you have. If you answer first, your answer wins.
 

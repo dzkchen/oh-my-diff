@@ -17,7 +17,11 @@ It shows Codex's own `update_plan` tool and adds no todo tool of its own.
 
 ## Turn it off
 
-It's on by default in OMD+. Turn it off in `/mods`.
+It is on by default in OMD+. Turn it off in `/mods`, or run:
+
+```sh
+omd-package mod disable omd_plan_panel
+```
 
 ## Use it
 
@@ -32,7 +36,7 @@ Both apply to the current thread and reset when OMD restarts.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `rows` | `8` | Most steps shown. Longer plans drop completed steps first, and the last row reads `+N more (X completed, Y pending)`. |
+| `rows` | `8` | Most steps shown (2-40). Longer plans drop completed steps first, and the last row reads `+N more (X completed, Y pending)`. |
 
 ## Needs and limits
 

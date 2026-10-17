@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "c74165e7e6e0d73869275df0c7843fc5fa83fb3f743af0aea3cc101a1441b022"
+    "sha256": "f62b628e4583b8c966d20c61056bb969ebb0d00a603ae977c50044e12d6df406"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -49,7 +49,7 @@
     "plugins/omd-artifact-reading/scripts/github_read.py": "a1b4afff9bc5f5db66280af6e93ac83b41e9518223ab0afd049b9146b9a21ad1",
     "plugins/omd-artifact-reading/scripts/read_artifact.py": "fd037db4ff91779538c2fb42979a8f08ba59d454ea42cb3b81868897f72f7eb3",
     "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",
-    "plugins/omd-code-execution/.codex-plugin/plugin.json": "f22c589d2750663096d75be96c63c666c4303542258eb0d79b8b5f6adce924e0",
+    "plugins/omd-code-execution/.codex-plugin/plugin.json": "aa223c67dc91727f7438e8381748a149516bc4de3fad4987be8ca08da0746425",
     "plugins/omd-code-execution/kernels/bun.mjs": "0e983d0c42e282e1145d7a421fdf8e331e9bb5ce21f6c153c839954520be5071",
     "plugins/omd-code-execution/kernels/python.py": "38d7563a12663419d880f22973e7141663131630c0e2c3c02cfaae550fe2068b",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "e22187126b92c4d587ceb387869321a47dbc612a72fd5e230ff2b279a2886a6f"

@@ -13,8 +13,8 @@ Include:
 - steps to reproduce
 - what an attacker could do
 
-The maintainer aims to reply within a week. Fixes ship as a patch release, with a public advisory once you can
-update.
+OMD is a one-person project, so replies are best effort. Fixes ship as a patch release, with a public advisory once you
+can update.
 
 ## Supported versions
 

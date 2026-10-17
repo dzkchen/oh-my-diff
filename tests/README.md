@@ -1,25 +1,18 @@
-# Test suites
+# Tests
 
-`mise run mods:test` (`pnpm --dir mods test`; `--list` prints the inventory without running):
+`mise run mods:test` (`pnpm --dir mods test`; `node scripts/mod_test_suite.mjs --list` prints the inventory without running):
 
-- Runs every Git-tracked or nonignored `*.test.{mjs,cjs,js}` and `*.spec.*` under `mods/`, `tests/` and `plugins/`.
-  New colocated tests join automatically; deleted ones leave immediately.
-- Other extensions or locations fail discovery. Optional/manual tests need an exact path and nonempty reason under
-  `optional` in `tests/suites.json` (reported as not executed; stale entries fail). Current entries: the live Claude
-  CLI check and a copied example's intentional-failure scenario.
-- Also assigns, but doesn't run: `tests/test_*.py` → Python unittest; `runtime/{omd,native}/src/**/*_tests.rs` or
-  `tests.rs` and `runtime/{omd,native}/tests/*` → Cargo; `mods/{examples,first-party}/<package>/mod.test.json` →
-  mod-host scenarios. Recognized test filenames outside these fail discovery (including nested Python tests).
-- It is a filename inventory, not proof a Rust module is enabled or a test executes.
+- Runs every Git-tracked or untracked-but-not-ignored `*.test.{mjs,cjs,js}` and `*.spec.*` file under `mods/`,
+  `tests/` and `plugins/`. New tests join automatically.
+- Fails discovery for test files in other locations or with other extensions. A test that should not run by default
+  needs its exact path and a reason under `optional` in `suites.json`; it is reported as not executed.
+- Assigns, but does not run: `tests/test_*.py` (Python unittest), Rust test files under `runtime/omd` and
+  `runtime/native` (Cargo), and `mods/{examples,first-party}/<package>/mod.test.json` (mod-host scenarios).
 
-The nightly runs the other suites: `python3 -m unittest discover -s tests`, Cargo in the patched scratch tree, and
-`scripts/mod_host_check.py --scenarios`.
+The nightly runs the rest: `python3 -m unittest discover -s tests`, Cargo in the patched scratch tree and
+`python3 scripts/mod_host_check.py --scenarios`.
 
-`mise run mods:check` type-checks:
-
-- `mods/tsconfig.json`: mod declarations, example, first-party, port and bundled-plugin TypeScript (including TSX).
-- `mods/tsconfig.author.json`: every public `mods/author/*.mjs` with `checkJs`, Node types and declaration-linked
-  JSDoc on the client, testing and JSX exports (`noImplicitAny: false` for internal parameters).
-- `node scripts/mod_typecheck_inventory.mjs --list` prints each shipped source and its check; newly uncovered source
-  fails. Browser examples, first-party hooks/sidecars and the Bun execution kernel are syntax-only entries checked
-  with Node. Test files belong to the suites above.
+`mise run mods:check` type-checks `mods/tsconfig.json` (declarations, examples, first-party mods, ports and bundled
+plugins) and `mods/tsconfig.author.json` (the public `mods/author/*.mjs` files), then checks that every shipped
+source is covered. `node scripts/mod_typecheck_inventory.mjs --list` prints each source and how it is checked;
+hooks, sidecars, browser examples and the Bun execution kernel are syntax-checked only.

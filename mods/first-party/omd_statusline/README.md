@@ -4,7 +4,13 @@ Shows model, context, limits, cost and git state in a configurable status line n
 
 ## Turn it off
 
-It's on by default and replaces Codex's own status row. Turn it off in `/mods`, or let it fail, and the native row and `/statusline` return. Your `tui.status_line` setting is never changed.
+It is on by default in OMD+ and replaces Codex's own status row. Turn it off in `/mods`, or run:
+
+```sh
+omd-package mod disable omd_statusline
+```
+
+The native row and `/statusline` return, also if the mod fails. Your `tui.status_line` setting is never changed.
 
 ## Use it
 

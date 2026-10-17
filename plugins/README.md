@@ -5,7 +5,7 @@ The three Codex plugins that come with OMD+. They're staged on disk but not inst
 | Plugin | What it does |
 | --- | --- |
 | `omd-artifact-reading` | Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites the source |
-| `omd-code-execution` | Guides persistent JavaScript, Python and Bun cells in code mode |
+| `omd-code-execution` | Guides JavaScript cells with session storage and persistent Python and Bun cells in code mode |
 | `omd-anchored-edit` | Edits files by `LINE#HASH` line anchors |
 
 ## Install
@@ -60,5 +60,3 @@ Removing a plugin doesn't disable a mod component you trusted. Disable that too.
 
 - [Launch collection](../docs/collection.md)
 - Language server mods aren't plugins. See [`mods/first-party`](../mods/first-party).
-- Changing a plugin: `release-files.json` lists every file that ships. When you add or remove one, update it, then
-  run `python3 -m scripts.plugin_lock --write`.
