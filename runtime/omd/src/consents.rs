@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::fs;
 use std::io;
 use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -42,7 +43,10 @@ fn with<T>(
         return Err(io::Error::other("consent_thread_invalid"));
     }
     let directory = root.join("consents");
-    fs::create_dir_all(&directory)?;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&directory)?;
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)

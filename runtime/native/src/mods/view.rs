@@ -116,6 +116,7 @@ impl Views {
                 || snapshot.conflicts != terminal.conflicts
                 || snapshot.contributors != terminal.contributors
                 || snapshot.component_owners != terminal.component_owners
+                || snapshot.layout_owner != terminal.layout_owner
             {
                 state.snapshot.revision = state.snapshot.revision.saturating_add(1);
             }
@@ -124,6 +125,7 @@ impl Views {
             state.snapshot.conflicts = terminal.conflicts;
             state.snapshot.contributors = terminal.contributors;
             state.snapshot.component_owners = terminal.component_owners;
+            state.snapshot.layout_owner = terminal.layout_owner;
             state.snapshot.input = input;
             state
                 .diagnostics

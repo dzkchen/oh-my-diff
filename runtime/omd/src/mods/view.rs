@@ -1094,6 +1094,8 @@ pub struct ModViewSnapshot {
     pub conflicts: Vec<ModViewConflict>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub component_owners: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_owner: Option<String>,
     #[serde(default)]
     pub input: Value,
     #[serde(default)]

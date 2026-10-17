@@ -6,6 +6,9 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
+use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -101,7 +104,7 @@ pub struct Peers {
 
 fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| failure("peer_path_invalid"))?;
-    fs::create_dir_all(parent)?;
+    private_directory(parent)?;
     let temporary = parent.join(format!(
         ".{}.{}.tmp",
         std::process::id(),
@@ -109,8 +112,21 @@ fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
             .and_then(|name| name.to_str())
             .unwrap_or("entry")
     ));
-    fs::write(&temporary, serde_json::to_vec(value)?)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temporary)?
+        .write_all(&serde_json::to_vec(value)?)?;
     fs::rename(&temporary, path)
+}
+
+fn private_directory(path: &Path) -> io::Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
 }
 
 /// Opens each complete `.json` entry before removing it; a failure keeps it queued and ends the pass with what was taken.
@@ -177,11 +193,12 @@ impl Peers {
             return Err(failure("peer_session_invalid"));
         }
         let root = store.join("peers");
-        fs::create_dir_all(root.join("sessions"))?;
+        private_directory(&root.join("sessions"))?;
         let lock = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
+            .mode(0o600)
             .open(root.join("sessions").join(format!("{session}.lock")))?;
         lock.try_lock()
             .map_err(|_| failure("peer_session_already_registered"))?;
