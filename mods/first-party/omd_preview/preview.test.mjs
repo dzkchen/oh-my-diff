@@ -73,12 +73,12 @@ test('preview harness rejects unhandled host operations', () => {
   /unexpected preview host operation: events.cancel/);
 });
 
-test('preview dismisses its popup on owned Escape or startup with thumbnails off', () => {
+test('preview dismisses its popup on owned Escape or resume with thumbnails off', () => {
   const state = { inline: { title: 'Preview', kind: 'markdown', text: 'Content' }, revision: 1, images: [] };
   const escaped = invoke(tmpdir(), state, 'component_event', { component: 'omd_preview_dialog', kind: 'close', origin: 'user' }, undefined, { thumbnails: false });
   assert.equal(escaped.state.inline, null);
   assert.equal(invoke(tmpdir(), escaped.state, 'terminal', { event: 'idle' }, undefined, { thumbnails: false }).value, null);
-  assert.equal(invoke(tmpdir(), state, 'terminal', { event: 'startup' }, undefined, { thumbnails: false }).state.inline, null);
+  assert.equal(invoke(tmpdir(), state, 'resume', { thread_id: 'thread-1', last_turn: null, restarted: false }, undefined, { thumbnails: false }).state.inline, null);
   assert.ok(invoke(tmpdir(), state, 'terminal', null, undefined, { thumbnails: false }).value.sites.dialog);
   assert.deepEqual(invoke(tmpdir(), state, 'component_event', { component: 'other_dialog', kind: 'close', origin: 'user' }, undefined, { thumbnails: false }).state.inline, state.inline);
 });

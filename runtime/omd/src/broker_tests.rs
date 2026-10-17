@@ -116,8 +116,14 @@ fn a_store_path_first_named_by_another_user_is_refused() {
     let mut client = Client::at(&socket).unwrap();
     client.call("grants.get", json!({"store": store})).unwrap();
     let owners = temp.path().canonicalize().unwrap().join("broker/owners");
-    let record = owners.join(format!("store-{}.json", sha256(store.as_os_str().as_encoded_bytes())));
-    assert_eq!(fs::read_to_string(&record).unwrap(), unsafe { libc::getuid() }.to_string());
+    let record = owners.join(format!(
+        "store-{}.json",
+        sha256(store.as_os_str().as_encoded_bytes())
+    ));
+    assert_eq!(
+        fs::read_to_string(&record).unwrap(),
+        unsafe { libc::getuid() }.to_string()
+    );
     fs::write(&record, "0").unwrap();
     assert_eq!(
         error(client.call("grants.get", json!({"store": store}))),
@@ -223,10 +229,7 @@ fn anchors_chain_every_appended_digest() {
     let (first, second) = (sha256(b"one"), sha256(b"two"));
     for entry in [&first, &second] {
         client
-            .call(
-                "anchor.append",
-                json!({"stream": ledger, "sha256": entry}),
-            )
+            .call("anchor.append", json!({"stream": ledger, "sha256": entry}))
             .unwrap();
     }
     let anchor: Anchor = serde_json::from_value(
@@ -254,9 +257,7 @@ fn anchors_chain_every_appended_digest() {
     );
     client.call("anchor.seed", seed(older)).unwrap();
     assert_eq!(
-        client
-            .call("anchor.get", json!({"stream": older}))
-            .unwrap()["head"],
+        client.call("anchor.get", json!({"stream": older})).unwrap()["head"],
         anchor.head
     );
     assert_eq!(

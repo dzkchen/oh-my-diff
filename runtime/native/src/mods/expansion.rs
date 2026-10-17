@@ -692,7 +692,12 @@ pub(in crate::mods) fn blit_sink(
                             && grants.capabilities == capabilities
                     }))
                 .then_some(())
-                .ok_or_else(|| codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "process_raster_revoked"))
+                .ok_or_else(|| {
+                    codex_omd::client_surface::BlitError::new(
+                        codex_omd::client_surface::BlitErrorKind::Revoked,
+                        "process_raster_revoked",
+                    )
+                })
             });
         *last
             .lock()

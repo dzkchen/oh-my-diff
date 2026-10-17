@@ -442,6 +442,26 @@ impl ModStore {
         Ok(store)
     }
 
+    /// Points the store at another Node binary, as an installer does after validating one.
+    pub fn set_node(&self, node: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let node = node.canonicalize()?;
+        if !node.is_file() {
+            return Err(failure("node_unavailable"));
+        }
+        let mut config = self.configuration()?;
+        if config.node == node {
+            return Ok(());
+        }
+        config.node = node;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        self.write("mods.json", &serde_json::to_value(config)?)
+    }
+
     /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.
     pub fn reset(&self, name: &str) -> Result<PathBuf> {
         if !matches!(

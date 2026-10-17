@@ -2,7 +2,7 @@
   "schema": 1,
   "as_of": "2026-10-10",
   "host": {
-    "codex": "0.162.1",
+    "codex": "0.163.0",
     "omd": "0.1.0",
     "stability": "experimental",
     "current_api": "0.2.0-experimental.5",

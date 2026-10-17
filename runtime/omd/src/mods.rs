@@ -1,7 +1,7 @@
 mod author;
-mod operation_validation;
 mod bridge;
 mod chain;
+mod operation_validation;
 mod persisted;
 mod render;
 pub use chain::ModChain;
@@ -76,9 +76,9 @@ pub use view::ModViewSnapshot;
 pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
-pub use view::owned_command;
 pub use view::mod_component_id;
 pub use view::mod_key_name;
+pub use view::owned_command;
 pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
@@ -170,7 +170,7 @@ pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 pub use store::Trust;
 
-pub const CODEX_HOST_RELEASE: &str = "0.162.1";
+pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -1027,7 +1027,11 @@ fn source_use(
         ),
         ("dom", &["document.", "window."][..]),
     ] {
-        let text = if name == "filesystem" { source } else { visible.as_str() };
+        let text = if name == "filesystem" {
+            source
+        } else {
+            visible.as_str()
+        };
         // A needle counts only at an identifier boundary, so `prefetch(` is not `fetch(`.
         if let Some(needle) = needles.iter().find(|needle| {
             text.match_indices(*needle).any(|(offset, _)| {
@@ -1044,9 +1048,14 @@ fn source_use(
         .iter()
         .find(|(name, _)| !package.environment.iter().any(|declared| declared == name))
     {
-        return Err(failure(format!("undeclared_environment_use: {name} ({needle})")));
+        return Err(failure(format!(
+            "undeclared_environment_use: {name} ({needle})"
+        )));
     }
-    let environment: Vec<String> = environment.into_iter().map(|(name, _)| name.to_owned()).collect();
+    let environment: Vec<String> = environment
+        .into_iter()
+        .map(|(name, _)| name.to_owned())
+        .collect();
     let used_capabilities = |operation: &String| -> Result<Vec<String>> {
         let used = if operation == "app.request" {
             let named = crate::app_routes::classes_named_in(source);
@@ -1066,7 +1075,13 @@ fn source_use(
             }
             .capabilities()?;
             if operation == "model.fork"
-                && required.iter().any(|capability| !package.capabilities.iter().any(|declared| declared.as_str() == *capability)) {
+                && required.iter().any(|capability| {
+                    !package
+                        .capabilities
+                        .iter()
+                        .any(|declared| declared.as_str() == *capability)
+                })
+            {
                 return Err(failure(format!("undeclared_operation_use: {operation}")));
             }
             let mut used = package
@@ -1492,8 +1507,7 @@ pub fn namespace_matches(pattern: &str, namespace: &str) -> bool {
     }
 }
 
-pub const DELEGABLE_APPROVAL_KINDS: &[&str] =
-    &["exec", "stdin", "execve", "patch", "mcp_tool", "network"];
+pub const DELEGABLE_APPROVAL_KINDS: &[&str] = &["exec", "stdin", "patch", "mcp_tool", "network"];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1761,7 +1775,7 @@ impl ModPackage {
             })
         {
             return Err(failure(
-                "invalid_approves: the approve capability needs approvals, middleware and approves.kinds from exec, stdin, execve, patch, mcp_tool, network",
+                "invalid_approves: the approve capability needs approvals, middleware and approves.kinds from exec, stdin, patch, mcp_tool, network",
             ));
         }
         let origin = |value: &str| {
@@ -2904,6 +2918,18 @@ fn invoke(
 ) -> Result<Value> {
     let _frame = scope.enter(id)?;
     let thread = state_thread(&payload);
+    let payload = match payload {
+        Value::Object(mut fields)
+            if event == "component_event" && !fields.contains_key("thread_id") =>
+        {
+            fields.insert(
+                "thread_id".into(),
+                thread.clone().map_or(Value::Null, Value::String),
+            );
+            Value::Object(fields)
+        }
+        payload => payload,
+    };
     let started = Instant::now();
     let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
     let now_ms = crate::peers::now_ms();
@@ -4560,41 +4586,64 @@ impl ModHost {
             policy::ManagedDeployment::default()
         };
         let mut selections = match &managed {
-            Some(managed) => managed.selections(
-                &deployment,
-                &self.store.managed_user(),
-                self.project.as_deref(),
-            ).0,
+            Some(managed) => {
+                managed
+                    .selections(
+                        &deployment,
+                        &self.store.managed_user(),
+                        self.project.as_deref(),
+                    )
+                    .0
+            }
             None => Vec::new(),
         };
         let mut administered = selections.len();
-        let configured = self.tier_selections.get(&loaded.package.id).unwrap_or(&loaded.selection);
+        let configured = self
+            .tier_selections
+            .get(&loaded.package.id)
+            .unwrap_or(&loaded.selection);
         let (configuration_sha256, configuration) = self.callback_configuration();
-        let hash = format!("{}:{}:{}:{}:{}",
+        let hash = format!(
+            "{}:{}:{}:{}:{}",
             configuration_sha256,
             brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed.as_ref().map_or("", |managed| managed.sha256.as_str()),
+            managed
+                .as_ref()
+                .map_or("", |managed| managed.sha256.as_str()),
             deployment.generation,
-            self.project.as_deref().unwrap_or(Path::new("")).display());
+            self.project.as_deref().unwrap_or(Path::new("")).display()
+        );
         // An unchanged authority inventory cannot introduce a different precedence winner.
         let unchanged = hash == self.configuration_sha256;
         match configuration {
             Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
-                config.mods.iter().filter(|selection| !unchanged || selection.path == loaded.selection.path).cloned(),
+                config
+                    .mods
+                    .iter()
+                    .filter(|selection| !unchanged || selection.path == loaded.selection.path)
+                    .cloned(),
             ),
             _ if configured.scope == MANAGED_SCOPE && managed.is_some() => (),
             _ => return Err(failure("callback_authority_changed")),
         }
         if unchanged {
-            administered = selections.iter().take(administered).filter(|selection| selection.path == loaded.selection.path).count();
+            administered = selections
+                .iter()
+                .take(administered)
+                .filter(|selection| selection.path == loaded.selection.path)
+                .count();
             selections.retain(|selection| selection.path == loaded.selection.path);
         }
         let selected = Self::select(
-            &selections, administered, false,
+            &selections,
+            administered,
+            false,
             brokered.as_ref().map(|(_, grants)| grants),
             managed.as_ref().map(|managed| &managed.policy),
             &mut Vec::new(),
-            |path| store::verified_package(path).map(|(package, hash)| (package, String::new(), hash)),
+            |path| {
+                store::verified_package(path).map(|(package, hash)| (package, String::new(), hash))
+            },
         )?;
         let Some((selection, _, _)) = selected.get(&loaded.package.id) else {
             return Err(failure("callback_authority_changed"));
@@ -4901,8 +4950,14 @@ impl ModHost {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
         self.check_callback_authority(&invocation.loaded)?;
-        if invocation.authority_current && !invocation.loaded.selection.authority_current()
-            && invocation.loaded.package.capabilities.iter().any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
+        if invocation.authority_current
+            && !invocation.loaded.selection.authority_current()
+            && invocation
+                .loaded
+                .package
+                .capabilities
+                .iter()
+                .any(|cap| AUTHORITY_CAPABILITIES.contains(&cap.as_str()))
         {
             return Err(failure("callback_authority_changed"));
         }
@@ -6003,7 +6058,8 @@ fn validate_ui_state(encoded: &str) -> Result<Value> {
 #[cfg(test)]
 #[test]
 fn ui_state_serialized_boundaries() {
-    let cases: Value = serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
+    let cases: Value =
+        serde_json::from_str(include_str!("../tests/fixtures/ui_state.json")).unwrap();
     for case in cases.as_array().unwrap() {
         let encoded = format!(
             "{}{}{}",

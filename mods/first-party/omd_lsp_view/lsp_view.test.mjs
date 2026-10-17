@@ -43,7 +43,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.deepEqual(view[0].children[1].rows, [{ value: 'box.py:2', label: 'box.py:2:7', spans: [{ text: 'box.py:2:7' }] }]);
     assert.deepEqual(view[0].children[1].action, { command: 'omd_lsp_view:lsp', args: 'open' });
     assert.equal(invoke(state, 'component_event', { component: view[0].id, kind: 'close', origin: 'user' }).state.view, null);
-    assert.equal(invoke(state, 'terminal', { event: 'startup' }).state.view, null);
+    assert.equal(invoke(state, 'resume', { thread_id: 'thread-1', last_turn: null, restarted: false }).state.view, null);
     state = invoke(state, 'command', 'open box.py:2', 'lsp').state;
     assert.deepEqual(state.view.excerpt, { path: 'box.py', line: 2, start: 1, lines: ['value = 1', 'class Box:', '    size = 2'], errors: [] });
     assert.deepEqual(calls.at(-1).args, { channel: 'request', data: { op: 'diagnostics', path: 'box.py', request: 2 } });
@@ -52,7 +52,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     state = invoke(state, 'channel', { publisher: 'omd_lsp_sync', channel: 'omd_lsp_sync/status', correlation: null, sequence: 1, dropped: 0,
       data: [{ adapter: 'python', server: 'pylsp', status: 'synced', reason: '', documents: 2, errors: ['box.py:3:5 bad size'] }, { adapter: 'rust', server: null, status: 'fallback', reason: 'rust_server_absent', documents: 0, errors: [] }] }).state;
     state = invoke(state, 'command', 'pane', 'lsp').state;
-    assert.equal(invoke(state, 'terminal', { event: 'startup' }).state.view.pane, true);
+    assert.equal(invoke(state, 'resume', { thread_id: 'thread-1', last_turn: null, restarted: false }).state.view.pane, true);
     let patch = invoke(state, 'terminal', { event: 'redraw', ledger: null }).value;
     assert.deepEqual([Object.keys(patch), Object.keys(patch.sites)], [['sites'], ['above_composer']]);
     assert.equal(patch.sites.above_composer.components[1].type, 'box');

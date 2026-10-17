@@ -342,9 +342,9 @@ export default function activate(api: ModAPI) {
 
   api.middleware('approval', event => {
     const config = configure(api.settings);
-    if (config.paths === 'off' || !['exec', 'stdin', 'execve'].includes(event.kind)) return null;
+    if (config.paths === 'off' || !['exec', 'stdin'].includes(event.kind)) return null;
     const details = (event.details ?? {}) as Record<string, Json>;
-    const text = [details.command, details.argv, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
+    const text = [details.command, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
     const unchecked = event.kind === 'stdin' && typeof details.input !== 'string';
     const hit = pathHit(text, config.sensitive, config.exempt.paths);
     if (!hit && !unchecked) return null;

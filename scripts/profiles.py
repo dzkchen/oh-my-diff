@@ -481,6 +481,8 @@ def install(args):
             store.parent.mkdir(parents=True, exist_ok=True)
             invoke(installed_manager, "init", store, node)
             made_store = True
+        else:
+            invoke(installed_manager, "set-node", store, node)
         host = invoke(installed_manager, "status", store)
         if host["api"] != locked["mod_api"]:
             raise ValueError("mod store API does not match the source lock")

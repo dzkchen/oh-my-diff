@@ -77,7 +77,11 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
             Some(generation)
         )
     );
-    for invalid in [json!({}), json!({"fields": "id"}), json!({"fields": [], "page": 1})] {
+    for invalid in [
+        json!({}),
+        json!({"fields": "id"}),
+        json!({"fields": [], "page": 1}),
+    ] {
         assert!(list_fields(&store, None, invalid).is_err());
     }
 
@@ -284,7 +288,11 @@ fn install_and_trust_previews_show_codex_config() {
             serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
         manifest["codex_config"] = json!({"tools.update_plan.enabled": true});
         manifest["compatibility"] = json!({"required_features": ["codex_config_v1"]});
-        std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
     };
     let installed = fixture_package(&root, "planner", &["commands"], json!([]));
     configure(&installed);

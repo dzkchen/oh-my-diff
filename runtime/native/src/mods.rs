@@ -419,7 +419,8 @@ fn initialize(
     registry: &mut ExtensionRegistryBuilder<Config>,
     host: Arc<Host>,
 ) -> Result<Arc<Mods>, String> {
-    let registration = codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
+    let registration =
+        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
     let validator = |schema: &Value| {
         codex_extension_api::parse_tool_input_schema(schema)
             .map(|_| ())
@@ -471,11 +472,24 @@ fn initialize(
         elicitations: Mutex::default(),
     });
     let dispatcher = intercept::dispatcher(&extension.core);
-    registration.install(dispatcher.clone()).map_err(|error| error.to_string())?;
-    *extension.registration.lock().map_err(|_| "host_installation_poisoned")? =
+    registration
+        .install(dispatcher.clone())
+        .map_err(|error| error.to_string())?;
+    *extension
+        .registration
+        .lock()
+        .map_err(|_| "host_installation_poisoned")? =
         Some(clients::install(&extension.core, registration)?);
-    extension.core.host.accounts.install_mod_runtime(extension.core.runtime.clone(), required);
-    extension.core.host.accounts.install_mod_dispatcher(dispatcher);
+    extension
+        .core
+        .host
+        .accounts
+        .install_mod_runtime(extension.core.runtime.clone(), required);
+    extension
+        .core
+        .host
+        .accounts
+        .install_mod_dispatcher(dispatcher);
     intercept::install_notifier(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
@@ -1496,7 +1510,9 @@ impl TurnLifecycleContributor for Mods {
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
-                runtime.refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire)).map_err(|error| error.to_string())?;
+                runtime
+                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await

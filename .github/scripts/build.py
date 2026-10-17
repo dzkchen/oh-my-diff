@@ -15,7 +15,8 @@ TMP = Path(os.environ.get("OMD_BATCH_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
-BUILD = ["build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "--bins"]
+BUILD = ["build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "-p", "codex-omd-extension",
+         "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"

@@ -19,12 +19,12 @@ const inspect = input => {
   return output;
 };
 
-test('inspector stays closed after startup or its owned Escape without claiming other dialogs', () => {
+test('inspector stays closed after resume or its owned Escape without claiming other dialogs', () => {
   const open = { open: true, contract: 'none', limits: 'kept' };
-  const startup = run('terminal', { event: 'startup' }, open);
-  assert.equal(startup.state.open, false);
-  assert.equal(startup.state.limits, 'kept');
-  assert.equal(startup.value, null);
+  const resumed = run('resume', { thread_id: 'thread-1', last_turn: null, restarted: false }, open);
+  assert.equal(resumed.state.open, false);
+  assert.equal(resumed.state.limits, 'kept');
+  assert.equal(run('terminal', { event: 'idle' }, resumed.state).value, null);
   const escaped = run('component_event', { component: 'omd_inspector_dialog', kind: 'close', origin: 'user' }, open);
   assert.equal(escaped.state.open, false);
   assert.equal(run('terminal', { event: 'idle' }, escaped.state).value, null);
@@ -32,7 +32,7 @@ test('inspector stays closed after startup or its owned Escape without claiming 
 });
 
 test('inspector opens from live host status and fails visibly when status is unavailable', () => {
-  const capabilities = ['agents', 'commands', 'contracts', 'store', 'terminal', 'events'];
+  const capabilities = ['agents', 'commands', 'contracts', 'store', 'terminal', 'events', 'lifecycle'];
   const receipts = [
     { call: { operation: 'task.status', arguments: null }, value: { ledger: { thread_id: 'thread-1', cost: { settled_task_charge_microusd: 2_000_000 } }, limits: { turns: 4 }, worker_limits: { active: 1 } } },
     { call: { operation: 'contract.status', arguments: null }, value: { status: 'active', active: { id: 'review', version: 2, assurance: 'local' } } },

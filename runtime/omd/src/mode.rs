@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 pub const MODE_ENV: &str = "OMD_MODE";
 pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
 pub const MOD_STORE_ENV: &str = "OMD_MOD_STORE";
-pub const PINNED_UPSTREAM: &str = "rust-v0.162.1 / 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d";
+pub const PINNED_UPSTREAM: &str = "rust-v0.163.0 / 83086188ae0614bd882818ff1aa23f3194962012";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeMode {

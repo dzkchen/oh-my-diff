@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.162.1",
-  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d"
+  "tag": "rust-v0.163.0",
+  "commit": "83086188ae0614bd882818ff1aa23f3194962012"
  },
  "routes": {
   "app.request": "Q1 `app.request`: invoke this pinned app-server client request on the session's own app-server connection. `class` is the required capability; `contexts` limits where it may be called (`user` = a user-invoked command, key or component action; `event` = lifecycle or notification handlers); `confirm` requires a native confirmation naming the mod; `scope` binds thread arguments to threads the caller may see; `refuse` lists parameters a mod may not set; `root` parameters must name the session root or one of its worktrees; `route_fields` must match a configured route; `keys` names the config keys the call writes, checked against `authority_config`.",
@@ -216,6 +216,9 @@
    "route": "app.notification"
   },
   "app_notification:thread/queue/changed": {
+   "route": "app.notification"
+  },
+  "app_notification:thread/readState/changed": {
    "route": "app.notification"
   },
   "app_notification:thread/realtime/closed": {
@@ -1392,6 +1395,7 @@
     "developerInstructions",
     "ephemeral",
     "excludeTurns",
+    "experimentalPredictionMode",
     "lastTurnId",
     "model",
     "modelProvider",
@@ -1462,6 +1466,20 @@
     "turnId"
    ]
   },
+  "app_request:thread/items/read": {
+   "route": "app.request",
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible",
+   "fields": [
+    "itemIds",
+    "threadId",
+    "turnId"
+   ]
+  },
   "app_request:thread/list": {
    "route": "app.request",
    "class": "sessions",
@@ -1477,6 +1495,7 @@
     "archived",
     "cursor",
     "cwd",
+    "excludedThreadIds",
     "limit",
     "modelProviders",
     "originators",
@@ -1634,6 +1653,19 @@
    "scope": "visible",
    "fields": [
     "includeTurns",
+    "threadId"
+   ]
+  },
+  "app_request:thread/readState/update": {
+   "route": "app.request",
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible",
+   "fields": [
+    "expectedRevision",
+    "operation",
     "threadId"
    ]
   },
@@ -2112,9 +2144,6 @@
   "approval_action:ExecCommand": {
    "route": "approval"
   },
-  "approval_action:Execve": {
-   "route": "approval"
-  },
   "approval_action:McpToolCall": {
    "route": "approval"
   },
@@ -2365,6 +2394,9 @@
   "config_key:features.apps_mcp_path_override": {
    "route": "config.write"
   },
+  "config_key:features.async_compaction": {
+   "route": "config.write"
+  },
   "config_key:features.auth_elicitation": {
    "exclude": "authority_config"
   },
@@ -2401,6 +2433,9 @@
   "config_key:features.code_mode_host": {
    "route": "config.write"
   },
+  "config_key:features.code_mode_host_grpc": {
+   "route": "config.write"
+  },
   "config_key:features.code_mode_interrupt": {
    "route": "config.write"
   },
@@ -2411,6 +2446,9 @@
    "route": "config.write"
   },
   "config_key:features.code_mode_prewarm": {
+   "route": "config.write"
+  },
+  "config_key:features.code_mode_tool_description_first": {
    "route": "config.write"
   },
   "config_key:features.code_mode_tool_search": {
@@ -2448,6 +2486,9 @@
   },
   "config_key:features.context_management": {
    "route": "config.write"
+  },
+  "config_key:features.credential_masking": {
+   "exclude": "authority_config"
   },
   "config_key:features.current_time_reminder": {
    "route": "config.write"
@@ -2531,6 +2572,9 @@
    "exclude": "authority_config"
   },
   "config_key:features.guardian_root_handoff_context": {
+   "exclude": "authority_config"
+  },
+  "config_key:features.guardian_trust_orchestrator_connectors": {
    "exclude": "authority_config"
   },
   "config_key:features.guardianv2": {
@@ -2639,6 +2683,9 @@
   "config_key:features.omit_app_server_notification_media": {
    "route": "config.write"
   },
+  "config_key:features.output_token_replay": {
+   "route": "config.write"
+  },
   "config_key:features.personality": {
    "route": "config.write"
   },
@@ -2708,6 +2755,9 @@
   "config_key:features.retain_client_developer_messages": {
    "route": "config.write"
   },
+  "config_key:features.retain_client_tool_outputs": {
+   "route": "config.write"
+  },
   "config_key:features.rollout_budget": {
    "route": "config.write"
   },
@@ -2766,6 +2816,9 @@
    "route": "config.write"
   },
   "config_key:features.step_model_switching": {
+   "route": "config.write"
+  },
+  "config_key:features.subagent_default_context_limits": {
    "route": "config.write"
   },
   "config_key:features.system_proxy_fallback": {
@@ -2963,6 +3016,9 @@
   "config_key:include_environment_context": {
    "route": "config.write"
   },
+  "config_key:include_environment_context_time": {
+   "route": "config.write"
+  },
   "config_key:include_permissions_instructions": {
    "route": "config.write"
   },
@@ -3092,6 +3148,9 @@
   "config_key:notice.hide_full_access_warning": {
    "route": "config.write"
   },
+  "config_key:notice.hide_gov_cloud_guidance": {
+   "route": "config.write"
+  },
   "config_key:notice.hide_gpt-5.1-codex-max_migration_prompt": {
    "route": "config.write"
   },
@@ -3175,6 +3234,9 @@
     "*.mcp_servers.*.enabled_tools",
     "*.mcp_servers.*.disabled_tools"
    ]
+  },
+  "config_key:plugins._default": {
+   "exclude": "authority_config"
   },
   "config_key:profile": {
    "route": "config.write"
@@ -3329,6 +3391,9 @@
   "config_key:tui.copy_on_select": {
    "route": "config.write"
   },
+  "config_key:tui.copy_on_select_clear_selection": {
+   "route": "config.write"
+  },
   "config_key:tui.disable_paste_burst": {
    "route": "config.write"
   },
@@ -3412,6 +3477,9 @@
   },
   "config_key:windows": {
    "exclude": "authority_config"
+  },
+  "config_key:windows.allow_mxc": {
+   "exclude": "platform_windows"
   },
   "config_key:windows.sandbox": {
    "exclude": "authority_config"
@@ -3502,6 +3570,10 @@
   "event:DynamicToolCallResponse": {
    "route": "mod.api",
    "via": "api.tool"
+  },
+  "event:ElicitationAbandoned": {
+   "route": "app.server_request",
+   "note": "observe only: answering or declining a question is the user's decision"
   },
   "event:ElicitationRequest": {
    "route": "app.server_request",
@@ -4373,10 +4445,16 @@
   "op:PatchApproval": {
    "exclude": "authority_decision"
   },
+  "op:RealtimeConversationAttach": {
+   "exclude": "realtime_media"
+  },
   "op:RealtimeConversationAudio": {
    "exclude": "realtime_media"
   },
   "op:RealtimeConversationClose": {
+   "exclude": "realtime_media"
+  },
+  "op:RealtimeConversationDetach": {
    "exclude": "realtime_media"
   },
   "op:RealtimeConversationListVoices": {
@@ -4556,6 +4634,15 @@
    ]
   },
   "slash_command:compact": {
+   "route": "builtins.command",
+   "access": [
+    "observe",
+    "invoke",
+    "hide",
+    "replace"
+   ]
+  },
+  "slash_command:config": {
    "route": "builtins.command",
    "access": [
     "observe",
@@ -5047,6 +5134,9 @@
   "tui_list:all-models-selection": {
    "route": "terminal.list"
   },
+  "tui_list:config-effects": {
+   "route": "terminal.list"
+  },
   "tui_list:connectors-selection": {
    "route": "terminal.list"
   },
@@ -5152,6 +5242,14 @@
     "observe"
    ],
    "note": "authority prompt; never replaced or hidden"
+  },
+  "tui_view:ConfigPanel": {
+   "route": "terminal.view",
+   "access": [
+    "observe",
+    "open",
+    "hide"
+   ]
   },
   "tui_view:CustomPromptView": {
    "route": "terminal.view",
@@ -5281,6 +5379,14 @@
     "observe"
    ],
    "note": "authority prompt; never replaced or hidden"
+  },
+  "tui_view:Step::GovCloudGuidance": {
+   "route": "terminal.view",
+   "access": [
+    "observe",
+    "open",
+    "hide"
+   ]
   },
   "tui_view:Step::TrustDirectory": {
    "route": "terminal.view",

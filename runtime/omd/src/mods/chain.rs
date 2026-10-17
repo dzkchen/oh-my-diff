@@ -184,7 +184,10 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
             || interceptor.pattern.len() > 64
             || serde_json::to_vec(&interceptor.matcher)?.len() > 4096
             || interceptor.before.len() + interceptor.after.len() > 16
-            || interceptor.before.iter().any(|id| interceptor.after.contains(id))
+            || interceptor
+                .before
+                .iter()
+                .any(|id| interceptor.after.contains(id))
             || !ordered.into_iter().all(|id| identifier(id))
             || interceptor.location.len() > 256
         {
@@ -246,9 +249,10 @@ pub(super) fn order(
             let reaches = |start: &String, goal: &String| {
                 let (mut seen, mut queue) = (BTreeSet::from([start]), vec![start]);
                 while let Some(node) = queue.pop() {
-                    for (_, to, _) in edges.iter().filter(|(from, to, _)| {
-                        from == node && remaining.contains(to)
-                    }) {
+                    for (_, to, _) in edges
+                        .iter()
+                        .filter(|(from, to, _)| from == node && remaining.contains(to))
+                    {
                         if to == goal {
                             return true;
                         }

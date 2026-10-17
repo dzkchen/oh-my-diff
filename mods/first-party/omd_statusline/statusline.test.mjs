@@ -26,7 +26,7 @@ const GRAPHQL = JSON.stringify({ data: { repository: {
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.162.1', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
   if (operation === 'app.request' && args.method === 'account/rateLimits/read') {
     return { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: (NOW + 7_200_000) / 1000 }, secondary: { usedPercent: 93, windowDurationMins: 10_080, resetsAt: (NOW + 86_400_000) / 1000 } } };
@@ -101,11 +101,11 @@ test('session telemetry is request-idempotent, separates workers from the lead c
   assert.match(lines(view(compacted))[0], /~38% 170k left ⟳1/);
   assert.deepEqual(lines(view(null)), []);
   const health = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 160, rows: 40 },
-    identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state });
+    identity: { codex_version: '0.163.0', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state });
   assert.match(lines(health.value)[0], / · 7 mods on 1 failed · \/omd$/);
   assert.deepEqual(health.state.mods, { installed: 21, enabled: 8, active: 7, failed: 1 });
   const again = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 160, rows: 40 },
-    identity: { codex_version: '0.162.1', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state: health.state });
+    identity: { codex_version: '0.163.0', install_profile: 'full', mode: 'omd', mods: { installed: 21, enabled: 8, active: 7, failed: 1 } } }, state: health.state });
   assert.deepEqual(again.state, health.state, 'an unchanged draw writes no state');
   assert.deepEqual(health.state.viewport, { columns: 160, rows: 40 });
   const narrow = call({ event: 'terminal', payload: { event: 'idle', ledger: { thread_id: 'lead' }, client: { kind: 'terminal', columns: 50, rows: 20 } }, state: health.state }).state;

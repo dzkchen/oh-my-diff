@@ -12,14 +12,14 @@ extensions; OMD+ also contains the selected first-party collection.
 The selectors are internal names; the public labels and status metadata use
 OMD Core and OMD+.
 
-These are local Apple Silicon profiles for the active Codex `0.162.1`
+These are local Apple Silicon profiles for the active Codex `0.163.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
 executables from `upstream.lock.json` and `runtime/patches/manifest.json`: check
 out the pinned Codex tag, run `scripts/normalize_upstream_lock.py` and
 `scripts/apply_runtime_patch.py` on it, `cargo build --release` the six binaries,
 and sign and pack them with `scripts/release_lock.py`. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
+later 24.x (`mise which node`); any upstream Codex `0.163.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
@@ -92,7 +92,7 @@ the privacy policy, the usage HUD and `/continue` (`omd_claude_cli`, `omd_lsp_sy
 disabled. Advisor every-turn selection requires its own explicit host policy and allowance;
 installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
+selections and settings, points it at the new installation's Node, replaces changed first-party package sources with the new release's (re-trusted, and
 re-enabled when they were on, also when an earlier attempt stopped between replacing and re-trusting), and adds
 newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.

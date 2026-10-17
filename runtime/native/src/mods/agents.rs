@@ -1830,7 +1830,10 @@ impl Agents {
         let history = if fork {
             for capability in ["sessions", "sessions_tools"] {
                 if !caller.grants.as_ref().is_some_and(|grants| {
-                    grants.capabilities.iter().any(|granted| granted == capability)
+                    grants
+                        .capabilities
+                        .iter()
+                        .any(|granted| granted == capability)
                 }) {
                     return Err(format!("capability_denied: {capability}"));
                 }

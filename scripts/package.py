@@ -7,6 +7,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import tomllib
+import urllib.request
 
 from scripts import release_lock as release
 from scripts import install_support as support
@@ -137,6 +139,28 @@ def install_payload(payload, args):
     support.run(command, cwd=payload, env=environment, capture=False)
 
 
+def v8_prebuilt(checkout, directory, environment):
+    if environment.get("V8_FROM_SOURCE") or environment.get("RUSTY_V8_ARCHIVE"):
+        return
+    lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
+    (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
+    target = support.output(["rustc", "-vV"], cwd=checkout / "codex-rs", env=environment).split("host: ", 1)[1].split()[0]
+    url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
+    names = {"archive": f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz",
+             "binding": f"src_binding_ptrcomp_sandbox_release_{target}.rs"}
+    directory.mkdir()
+    for name in (f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256", *names.values()):
+        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response, (directory / name).open("wb") as file:
+            shutil.copyfileobj(response, file)
+    expected = dict(reversed(line.split()) for line in
+                    (directory / f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256").read_text().splitlines() if line.strip())
+    for name in names.values():
+        if expected.get(name) != support.digest(directory / name):
+            raise ValueError(f"V8 prebuilt checksum mismatch: {name}")
+    environment["RUSTY_V8_ARCHIVE"] = str(directory / names["archive"])
+    environment["RUSTY_V8_SRC_BINDING_PATH"] = str(directory / names["binding"])
+
+
 def source_build(args):
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     if args.output_archive and args.output_archive.resolve().exists():
@@ -150,9 +174,10 @@ def source_build(args):
         target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
+        v8_prebuilt(checkout, Path(temporary) / "v8", environment)
         arguments = ["build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
+            "-p", "codex-omd-extension", "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
         before = release.build_provenance.inputs(checkout, arguments, environment)
         (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
         support.run(["cargo", f"+{upstream['rust_toolchain']}", *arguments], cwd=checkout / "codex-rs", env=environment,

@@ -490,7 +490,12 @@ async fn http(
             {
                 return Err("host_caller_inactive".into());
             }
-            if streams.values().filter(|stream| stream.owner == caller.id).count() >= STREAMS_PER_MOD {
+            if streams
+                .values()
+                .filter(|stream| stream.owner == caller.id)
+                .count()
+                >= STREAMS_PER_MOD
+            {
                 return Err("http_stream_limit: at most 4 open streams".into());
             }
             streams.insert(
@@ -529,10 +534,9 @@ async fn http(
                     .streams
                     .lock()
                     .map_err(|_| "http_streams_poisoned")?;
-                let Some(stream) = streams
-                    .get_mut(&input.handle)
-                    .filter(|stream| stream.owner == caller.id && stream.generation == caller.generation)
-                else {
+                let Some(stream) = streams.get_mut(&input.handle).filter(|stream| {
+                    stream.owner == caller.id && stream.generation == caller.generation
+                }) else {
                     return Err("http_stream_unavailable".into());
                 };
                 if request.operation == "http.close" {
@@ -589,7 +593,9 @@ async fn http(
                     .lock()
                     .map_err(|_| "http_streams_poisoned")?;
                 if let Some(stream) = streams.get_mut(&input.handle).filter(|stream| {
-                    stream.owner == caller.id && stream.generation == caller.generation && stream.body.is_none()
+                    stream.owner == caller.id
+                        && stream.generation == caller.generation
+                        && stream.body.is_none()
                 }) {
                     if read.as_ref().is_ok_and(|(_, done)| *done) {
                         streams.remove(&input.handle);

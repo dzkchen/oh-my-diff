@@ -68,22 +68,26 @@
         "kind": "change",
         "revision": 2,
         "attachments_revision": 1,
-        "origin": "user"
+        "origin": "user",
+        "thread_id": "thread-1"
       }
     },
     {
       "type": "terminal_mount",
-      "mod": "omd_preview"
+      "mod": "omd_preview",
+      "thread_id": "thread-1"
     },
     {
       "type": "terminal_interact",
       "mod": "omd_preview",
       "component": "omd_preview_open_0",
+      "thread_id": "thread-1",
       "expect": { "action": { "command": "omd_preview:preview", "args": "image 1" }, "result": null }
     },
     {
       "type": "terminal_mount",
-      "mod": "omd_preview"
+      "mod": "omd_preview",
+      "thread_id": "thread-1"
     }
   ]
 }

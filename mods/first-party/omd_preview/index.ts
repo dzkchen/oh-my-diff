@@ -222,7 +222,11 @@ export default function activate(api: ModAPI) {
 
   api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
   api.on('timer', () => poll());
-  for (const event of ['start', 'resume'] as const) api.on(event, () => { poll(); if (thumbnails) refresh(); });
+  for (const event of ['start', 'resume'] as const) api.on(event, () => {
+    if (event === 'resume' && load().inline) save({ inline: null });
+    poll();
+    if (thumbnails) refresh();
+  });
   if (thumbnails) {
     api.on('composer', event => { if (event.kind === 'change' && event.attachments_revision !== load().attachments) refresh(event.attachments_revision); });
   }
@@ -274,7 +278,6 @@ export default function activate(api: ModAPI) {
   };
 
   api.on('terminal', event => {
-    if (event?.event === 'startup' && load().inline) save({ inline: null });
     const { inline, revision, images } = load();
     const sites: Partial<Record<'dialog' | 'above_composer', TerminalRenderSite>> = {};
     if (inline) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_preview_dialog', label: 'Preview', title: inline.title, children: dialog(inline, revision, Math.min((event?.client?.columns ?? 80) - 4, 76) - 3) }] };

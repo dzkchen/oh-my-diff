@@ -82,17 +82,30 @@ fn parse_request(operation: &str, arguments: &Value) -> io::Result<Input> {
     if !matches!(input.scope.as_str(), "repository" | "user" | "thread") {
         return Err(failure("store_scope_invalid"));
     }
-    if matches!(operation, "store.get" | "store.put" | "store.delete") && !input.key.as_deref().is_some_and(key) {
+    if matches!(operation, "store.get" | "store.put" | "store.delete")
+        && !input.key.as_deref().is_some_and(key)
+    {
         return Err(failure("store_key_invalid"));
     }
     match operation {
         "store.put" => {
-            let value = input.value.as_ref().ok_or_else(|| failure("store_value_required"))?;
-            if serde_json::to_vec(value)?.len() > VALUE_BYTES { return Err(failure("store_value_limit")); }
-            if arguments.get("expected_revision").is_none() { return Err(failure("store_expected_revision_required")); }
+            let value = input
+                .value
+                .as_ref()
+                .ok_or_else(|| failure("store_value_required"))?;
+            if serde_json::to_vec(value)?.len() > VALUE_BYTES {
+                return Err(failure("store_value_limit"));
+            }
+            if arguments.get("expected_revision").is_none() {
+                return Err(failure("store_expected_revision_required"));
+            }
         }
-        "store.delete" if input.expected_revision.is_none() => return Err(failure("store_expected_revision_required")),
-        "store.reset" if input.expected_generation.is_none() => return Err(failure("store_expected_generation_required")),
+        "store.delete" if input.expected_revision.is_none() => {
+            return Err(failure("store_expected_revision_required"));
+        }
+        "store.reset" if input.expected_generation.is_none() => {
+            return Err(failure("store_expected_generation_required"));
+        }
         _ => {}
     }
     Ok(input)
@@ -178,10 +191,17 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
     match fs::symlink_metadata(&source) {
         Ok(metadata) if metadata.is_dir() => {
             if target.try_exists()? {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "store_thread_exists"));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "store_thread_exists",
+                ));
             }
-            let threads = target.parent().ok_or_else(|| failure("store_thread_invalid"))?;
-            let stage = tempfile::Builder::new().prefix(".fork-").tempdir_in(threads)?;
+            let threads = target
+                .parent()
+                .ok_or_else(|| failure("store_thread_invalid"))?;
+            let stage = tempfile::Builder::new()
+                .prefix(".fork-")
+                .tempdir_in(threads)?;
             copy_regular_tree(&source, stage.path())?;
             // A writer may create the target directory meanwhile; an exclusive rename never replaces even an empty one.
             crate::workspace::rename_exclusive(
@@ -299,7 +319,10 @@ impl DataStore<'_> {
     pub fn call(&self, operation: &str, arguments: Value) -> io::Result<Value> {
         let input = parse_request(operation, &arguments)?;
         let checked_key = || {
-            input.key.as_deref().ok_or_else(|| failure("store_key_invalid"))
+            input
+                .key
+                .as_deref()
+                .ok_or_else(|| failure("store_key_invalid"))
         };
         match operation {
             "store.get" => {

@@ -50,17 +50,27 @@ pub(super) async fn chain(
             let authority = core.runtime.clone();
             let caller = call.caller.clone();
             let source = call.source.clone();
-            let capabilities = call.grants.as_ref().map(|grants| grants.capabilities.clone());
+            let capabilities = call
+                .grants
+                .as_ref()
+                .map(|grants| grants.capabilities.clone());
             let flag = cancelled.clone();
             let current = tokio::task::spawn_blocking(move || {
-                let mut runtime = authority.lock().map_err(|_| "mod_runtime_poisoned".to_owned())?;
-                runtime.refresh_guarded(&|| !flag.load(Ordering::Acquire)).map_err(|error| error.to_string())?;
+                let mut runtime = authority
+                    .lock()
+                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
+                runtime
+                    .refresh_guarded(&|| !flag.load(Ordering::Acquire))
+                    .map_err(|error| error.to_string())?;
                 let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
                 if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
                     return Err("callback_authority_changed".into());
                 }
                 Ok(runtime.generation())
-            }).await.map_err(|error| error.to_string()).and_then(|result| result);
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
             match current {
                 Ok(generation) => generation,
                 Err(error) => {
@@ -68,7 +78,9 @@ pub(super) async fn chain(
                     continue;
                 }
             }
-        } else { generation };
+        } else {
+            generation
+        };
         let value = operations::dispatch(
             &core,
             &lead,
@@ -141,7 +153,12 @@ pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher
                 Ok(handle)
                     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
                 {
-                    (session.clone().ok_or_else(|| unavailable("no session runtime"))?, true)
+                    (
+                        session
+                            .clone()
+                            .ok_or_else(|| unavailable("no session runtime"))?,
+                        true,
+                    )
                 }
                 Ok(_) => {
                     return Err(unavailable(

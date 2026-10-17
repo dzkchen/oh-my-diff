@@ -214,7 +214,13 @@ fn selection_status_explains_precedence_and_changed_source() {
     );
     assert_eq!(status["selections"][1]["effective"], true);
     let listed = codex_omd::package_controls::list(&store, None).unwrap();
-    assert!(listed["packages"].as_array().unwrap().iter().all(|item| item["failed"].is_null()));
+    assert!(
+        listed["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["failed"].is_null())
+    );
     std::fs::write(project_mod.join("main.ts"), "export default () => 0;\n").unwrap();
     let status = store.selection_status().unwrap();
     assert_eq!(status["selections"][0]["effective"], true);
@@ -1007,7 +1013,9 @@ fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
     }
     for (refusal, limit) in refusals {
         assert!(
-            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
+            refusal.contains(&format!(
+                "repository_read_failed: larger than {limit} bytes"
+            )),
             "{refusal}"
         );
     }
@@ -1750,7 +1758,10 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
-    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit: big.ts exceeds 131072 bytes"));
+    assert!(
+        refusal(&store, request(&package, &["commands"]))
+            .contains("file_limit: big.ts exceeds 131072 bytes")
+    );
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();
     assert!(refusal(&store, request(&package, &["commands"])).contains("regular_file_required"));
@@ -2278,13 +2289,23 @@ fn thread_state_version_updates_require_a_migrate_handler() {
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["state_scope"] = json!("thread");
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
     let install = request(&stateless, &["commands"]);
     let plan = store.package_plan(install.clone()).unwrap();
-    store.package_apply(install.clone(), &plan.confirmation).unwrap();
+    store
+        .package_apply(install.clone(), &plan.confirmation)
+        .unwrap();
     manifest["version"] = json!("1.1.0");
     manifest["state_version"] = json!(2);
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
     let plan = store.package_plan(install.clone()).unwrap();
     assert_eq!(
         plan.changes["packages"][0]["state_version"]["handler_required"],

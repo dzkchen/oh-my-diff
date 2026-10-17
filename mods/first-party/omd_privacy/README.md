@@ -115,7 +115,7 @@ Stream deltas are not part of the guarantee. Completed replies return as whole s
 
 ## Sensitive paths
 
-The `approval` middleware sees every shell command, including auto-approved ones, input written to an interactive session and escalated `execve` calls. Input too large for the host to include in the approval is treated as a match. With the default `paths: ask`, a command that names a path matching `sensitive_paths` brings up the native approval prompt and names the matched pattern, so you review a read before its output can reach the model. `deny` refuses such commands and `off` disables the check. The detectors still apply to whatever output does reach the model.
+The `approval` middleware sees every shell command, including auto-approved ones, and input written to an interactive session. Input too large for the host to include in the approval is treated as a match. With the default `paths: ask`, a command that names a path matching `sensitive_paths` brings up the native approval prompt and names the matched pattern, so you review a read before its output can reach the model. `deny` refuses such commands and `off` disables the check. The detectors still apply to whatever output does reach the model.
 
 Patterns:
 
