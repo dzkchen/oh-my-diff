@@ -7,6 +7,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import tomllib
+import urllib.request
 
 from scripts import release_lock as release
 from scripts import install_support as support
@@ -32,8 +34,8 @@ def copy_sources(destination):
 
 
 def archive_payload(artifact_dir, destination, source_rebuild=False):
-    record = release.build(artifact_dir)
     frozen = json.loads(release.OUTPUT.read_text())
+    record = release.build(artifact_dir, version=frozen["version"])
     if source_rebuild:
         for name in set(record) | set(frozen):
             if name not in ("artifacts", "build_provenance") and record.get(name) != frozen.get(name):
@@ -121,7 +123,8 @@ def install_payload(payload, args):
     if not support.compatible_upstream(upstream["version"], expected_version):
         raise ValueError("upstream fallback does not match the package's Codex minor version")
     support.run([sys.executable, "-m", "scripts.release_lock", "--artifact-dir", payload / "artifacts",
-                 "--package-mode"], cwd=payload, capture=False)
+                 "--package-mode", "--version", json.loads((payload / "runtime/release.lock.json").read_text())["version"]],
+                cwd=payload, capture=False)
     command = [sys.executable, "-m", "scripts.profiles", "--prefix", args.prefix,
                "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
                "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
@@ -134,6 +137,33 @@ def install_payload(payload, args):
     environment = os.environ.copy()
     environment["PATH"] = str(Path(upstream["path"]).parent) + os.pathsep + environment.get("PATH", "")
     support.run(command, cwd=payload, env=environment, capture=False)
+
+
+def v8_prebuilt(checkout, directory, environment):
+    if environment.get("V8_FROM_SOURCE") or environment.get("RUSTY_V8_ARCHIVE"):
+        return
+    lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
+    (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
+    target = support.output(["rustc", "-vV"], cwd=checkout / "codex-rs", env=environment).split("host: ", 1)[1].split()[0]
+    url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
+    manifest = f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256"
+    names = {"archive": f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz",
+             "binding": f"src_binding_ptrcomp_sandbox_release_{target}.rs"}
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def checksums(path):
+        return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
+
+    expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
+    for name in (manifest, *names.values()):
+        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response, (directory / name).open("wb") as file:
+            shutil.copyfileobj(response, file)
+        if expected.get(name) != support.digest(directory / name):
+            raise ValueError(f"V8 prebuilt checksum mismatch: {name}")
+        if name == manifest:
+            expected = checksums(directory / manifest)
+    environment["RUSTY_V8_ARCHIVE"] = str(directory / names["archive"])
+    environment["RUSTY_V8_SRC_BINDING_PATH"] = str(directory / names["binding"])
 
 
 def source_build(args):
@@ -149,9 +179,10 @@ def source_build(args):
         target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
+        v8_prebuilt(checkout, Path(temporary) / "v8", environment)
         arguments = ["build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
+            "-p", "codex-omd-extension", "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
         before = release.build_provenance.inputs(checkout, arguments, environment)
         (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
         support.run(["cargo", f"+{upstream['rust_toolchain']}", *arguments], cwd=checkout / "codex-rs", env=environment,

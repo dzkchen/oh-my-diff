@@ -129,8 +129,15 @@ impl EventBus {
         if correlation.as_ref().is_some_and(|c| c.len() > 256) {
             return Err(io::Error::other("channel_correlation_too_large"));
         }
-        let queued = self.subscribers.values()
-            .flat_map(|subscriber| subscriber.queue.iter().map(|(event, _)| event.publisher.as_str()))
+        let queued = self
+            .subscribers
+            .values()
+            .flat_map(|subscriber| {
+                subscriber
+                    .queue
+                    .iter()
+                    .map(|(event, _)| event.publisher.as_str())
+            })
             .collect::<BTreeSet<_>>();
         self.sequences.retain(|publisher, sequences| {
             now.duration_since(sequences.used) < CHANNEL_PUBLISHER_IDLE
@@ -139,17 +146,28 @@ impl EventBus {
         let current = self.sequences.get(publisher);
         if !current.is_some_and(|sequences| sequences.channels.contains_key(name))
             && (current.is_some_and(|sequences| sequences.channels.len() >= CHANNELS_PER_PUBLISHER)
-                || self.sequences.values().map(|sequences| sequences.channels.len()).sum::<usize>() >= CHANNEL_SEQUENCES)
+                || self
+                    .sequences
+                    .values()
+                    .map(|sequences| sequences.channels.len())
+                    .sum::<usize>()
+                    >= CHANNEL_SEQUENCES)
         {
             return Err(io::Error::other("channel_sequence_limit"));
         }
         let channel = format!("{publisher}/{name}");
-        let publisher_sequences = self.sequences.entry(publisher.to_owned()).or_insert_with(|| PublisherSequences {
-            used: now,
-            channels: BTreeMap::new(),
-        });
+        let publisher_sequences = self
+            .sequences
+            .entry(publisher.to_owned())
+            .or_insert_with(|| PublisherSequences {
+                used: now,
+                channels: BTreeMap::new(),
+            });
         publisher_sequences.used = now;
-        let sequence = publisher_sequences.channels.entry(name.to_owned()).or_default();
+        let sequence = publisher_sequences
+            .channels
+            .entry(name.to_owned())
+            .or_default();
         *sequence += 1;
         let event = ChannelEvent {
             publisher: publisher.to_owned(),

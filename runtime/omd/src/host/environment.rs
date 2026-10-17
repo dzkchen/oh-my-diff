@@ -54,7 +54,9 @@ impl Environment {
     pub(super) fn set(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
         let (name, value) = validate_environment_set(&arguments)?;
         let thread = caller.thread.ok_or("environment_thread_required")?;
-        if !caller.exec_environment.contains(&name) { return Err("exec_environment_undeclared".into()); }
+        if !caller.exec_environment.contains(&name) {
+            return Err("exec_environment_undeclared".into());
+        }
         let set = value.is_some();
         let mut scopes = self.0.lock().map_err(|_| "environment_state_poisoned")?;
         let key = (

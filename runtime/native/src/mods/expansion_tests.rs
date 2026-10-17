@@ -1,10 +1,10 @@
 use super::*;
+use crate::mods::DISPATCHER_TEST;
 use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
 use codex_omd::ModStore;
 use std::path::Path;
 use std::path::PathBuf;
-use crate::mods::DISPATCHER_TEST;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -553,9 +553,14 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
     )
     .await;
     fixture.core.expansion.thread_started(&fixture.lead);
-    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    let dispatcher =
+        codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core))
+            .unwrap();
     let registration = clients::install(&fixture.core, dispatcher).unwrap();
-    assert!(codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).is_err());
+    assert!(
+        codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core))
+            .is_err()
+    );
     let source = fixture
         .core
         .runtime
@@ -677,16 +682,33 @@ async fn scoped_environment_session_dispatch_rejects_a_different_captured_source
             .exists()
     );
     drop(registration);
-    assert!(call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).is_err());
-    let dispatcher = codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core)).unwrap();
+    assert!(
+        call(
+            &source,
+            "environment.read",
+            json!({"names": ["FIXTURE_VALUE"]})
+        )
+        .is_err()
+    );
+    let dispatcher =
+        codex_omd::host::install_session_dispatcher(super::intercept::dispatcher(&fixture.core))
+            .unwrap();
     let _reinstalled = clients::install(&fixture.core, dispatcher).unwrap();
-    call(&source, "environment.read", json!({"names": ["FIXTURE_VALUE"]})).unwrap();
+    call(
+        &source,
+        "environment.read",
+        json!({"names": ["FIXTURE_VALUE"]}),
+    )
+    .unwrap();
     drop(_reinstalled);
     let mut first = ExtensionRegistryBuilder::new();
     super::install(&mut first, fixture.core.host.clone()).unwrap();
     let installed = fixture.core.host.accounts.mod_installation();
     let mut second = ExtensionRegistryBuilder::new();
-    assert_eq!(super::install(&mut second, fixture.core.host.clone()).unwrap_err(), "host_already_installed");
+    assert_eq!(
+        super::install(&mut second, fixture.core.host.clone()).unwrap_err(),
+        "host_already_installed"
+    );
     assert_eq!(fixture.core.host.accounts.mod_installation(), installed);
     drop(first);
     super::install(&mut second, fixture.core.host.clone()).unwrap();
@@ -1791,6 +1813,37 @@ fn timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn component_events_carry_the_bound_thread() {
+    let Some(fixture) = fixture(&[Package {
+        id: "clicker",
+        capabilities: &["terminal", "store", "commands"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('component_event', e => { api.state.set(e.thread_id); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    for payload in [
+        json!({"component": "c", "kind": "click"}),
+        json!({"component": "c", "kind": "click", "thread_id": "forged"}),
+    ] {
+        invoke_one(
+            &fixture.core,
+            &fixture.lead,
+            "clicker".into(),
+            "component_event",
+            payload,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            command(&fixture.core, "clicker", "seen"),
+            json!(fixture.lead.thread.to_string())
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn event_context_refuses_user_only_app_methods_before_the_client() {
     let Some(fixture) = fixture(&[Package {
         id: "steerer",
@@ -1898,10 +1951,16 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
     assert!(extension.rewrites_persisted_text());
     drop(held);
     let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
-    install(&store, &fixture._dir.path().join("packages"), &Package {
-        id: "late", capabilities: &["commands"], manifest: Value::Null,
-        source: "export default api => api.command('noop', () => null)",
-    });
+    install(
+        &store,
+        &fixture._dir.path().join("packages"),
+        &Package {
+            id: "late",
+            capabilities: &["commands"],
+            manifest: Value::Null,
+            source: "export default api => api.command('noop', () => null)",
+        },
+    );
     assert!(extension.rewrites_persisted_text());
     let entries = [codex_extension_api::PersistedText {
         kind: "message",
@@ -1913,7 +1972,15 @@ async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_ru
         thread_id: "thread",
         entries: &entries,
     };
-    fixture.core.runtime.lock().unwrap().required_surfaces().lock().unwrap().push("history_persist");
+    fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .required_surfaces()
+        .lock()
+        .unwrap()
+        .push("history_persist");
     let runtime = fixture.core.persist_runtime.clone();
     let _ = std::thread::spawn(move || {
         let _held = runtime.lock().unwrap();
@@ -1942,7 +2009,12 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
                 source: "export default api => api.command('run', () => { api.host.call('task.status', null); api.state.set('unsafe'); return 'unsafe'; })",
             }]).unwrap();
             let store = ModStore::open(fixture.core.host.root.clone()).unwrap();
-            let path = fixture._dir.path().join("packages/writer").canonicalize().unwrap();
+            let path = fixture
+                ._dir
+                .path()
+                .join("packages/writer")
+                .canonicalize()
+                .unwrap();
             std::fs::write(fixture.core.host.root.join("managed.json"), "{").unwrap();
             let runtime = match lane {
                 "input" => &fixture.core.input_runtime,
@@ -1954,30 +2026,52 @@ fn lanes_reject_changed_authority_before_committing_callback_state() {
             let state = fixture.core.host.root.join("state-writer.json");
             let before = std::fs::read(&state).ok();
             let active = std::cell::Cell::new(true);
-            let result = runtime.invoke_with("writer", generation, "command", "run", Value::Null,
-                || active.get(), |_| {
+            let result = runtime.invoke_with(
+                "writer",
+                generation,
+                "command",
+                "run",
+                Value::Null,
+                || active.get(),
+                |_| {
                     match change {
                         "disable" => store.enable(&path, false)?,
                         "revoke" => {
                             let config = fixture.core.host.root.join("mods.json");
-                            let mut value: Value = serde_json::from_slice(&std::fs::read(&config)?)?;
+                            let mut value: Value =
+                                serde_json::from_slice(&std::fs::read(&config)?)?;
                             value["mods"][0]["capabilities"] = json!(["commands", "store"]);
                             std::fs::write(config, serde_json::to_vec(&value)?)?;
                         }
-                        "replace" => std::fs::write(path.join("index.ts"), "export default () => {}")?,
+                        "replace" => {
+                            std::fs::write(path.join("index.ts"), "export default () => {}")?
+                        }
                         "broken" => std::fs::write(fixture.core.host.root.join("mods.json"), "{")?,
                         "cancel" => active.set(false),
                         _ => unreachable!(),
                     }
                     Ok(Value::Null)
-                });
+                },
+            );
             assert!(result.is_err(), "{lane} {change}");
             assert_eq!(std::fs::read(&state).ok(), before, "{lane} {change}");
             if change == "broken" {
                 assert!(runtime.refresh_guarded(&|| true).is_err());
             }
-            let next = runtime.invoke_with("writer", generation, "command", "run", Value::Null, || true, |_| Ok(Value::Null));
-            assert_eq!(next.is_ok(), change == "cancel", "next admission {lane} {change}");
+            let next = runtime.invoke_with(
+                "writer",
+                generation,
+                "command",
+                "run",
+                Value::Null,
+                || true,
+                |_| Ok(Value::Null),
+            );
+            assert_eq!(
+                next.is_ok(),
+                change == "cancel",
+                "next admission {lane} {change}"
+            );
         }
     }
 }
@@ -1995,18 +2089,35 @@ async fn dropping_persistence_cancels_callback_state_commit() {
     let before = std::fs::read(&state).ok();
     let task = tokio::spawn(async move {
         let entries = [codex_extension_api::PersistedText {
-            kind: "message", role: Some("user".into()), call_id: None, text: "private".into(),
+            kind: "message",
+            role: Some("user".into()),
+            call_id: None,
+            text: "private".into(),
         }];
-        persisted::rewrite(worker_runtime, required, codex_extension_api::PersistedTextInput {
-            thread_id: "t", entries: &entries,
-        }).await
+        persisted::rewrite(
+            worker_runtime,
+            required,
+            codex_extension_api::PersistedTextInput {
+                thread_id: "t",
+                entries: &entries,
+            },
+        )
+        .await
     });
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while runtime.try_lock().is_ok() { tokio::task::yield_now().await; }
-    }).await.unwrap();
+        while runtime.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    tokio::task::spawn_blocking(move || { drop(runtime.lock().unwrap()); }).await.unwrap();
+    tokio::task::spawn_blocking(move || {
+        drop(runtime.lock().unwrap());
+    })
+    .await
+    .unwrap();
     assert_eq!(std::fs::read(state).ok(), before);
 }
 
@@ -2014,15 +2125,22 @@ async fn dropping_persistence_cancels_callback_state_commit() {
 async fn model_fork_checks_history_authority_before_access() {
     for (capabilities, expected) in [
         (vec!["agents"], "capability_denied: sessions"),
-        (vec!["agents", "sessions"], "capability_denied: sessions_tools"),
-        (vec!["agents", "sessions", "sessions_tools"], "native_thread_manager_stopped"),
+        (
+            vec!["agents", "sessions"],
+            "capability_denied: sessions_tools",
+        ),
+        (
+            vec!["agents", "sessions", "sessions_tools"],
+            "native_thread_manager_stopped",
+        ),
     ] {
         let fixture = fixture(&[Package {
             id: "forker",
             capabilities: &capabilities,
             manifest: Value::Null,
             source: "export default function () {}\n",
-        }]).expect("native fixture");
+        }])
+        .expect("native fixture");
         *fixture.lead.session.contract.lock().unwrap() =
             crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
         let (grants, generation) = {
@@ -2030,13 +2148,25 @@ async fn model_fork_checks_history_authority_before_access() {
             (runtime.grants("forker"), runtime.generation())
         };
         let error = operations::dispatch(
-            &fixture.core, &fixture.lead,
-            Caller { id: "forker", source: "", grants, generation,
-                origin: Origin::Event, record_changes: false },
+            &fixture.core,
+            &fixture.lead,
+            Caller {
+                id: "forker",
+                source: "",
+                grants,
+                generation,
+                origin: Origin::Event,
+                record_changes: false,
+            },
             None,
-            ModHostCall { operation: "model.fork".into(), arguments: json!({"prompt":"repeat the tool output"}) },
+            ModHostCall {
+                operation: "model.fork".into(),
+                arguments: json!({"prompt":"repeat the tool output"}),
+            },
             &Arc::new(AtomicBool::new(false)),
-        ).await.unwrap_err();
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error, expected);
     }
 }
@@ -2047,23 +2177,41 @@ fn stream_fixture(origin: &str) -> Fixture {
         capabilities: &["http"],
         manifest: json!({"http_access":{"origins":[origin]}}),
         source: "export default function () {}\n",
-    }]).expect("HTTP fixture");
+    }])
+    .expect("HTTP fixture");
     *fixture.lead.session.contract.lock().unwrap() =
         crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
     fixture
 }
 
-async fn stream_call(fixture: &Fixture, operation: &str, arguments: Value) -> Result<Value, String> {
+async fn stream_call(
+    fixture: &Fixture,
+    operation: &str,
+    arguments: Value,
+) -> Result<Value, String> {
     let (grants, generation) = {
         let runtime = fixture.core.runtime.lock().unwrap();
         (runtime.grants("fetcher"), runtime.generation())
     };
     operations::dispatch(
-        &fixture.core, &fixture.lead,
-        Caller { id: "fetcher", source: "", grants, generation,
-            origin: Origin::Event, record_changes: false },
-        None, ModHostCall { operation: operation.into(), arguments }, &Arc::new(AtomicBool::new(false)),
-    ).await
+        &fixture.core,
+        &fixture.lead,
+        Caller {
+            id: "fetcher",
+            source: "",
+            grants,
+            generation,
+            origin: Origin::Event,
+            record_changes: false,
+        },
+        None,
+        ModHostCall {
+            operation: operation.into(),
+            arguments,
+        },
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2081,30 +2229,43 @@ async fn concurrent_http_opens_share_the_last_stream_slot() {
                 match listener.accept() {
                     Ok(socket) => break socket,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        if !matches!(stopped.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
-                            || std::time::Instant::now() >= deadline { return; }
+                        if !matches!(
+                            stopped.try_recv(),
+                            Err(std::sync::mpsc::TryRecvError::Empty)
+                        ) || std::time::Instant::now() >= deadline
+                        {
+                            return;
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(5));
                     }
                     Err(error) => panic!("{error}"),
                 }
             };
             socket.set_nonblocking(false).unwrap();
-            socket.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).unwrap();
+            assert!(socket.read(&mut request).unwrap() > 0);
             if index < 3 {
-                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                    .unwrap();
             }
             sockets.push(socket);
         }
         for socket in &mut sockets[3..] {
-            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                .unwrap();
         }
         let _ = stopped.recv_timeout(std::time::Duration::from_secs(10));
     });
     let fixture = stream_fixture(&origin);
     for _ in 0..3 {
-        stream_call(&fixture, "http.open", json!({"url":origin})).await.unwrap();
+        stream_call(&fixture, "http.open", json!({"url":origin}))
+            .await
+            .unwrap();
     }
     let (first, second) = tokio::join!(
         stream_call(&fixture, "http.open", json!({"url":origin})),

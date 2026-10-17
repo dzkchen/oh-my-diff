@@ -1,9 +1,9 @@
 # Runtime
 
-The patched `rust-v0.162.1` host accepts `OMD_MODE=omd` for the generic mod host
+The patched `rust-v0.163.0` host accepts `OMD_MODE=omd` for the generic mod host
 and `OMD_MODE=upstream_direct` for the pinned upstream task flow; with no mode
 selected it runs upstream-style direct; any other `OMD_MODE` fails closed. The single artifact is
-`patches/omd-0.162.1.patch`; `runtime/omd` and `runtime/native` mirror its
+`patches/omd-0.163.0.patch`; `runtime/omd` and `runtime/native` mirror its
 `codex-rs/omd` and `codex-rs/ext/omd` crates byte for byte, and
 `runtime/native/src/request_observer.rs` mirrors the patched
 `codex-rs/codex-api/src/request_observer.rs`.

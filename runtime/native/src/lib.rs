@@ -11,6 +11,7 @@ mod workspace_operations;
 mod workspace_watch;
 
 pub use mods::clients;
+pub use mods::validate_tool_schema;
 
 use accounting::Account;
 use accounting::Accounts;

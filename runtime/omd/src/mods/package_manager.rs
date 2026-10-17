@@ -57,7 +57,9 @@ impl NpmConfig {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default();
         let expand = |value: &str| {
-            interpolate(value.trim().trim_matches('"'), |name| std::env::var(name).ok())
+            interpolate(value.trim().trim_matches('"'), |name| {
+                std::env::var(name).ok()
+            })
         };
         let mut config = Self::default();
         for line in text.lines().map(str::trim) {
@@ -2743,7 +2745,9 @@ fn selected_settings(
 }
 
 fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
-    let changes = plan.changes["packages"].as_array().map_or(&[][..], Vec::as_slice);
+    let changes = plan.changes["packages"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
     for (locked, change) in plan.packages.iter().zip(changes) {
         if change["state_version"]["handler_required"] != true {
             continue;

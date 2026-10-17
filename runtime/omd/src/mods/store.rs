@@ -219,16 +219,15 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
     ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
-fn inspect_package(
-    path: &Path,
-    collect_assets: bool,
-) -> Result<(
+type InspectedPackage = (
     ModPackage,
     String,
     String,
     BTreeMap<String, String>,
     Vec<(PathBuf, FileStamp)>,
-)> {
+);
+
+fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
@@ -438,6 +437,25 @@ impl ModStore {
         };
         store.write("mods.json", &serde_json::to_value(config)?)?;
         Ok(store)
+    }
+
+    pub fn set_node(&self, node: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let node = node.canonicalize()?;
+        if !node.is_file() {
+            return Err(failure("node_unavailable"));
+        }
+        let mut config = self.configuration()?;
+        if config.node == node {
+            return Ok(());
+        }
+        config.node = node;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        self.write("mods.json", &serde_json::to_value(config)?)
     }
 
     /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.

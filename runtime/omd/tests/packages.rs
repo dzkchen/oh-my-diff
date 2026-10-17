@@ -717,7 +717,9 @@ fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
     }
     for (refusal, limit) in refusals {
         assert!(
-            refusal.contains(&format!("repository_read_failed: larger than {limit} bytes")),
+            refusal.contains(&format!(
+                "repository_read_failed: larger than {limit} bytes"
+            )),
             "{refusal}"
         );
     }
@@ -1315,7 +1317,10 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
     std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
-    assert!(refusal(&store, request(&package, &["commands"])).contains("file_limit: big.ts exceeds 131072 bytes"));
+    assert!(
+        refusal(&store, request(&package, &["commands"]))
+            .contains("file_limit: big.ts exceeds 131072 bytes")
+    );
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();
     assert!(refusal(&store, request(&package, &["commands"])).contains("regular_file_required"));

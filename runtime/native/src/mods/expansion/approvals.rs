@@ -106,7 +106,6 @@ pub(super) fn within_grant(
                 _ => command[0].as_str().unwrap_or_default().to_owned(),
             }
         }
-        "execve" => details["program"].as_str().unwrap_or_default().to_owned(),
         "mcp_tool" => format!(
             "{}/{}",
             details["server"].as_str().unwrap_or_default(),
@@ -126,7 +125,7 @@ pub(super) fn within_grant(
     }
     let paths: Vec<Value> = match kind {
         "patch" => details["files"].as_array().cloned().unwrap_or_default(),
-        "exec" | "execve" | "stdin" => vec![details["cwd"].clone()],
+        "exec" | "stdin" => vec![details["cwd"].clone()],
         _ => Vec::new(),
     };
     if !scope.roots.is_empty() && !scope.roots.iter().any(|root| root == "*") {
