@@ -222,12 +222,12 @@ def artifacts(args):
     output.mkdir()
     for name in BINARIES:
         shutil.copy2(built / name, output / name)
+    if provenance and build_provenance.hashes(output) != unsigned["unsigned"]:
+        raise SystemExit("release artifacts changed during copying")
     if sys.platform == "darwin":
         for name in release_lock.HARDENED:
             release_lock.sign(output / name)
     if provenance:
-        if build_provenance.hashes(output) != unsigned["unsigned"]:
-            raise SystemExit("release artifacts changed during copying")
         build_provenance.record_signing(output, unsigned)
     pack_sdk(output)
     print(output)
