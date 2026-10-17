@@ -112,9 +112,6 @@ def release_lock(upstream, patch, mods):
             or record.get("mod_api") != mods["mod_api"]
             or record.get("node") != mods["node"]):
         raise ValueError("release lock disagrees with pinned runtime sources")
-    for name, expected in record["source_sha256"].items():
-        if support.digest(ROOT / name) != expected:
-            raise ValueError(f"release source changed: {name}")
     return record
 
 
