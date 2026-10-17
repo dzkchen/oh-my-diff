@@ -322,3 +322,55 @@ test('profile switches stay on the thread, ask before paid routes and report ref
   assert.match(invoke(state, 'command', '', 'profile').value.display, /^Last switch failed: work: route_unavailable_for_thread: work\n/);
   assert.deepEqual(invoke(state, 'intercept', { surface: 'model_request', input: {}, original: {}, origin: { caller: 'model' } }, '0').value.result, { deny: 'work: route_unavailable_for_thread: work' });
 });
+
+test('the port hand-off shows a foreign holder neither the local token nor the readiness nonce', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
+  const token = 'local-token-'.repeat(4);
+  const seen = [];
+  const squatter = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    seen.push(JSON.stringify(request.headers) + body);
+    response.end('OMD_READY:other');
+  });
+  const port = await listen(squatter);
+  const routePath = join(directory, 'route.json');
+  writeFileSync(routePath, JSON.stringify({ port, profiles: {} }));
+  const children = [];
+  const serve = ready => {
+    const child = spawn(process.execPath, [router, 'serve', routePath], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.setEncoding('utf8');
+    child.output = '';
+    child.stderr.on('data', chunk => { child.output += chunk; });
+    children.push(child);
+    return child;
+  };
+  const served = async expected => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.text(), () => '') === `OMD_READY:${expected}`) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.fail(`${expected} was never served`);
+  };
+  try {
+    const refused = serve('nonce-a');
+    const code = await new Promise(resolve => refused.on('exit', resolve));
+    assert.notEqual(code, 0);
+    assert.match(refused.output, /provider_port_in_use/);
+    assert.ok(seen.length);
+    assert.ok(!seen.some(request => request.includes(token) || request.includes('nonce-a')));
+    squatter.closeAllConnections();
+    await new Promise(resolve => squatter.close(resolve));
+    const owner = serve('nonce-a');
+    await served('nonce-a');
+    const later = serve('nonce-b');
+    await served('nonce-b');
+    owner.kill();
+    await new Promise(resolve => owner.on('exit', resolve));
+    await served('nonce-b');
+    assert.equal(later.exitCode, null);
+  } finally {
+    for (const child of children) child.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

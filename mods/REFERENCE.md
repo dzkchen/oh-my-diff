@@ -157,7 +157,8 @@ declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
 - `os_access: {programs, network?}` lists up to 32 programs (`*`, a bare name
-  resolved on `PATH`, or an absolute path) and whether unsandboxed runs keep
+  resolved on `PATH` outside the repository, or an absolute path; a program
+  inside the repository runs only when its absolute path is listed) and whether unsandboxed runs keep
   external network (`network: false` runs them under a profile that denies IP
   networking only). It needs `exec`.
 - `approves: {kinds, tools?, roots?, hosts?}` lists the request kinds a mod may
@@ -1819,15 +1820,15 @@ component, ratio}`, where `component` is the split's path (`r` for the root,
 then `.N` per child index) and `ratio` its new percentages, so a mod can keep
 the ratio in its layout. Clicking a tab title switches the tab and sends
 `component_event {kind: 'select', component, index}` with the `tabs` node's
-path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. View
+path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. Both
+go only to the mod whose view supplied the layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
 is ignored with a warning. Key bindings and component actions run only the
 contributing mod's commands: a bare name is its own `id:name`, and a binding or
 control naming another mod's command is dropped. `component_event`, `view` and `focus` report
-interaction; `component_event` also reports, to the component's owner only and
-with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
+interaction; `component_event` goes only to the component's owner and also reports, with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`). Every `component_event` carries the
@@ -2122,7 +2123,8 @@ runtime or published view in this host), `command_unavailable` and
 | `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
 The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
-full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
+full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `layout_owner`
+(the mod whose view supplied `view.layout`), `progress`,
 `activity`, `diagnostics`), `omd/roster/updated {roster}` and
 `omd/surface/mirrored {caller, operation, arguments}`, and the server request
 `omd/surface/call {caller, operation, arguments, confirm?}`, answered with the
@@ -3075,8 +3077,9 @@ supported.
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
+| `omd-mod set-node STORE NODE` | Point the store at another `node` binary; with the authority broker deployed this grants it as the runner and asks for authorization |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Imports no package-source provenance. |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the configured `node` as the runner; imports no package-source provenance. |
 | `omd-mod selection-status STORE` | Show managed, project and user selections, precedence, administrator refusals, source errors, and each setting's origin without running mod code |
 | `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](#administrator-policy-and-managed-deployment)'s packages unattended, or reactivate the previous generation |
 | `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the administrator policy |
@@ -3552,6 +3555,13 @@ root-owned daemon plist exists,
 
 - keeps credential profiles, secrets and sign-in tokens in the broker
   (enrollment never writes them to the user's disk);
+- runs mod callbacks only under the `node` binary in `mods.json` whose path
+  and digest the broker holds as a runner grant (`node_unverified` otherwise,
+  `node_changed` when the binary changes after verification). Only
+  `omd-mod init`, `omd-mod set-node STORE NODE` (for example after a Node
+  upgrade) and broker grant import grant a runner; trusting or installing
+  packages never does. A missing `node` fails with `node_unavailable`, without
+  a `PATH` fallback;
 - accepts a mod selection only when the broker holds the same grant (path,
   digest, capabilities, scope and secret environment), otherwise
   `grant_not_brokered`; enabling, disabling and settings changes don't touch

@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 pub const ACTIVITY_READ_BYTES: u64 = 8 << 20;
@@ -98,13 +99,17 @@ impl TurnActivityLog {
 
     pub fn append(&self, record: &ActivityRecord) -> io::Result<()> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)?;
         }
         let mut line = serde_json::to_vec(record).map_err(io::Error::other)?;
         line.push(b'\n');
         OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
             .open(&self.path)?
             .write_all(&line)
     }

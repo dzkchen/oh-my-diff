@@ -20611,7 +20611,7 @@ index 08b52fc2e..cffb20555 100644
  mod compact_remote_history;
  mod compact_remote_v2;
 diff --git a/codex-rs/core/src/mcp_tool_call.rs b/codex-rs/core/src/mcp_tool_call.rs
-index 991ad9083..18ce853d3 100644
+index 991ad9083..e11f561fe 100644
 --- a/codex-rs/core/src/mcp_tool_call.rs
 +++ b/codex-rs/core/src/mcp_tool_call.rs
 @@ -20,6 +20,7 @@ use crate::tools::context::ToolCallOrigin;
@@ -20622,7 +20622,15 @@ index 991ad9083..18ce853d3 100644
  use crate::tools::sandboxing::ToolError;
  use crate::turn_metadata::ExecutionMetadata;
  use codex_analytics::AppInvocation;
-@@ -212,17 +213,8 @@ pub(crate) async fn handle_mcp_tool_call(
+@@ -33,6 +34,7 @@ use codex_config::types::AppToolApproval;
+ use codex_connectors::AppToolPolicy;
+ use codex_connectors::AppToolPolicyEvaluator;
+ use codex_connectors::AppToolPolicyInput;
++use codex_extension_api::ApprovalGate;
+ use codex_extension_api::McpToolContext;
+ use codex_features::Feature;
+ use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+@@ -212,17 +214,8 @@ pub(crate) async fn handle_mcp_tool_call(
          }
      };
      let item_metadata = McpToolCallItemMetadata::from_tool_metadata(&server, Some(&metadata));
@@ -20642,7 +20650,7 @@ index 991ad9083..18ce853d3 100644
 
      let connector_id = metadata.connector_id.clone();
      let connector_name = metadata.connector_name.clone();
-@@ -270,11 +262,6 @@ pub(crate) async fn handle_mcp_tool_call(
+@@ -270,11 +263,6 @@ pub(crate) async fn handle_mcp_tool_call(
      )
      .await;
 
@@ -20654,7 +20662,7 @@ index 991ad9083..18ce853d3 100644
      if let Some(decision) = maybe_request_mcp_tool_approval(
          &sess,
          step_context,
-@@ -1467,6 +1454,124 @@ fn mcp_tool_approval_prompt_options(
+@@ -1467,6 +1455,117 @@ fn mcp_tool_approval_prompt_options(
      }
  }
 
@@ -20685,7 +20693,7 @@ index 991ad9083..18ce853d3 100644
 +enum McpApprovalNeed {
 +    NotRequired,
 +    Remembered,
-+    Prompt(Box<ApprovalAction>, Box<ApprovalContext>),
++    Prompt,
 +}
 +
 +#[expect(clippy::too_many_arguments)]
@@ -20737,53 +20745,46 @@ index 991ad9083..18ce853d3 100644
 +            "MCP tool call blocked by app configuration".to_string(),
 +        ));
 +    }
-+    let skip = ExecApprovalRequirement::Skip {
-+        bypass_sandbox: false,
-+        proposed_execpolicy_amendment: None,
-+    };
-+    Ok(
-+        match mcp_tool_approval_need(
-+            sess,
-+            step_context,
-+            cancellation_token,
-+            call_id,
-+            &invocation,
-+            invocation_tool_name,
-+            hook_tool_name,
-+            &metadata,
-+            prepared_call.config(),
-+            prepared_call.permission_profile(),
-+            policy,
-+        )
-+        .await
-+        {
++    let (need, action, _) = mcp_tool_approval_need(
++        sess,
++        step_context,
++        cancellation_token,
++        call_id,
++        &invocation,
++        invocation_tool_name,
++        hook_tool_name,
++        &metadata,
++        prepared_call.config(),
++        prepared_call.permission_profile(),
++        policy,
++    )
++    .await;
++    Ok(crate::tools::registry::ToolAssessment {
++        requirement: match need {
 +            McpApprovalNeed::NotRequired | McpApprovalNeed::Remembered => {
-+                crate::tools::registry::ToolAssessment {
-+                    requirement: skip,
-+                    action: None,
-+                    overridable: false,
++                ExecApprovalRequirement::Skip {
++                    bypass_sandbox: false,
++                    proposed_execpolicy_amendment: None,
 +                }
 +            }
-+            McpApprovalNeed::Prompt(action, _) => crate::tools::registry::ToolAssessment {
-+                requirement: ExecApprovalRequirement::NeedsApproval {
-+                    reason: None,
-+                    proposed_execpolicy_amendment: None,
-+                },
-+                action: Some(*action),
-+                overridable: false,
++            McpApprovalNeed::Prompt => ExecApprovalRequirement::NeedsApproval {
++                reason: None,
++                proposed_execpolicy_amendment: None,
 +            },
 +        },
-+    )
++        action: Some(action),
++        overridable: false,
++    })
 +}
 +
  #[expect(clippy::too_many_arguments)]
  async fn maybe_request_mcp_tool_approval(
      sess: &Arc<Session>,
-@@ -1481,6 +1586,47 @@ async fn maybe_request_mcp_tool_approval(
+@@ -1481,6 +1580,72 @@ async fn maybe_request_mcp_tool_approval(
      permission_profile: &PermissionProfile,
      policy: McpToolApprovalPolicy,
  ) -> Option<ReviewDecision> {
-+    match mcp_tool_approval_need(
++    let (need, action, mut approval_context) = mcp_tool_approval_need(
 +        sess,
 +        step_context,
 +        cancellation_token,
@@ -20796,17 +20797,42 @@ index 991ad9083..18ce853d3 100644
 +        permission_profile,
 +        policy,
 +    )
-+    .await
-+    {
++    .await;
++    let decided = |result: Result<ReviewDecision, ToolError>| match result {
++        Ok(decision) => decision,
++        Err(ToolError::Rejected(rejection)) => ReviewDecision::denied(rejection),
++        Err(ToolError::Codex(_)) => ReviewDecision::Abort,
++    };
++    let skipped = match need {
 +        McpApprovalNeed::NotRequired => None,
 +        McpApprovalNeed::Remembered => Some(ReviewDecision::Approved),
-+        McpApprovalNeed::Prompt(action, approval_context) => Some(
-+            match sess.request_approval(*action, *approval_context).await {
-+                Ok(decision) => decision,
-+                Err(ToolError::Rejected(rejection)) => ReviewDecision::denied(rejection),
-+                Err(ToolError::Codex(_)) => ReviewDecision::Abort,
-+            },
-+        ),
++        McpApprovalNeed::Prompt => {
++            return Some(decided(
++                sess.request_approval(action, approval_context).await,
++            ));
++        }
++    };
++    // Auto-approved and remembered calls still pass the approval gate, as skipped exec does.
++    match crate::tools::approval_gate::gate(sess, &action, &approval_context, "skip").await {
++        ApprovalGate::Continue | ApprovalGate::Approve(_) => skipped,
++        ApprovalGate::Deny(reason) => {
++            crate::tools::approval_gate::report(
++                sess,
++                "mcp_tool",
++                &approval_context,
++                "denied",
++                "mod",
++            )
++            .await;
++            Some(ReviewDecision::denied(reason))
++        }
++        ApprovalGate::Ask(reason) => {
++            approval_context.approval_reason = Some(reason);
++            Some(decided(
++                sess.resolve_approval(action, approval_context, /*forced*/ true)
++                    .await,
++            ))
++        }
 +    }
 +}
 +
@@ -20823,35 +20849,63 @@ index 991ad9083..18ce853d3 100644
 +    config: &codex_mcp::McpConfig,
 +    permission_profile: &PermissionProfile,
 +    policy: McpToolApprovalPolicy,
-+) -> McpApprovalNeed {
++) -> (McpApprovalNeed, ApprovalAction, ApprovalContext) {
      let turn_context = &step_context.turn;
      let strict_auto_review = turn_context.strict_auto_review_enabled();
      let approvals_reviewer = connectors::mcp_approvals_reviewer_from_layers(
-@@ -1503,12 +1649,12 @@ async fn maybe_request_mcp_tool_approval(
-             },
-         )
-     {
+@@ -1494,23 +1659,6 @@ async fn maybe_request_mcp_tool_approval(
+         metadata.connector_id.as_deref(),
+         metadata.link_id.as_deref(),
+     );
+-    if !strict_auto_review
+-        && mcp_permission_prompt_is_auto_approved(
+-            config.approval_policy.value(),
+-            permission_profile,
+-            McpPermissionPromptAutoApproveContext {
+-                tool_approval_mode: Some(policy.mode),
+-            },
+-        )
+-    {
 -        return None;
-+        return McpApprovalNeed::NotRequired;
-     }
-
-     let annotations = metadata.annotations.as_ref();
-     if !strict_auto_review && !requires_mcp_tool_approval_for_mode(annotations, policy.mode) {
+-    }
+-
+-    let annotations = metadata.annotations.as_ref();
+-    if !strict_auto_review && !requires_mcp_tool_approval_for_mode(annotations, policy.mode) {
 -        return None;
-+        return McpApprovalNeed::NotRequired;
-     }
-
+-    }
+-
      let session_approval_key =
-@@ -1522,7 +1668,7 @@ async fn maybe_request_mcp_tool_approval(
+         session_mcp_tool_approval_key(invocation, Some(metadata), policy.mode);
+     let persistent_approval_key = if policy.allow_persistent {
+@@ -1518,12 +1666,24 @@ async fn maybe_request_mcp_tool_approval(
+     } else {
+         None
+     };
+-    if !strict_auto_review
++    let need = if !strict_auto_review
++        && (mcp_permission_prompt_is_auto_approved(
++            config.approval_policy.value(),
++            permission_profile,
++            McpPermissionPromptAutoApproveContext {
++                tool_approval_mode: Some(policy.mode),
++            },
++        ) || !requires_mcp_tool_approval_for_mode(metadata.annotations.as_ref(), policy.mode))
++    {
++        McpApprovalNeed::NotRequired
++    } else if !strict_auto_review
          && let Some(key) = session_approval_key.as_ref()
          && mcp_tool_approval_is_remembered(sess, key).await
      {
 -        return Some(ReviewDecision::Approved);
-+        return McpApprovalNeed::Remembered;
-     }
+-    }
++        McpApprovalNeed::Remembered
++    } else {
++        McpApprovalNeed::Prompt
++    };
 
      let action = ApprovalAction::McpToolCall {
-@@ -1563,13 +1709,7 @@ async fn maybe_request_mcp_tool_approval(
+         id: call_id.to_string(),
+@@ -1563,13 +1723,7 @@ async fn maybe_request_mcp_tool_approval(
          retry_reason: None,
          network_approval_context: None,
      };
@@ -20862,10 +20916,124 @@ index 991ad9083..18ce853d3 100644
 -            Err(ToolError::Codex(_)) => ReviewDecision::Abort,
 -        },
 -    )
-+    McpApprovalNeed::Prompt(Box::new(action), Box::new(approval_context))
++    (need, action, approval_context)
  }
 
  pub(crate) async fn request_mcp_tool_user_approval(
+diff --git a/codex-rs/core/src/mcp_tool_call_tests.rs b/codex-rs/core/src/mcp_tool_call_tests.rs
+index 1dc06e3d0..9095a142f 100644
+--- a/codex-rs/core/src/mcp_tool_call_tests.rs
++++ b/codex-rs/core/src/mcp_tool_call_tests.rs
+@@ -2801,6 +2801,109 @@ async fn approve_mode_skips_when_annotations_do_not_require_approval() {
+     assert_eq!(decision, None);
+ }
+
++struct DenyingGate(std::sync::Mutex<Vec<(String, String, String)>>);
++
++impl codex_extension_api::ApprovalGateContributor for DenyingGate {
++    fn gate_approval<'a>(
++        &'a self,
++        input: codex_extension_api::ApprovalGateInput<'a>,
++    ) -> codex_extension_api::ExtensionFuture<'a, ApprovalGate> {
++        self.0.lock().unwrap().push((
++            input.kind.to_owned(),
++            input.host_decision.to_owned(),
++            "gate".to_owned(),
++        ));
++        Box::pin(std::future::ready(ApprovalGate::Deny(
++            "mod: no MCP".into(),
++        )))
++    }
++
++    fn on_approval_result<'a>(
++        &'a self,
++        input: codex_extension_api::ApprovalResultInput<'a>,
++    ) -> codex_extension_api::ExtensionFuture<'a, ()> {
++        self.0.lock().unwrap().push((
++            input.kind.to_owned(),
++            input.decision.to_owned(),
++            input.source.to_owned(),
++        ));
++        Box::pin(std::future::ready(()))
++    }
++}
++
++#[tokio::test]
++async fn approval_gate_denies_auto_approved_and_remembered_mcp_calls() {
++    let (mut session, turn_context) = make_session_and_context().await;
++    let gate = Arc::new(DenyingGate(Default::default()));
++    let mut extensions = codex_extension_api::ExtensionRegistryBuilder::new();
++    extensions.approval_gate_contributor(gate.clone());
++    session.services.extensions = Arc::new(extensions.build());
++    let session = Arc::new(session);
++    let turn_context = Arc::new(turn_context);
++    let invocation = McpInvocation {
++        server: "memory".to_string(),
++        tool: "create_entities".to_string(),
++        arguments: None,
++    };
++    let metadata = |read_only| McpToolApprovalMetadata {
++        annotations: Some(annotations(
++            Some(read_only),
++            Some(!read_only),
++            /*open_world*/ None,
++        )),
++        connector_id: None,
++        link_id: None,
++        connector_name: None,
++        connector_description: None,
++        connected_account_email: None,
++        plugin_id: None,
++        tool_title: None,
++        tool_description: None,
++        mcp_app_resource_uri: None,
++        mcp_app_ui: None,
++        codex_apps_meta: None,
++        openai_file_input_optional_fields: None,
++    };
++    let writer = metadata(false);
++    let key = session_mcp_tool_approval_key(&invocation, Some(&writer), AppToolApproval::Auto)
++        .expect("memory MCP tool should support session approval");
++    remember_mcp_tool_approval(&session, key).await;
++    // Tool-mode approval, a read-only annotation and a remembered session approval all skip the prompt.
++    for (mode, metadata) in [
++        (AppToolApproval::Approve, metadata(false)),
++        (AppToolApproval::Auto, metadata(true)),
++        (AppToolApproval::Auto, writer),
++    ] {
++        let decision = maybe_request_mcp_tool_approval(
++            &session,
++            &StepContext::for_test(Arc::clone(&turn_context)),
++            &CancellationToken::new(),
++            "call-1",
++            &invocation,
++            &ToolName::namespaced(&invocation.server, &invocation.tool),
++            &HookToolName::new("mcp__memory__create_entities"),
++            &metadata,
++            &approval_config(&turn_context),
++            turn_context.config.permissions.permission_profile(),
++            McpToolApprovalPolicy::for_server(mode),
++        )
++        .await;
++        assert!(
++            matches!(decision, Some(ReviewDecision::Denied { .. })),
++            "{mode:?}: {decision:?}"
++        );
++    }
++    let seen = gate.0.lock().unwrap().clone();
++    let entry = |kind: &str, decision: &str, source: &str| {
++        (kind.to_owned(), decision.to_owned(), source.to_owned())
++    };
++    let denied = [
++        entry("mcp_tool", "skip", "gate"),
++        entry("mcp_tool", "denied", "mod"),
++    ];
++    assert_eq!(seen, [denied.clone(), denied.clone(), denied].concat());
++}
++
+ #[tokio::test]
+ async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
+     use wiremock::Mock;
 diff --git a/codex-rs/core/src/session/extension_interruption.rs b/codex-rs/core/src/session/extension_interruption.rs
 index 87da41f20..a9328fb7d 100644
 --- a/codex-rs/core/src/session/extension_interruption.rs
@@ -25050,11 +25218,11 @@ index e26d83da6..21a30bc67 100644
              cell_id,
              runtime_tool_call_id,
 diff --git a/codex-rs/core/src/tools/mod.rs b/codex-rs/core/src/tools/mod.rs
-index 501ce5fe4..2f341e332 100644
+index 501ce5fe4..94ca3957d 100644
 --- a/codex-rs/core/src/tools/mod.rs
 +++ b/codex-rs/core/src/tools/mod.rs
 @@ -1,4 +1,6 @@
-+mod approval_gate;
++pub(crate) mod approval_gate;
  mod approvals;
 +pub(crate) mod batch;
  pub(crate) mod call_trace;
@@ -56629,7 +56797,7 @@ index 000000000..b36398d5d
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..22086bf33
+index 000000000..c8158f055
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
 @@ -0,0 +1,2486 @@
@@ -57510,7 +57678,7 @@ index 000000000..22086bf33
 +                    || !matches!(input.stdin.as_deref(), None | Some("null"))
 +                    || match unrestricted {
 +                        Some(access) => {
-+                            codex_omd::host::unrestricted_program(access, &input.name)?
++                            codex_omd::host::unrestricted_program(access, &input.name, repository)?
 +                                != input.path
 +                        }
 +                        None => program(&input.name, repository).as_ref() != Some(&input.path),
@@ -58600,7 +58768,7 @@ index 000000000..22086bf33
 +            os_access: Some(&access),
 +            blit: Some(&sink),
 +        };
-+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
++        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
 +        let sha256 = program_sha256(&sh).unwrap();
 +        let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
 +        let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
@@ -58721,7 +58889,7 @@ index 000000000..22086bf33
 +            os_access: Some(&access),
 +            blit: None,
 +        };
-+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
++        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
 +        let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
 +        let pidfile = repository.join("child.pid");
 +        let start = |owner: ProcessOwner<'_>, session: &str| {
@@ -58946,7 +59114,7 @@ index 000000000..22086bf33
 +            programs: vec!["sh".into()],
 +            network: false,
 +        };
-+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
++        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
 +        let owner = ProcessOwner {
 +            thread: None,
 +            id: "fixture",
@@ -77122,10 +77290,10 @@ index 000000000..88b18991e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..0c58cc61e
+index 000000000..a13f2fad8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,226 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -77244,6 +77412,7 @@ index 000000000..0c58cc61e
 +                || snapshot.conflicts != terminal.conflicts
 +                || snapshot.contributors != terminal.contributors
 +                || snapshot.component_owners != terminal.component_owners
++                || snapshot.layout_owner != terminal.layout_owner
 +            {
 +                state.snapshot.revision = state.snapshot.revision.saturating_add(1);
 +            }
@@ -77252,6 +77421,7 @@ index 000000000..0c58cc61e
 +            state.snapshot.conflicts = terminal.conflicts;
 +            state.snapshot.contributors = terminal.contributors;
 +            state.snapshot.component_owners = terminal.component_owners;
++            state.snapshot.layout_owner = terminal.layout_owner;
 +            state.snapshot.input = input;
 +            state
 +                .diagnostics
@@ -89375,10 +89545,10 @@ index 000000000..a68f87f31
 +
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 000000000..6aa9d519d
+index 000000000..e2bb56cbe
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,173 @@
 +//! Single-use user consents for prompts a mod captured, kept per thread outside mod state.
 +
 +use crate::resource_data::ResourceRef;
@@ -89388,6 +89558,7 @@ index 000000000..6aa9d519d
 +use std::fs;
 +use std::io;
 +use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +
@@ -89423,7 +89594,10 @@ index 000000000..6aa9d519d
 +        return Err(io::Error::other("consent_thread_invalid"));
 +    }
 +    let directory = root.join("consents");
-+    fs::create_dir_all(&directory)?;
++    fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(&directory)?;
 +    let file = fs::OpenOptions::new()
 +        .read(true)
 +        .write(true)
@@ -92655,10 +92829,10 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..c12a9d97e
+index 000000000..c83a99e5d
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1768 @@
+@@ -0,0 +1,1782 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -93139,21 +93313,35 @@ index 000000000..c12a9d97e
 +    })
 +}
 +
-+pub fn unrestricted_program(access: &crate::ModOsAccess, name: &str) -> Result<PathBuf, String> {
++/// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
++/// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
++pub fn unrestricted_program(
++    access: &crate::ModOsAccess,
++    name: &str,
++    repository: &Path,
++) -> Result<PathBuf, String> {
 +    let path = Path::new(name);
 +    let resolved = if path.is_absolute() {
 +        path.canonicalize().ok()
 +    } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
 +        std::env::var_os("PATH").and_then(|paths| {
-+            std::env::split_paths(&paths)
-+                .find_map(|directory| directory.join(name).canonicalize().ok())
++            std::env::split_paths(&paths).find_map(|directory| {
++                let candidate = directory.join(name).canonicalize().ok()?;
++                (!candidate.starts_with(repository)).then_some(candidate)
++            })
 +        })
 +    } else {
 +        None
 +    }
 +    .filter(|path| path.is_file())
 +    .ok_or("exec_program_unavailable")?;
-+    if !access.allows(name, &resolved) && !access.allows(name, path) {
++    let listed = access
++        .programs
++        .iter()
++        .any(|allowed| Path::new(allowed) == resolved || Path::new(allowed) == path);
++    if resolved.starts_with(repository) && !listed
++        || !access.allows(name, &resolved) && !access.allows(name, path)
++    {
 +        return Err(format!("os_access_denied: {name}"));
 +    }
 +    Ok(resolved)
@@ -93745,7 +93933,7 @@ index 000000000..c12a9d97e
 +            .map(|name| inherited_socket(name, &repository).ok_or("exec_socket_unavailable"))
 +            .collect::<Result<Vec<_>, _>>()?;
 +        let program = match unrestricted {
-+            Some(access) => unrestricted_program(access, &input.program)?,
++            Some(access) => unrestricted_program(access, &input.program, &repository)?,
 +            None => {
 +                resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?
 +            }
@@ -94562,10 +94750,10 @@ index 000000000..9628a2002
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..16c18656d
+index 000000000..5daca384e
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,247 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -94774,6 +94962,7 @@ index 000000000..16c18656d
 +pub use mods::access_receipt;
 +pub use mods::activation_failures;
 +pub use mods::authority_exposure;
++pub use mods::capability_phrase;
 +pub use mods::client_component_unmount;
 +pub use mods::component_detach;
 +pub use mods::component_events;
@@ -96450,10 +96639,10 @@ index 000000000..9d7328ac6
 +
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..31dbac59a
+index 000000000..de54508c2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6015 @@
+@@ -0,0 +1,6108 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -97018,6 +97207,63 @@ index 000000000..31dbac59a
 +    "history_write",
 +    "history_persist",
 +];
++
++/// The install-consent wording for a capability; an unknown name reads as itself.
++pub fn capability_phrase(capability: &str) -> &str {
++    match capability {
++        "context" => "add text to the agent's context",
++        "tools" => "give the agent new tools",
++        "commands" => "add slash commands",
++        "lifecycle" => "react to session and turn events",
++        "input" => "rewrite what you type before it is sent",
++        "interception" => "allow or block tool calls",
++        "compaction" => "decide how the conversation is compacted",
++        "middleware" => "inspect and change model requests",
++        "services" => "offer or use services from other mods",
++        "virtual_reads" => "serve virtual files",
++        "terminal" => "draw in the terminal",
++        "exec" => "run programs in this repository",
++        "fs.read" => "read files in this repository",
++        "fs.write" => "change files in this repository",
++        "network" => "use the network",
++        "unix_sockets" => "connect to local sockets",
++        "model" => "choose model routes",
++        "agents" => "start helper agents",
++        "store" => "keep its own saved data",
++        "sessions" => "read session history",
++        "sessions_tools" => "read tool arguments and outputs in session history",
++        "contracts" => "set task completion rules",
++        "builtins" => "run and hide built-in commands",
++        "threads" => "start and manage threads",
++        "config" => "read Codex settings",
++        "config.write" => "change Codex settings",
++        "inventory" => "list skills, plugins and commands",
++        "account" => "read account details",
++        "packages" => "install and manage mods",
++        "approvals" => "answer approval prompts",
++        "events" => "send and receive mod events",
++        "credentials" => "use stored account credentials",
++        "composer" => "read and write the message you are typing",
++        "pty" => "run interactive terminal programs",
++        "history" => "edit the conversation history",
++        "outputs" => "change tool output",
++        "os" => "run listed programs unsandboxed with your account's full access",
++        "approve" => "approve tool calls for you",
++        "approve.override" => "approve commands your own rules forbid",
++        "http" => "send web requests to the sites it lists",
++        "fs.external" => "read and change the folders it lists outside this repository",
++        "mcp" => "connect to the MCP servers it lists",
++        "policy" => "refuse other mods or limit what they can do",
++        "peers" => "message other Codex sessions",
++        "autonomous" => "queue and stop turns on its own",
++        "history_write" => "rewrite this session's transcript",
++        "history_persist" => "see and replace saved history text",
++        "request_policy" => {
++            "check every model request, and block all of them whenever it is not working"
++        }
++        other => other,
++    }
++}
 +
 +pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
 +    let granted = |name: &str| capabilities.iter().any(|c| c == name);
@@ -98741,17 +98987,8 @@ index 000000000..31dbac59a
 +
 +impl ModConfiguration {
 +    pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-+        let mut config: Self = serde_json::from_slice(bytes)
-+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
-+        if !config.node.is_file() {
-+            config.node = node_on_path().ok_or_else(|| {
-+                failure(format!(
-+                    "node_unavailable: {} is missing and no node is on PATH",
-+                    config.node.display()
-+                ))
-+            })?;
-+        }
-+        Ok(config)
++        serde_json::from_slice(bytes)
++            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
 +    }
 +}
 +
@@ -98838,6 +99075,8 @@ index 000000000..31dbac59a
 +    pub contributors: Vec<String>,
 +    #[serde(default)]
 +    pub component_owners: BTreeMap<String, String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub layout_owner: Option<String>,
 +    #[serde(default)]
 +    pub conflicts: Vec<ModViewConflict>,
 +    #[serde(default)]
@@ -99054,6 +99293,41 @@ index 000000000..31dbac59a
 +        std::fs::rename(&path, &moved).unwrap();
 +        std::os::unix::fs::symlink(&moved, &path).unwrap();
 +        assert!(host.refresh_authority().is_err());
++    }
++
++    #[test]
++    fn every_capability_has_a_consent_phrase() {
++        for capability in MOD_CAPABILITIES {
++            assert_ne!(capability_phrase(capability), *capability);
++        }
++    }
++
++    #[test]
++    fn store_root_and_session_records_are_private_to_the_user() {
++        use std::os::unix::fs::PermissionsExt;
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap().join("store");
++        ModStore::create(root.clone(), std::env::current_exe().unwrap()).unwrap();
++        let peers = crate::peers::Peers::open(&root, "alpha", Path::new("/repo")).unwrap();
++        peers.publish(&[]).unwrap();
++        crate::consents::grant(&root, "thread", "owner", "digest", "id").unwrap();
++        crate::turn_activity::TurnActivityLog::open(&root.join("turn-activity"), "thread")
++            .unwrap()
++            .append(&crate::turn_activity::ActivityRecord::Paused { at: "now".into() })
++            .unwrap();
++        for path in [
++            "",
++            "peers",
++            "peers/sessions",
++            "peers/sessions/alpha.lock",
++            "peers/sessions/alpha.json",
++            "consents",
++            "turn-activity",
++            "turn-activity/thread.jsonl",
++        ] {
++            let mode = std::fs::metadata(root.join(path)).unwrap().permissions().mode();
++            assert_eq!(mode & 0o077, 0, "{path}: {mode:o}");
++        }
 +    }
 +}
 +type Authority = (
@@ -99816,6 +100090,10 @@ index 000000000..31dbac59a
 +            .and_then(
 +                |config| match config.schema != 1 || !config.node.is_absolute() {
 +                    true => Err(failure("invalid_mod_configuration")),
++                    false if !config.node.is_file() => Err(failure(format!(
++                        "node_unavailable: {} is missing; run omd-mod set-node STORE NODE",
++                        config.node.display()
++                    ))),
 +                    false => Ok(config),
 +                },
 +            );
@@ -99833,15 +100111,18 @@ index 000000000..31dbac59a
 +                ModConfiguration {
 +                    schema: 1,
 +                    revision: 0,
-+                    node: Some(self.node.clone())
-+                        .filter(|node| node.is_file())
-+                        .or_else(node_on_path)
-+                        .unwrap_or_default(),
++                    node: self.node.clone(),
 +                    mods: Vec::new(),
 +                }
 +            }
 +            Err(error) => return Err(error),
 +        };
++        if let Err(error) =
++            store::verify_runner(&config.node, brokered.as_ref().map(|(_, grants)| grants))
++        {
++            self.fail_closed(error.to_string());
++            return Err(error);
++        }
 +        let ui_signature = digest(serde_json::to_vec(&(&config.node, &config.mods))?.as_slice());
 +        if self
 +            .ui_configuration
@@ -101883,6 +102164,7 @@ index 000000000..31dbac59a
 +        view.close_wraps();
 +        conflicts.truncate(32);
 +        ModTerminalView {
++            layout_owner: view.layout.as_ref().and(claims.remove("layout")),
 +            view,
 +            contributors,
 +            component_owners,
@@ -102471,10 +102753,10 @@ index 000000000..31dbac59a
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..d1dbf9dde
+index 000000000..1068b6b12
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1098 @@
+@@ -0,0 +1,1085 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -103465,13 +103747,7 @@ index 000000000..d1dbf9dde
 +}
 +
 +fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]) {
-+    let sensitive = key.is_some_and(|key| {
-+        let key = key.to_ascii_lowercase();
-+        ["secret", "token", "password", "credential", "api_key"]
-+            .iter()
-+            .any(|needle| key.contains(needle))
-+    });
-+    if sensitive && !value.is_boolean() {
++    if key.is_some_and(crate::resource_data::secret_name) && !value.is_boolean() {
 +        *value = Value::String("[REDACTED]".to_owned());
 +        return;
 +    }
@@ -103480,7 +103756,7 @@ index 000000000..d1dbf9dde
 +            for (path, replacement) in paths {
 +                *text = text.replace(path, replacement);
 +            }
-+            *text = redact_text(text);
++            *text = crate::resource_data::redact(text);
 +        }
 +        Value::Array(values) => {
 +            for value in values {
@@ -103494,30 +103770,6 @@ index 000000000..d1dbf9dde
 +        }
 +        _ => {}
 +    }
-+}
-+
-+fn redact_text(text: &str) -> String {
-+    let mut output = text.to_owned();
-+    for prefix in ["sk-", "ghp_", "github_pat_", "Bearer "] {
-+        let mut from = 0;
-+        while let Some(offset) = output[from..].find(prefix) {
-+            let start = from + offset;
-+            let tail = &output[start + prefix.len()..];
-+            let length = tail
-+                .find(|character: char| {
-+                    character.is_whitespace()
-+                        || matches!(character, '\'' | '"' | ',' | ']' | '}' | ')')
-+                })
-+                .unwrap_or(tail.len());
-+            if length == 0 {
-+                from = start + prefix.len();
-+                continue;
-+            }
-+            output.replace_range(start..start + prefix.len() + length, "[REDACTED]");
-+            from = start + "[REDACTED]".len();
-+        }
-+    }
-+    output
 +}
 +
 +#[cfg(test)]
@@ -103570,6 +103822,23 @@ index 000000000..d1dbf9dde
 +                .to_string()
 +                .contains("offline_mock_violation")
 +        );
++    }
++
++    #[test]
++    fn diagnostic_redaction_matches_the_shared_secret_rules() {
++        let mut bundle = json!({
++            "telemetry": {"last_error": "failed with gho_abc123\nkey AKIAABCDEFGHIJKLMNOP\n-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbody\n-----END RSA PRIVATE KEY-----\nat /store/x"},
++            "settings": {"apiKey": "k1", "privateKey": "k2", "authorization": "k3", "enabled": true},
++            "settings_keys": ["theme"],
++        });
++        redact_value(&mut bundle, None, &[("/store".into(), "$STORE".into())]);
++        let encoded = bundle.to_string();
++        for secret in ["gho_abc123", "AKIAABCDEFGHIJKLMNOP", "MIIEsecretbody", "k1", "k2", "k3"] {
++            assert!(!encoded.contains(secret), "{encoded}");
++        }
++        assert!(encoded.contains("at $STORE/x"), "{encoded}");
++        assert_eq!(bundle["settings"]["enabled"], true);
++        assert_eq!(bundle["settings_keys"], json!(["theme"]));
 +    }
 +
 +}
@@ -106478,10 +106747,10 @@ index 000000000..e25e0ed2f
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..ba4540441
+index 000000000..64b35784d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2896 @@
+@@ -0,0 +1,2898 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -107142,6 +107411,7 @@ index 000000000..ba4540441
 +        }
 +        let mut lock = self.read_package_lock()?;
 +        let mut config = self.configuration()?;
++        self.verified_node(&config.node)?;
 +        require_migration_handlers(&plan, &scope, &config.node)?;
 +        let mut selection_ids = config
 +            .mods
@@ -108604,6 +108874,7 @@ index 000000000..ba4540441
 +        )?)
 +        .map_err(failure)?;
 +        let node = self.configuration()?.node;
++        self.verified_node(&node)?;
 +        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
 +            "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
 +                "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
@@ -109380,10 +109651,10 @@ index 000000000..ba4540441
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 000000000..7a5748cd8
+index 000000000..299e24428
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,318 @@
 +use super::*;
 +
 +impl ModStore {
@@ -109518,6 +109789,7 @@ index 000000000..7a5748cd8
 +            selection.clone(),
 +            previous["value"].clone(),
 +        );
++        self.verified_node(&config.node)?;
 +        loaded.registrations = migration_registrations(&config.node, &loaded)?;
 +        let state = run_migration(&config.node, &loaded, from, &|| true)?;
 +        let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
@@ -110401,10 +110673,10 @@ index 000000000..262995594
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 000000000..fbedd7d4a
+index 000000000..eb75e4380
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,743 @@
+@@ -0,0 +1,744 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -110435,6 +110707,7 @@ index 000000000..fbedd7d4a
 +        return Err(failure("unsupported_platform: mods require macOS Seatbelt"));
 +    }
 +    let node = node.canonicalize()?;
++    super::store::check_runner(&node)?;
 +    let literal = serde_json::to_string(&node)?;
 +    let profile = format!(
 +        "(version 1)(deny default)(allow process-exec (literal {literal}))(allow process-info* (target self))(allow sysctl-read)(allow signal (target self))(allow file-read* (literal \"/\")(literal {literal})(subpath \"/System/Library\")(subpath \"/usr/lib\")(literal \"/dev/null\")(literal \"/dev/urandom\")(literal \"/dev/random\"))(allow file-write* (literal \"/dev/null\"))"
@@ -113371,10 +113644,10 @@ index 000000000..7779d6098
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..8f89803a9
+index 000000000..bf3b4cfc7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1388 @@
+@@ -0,0 +1,1494 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -113422,6 +113695,78 @@ index 000000000..8f89803a9
 +    crate::broker::canonical(&grant)
 +}
 +
++type RunnerDigests = HashMap<PathBuf, (FileStamp, String)>;
++
++static RUNNER_DIGESTS: LazyLock<Mutex<RunnerDigests>> = LazyLock::new(Default::default);
++static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> = LazyLock::new(Default::default);
++
++/// The runner binary's digest, rehashed only when its file stamp changes.
++fn runner_digest(node: &Path) -> Result<String> {
++    let stamp = file_stamp(&std::fs::metadata(node)?);
++    let mut digests = RUNNER_DIGESTS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if let Some((cached, digest)) = digests.get(node)
++        && *cached == stamp
++    {
++        return Ok(digest.clone());
++    }
++    let mut hasher = Sha256::new();
++    std::io::copy(&mut File::open(node)?, &mut hasher)?;
++    let digest = format!("{:x}", hasher.finalize());
++    digests.insert(node.to_path_buf(), (stamp, digest.clone()));
++    Ok(digest)
++}
++
++fn runner_record(node: &Path, sha256: &str) -> String {
++    crate::broker::canonical(&json!({"runner": {"path": node, "sha256": sha256}}))
++}
++
++/// The protected record that lets this exact `node` binary serve a store's mods.
++pub(super) fn runner_grant(node: &Path) -> Result<String> {
++    let node = node.canonicalize()?;
++    Ok(runner_record(&node, &runner_digest(&node)?))
++}
++
++/// With brokered `grants`, mods run only under a runner whose path and digest the broker holds.
++pub(super) fn verify_runner(node: &Path, grants: Option<&BTreeSet<String>>) -> Result<()> {
++    let Some(grants) = grants else {
++        return Ok(());
++    };
++    let unverified = || {
++        failure(format!(
++            "node_unverified: {} has no protected runner grant; run omd-mod set-node STORE NODE",
++            node.display()
++        ))
++    };
++    let canonical = node.canonicalize().map_err(|_| unverified())?;
++    let digest = runner_digest(&canonical)?;
++    if !grants.contains(&runner_record(&canonical, &digest)) {
++        return Err(unverified());
++    }
++    VERIFIED_RUNNERS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .insert(canonical, digest);
++    Ok(())
++}
++
++/// Refuses to start a verified runner path whose binary changed since its verification.
++pub(super) fn check_runner(node: &Path) -> Result<()> {
++    let verified = VERIFIED_RUNNERS
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .get(node)
++        .cloned();
++    match verified {
++        Some(digest) if digest != runner_digest(node)? => Err(failure(format!(
++            "node_changed: {} differs from its protected runner grant",
++            node.display()
++        ))),
++        _ => Ok(()),
++    }
++}
++
 +pub(super) fn package_provenance(package: &super::package_manager::ModLockedPackage) -> String {
 +    crate::broker::canonical(&json!({"package_source": {
 +        "id": package.id, "path": package.path, "sha256": package.integrity,
@@ -113443,6 +113788,28 @@ index 000000000..8f89803a9
 +            .then(|| source["source"].as_str().map(str::to_owned))
 +            .flatten()
 +    })
++}
++
++#[cfg(test)]
++mod runner_tests {
++    use super::*;
++
++    #[test]
++    fn brokered_runners_need_their_exact_protected_grant() {
++        let directory = tempfile::tempdir().unwrap();
++        let node = directory.path().canonicalize().unwrap().join("node");
++        std::fs::write(&node, "first").unwrap();
++        let refusal = |result: Result<()>| result.unwrap_err().to_string();
++        verify_runner(&node, None).unwrap();
++        let mut grants = BTreeSet::new();
++        assert!(refusal(verify_runner(&node, Some(&grants))).starts_with("node_unverified"));
++        grants.insert(runner_grant(&node).unwrap());
++        verify_runner(&node, Some(&grants)).unwrap();
++        check_runner(&node).unwrap();
++        std::fs::write(&node, "replaced binary").unwrap();
++        assert!(refusal(check_runner(&node)).starts_with("node_changed"));
++        assert!(refusal(verify_runner(&node, Some(&grants))).starts_with("node_unverified"));
++    }
 +}
 +
 +#[cfg(test)]
@@ -113804,7 +114171,7 @@ index 000000000..8f89803a9
 +
 +impl ModStore {
 +    pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
-+        std::fs::create_dir(&root)?;
++        std::fs::DirBuilder::new().mode(0o700).create(&root)?;
 +        let store = Self::open(root.canonicalize()?)?;
 +        let config = ModConfiguration {
 +            schema: 1,
@@ -113812,10 +114179,17 @@ index 000000000..8f89803a9
 +            node: node.canonicalize()?,
 +            mods: Vec::new(),
 +        };
-+        store.write("mods.json", &serde_json::to_value(config)?)?;
++        let approved = BTreeSet::from([runner_grant(&config.node)?]);
++        store.write_granting("mods.json", &serde_json::to_value(config)?, &approved)?;
 +        Ok(store)
 +    }
 +
++    /// The configured `node`, refused when the broker holds no runner grant for it.
++    pub(super) fn verified_node(&self, node: &Path) -> Result<()> {
++        verify_runner(node, brokered_grants(&self.root)?.as_ref().map(|(_, grants)| grants))
++    }
++
++    /// Points the store at another `node` binary, authorizing it as the runner when the broker is deployed.
 +    pub fn set_node(&self, node: &Path) -> Result<()> {
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
@@ -113824,7 +114198,8 @@ index 000000000..8f89803a9
 +            return Err(failure("node_unavailable"));
 +        }
 +        let mut config = self.configuration()?;
-+        if config.node == node {
++        // The same path still needs a fresh grant after an in-place Node upgrade.
++        if config.node == node && self.verified_node(&node).is_ok() {
 +            return Ok(());
 +        }
 +        config.node = node;
@@ -113832,7 +114207,8 @@ index 000000000..8f89803a9
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.write("mods.json", &serde_json::to_value(config)?)
++        let approved = BTreeSet::from([runner_grant(&config.node)?]);
++        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
 +    }
 +
 +    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.
@@ -113911,6 +114287,9 @@ index 000000000..8f89803a9
 +        let Some((mut generation, current)) = brokered else {
 +            return self.write_staged(name, &bytes, || Ok(()));
 +        };
++        let runner = value["node"]
++            .as_str()
++            .and_then(|node| runner_grant(Path::new(node)).ok());
 +        let selected = value["mods"]
 +            .as_array()
 +            .into_iter()
@@ -113918,7 +114297,7 @@ index 000000000..8f89803a9
 +            .map(grant)
 +            .collect::<BTreeSet<_>>();
 +        let selected_record = |record: &String| {
-+            if selected.contains(record) {
++            if selected.contains(record) || runner.as_ref() == Some(record) {
 +                return true;
 +            }
 +            let Ok(record) = serde_json::from_str::<Value>(record) else {
@@ -114488,7 +114867,7 @@ index 000000000..8f89803a9
 +        if snapshot != current {
 +            return Err(failure("broker_import_configuration_changed"));
 +        }
-+        let mut approved = BTreeSet::new();
++        let mut approved = BTreeSet::from([runner_grant(&config.node)?]);
 +        let mut skipped = Vec::new();
 +        for selection in &config.mods {
 +            let eligible = (|| {
@@ -114521,7 +114900,7 @@ index 000000000..8f89803a9
 +            }
 +        }
 +        self.write_granting("mods.json", &current, &approved)?;
-+        Ok(json!({"imported": approved.len(), "skipped": skipped}))
++        Ok(json!({"imported": approved.len() - 1, "skipped": skipped}))
 +    }
 +
 +    pub fn revoke(&self, target: &str) -> Result<()> {
@@ -114765,10 +115144,10 @@ index 000000000..8f89803a9
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..60904ccf8
+index 000000000..bcdb1932b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2190 @@
+@@ -0,0 +1,2192 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -115865,6 +116244,8 @@ index 000000000..60904ccf8
 +    pub conflicts: Vec<ModViewConflict>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub component_owners: BTreeMap<String, String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub layout_owner: Option<String>,
 +    #[serde(default)]
 +    pub input: Value,
 +    #[serde(default)]
@@ -118095,10 +118476,10 @@ index 000000000..8bceb657d
 +
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..42eb1ca3d
+index 000000000..ee873ae8a
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,471 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
@@ -118107,6 +118488,9 @@ index 000000000..42eb1ca3d
 +use std::collections::BTreeMap;
 +use std::fs;
 +use std::io;
++use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
++use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::sync::Mutex;
@@ -118202,7 +118586,7 @@ index 000000000..42eb1ca3d
 +
 +fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
 +    let parent = path.parent().ok_or_else(|| failure("peer_path_invalid"))?;
-+    fs::create_dir_all(parent)?;
++    private_directory(parent)?;
 +    let temporary = parent.join(format!(
 +        ".{}.{}.tmp",
 +        std::process::id(),
@@ -118210,8 +118594,21 @@ index 000000000..42eb1ca3d
 +            .and_then(|name| name.to_str())
 +            .unwrap_or("entry")
 +    ));
-+    fs::write(&temporary, serde_json::to_vec(value)?)?;
++    fs::OpenOptions::new()
++        .write(true)
++        .create(true)
++        .truncate(true)
++        .mode(0o600)
++        .open(&temporary)?
++        .write_all(&serde_json::to_vec(value)?)?;
 +    fs::rename(&temporary, path)
++}
++
++fn private_directory(path: &Path) -> io::Result<()> {
++    fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(path)
 +}
 +
 +/// Opens each complete `.json` entry before removing it; a failure keeps it queued and ends the pass with what was taken.
@@ -118278,11 +118675,12 @@ index 000000000..42eb1ca3d
 +            return Err(failure("peer_session_invalid"));
 +        }
 +        let root = store.join("peers");
-+        fs::create_dir_all(root.join("sessions"))?;
++        private_directory(&root.join("sessions"))?;
 +        let lock = fs::OpenOptions::new()
 +            .create(true)
 +            .truncate(false)
 +            .write(true)
++            .mode(0o600)
 +            .open(root.join("sessions").join(format!("{session}.lock")))?;
 +        lock.try_lock()
 +            .map_err(|_| failure("peer_session_already_registered"))?;
@@ -119587,10 +119985,10 @@ index 000000000..be39dfbf1
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..5a6423e9d
+index 000000000..22b27ab56
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,372 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -119695,24 +120093,47 @@ index 000000000..5a6423e9d
 +        let value = line[offset + 1..]
 +            .trim_start()
 +            .trim_start_matches(['"', '\'', '=']);
-+        let segments = before[start..]
-+            .split(['_', '-', '.'])
-+            .map(str::to_ascii_lowercase)
-+            .collect::<Vec<_>>();
-+        !value.is_empty()
-+            && segments.iter().enumerate().any(|(index, segment)| {
-+                ["token", "secret", "password", "passwd", "apikey"]
-+                    .iter()
-+                    .any(|word| segment.ends_with(word))
-+                    || segment == "pwd"
-+                    || segment.starts_with("credential")
-+                    || (segment == "key"
-+                        && index > 0
-+                        && [
-+                            "api", "access", "private", "secret", "signing", "client", "master",
-+                        ]
-+                        .contains(&segments[index - 1].as_str()))
-+            })
++        !value.is_empty() && secret_name(&before[start..])
++    })
++}
++
++/// Whether a `_`, `-`, `.` or camelCase segment of a field or variable name reads as a secret.
++pub fn secret_name(name: &str) -> bool {
++    let mut segments = vec![String::new()];
++    let mut previous_lower = false;
++    for character in name.chars() {
++        if matches!(character, '_' | '-' | '.')
++            || (previous_lower && character.is_ascii_uppercase())
++        {
++            segments.push(String::new());
++        }
++        previous_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
++        if !matches!(character, '_' | '-' | '.') {
++            segments
++                .last_mut()
++                .expect("segments start non-empty")
++                .push(character.to_ascii_lowercase());
++        }
++    }
++    segments.iter().enumerate().any(|(index, segment)| {
++        [
++            "token",
++            "secret",
++            "password",
++            "passwd",
++            "apikey",
++            "authorization",
++        ]
++        .iter()
++        .any(|word| segment.ends_with(word))
++            || segment == "pwd"
++            || segment.starts_with("credential")
++            || (segment == "key"
++                && index > 0
++                && [
++                    "api", "access", "private", "secret", "signing", "client", "master",
++                ]
++                .contains(&segments[index - 1].as_str()))
 +    })
 +}
 +
@@ -121386,15 +121807,16 @@ index 000000000..98681031f
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
 new file mode 100644
-index 000000000..715b2c109
+index 000000000..83ea284fd
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity.rs
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,369 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
 +use std::fs::{self, OpenOptions};
 +use std::io::{self, Read, Seek, SeekFrom, Write};
++use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 +use std::path::{Path, PathBuf};
 +
 +pub const ACTIVITY_READ_BYTES: u64 = 8 << 20;
@@ -121490,13 +121912,17 @@ index 000000000..715b2c109
 +
 +    pub fn append(&self, record: &ActivityRecord) -> io::Result<()> {
 +        if let Some(parent) = self.path.parent() {
-+            fs::create_dir_all(parent)?;
++            fs::DirBuilder::new()
++                .recursive(true)
++                .mode(0o700)
++                .create(parent)?;
 +        }
 +        let mut line = serde_json::to_vec(record).map_err(io::Error::other)?;
 +        line.push(b'\n');
 +        OpenOptions::new()
 +            .create(true)
 +            .append(true)
++            .mode(0o600)
 +            .open(&self.path)?
 +            .write_all(&line)
 +    }
@@ -124018,10 +124444,10 @@ index 000000000..19fc4ef97
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..9fb76839b
+index 000000000..98be39bf0
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2058 @@
+@@ -0,0 +1,2101 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -125820,6 +126246,49 @@ index 000000000..9fb76839b
 +}
 +
 +#[test]
++fn unrestricted_programs_never_resolve_inside_the_repository() {
++    use std::os::unix::fs::PermissionsExt;
++    let _exec = exec_slot();
++    let (temp, repository, _data, _authority) = setup();
++    let outside = temp.path().canonicalize().unwrap().join("outside");
++    let planted = repository.join("bin/omd-fixture-tool");
++    let system = outside.join("omd-fixture-tool");
++    for program in [&planted, &system] {
++        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
++        std::fs::write(program, "#!/bin/sh\n").unwrap();
++        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
++    }
++    let path = std::env::var_os("PATH").unwrap();
++    let directories = [repository.join("bin"), outside.clone()];
++    // SAFETY: the fixture name is unique to this test, so other tests resolve the same programs.
++    unsafe {
++        std::env::set_var(
++            "PATH",
++            std::env::join_paths(directories.into_iter().chain(std::env::split_paths(&path)))
++                .unwrap(),
++        );
++    }
++    let access = |programs: &[&str]| codex_omd::ModOsAccess {
++        programs: strings(programs),
++        network: false,
++    };
++    let resolve = |programs: &[&str], name: &str| {
++        codex_omd::host::unrestricted_program(&access(programs), name, &repository)
++    };
++    let bare = resolve(&["omd-fixture-tool"], "omd-fixture-tool");
++    let wildcard = resolve(&["*"], planted.to_str().unwrap());
++    let listed = resolve(&[planted.to_str().unwrap()], planted.to_str().unwrap());
++    // SAFETY: as above.
++    unsafe { std::env::set_var("PATH", path) };
++    assert_eq!(bare.unwrap(), system);
++    assert_eq!(
++        wildcard.unwrap_err(),
++        format!("os_access_denied: {}", planted.display())
++    );
++    assert_eq!(listed.unwrap(), planted);
++}
++
++#[test]
 +fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
 +    let _exec = exec_slot();
 +    let (temp, repository, data, authority) = setup();
@@ -127577,10 +128046,10 @@ index 000000000..8ef5a1e8f
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..3276b01a0
+index 000000000..007995135
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4760 @@
+@@ -0,0 +1,4774 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -127972,6 +128441,20 @@ index 000000000..3276b01a0
 +            .to_string()
 +            .contains("state_limit")
 +    );
++}
++
++#[test]
++fn a_missing_runner_fails_closed_without_a_path_fallback() {
++    let (temp, store, _) = fixture(COUNTER, &["store"]);
++    let root = temp.path().canonicalize().unwrap();
++    let path = root.join("store/mods.json");
++    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++    config["node"] = json!(root.join("upgraded/node"));
++    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
++    let error = ModHost::open(root.join("store")).err().unwrap().to_string();
++    assert!(error.starts_with("node_unavailable"), "{error}");
++    store.set_node(&node()).unwrap();
++    host(&temp);
 +}
 +
 +#[test]
@@ -138731,10 +139214,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..002e9ac7a
+index 000000000..643866332
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2118 @@
+@@ -0,0 +1,2063 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -139062,61 +139545,6 @@ index 000000000..002e9ac7a
 +
 +type Confirmation = (Option<String>, String, Option<Confirmed>);
 +
-+fn capability_phrase(capability: &str) -> &str {
-+    match capability {
-+        "context" => "add text to the agent's context",
-+        "tools" => "give the agent new tools",
-+        "commands" => "add slash commands",
-+        "lifecycle" => "react to session and turn events",
-+        "input" => "rewrite what you type before it is sent",
-+        "interception" => "allow or block tool calls",
-+        "compaction" => "decide how the conversation is compacted",
-+        "middleware" => "inspect and change model requests",
-+        "services" => "offer or use services from other mods",
-+        "virtual_reads" => "serve virtual files",
-+        "terminal" => "draw in the terminal",
-+        "exec" => "run programs in this repository",
-+        "fs.read" => "read files in this repository",
-+        "fs.write" => "change files in this repository",
-+        "network" => "use the network",
-+        "unix_sockets" => "connect to local sockets",
-+        "model" => "choose model routes",
-+        "agents" => "start helper agents",
-+        "store" => "keep its own saved data",
-+        "sessions" => "read session history",
-+        "contracts" => "set task completion rules",
-+        "builtins" => "run and hide built-in commands",
-+        "threads" => "start and manage threads",
-+        "config" => "read Codex settings",
-+        "config.write" => "change Codex settings",
-+        "inventory" => "list skills, plugins and commands",
-+        "account" => "read account details",
-+        "packages" => "install and manage mods",
-+        "approvals" => "answer approval prompts",
-+        "events" => "send and receive mod events",
-+        "credentials" => "use stored account credentials",
-+        "composer" => "read and write the message you are typing",
-+        "pty" => "run interactive terminal programs",
-+        "history" => "edit the conversation history",
-+        "outputs" => "change tool output",
-+        "os" => "run listed programs unsandboxed with your account's full access",
-+        "approve" => "approve tool calls for you",
-+        "approve.override" => "approve commands your own rules forbid",
-+        "http" => "send web requests to the sites it lists",
-+        "fs.external" => "read and change the folders it lists outside this repository",
-+        "mcp" => "connect to the MCP servers it lists",
-+        "policy" => "refuse other mods or limit what they can do",
-+        "peers" => "message other Codex sessions",
-+        "autonomous" => "queue and stop turns on its own",
-+        "history_write" => "rewrite this session's transcript",
-+        "history_persist" => "see and replace saved history text",
-+        "request_policy" => {
-+            "check every model request, and block all of them whenever it is not working"
-+        }
-+        other => other,
-+    }
-+}
-+
 +fn confirmation(call: &SurfaceCall) -> Result<Option<Confirmation>, String> {
 +    let invoked = call.arguments["command"]
 +        .as_str()
@@ -139152,7 +139580,7 @@ index 000000000..002e9ac7a
 +                .into_iter()
 +                .flatten()
 +                .filter_map(Value::as_str)
-+                .map(|capability| format!("• {}", capability_phrase(capability)))
++                .map(|capability| format!("• {}", codex_omd::capability_phrase(capability)))
 +                .collect::<Vec<_>>();
 +            let added = preview.public["grants_added"]
 +                .as_array()
@@ -139660,7 +140088,7 @@ index 000000000..002e9ac7a
 +                .canonicalize()
 +                .map_err(|_| "pty_cwd_invalid")?;
 +            let argv = crate::mod_pty::argv(arguments)?;
-+            let program = codex_omd::host::unrestricted_program(&access, &argv[0])?;
++            let program = codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
 +            if let Some(expected) = arguments["sha256"].as_str()
 +                && codex_omd::host::program_hash(&program)? != expected
 +            {
@@ -143918,7 +144346,7 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..5e535abe6
+index 000000000..47708b591
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,686 @@
@@ -144488,7 +144916,7 @@ index 000000000..5e535abe6
 +            Ok(matches) => json!({"component": id, "kind": "find", "matches": matches}),
 +            Err(error) => json!({"component": id, "kind": "find", "matches": 0, "error": error}),
 +        };
-+        crate::mod_surface::terminal_event("component_event", payload);
++        crate::mod_surface::component_event(payload);
 +    }
 +    let height = height.map_or(DEFAULT_HEIGHT, usize::from);
 +    document.height = height;
@@ -144588,7 +145016,7 @@ index 000000000..5e535abe6
 +        }
 +    };
 +    drop(documents);
-+    crate::mod_surface::terminal_event("component_event", payload);
++    crate::mod_surface::component_event(payload);
 +    Some((id.to_owned(), argument))
 +}
 +
@@ -145101,10 +145529,10 @@ index 000000000..d11794ca3
 +
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..d7c09ea69
+index 000000000..bcd52799f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,319 @@
 +use crate::omd::LockExt;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
@@ -145169,6 +145597,7 @@ index 000000000..d7c09ea69
 +#[derive(Default)]
 +struct State {
 +    layout: Option<ModLayout>,
++    owner: Option<String>,
 +    ratios: BTreeMap<String, Vec<u16>>,
 +    active: BTreeMap<String, usize>,
 +    drag: Option<(String, usize)>,
@@ -145283,7 +145712,7 @@ index 000000000..d7c09ea69
 +    }
 +}
 +
-+pub(crate) fn place(layout: &ModLayout, area: Rect) -> Placement {
++pub(crate) fn place(layout: &ModLayout, owner: Option<&str>, area: Rect) -> Placement {
 +    with(|state| {
 +        if state.layout.as_ref() != Some(layout) {
 +            *state = State {
@@ -145291,6 +145720,7 @@ index 000000000..d7c09ea69
 +                ..State::default()
 +            };
 +        }
++        state.owner = owner.map(str::to_owned);
 +        let mut placement = Placement::default();
 +        walk(layout, area, "r", state, &mut placement);
 +        state.last = placement.clone();
@@ -145343,10 +145773,12 @@ index 000000000..d7c09ea69
 +                .then(|| tab_at(bar, event.column).map(|index| (bar.path.clone(), index)))
 +                .flatten()
 +            }) {
-+                crate::mod_surface::terminal_event(
-+                    "component_event",
-+                    serde_json::json!({"component": path, "kind": "select", "index": index}),
-+                );
++                if let Some(owner) = &state.owner {
++                    crate::mod_surface::layout_event(
++                        owner,
++                        serde_json::json!({"component": path, "kind": "select", "index": index}),
++                    );
++                }
 +                state.active.insert(path, index);
 +                return true;
 +            }
@@ -145404,10 +145836,12 @@ index 000000000..d7c09ea69
 +                    .iter()
 +                    .map(|size| (u32::from(*size) * 100 / total).clamp(1, 100))
 +                    .collect::<Vec<_>>();
-+                crate::mod_surface::terminal_event(
-+                    "component_event",
-+                    serde_json::json!({"component": path, "kind": "resize", "ratio": ratio}),
-+                );
++                if let Some(owner) = &state.owner {
++                    crate::mod_surface::layout_event(
++                        owner,
++                        serde_json::json!({"component": path, "kind": "resize", "ratio": ratio}),
++                    );
++                }
 +            }
 +            true
 +        }
@@ -145420,7 +145854,7 @@ index 000000000..d7c09ea69
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 000000000..ed8c09bf3
+index 000000000..63e71803f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
 @@ -0,0 +1,116 @@
@@ -145443,7 +145877,7 @@ index 000000000..ed8c09bf3
 +             "children": [{"content": "transcript"}, {"content": "composer"}]}
 +        ]
 +    }));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(
 +        placement.area("site:files/tree"),
 +        Some(Rect::new(0, 1, 25, 39))
@@ -145467,7 +145901,7 @@ index 000000000..ed8c09bf3
 +        9,
 +        0
 +    )));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(
 +        placement.area("site:notes/pad"),
 +        Some(Rect::new(0, 1, 25, 39))
@@ -145488,7 +145922,7 @@ index 000000000..ed8c09bf3
 +        40,
 +        10
 +    )));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(placement.area("transcript").map(|area| area.x), Some(40));
 +    assert!(!pointer(click(
 +        MouseEventKind::Down(MouseButton::Left),
@@ -145504,7 +145938,7 @@ index 000000000..ed8c09bf3
 +        serde_json::json!({"split": "horizontal", "gap": 2, "children": [
 +        {"content": "site:files/tree", "style": {"border": "thick"}}, {"content": "transcript"}]}),
 +    );
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(
 +        placement.regions[0],
 +        Region {
@@ -145517,9 +145951,9 @@ index 000000000..ed8c09bf3
 +        }
 +    );
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(22, 0, 20, 10)));
-+    let narrow = place(&layout, Rect::new(0, 0, 7, 10));
++    let narrow = place(&layout, None, Rect::new(0, 0, 7, 10));
 +    assert_eq!(narrow.area("transcript"), Some(Rect::new(4, 0, 3, 10)));
-+    place(&layout, Rect::new(0, 0, 42, 10));
++    place(&layout, None, Rect::new(0, 0, 42, 10));
 +    let at = |kind, column| MouseEvent {
 +        kind,
 +        column,
@@ -145529,7 +145963,7 @@ index 000000000..ed8c09bf3
 +    assert!(pointer(at(MouseEventKind::Down(MouseButton::Left), 21)));
 +    assert!(pointer(at(MouseEventKind::Drag(MouseButton::Left), 30)));
 +    assert!(pointer(at(MouseEventKind::Up(MouseButton::Left), 30)));
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(
 +        placement.area("site:files/tree"),
 +        Some(Rect::new(0, 0, 30, 10))
@@ -145537,7 +145971,7 @@ index 000000000..ed8c09bf3
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +    hide();
 +    assert!(!pointer(at(MouseEventKind::Down(MouseButton::Left), 31)));
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
@@ -148392,10 +148826,10 @@ index 000000000..d64019e63
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..eee60db00
+index 000000000..690e9852a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1564 @@
+@@ -0,0 +1,1566 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -148627,6 +149061,7 @@ index 000000000..eee60db00
 +            contributors: terminal.contributors,
 +            conflicts: terminal.conflicts,
 +            component_owners: terminal.component_owners,
++            layout_owner: terminal.layout_owner,
 +            diagnostics: terminal.diagnostics,
 +            input,
 +            ..ModViewSnapshot::default()
@@ -149085,6 +149520,7 @@ index 000000000..eee60db00
 +    snapshot.conflicts = terminal.conflicts;
 +    snapshot.contributors = terminal.contributors;
 +    snapshot.component_owners = terminal.component_owners;
++    snapshot.layout_owner = terminal.layout_owner;
 +    for diagnostic in terminal.diagnostics {
 +        if !snapshot.diagnostics.contains(&diagnostic) {
 +            snapshot.diagnostics.push(diagnostic);
@@ -150591,10 +151027,10 @@ index 000000000..4a1ca43cd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..cdf77f1bd
+index 000000000..474adaed6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,1125 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -151254,11 +151690,22 @@ index 000000000..cdf77f1bd
 +    true
 +}
 +
++/// Delivers a `component_event` to the component's owner only.
 +pub(crate) fn component_event(payload: Value) {
-+    static QUEUE: std::sync::OnceLock<EventQueue<Value>> = std::sync::OnceLock::new();
++    owned_component_event(None, payload);
++}
++
++/// Layout tab and resize events go to the mod whose view claimed the layout.
++pub(crate) fn layout_event(owner: &str, payload: Value) {
++    owned_component_event(Some(owner.to_owned()), payload);
++}
++
++fn owned_component_event(owner: Option<String>, payload: Value) {
++    static QUEUE: std::sync::OnceLock<EventQueue<(Option<String>, Value)>> =
++        std::sync::OnceLock::new();
 +    if registered("component_event") || codex_omd::process_raster::any() {
 +        let queue = QUEUE.get_or_init(|| {
-+            EventQueue::spawn(|payload: Value, dropped| {
++            EventQueue::spawn(|(owner, payload): (Option<String>, Value), dropped| {
 +                let mut payload = if payload["kind"] == "motion" {
 +                    let Some(latest) = payload["component"]
 +                        .as_str()
@@ -151273,10 +151720,11 @@ index 000000000..cdf77f1bd
 +                if let Some(pointer) = payload["pointer"].as_object_mut() {
 +                    pointer.remove("fraction");
 +                }
-+                if let Some(owner) = payload["component"]
-+                    .as_str()
-+                    .and_then(crate::mod_ui::component_owner)
-+                {
++                if let Some(owner) = owner.or_else(|| {
++                    payload["component"]
++                        .as_str()
++                        .and_then(crate::mod_ui::component_owner)
++                }) {
 +                    crate::mod_runtime::invoke_event(
 +                        &owner,
 +                        "component_event",
@@ -151286,13 +151734,13 @@ index 000000000..cdf77f1bd
 +            })
 +        });
 +        if let Some(pending) = close_motion(&payload) {
-+            queue.push(pending);
++            queue.push((None, pending));
 +        }
 +        let marker = (payload["kind"] == "motion")
 +            .then(|| payload["component"].as_str().map(str::to_owned))
 +            .flatten();
 +        // A dropped marker releases its pending motion, so the next move queues a new one.
-+        if !queue.push(payload)
++        if !queue.push((owner, payload))
 +            && let Some(component) = marker
 +        {
 +            motion().remove(&component);
@@ -151710,10 +152158,10 @@ index 000000000..cdf77f1bd
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..98b5a8250
+index 000000000..9da1a5c19
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,959 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -152588,9 +153036,94 @@ index 000000000..98b5a8250
 +        .collect();
 +    assert_eq!(listed, served, "update mods/conformance/tui-surface.json");
 +}
++
++#[test]
++#[serial_test::serial]
++fn document_and_layout_events_reach_only_their_owner() {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(
++        data.clone(),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap();
++    for id in ["owner", "other"] {
++        let package = root.join(id);
++        std::fs::create_dir(&package).unwrap();
++        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": id, "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["terminal", "store"]})).unwrap()).unwrap();
++        std::fs::write(
++            package.join("index.ts"),
++            "export default api => api.on('component_event', e => { api.state.set([...(api.state.get() ?? []), `${e.kind}:${e.component}`]); });",
++        )
++        .unwrap();
++        let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++        store
++            .trust(
++                package.clone(),
++                inspected["sha256"].as_str().unwrap(),
++                vec!["terminal".into(), "store".into()],
++                "user",
++            )
++            .unwrap();
++        store.enable(&package, true).unwrap();
++    }
++    std::fs::write(
++        data.join("mod-status.json"),
++        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = crate::mod_runtime::test_fresh_host();
++    with(|state| state.checked = None);
++
++    let snapshot = codex_omd::ModViewSnapshot {
++        view: codex_omd::ModView::parse(json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
++            {"type": "document", "id": "doc", "label": "Doc", "lines": [[{"text": "line"}]]}
++        ]}}}))
++        .unwrap(),
++        component_owners: [("doc".to_owned(), "owner".to_owned())].into(),
++        ..Default::default()
++    };
++    let area = ratatui::layout::Rect::new(0, 0, 100, 24);
++    crate::mod_ui::render(area, area, &mut ratatui::buffer::Buffer::empty(area), &snapshot);
++    assert!(
++        crate::mod_components::handle("doc", crate::mod_document::DocumentKey::Activate).is_some()
++    );
++    let layout = serde_json::from_value(json!({"tabs": [
++        {"title": "A", "node": {"content": "transcript"}},
++        {"title": "B", "node": {"content": "composer"}}
++    ]}))
++    .unwrap();
++    crate::mod_layout::place(&layout, Some("owner"), area);
++    assert!(crate::mod_layout::pointer(crossterm::event::MouseEvent {
++        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
++        column: 4,
++        row: 0,
++        modifiers: crossterm::event::KeyModifiers::NONE,
++    }));
++
++    let state = |id: &str| {
++        crate::mod_runtime::shared_host()
++            .unwrap()
++            .lock()
++            .unwrap()
++            .state(id)
++            .cloned()
++            .unwrap_or_default()
++    };
++    let deadline = Instant::now() + Duration::from_secs(20);
++    while state("owner").as_array().map_or(0, Vec::len) < 2 && Instant::now() < deadline {
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert_eq!(state("owner"), json!(["activate:doc", "select:r"]));
++    assert_eq!(state("other"), Value::Null);
++    crate::mod_layout::hide();
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..769389f09
+index 000000000..723c29865
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
 @@ -0,0 +1,4644 @@
@@ -155708,7 +156241,7 @@ index 000000000..769389f09
 +        crate::mod_layout::hide();
 +        return None;
 +    };
-+    let placement = crate::mod_layout::place(layout, screen);
++    let placement = crate::mod_layout::place(layout, snapshot.layout_owner.as_deref(), screen);
 +    placement
 +        .chat()
 +        .filter(|chat| chat.width >= 20 && chat.height >= 6)

@@ -875,7 +875,7 @@ impl ManagedProcesses {
                     || !matches!(input.stdin.as_deref(), None | Some("null"))
                     || match unrestricted {
                         Some(access) => {
-                            codex_omd::host::unrestricted_program(access, &input.name)?
+                            codex_omd::host::unrestricted_program(access, &input.name, repository)?
                                 != input.path
                         }
                         None => program(&input.name, repository).as_ref() != Some(&input.path),
@@ -1965,7 +1965,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             os_access: Some(&access),
             blit: Some(&sink),
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let sha256 = program_sha256(&sh).unwrap();
         let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
         let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
@@ -2086,7 +2086,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             os_access: Some(&access),
             blit: None,
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
         let pidfile = repository.join("child.pid");
         let start = |owner: ProcessOwner<'_>, session: &str| {
@@ -2311,7 +2311,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             programs: vec!["sh".into()],
             network: false,
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let owner = ProcessOwner {
             thread: None,
             id: "fixture",

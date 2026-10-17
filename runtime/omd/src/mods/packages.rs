@@ -132,6 +132,7 @@ impl ModStore {
             selection.clone(),
             previous["value"].clone(),
         );
+        self.verified_node(&config.node)?;
         loaded.registrations = migration_registrations(&config.node, &loaded)?;
         let state = run_migration(&config.node, &loaded, from, &|| true)?;
         let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));

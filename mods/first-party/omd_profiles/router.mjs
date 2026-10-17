@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -382,8 +382,10 @@ export function prepare(body, profile, last, foreign = new Map()) {
 
 export const estimate = input => Math.ceil(JSON.stringify(input ?? [], (key, value) => typeof value === 'string' && value.startsWith('data:image/') ? 'x'.repeat(6_000) : value).length / 4);
 
+// Concurrent sessions share the store's fixed port: during the host's 3 s readiness window a later transport hands the owner its readiness nonce sealed with the shared local token, so only a token holder can read it, and takes the port once the owner has drained and exited. A holder that never serves the nonce fails the start.
 async function claim(server, port, token, ready) {
   const handoff = Date.now() + 3_000;
+  let handedOff = false;
   for (;;) {
     try {
       await new Promise((resolve, reject) => {
@@ -394,10 +396,29 @@ async function claim(server, port, token, ready) {
     } catch (error) {
       if (error.code !== 'EADDRINUSE') throw error;
     }
-    if (Date.now() < handoff) await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
-      headers: { authorization: `Bearer ${token}` }, body: ready }).catch(() => {});
+    if (Date.now() < handoff) {
+      const signal = AbortSignal.timeout(500);
+      await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', body: seal(token, ready), signal }).catch(() => {});
+      handedOff ||= await fetch(`http://127.0.0.1:${port}/_omd/ready`, { signal }).then(reply => reply.text(), () => '') === `OMD_READY:${ready}`;
+    } else if (!handedOff) throw new Error('provider_port_in_use');
     await new Promise(resolve => setTimeout(resolve, 500));
   }
+}
+
+const sealKey = token => createHash('sha256').update(`omd-handoff\0${token}`).digest();
+
+function seal(token, text) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', sealKey(token), iv);
+  const data = Buffer.concat([cipher.update(text), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
+}
+
+function unseal(token, text) {
+  const bytes = Buffer.from(text, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', sealKey(token), bytes.subarray(0, 12));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
 }
 
 async function serve(routePath) {
@@ -414,8 +435,7 @@ async function serve(routePath) {
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/_omd/ready') return void response.writeHead(200).end(`OMD_READY:${nonce}`);
     if (request.method === 'POST' && request.url === '/_omd/nonce') {
-      if (request.headers.authorization !== `Bearer ${token}`) return void response.writeHead(401).end();
-      nonce = String(await bodyOf(request, 256));
+      try { nonce = unseal(token, String(await bodyOf(request, 256))); } catch { return void response.writeHead(401).end(); }
       return void response.writeHead(204).end();
     }
     if (request.method !== 'POST' || request.url !== '/v1/responses' || request.headers.origin) return void response.writeHead(404).end();

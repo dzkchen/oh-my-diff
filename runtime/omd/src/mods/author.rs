@@ -988,13 +988,7 @@ fn terminal_component_action(view: &ModView, id: &str, value: Option<&str>) -> R
 }
 
 fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]) {
-    let sensitive = key.is_some_and(|key| {
-        let key = key.to_ascii_lowercase();
-        ["secret", "token", "password", "credential", "api_key"]
-            .iter()
-            .any(|needle| key.contains(needle))
-    });
-    if sensitive && !value.is_boolean() {
+    if key.is_some_and(crate::resource_data::secret_name) && !value.is_boolean() {
         *value = Value::String("[REDACTED]".to_owned());
         return;
     }
@@ -1003,7 +997,7 @@ fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]
             for (path, replacement) in paths {
                 *text = text.replace(path, replacement);
             }
-            *text = redact_text(text);
+            *text = crate::resource_data::redact(text);
         }
         Value::Array(values) => {
             for value in values {
@@ -1017,30 +1011,6 @@ fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]
         }
         _ => {}
     }
-}
-
-fn redact_text(text: &str) -> String {
-    let mut output = text.to_owned();
-    for prefix in ["sk-", "ghp_", "github_pat_", "Bearer "] {
-        let mut from = 0;
-        while let Some(offset) = output[from..].find(prefix) {
-            let start = from + offset;
-            let tail = &output[start + prefix.len()..];
-            let length = tail
-                .find(|character: char| {
-                    character.is_whitespace()
-                        || matches!(character, '\'' | '"' | ',' | ']' | '}' | ')')
-                })
-                .unwrap_or(tail.len());
-            if length == 0 {
-                from = start + prefix.len();
-                continue;
-            }
-            output.replace_range(start..start + prefix.len() + length, "[REDACTED]");
-            from = start + "[REDACTED]".len();
-        }
-    }
-    output
 }
 
 #[cfg(test)]
@@ -1093,6 +1063,23 @@ mod mock_boundary_tests {
                 .to_string()
                 .contains("offline_mock_violation")
         );
+    }
+
+    #[test]
+    fn diagnostic_redaction_matches_the_shared_secret_rules() {
+        let mut bundle = json!({
+            "telemetry": {"last_error": "failed with gho_abc123\nkey AKIAABCDEFGHIJKLMNOP\n-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbody\n-----END RSA PRIVATE KEY-----\nat /store/x"},
+            "settings": {"apiKey": "k1", "privateKey": "k2", "authorization": "k3", "enabled": true},
+            "settings_keys": ["theme"],
+        });
+        redact_value(&mut bundle, None, &[("/store".into(), "$STORE".into())]);
+        let encoded = bundle.to_string();
+        for secret in ["gho_abc123", "AKIAABCDEFGHIJKLMNOP", "MIIEsecretbody", "k1", "k2", "k3"] {
+            assert!(!encoded.contains(secret), "{encoded}");
+        }
+        assert!(encoded.contains("at $STORE/x"), "{encoded}");
+        assert_eq!(bundle["settings"]["enabled"], true);
+        assert_eq!(bundle["settings_keys"], json!(["theme"]));
     }
 
 }

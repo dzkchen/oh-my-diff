@@ -69,10 +69,10 @@
         "mod.json": "6264cfa904b9b382c24662237a610b1cefa6fd8b030e91a2a05466597c464fed",
         "models.json": "21710d46d563a0d0e25fdbfd05f1cbdbf788ab235ca65bdd65a7b31f19f09cc8",
         "setup.mjs": "c7d347f8e95ccd970cb69c9e754b23d44ed7c9a8aee4f554558e90eaaebc1c9d",
-        "transport.mjs": "db62d444d6d559ad35dfda3cba05ecc29f516d5444d3c2f1c286fb0ffe47bdaf"
+        "transport.mjs": "5dd668df6ee34d70174df093836eacc0b215de8922fbf061061ff4cdc75fcab0"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "1187c646fa3a637720c5b19ce272639b9ce3b7b8a7801c59fca4e107b030c131",
+      "package_sha256": "560b04d71d5a3ee9869951ddb631aacebd083da2f6ed4ff66137ef037af7d579",
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.2.0-preview.3"
     },
@@ -354,11 +354,11 @@
       "files": {
         "index.ts": "462440d3f781abc851d19afcb58a0c3e9a1c048fb41efd90ddf3a1a9f46b8532",
         "mod.json": "60074eda6a1d9b85848268d1e9175e560151cb6e40f61eec7cd475e9669b4722",
-        "router.mjs": "8758a1612e460862ce346622605cff7d5f08ecbc21c2654014cc8ed4c240fdef",
+        "router.mjs": "ae556f4f4e2ed3ae2c62def670e06d2c8d0406f732802b8d755cb7b600d5a9e7",
         "setup.mjs": "2ab3e815ac725020a0b4253d8613464bf4deea530acfb20d453205e89e309a86"
       },
       "id": "omd_profiles",
-      "package_sha256": "112ee16384e3f69a787385cb2063826012cbcd372fb814ee413423192e22eed9",
+      "package_sha256": "7d7d0763aedcbeea95c44310c0867218988f845ecf1ede148259c80588b2e56e",
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.2"
     },
