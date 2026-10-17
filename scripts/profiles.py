@@ -736,20 +736,36 @@ def uninstall(prefix, bin_dir, keep_broker=False):
         raise ValueError("installation prefix contains unmanaged files; move them before uninstall")
     if resuming:
         return removed(prefix, bin_dir, record)
-    config = Path(record["shared_state"]["codex_home"]) / "config.toml"
-    if config.is_file():
-        marketplaces = tomllib.loads(config.read_text()).get("marketplaces", {})
-        for name, details in marketplaces.items():
-            source = details.get("source") if isinstance(details, dict) else None
-            if isinstance(source, str) and support.within(support.resolved(source), prefix):
-                raise ValueError(f"Codex marketplace {name} still references the installation; remove or relocate it before uninstall")
     found = shutil.which("codex", path=support.path_without(bin_dir))
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
+    plugins = remove_plugins(record, prefix)
     record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
-    return removed(prefix, bin_dir, record)
+    return removed(prefix, bin_dir, record) | ({"removed_plugins": plugins} if plugins else {})
+
+
+def remove_plugins(record, prefix):
+    home = Path(record["shared_state"]["codex_home"])
+    config = home / "config.toml"
+    env = {**os.environ, "CODEX_HOME": str(home)}
+
+    def ours():
+        settings = tomllib.loads(config.read_text()) if config.is_file() else {}
+        names = [name for name, details in settings.get("marketplaces", {}).items()
+                 if isinstance(details, dict) and isinstance(details.get("source"), str)
+                 and support.within(support.resolved(details["source"]), prefix)]
+        return names, [plugin for plugin in settings.get("plugins", {}) if plugin.rsplit("@", 1)[-1] in names]
+
+    names, plugins = ours()
+    for plugin in plugins:
+        subprocess.run([record["binary"]["installed_path"], "plugin", "remove", plugin], check=True, capture_output=True, env=env)
+    for name in names:
+        subprocess.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
+    if any(ours()):
+        raise ValueError("Codex still lists OMD plugins from this installation; remove them with codex plugin remove")
+    return plugins
 
 
 def removed(prefix, bin_dir, record):

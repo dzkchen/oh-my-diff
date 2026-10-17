@@ -68,6 +68,38 @@ class ProfileModeTests(unittest.TestCase):
                         self.assertFalse(prefix.exists())
                         self.assertEqual(list(bin_dir.iterdir()), [])
 
+    def test_uninstall_removes_plugins_added_from_this_installation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            prefix, home = base / "prefix", base / "codex"
+            (prefix / "plugins").mkdir(parents=True)
+            home.mkdir()
+            config = home / "config.toml"
+            config.write_text(f'''[marketplaces.oh-my-diff]
+source = "{prefix / 'plugins'}"
+[marketplaces.other]
+source = "{base}"
+[plugins."omd-anchored-edit@oh-my-diff"]
+enabled = true
+[plugins."tool@other"]
+enabled = true
+''')
+            calls = []
+
+            def run(arguments, **kwargs):
+                calls.append(arguments[1:])
+                text = config.read_text()
+                drop = ('[plugins."omd-anchored-edit@oh-my-diff"]\nenabled = true\n' if arguments[2] == "remove"
+                        else f'[marketplaces.oh-my-diff]\nsource = "{prefix / "plugins"}"\n')
+                config.write_text(text.replace(drop, ""))
+
+            record = {"shared_state": {"codex_home": str(home)}, "binary": {"installed_path": "/omd/codex"}}
+            with patch.object(profiles.subprocess, "run", side_effect=run):
+                self.assertEqual(profiles.remove_plugins(record, prefix), ["omd-anchored-edit@oh-my-diff"])
+            self.assertEqual(calls, [["plugin", "remove", "omd-anchored-edit@oh-my-diff"],
+                                     ["plugin", "marketplace", "remove", "oh-my-diff"]])
+            self.assertIn('[plugins."tool@other"]', config.read_text())
+
     def test_interrupted_uninstall_resumes_and_keeps_replaced_launchers(self):
         real_rmtree, real_unlink = shutil.rmtree, Path.unlink
         for point in ("launchers", "prefix", "journal"):

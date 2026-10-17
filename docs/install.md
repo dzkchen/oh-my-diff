@@ -7,7 +7,8 @@ This page covers installing, updating and removing OMD.
 You need:
 
 - An Apple Silicon Mac. Linux and Intel Macs aren't supported.
-- Codex `0.163.x`. Check with `codex --version`; install it with `npm install -g @openai/codex@0.163`.
+- Codex `0.163.x`. Check with `codex --version`; install it with `npm install -g @openai/codex@0.163`. OMD follows
+  the latest stable Codex, so don't update Codex until an OMD release supports the new version.
 - Node 24.18 or later 24.x, installed with [mise](https://mise.jdx.dev): `mise use -g node@24`.
 - Python 3.12 or later. macOS ships 3.9; install a newer one with `brew install python@3.12`.
 
@@ -61,14 +62,12 @@ Run the install command again with the other `--profile`. Each profile remembers
 
 ## Uninstall
 
-If you added OMD's plugins to Codex, remove them first: `codex plugin remove NAME@oh-my-diff` for each, then
-`codex plugin marketplace remove oh-my-diff`. Then run:
 
 ```sh
 sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
 ```
 
-This removes OMD and puts back any commands it moved aside. Your Codex data is kept, and so are your mod
+This removes OMD, removes OMD's plugins from Codex if you added them, and puts back any commands it moved aside. Your Codex data is kept, and so are your mod
 settings in `~/.local/share/oh-my-diff/stores`. Delete that folder too if you want them gone.
 
 ## Troubleshooting

@@ -59,6 +59,11 @@ For the minimal install, other options, updates and removal, see [Install Oh My 
 **OMD is in beta.** Beta means it doesn't have every planned feature yet, not that it's unstable. More OMD+ mods
 and a fuller OMD Core are coming in the next updates ([what's planned](docs/collection.md#not-in-this-release)).
 
+OMD follows the latest stable Codex CLI and moves to each new Codex release as soon as it can. Each OMD release
+supports one Codex version line (now `0.163.x`), so updating Codex on its own can stop OMD from working until OMD
+catches up. To stay safe, turn off automatic Codex updates and update Codex only after `omd update` brings an OMD
+release that supports it.
+
 OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
 
 - **Something broke?** [Open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
