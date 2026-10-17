@@ -168,7 +168,7 @@ def cargo_tests(suite):
         targets.discard(("--test", "all"))
     failed = False
     for index, flags in enumerate(sorted(targets)):
-        args = ["test", "--locked", *crates, *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
+        args = ["test", "--locked", "--no-fail-fast", *crates, *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
