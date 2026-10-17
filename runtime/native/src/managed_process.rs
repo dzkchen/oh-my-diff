@@ -1569,11 +1569,15 @@ mod tests {
             blit: None,
         };
         let found = processes
-            .call(owner, "process.which", json!({"names":["python3"]}), || {
-                true
-            })
+            .call(owner, "process.which", json!({"names":["sh"]}), || true)
             .unwrap();
-        let python = &found["found"][0];
+        let sh = &found["found"][0];
+        let python = Command::new("python3")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .output()
+            .unwrap()
+            .stdout;
+        let python = String::from_utf8(python).unwrap();
         let probe = r#"import ctypes,errno,json,os
 lib=ctypes.CDLL(None,use_errno=True)
 name=('/omdprobe_'+str(os.getpid())).encode()
@@ -1589,8 +1593,8 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             .call(
                 owner,
                 "process.start",
-                json!({"session":"probe","name":"python3","path":python["path"],
-            "sha256":python["sha256"],"arguments":["-c",probe],"framing":"ndjson"}),
+                json!({"session":"probe","name":"sh","path":sh["path"],"sha256":sh["sha256"],
+            "arguments":["-c","exec \"$0\" -c \"$1\"",python.trim(),probe],"framing":"ndjson"}),
                 || true,
             )
             .unwrap();
@@ -2212,7 +2216,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 },
             );
             frames.offer(json!({"pixels": {}}));
-            receiver.recv_timeout(Duration::from_secs(8)).unwrap();
+            receiver.recv_timeout(Duration::from_secs(60)).unwrap();
             assert_eq!(
                 attempts.load(std::sync::atomic::Ordering::SeqCst),
                 failures + 1

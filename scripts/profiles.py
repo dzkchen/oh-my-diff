@@ -760,9 +760,9 @@ def remove_plugins(record, prefix):
 
     names, plugins = ours()
     for plugin in plugins:
-        subprocess.run([record["binary"]["installed_path"], "plugin", "remove", plugin], check=True, capture_output=True, env=env)
+        support.run([record["binary"]["installed_path"], "plugin", "remove", plugin], env=env)
     for name in names:
-        subprocess.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
+        support.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], env=env)
     if any(ours()):
         raise ValueError("Codex still lists OMD plugins from this installation; remove them with codex plugin remove")
     return plugins

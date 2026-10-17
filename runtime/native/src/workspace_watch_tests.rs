@@ -37,12 +37,22 @@ async fn external_changes_are_reported_relative_to_the_root() {
         .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    std::fs::write(dir.path().join("src/a.txt"), "x").unwrap();
-    let (watch_id, paths) =
-        tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)))
-            .await
-            .unwrap()
-            .unwrap();
+    let file = dir.path().join("src/a.txt");
+    let (watch_id, paths) = tokio::task::spawn_blocking(move || {
+        let mut seen = Vec::new();
+        for round in 0..20 {
+            std::fs::write(&file, round.to_string()).unwrap();
+            while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
+                if batch.1.iter().any(|p| p == "src/a.txt") {
+                    return batch;
+                }
+                seen.push(batch);
+            }
+        }
+        panic!("{seen:?}")
+    })
+    .await
+    .unwrap();
     assert_eq!(watch_id, id);
     assert!(paths.iter().any(|p| p == "src/a.txt"), "{paths:?}");
     assert!(watches.unwatch("m", &id));

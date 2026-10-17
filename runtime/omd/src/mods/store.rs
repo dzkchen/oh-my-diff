@@ -48,7 +48,8 @@ pub(super) fn grant(selection: &Value) -> String {
 type RunnerDigests = HashMap<PathBuf, (FileStamp, String)>;
 
 static RUNNER_DIGESTS: LazyLock<Mutex<RunnerDigests>> = LazyLock::new(Default::default);
-static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> = LazyLock::new(Default::default);
+static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> =
+    LazyLock::new(Default::default);
 
 /// The runner binary's digest, rehashed only when its file stamp changes.
 fn runner_digest(node: &Path) -> Result<String> {
@@ -536,7 +537,12 @@ impl ModStore {
 
     /// The configured `node`, refused when the broker holds no runner grant for it.
     pub(super) fn verified_node(&self, node: &Path) -> Result<()> {
-        verify_runner(node, brokered_grants(&self.root)?.as_ref().map(|(_, grants)| grants))
+        verify_runner(
+            node,
+            brokered_grants(&self.root)?
+                .as_ref()
+                .map(|(_, grants)| grants),
+        )
     }
 
     /// Points the store at another `node` binary, authorizing it as the runner when the broker is deployed.

@@ -747,4 +747,3 @@ impl SessionIndex<'_> {
         Ok(result)
     }
 }
-

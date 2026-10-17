@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check the conformance registry and classic-hook ledger against the host and public types."""
 import json
 import re
@@ -100,6 +99,7 @@ def check_launch(contract, sets):
         problems.append(f"unclassified launch surface: {name}")
     for name in sorted(entries.keys() - expected):
         problems.append(f"unknown launch surface: {name}")
+    decisions = {decision["id"] for decision in contract["decisions"]}
     for name, entry in entries.items():
         if entry.get("status") == "experimental":
             if not entry.get("reason"):
@@ -108,6 +108,8 @@ def check_launch(contract, sets):
         if entry.get("status") != "frozen":
             problems.append(f"{name}: invalid launch status")
             continue
+        if "decision" in entry and entry["decision"] not in decisions:
+            problems.append(f"{name}: unknown decision {entry['decision']}")
         consumer = entry.get("consumer", {})
         path = (ROOT / consumer.get("path", "")).resolve()
         allowed = any(path.is_relative_to(ROOT / directory) for directory in ("mods/first-party", "mods/examples"))
@@ -152,16 +154,3 @@ def check(contract, version, sets):
         if entry["native"] not in sets["events"] | sets["intercepts"]:
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
     return problems + check_launch(contract, sets)
-
-
-def main():
-    contract = json.loads(CONTRACT.read_text())
-    version, sets = host_sets()
-    if problems := check(contract, version, sets):
-        raise SystemExit("\n".join(problems))
-    print(f"contract {contract['api']}: {len(contract['decisions'])} decisions, {len(contract['composition'])} composition "
-          "rules; every capability, event, replacement point, intercept surface and host operation is classified")
-
-
-if __name__ == "__main__":
-    main()

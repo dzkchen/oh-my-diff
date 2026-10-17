@@ -1,7 +1,7 @@
 {
   "name": "omd-code-execution",
   "version": "0.2.0",
-  "description": "Persistent V8, Python, and Bun cells with host-authorized tool calls for Oh My Diff.",
+  "description": "V8 cells with session storage and persistent Python and Bun cells, with host-authorized tool calls for Oh My Diff.",
   "author": {
     "name": "Oh My Diff"
   },

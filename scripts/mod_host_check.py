@@ -114,7 +114,7 @@ class Host:
         scenario = self.work / "scenario.json"
         scenario.write_text(json.dumps({
             "schema": 1, "host_operations": {operation: [{"result": reply, "optional": True}] * 32 for operation, reply in MOCKS.items()},
-            "steps": [{"type": "invoke", "mod": mod, "event": "command", "name": name, "payload": ""}]}))
+            "steps": [{"type": "invoke", "mod": mod, "event": "command", "name": name, "payload": "", "thread_id": "host-check"}]}))
         output, error = self.run("test", location, scenario, check=False, timeout=60)
         steps = output.get("steps") if isinstance(output, dict) else None
         if error:
@@ -299,15 +299,11 @@ def check(host, paths, providers, commands, scenarios):
 def main():
     parser = argparse.ArgumentParser(description="Load every first-party package and example through the real host and report what it refuses.")
     parser.add_argument("--omd-mod", default=shutil.which("omd-mod"), help="omd-mod binary built from the applied runtime patch")
-    parser.add_argument("--node", default=None, help="Node 24 executable (default: mise which node)")
     parser.add_argument("--no-commands", action="store_true", help="skip running each registered command")
     parser.add_argument("--scenarios", action="store_true", help="also run each package's offline mod.test.json scenario")
-    parser.add_argument("--json", action="store_true", help="print the full report as JSON")
     parser.add_argument("--static", action="store_true", help="only the source checks; needs no omd-mod")
     parser.add_argument("packages", nargs="*", help="limit to these package directory names or mod IDs")
     args = parser.parse_args()
-    global NODE
-    NODE = args.node
     inspect_sources(packages(args.packages))
     if args.static:
         report = {f"{path.parent.name}/{path.name}": found for path in packages(args.packages) if (found := static_problems(path))}
@@ -320,14 +316,11 @@ def main():
                       for service in manifest(path).get("services", {}).get("exports", [])}
         with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
             report = check(Host(Path(args.omd_mod).resolve(), node(), Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
-    if args.json:
-        print(json.dumps(report, indent=2))
-    else:
-        for name, found in report.items():
-            print(name)
-            print("".join(f"  {line}\n" for line in found), end="")
-        print(f"{len(report)} package groups with problems" if report else
-              "no static problems" if args.static else "every package loads cleanly on the real host")
+    for name, found in report.items():
+        print(name)
+        print("".join(f"  {line}\n" for line in found), end="")
+    print(f"{len(report)} package groups with problems" if report else
+          "no static problems" if args.static else "every package loads cleanly on the real host")
     return 1 if report else 0
 
 
