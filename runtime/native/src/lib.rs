@@ -155,8 +155,7 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
-    let effective = codex_omd::effective_mode()?;
-    if !effective.mode.mod_host_enabled() {
+    if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
     let root = PathBuf::from(

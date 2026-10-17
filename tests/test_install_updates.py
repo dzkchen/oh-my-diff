@@ -103,6 +103,19 @@ class UpdateSelection(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "upstream Codex"):
                         module.upstream_binary(args, None, module.UPSTREAM_MINOR)
 
+    def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
+        upstream, bin_dir = self.root / "upstream", self.root / "bin"
+        for directory in (upstream, bin_dir):
+            directory.mkdir()
+            (directory / "codex").write_text("#!/bin/sh\n")
+            (directory / "codex").chmod(0o755)
+        with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
+            warning = self.module.path_warning(bin_dir)
+        self.assertIn(str(upstream / "codex"), warning)
+        self.assertIn(f'export PATH="{bin_dir}:$PATH"', warning)
+        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
+            self.assertIsNone(self.module.path_warning(bin_dir))
+
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
             for failed_name in (list(self.module.LINKS)[0], list(self.module.LINKS)[-1]):

@@ -212,7 +212,6 @@ def run(artifact_dir, upstream, output, managed_policy=False):
                                   for item in group["hooks"]})
                 for script in scripts:
                     inactive_env = env.copy()
-                    inactive_env.pop("OMD_CONTROLLED_MANIFEST", None)
                     inactive_env["OMD_MODE"] = "omd"
                     probe = subprocess.run(["python3", plugin_root / script], input="{}", text=True,
                                            capture_output=True, env=inactive_env, cwd=ROOT)

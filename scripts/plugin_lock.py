@@ -20,6 +20,12 @@ def build():
     plugins = {}
     for identifier in listed:
         manifest = json.loads((source / f"plugins/{identifier}/.codex-plugin/plugin.json").read_text())
+        descriptor = source / f"plugins/{identifier}/.codex-plugin/omd.json"
+        if descriptor.is_file():
+            component = json.loads(descriptor.read_text())
+            actual = support.package_digest(descriptor.parent.parent / component["component"])
+            if component["sha256"] != actual:
+                raise SystemExit(f"{descriptor.relative_to(ROOT)} pins {component['sha256']}; its component digest is {actual}")
         plugins[identifier] = {**lock["plugins"][identifier], "version": manifest["version"]}
     files = support.plugin_inventory(source)
     return {

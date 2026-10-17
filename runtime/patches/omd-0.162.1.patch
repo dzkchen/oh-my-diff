@@ -28187,27 +28187,6 @@ index 41b99f95a..f1955463c 100644
  }
 
  fn deserialize_mcp_attribution_checkpoint<'de, D>(
-diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index 28a952ea2..df467be01 100644
---- a/codex-rs/login/src/auth/default_client.rs
-+++ b/codex-rs/login/src/auth/default_client.rs
-@@ -414,9 +414,14 @@ pub async fn create_transport_for_routes_async(
- }
-
- fn default_http_client_builder() -> HttpClientBuilder {
--    HttpClientBuilder::new()
-+    let builder = HttpClientBuilder::new()
-         .default_headers(default_headers())
--        .with_chatgpt_cloudflare_cookie_store()
-+        .with_chatgpt_cloudflare_cookie_store();
-+    if std::env::var_os("OMD_CONTROLLED_MANIFEST").is_some() {
-+        builder.without_redirects()
-+    } else {
-+        builder
-+    }
- }
-
- // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
 diff --git a/codex-rs/memories/write/src/guard_tests.rs b/codex-rs/memories/write/src/guard_tests.rs
 index 5271070cc..3954e7166 100644
 --- a/codex-rs/memories/write/src/guard_tests.rs
@@ -29294,7 +29273,7 @@ index 1d328eae5..201f2e0f0 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 2979e0a9a..6a7d9bce5 100644
+index 2979e0a9a..017fafc1a 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -104,6 +104,7 @@ impl App {
@@ -29305,15 +29284,12 @@ index 2979e0a9a..6a7d9bce5 100644
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -409,6 +410,91 @@ impl App {
+@@ -409,6 +410,88 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
 +            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
 +            AppEvent::OmdOpenAllMods => self.chat_widget.open_omd_all_mods(),
-+            AppEvent::OmdRunModCommand(command) => {
-+                self.chat_widget.run_mod_command(command, String::new());
-+            }
 +            AppEvent::OmdDispatchCommand(intercepted) => {
 +                self.chat_widget.dispatch_intercepted_command(*intercepted);
 +            }
@@ -29397,7 +29373,7 @@ index 2979e0a9a..6a7d9bce5 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -849,6 +935,10 @@ impl App {
+@@ -849,6 +932,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -29408,7 +29384,7 @@ index 2979e0a9a..6a7d9bce5 100644
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1705,8 +1795,18 @@ impl App {
+@@ -1705,8 +1792,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -29427,7 +29403,7 @@ index 2979e0a9a..6a7d9bce5 100644
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2964,6 +3064,14 @@ impl App {
+@@ -2964,6 +3061,14 @@ impl App {
                  self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                      .await?;
              }
@@ -31175,7 +31151,7 @@ index f55b75c1b..21c998a28 100644
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 4c6ede335..698377462 100644
+index 4c6ede335..a4e7de1dc 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -406,6 +406,10 @@ pub(crate) enum AppEvent {
@@ -31189,13 +31165,12 @@ index 4c6ede335..698377462 100644
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -502,6 +506,40 @@ pub(crate) enum AppEvent {
+@@ -502,6 +506,39 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
 +    OmdOpenPlugins,
 +    OmdOpenAllMods,
-+    OmdRunModCommand(crate::mod_runtime::ModSlashCommand),
 +    OmdDispatchCommand(Box<crate::chatwidget::InterceptedCommand>),
 +    OmdModToggle {
 +        id: String,
@@ -31230,7 +31205,7 @@ index 4c6ede335..698377462 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -653,6 +691,10 @@ pub(crate) enum AppEvent {
+@@ -653,6 +690,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -31241,7 +31216,7 @@ index 4c6ede335..698377462 100644
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -699,6 +741,14 @@ pub(crate) enum AppEvent {
+@@ -699,6 +740,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -37243,7 +37218,7 @@ index b12b8312f..904641a44 100644
      };
      let _ = DRAFT.try_with(|draft| {
 diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
-index 65ef9f651..7641bbe49 100644
+index 65ef9f651..0faa9b0b2 100644
 --- a/codex-rs/tui/src/status/card.rs
 +++ b/codex-rs/tui/src/status/card.rs
 @@ -52,6 +52,33 @@ use std::sync::RwLock;
@@ -37298,7 +37273,7 @@ index 65ef9f651..7641bbe49 100644
          lines.push(formatter.line("Agents.md", vec![Span::from(agents_summary)]));
 +        if let Some(profile) = install_profile {
 +            let mode = crate::omd::effective_mode()
-+                .map(|value| value.mode.label().to_string())
++                .map(|mode| mode.label().to_string())
 +                .unwrap_or_else(|error| format!("invalid: {error}"));
 +            lines.extend(omd_status_lines(
 +                profile,
@@ -41571,7 +41546,7 @@ index 000000000..85c8d5498
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 000000000..e946f406b
+index 000000000..28263cf10
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
 @@ -0,0 +1,362 @@
@@ -41614,7 +41589,7 @@ index 000000000..e946f406b
 +    clients: Arc<OmdClients>,
 +    transport: mpsc::WeakSender<TransportEvent>,
 +) -> Option<client_surface::Registration> {
-+    let enabled = codex_omd::effective_mode().is_ok_and(|mode| mode.mode.mod_host_enabled());
++    let enabled = codex_omd::effective_mode().is_ok_and(codex_omd::RuntimeMode::mod_host_enabled);
 +    let store = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from)?;
 +    let repository = std::env::current_dir()
 +        .and_then(|directory| directory.canonicalize())
@@ -54891,10 +54866,10 @@ index 000000000..096710ab2
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..53a789cb9
+index 000000000..765db1ebe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,713 @@
+@@ -0,0 +1,712 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -55052,8 +55027,7 @@ index 000000000..53a789cb9
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    manager: Weak<ThreadManager>,
 +) -> Result<(), String> {
-+    let effective = codex_omd::effective_mode()?;
-+    if !effective.mode.mod_host_enabled() {
++    if !codex_omd::effective_mode()?.mod_host_enabled() {
 +        return Ok(());
 +    }
 +    let root = PathBuf::from(
@@ -93310,10 +93284,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..762f10c93
+index 000000000..264cedc44
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,246 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -93384,15 +93358,10 @@ index 000000000..762f10c93
 +pub use contract_document::replay_finding_receipts;
 +pub use contract_document::resolve_contract;
 +pub use credentials::url_origin;
-+pub use mode::EffectiveMode;
-+pub use mode::MANIFEST_ENV;
 +pub use mode::MOD_STORE_ENV;
 +pub use mode::MODE_ENV;
-+pub use mode::ModeSource;
-+pub use mode::PINNED_UPSTREAM;
 +pub use mode::RuntimeMode;
 +pub use mode::effective_mode;
-+pub use mode::effective_mode_from;
 +pub use owner::PolicyOwner;
 +pub use workspace::File;
 +pub use workspace::Fingerprint;
@@ -93618,16 +93587,12 @@ index 000000000..5d6a3e4e7
 +}
 diff --git a/codex-rs/omd/src/mode.rs b/codex-rs/omd/src/mode.rs
 new file mode 100644
-index 000000000..76e7f772f
+index 000000000..cde03e640
 --- /dev/null
 +++ b/codex-rs/omd/src/mode.rs
-@@ -0,0 +1,88 @@
-+use std::ffi::OsStr;
-+
+@@ -0,0 +1,37 @@
 +pub const MODE_ENV: &str = "OMD_MODE";
-+pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
 +pub const MOD_STORE_ENV: &str = "OMD_MOD_STORE";
-+pub const PINNED_UPSTREAM: &str = "rust-v0.162.1 / 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d";
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +pub enum RuntimeMode {
@@ -93648,68 +93613,21 @@ index 000000000..76e7f772f
 +    }
 +}
 +
-+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-+pub enum ModeSource {
-+    Explicit,
-+    CompatibilityDefault,
-+}
-+
-+impl ModeSource {
-+    pub fn label(self) -> &'static str {
-+        match self {
-+            Self::Explicit => "explicit OMD_MODE selection",
-+            Self::CompatibilityDefault => "compatibility default",
-+        }
-+    }
-+}
-+
-+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-+pub struct EffectiveMode {
-+    pub mode: RuntimeMode,
-+    pub source: ModeSource,
-+}
-+
-+pub fn effective_mode() -> Result<EffectiveMode, String> {
-+    effective_mode_from(
-+        std::env::var_os(MODE_ENV).as_deref(),
-+        std::env::var_os(MANIFEST_ENV).is_some(),
-+    )
-+}
-+
-+pub fn effective_mode_from(
-+    selected: Option<&OsStr>,
-+    legacy_manifest_present: bool,
-+) -> Result<EffectiveMode, String> {
-+    if legacy_manifest_present {
-+        return Err(format!(
-+            "{MANIFEST_ENV} is no longer supported; the controlled workflow ships as mods. Unset it and launch with {MODE_ENV}=omd"
-+        ));
-+    }
-+    match selected.and_then(OsStr::to_str) {
-+        Some("upstream_direct") => Ok(EffectiveMode {
-+            mode: RuntimeMode::UpstreamDirect,
-+            source: ModeSource::Explicit,
-+        }),
-+        Some("omd") => Ok(EffectiveMode {
-+            mode: RuntimeMode::Omd,
-+            source: ModeSource::Explicit,
-+        }),
-+        Some(value @ ("platform" | "enabled")) => Err(format!(
-+            "{MODE_ENV}={value} was replaced by {MODE_ENV}=omd; relaunch with {MODE_ENV}=omd or {MODE_ENV}=upstream_direct"
-+        )),
++pub fn effective_mode() -> Result<RuntimeMode, String> {
++    let Some(selected) = std::env::var_os(MODE_ENV) else {
++        return Ok(RuntimeMode::UpstreamDirect);
++    };
++    match selected.to_str() {
++        Some("upstream_direct") => Ok(RuntimeMode::UpstreamDirect),
++        Some("omd") => Ok(RuntimeMode::Omd),
 +        Some(value) => Err(format!(
 +            "invalid {MODE_ENV} value {value:?}; expected omd or upstream_direct"
 +        )),
-+        None if selected.is_some() => Err(format!(
++        None => Err(format!(
 +            "invalid non-Unicode {MODE_ENV}; expected omd or upstream_direct"
 +        )),
-+        None => Ok(EffectiveMode {
-+            mode: RuntimeMode::UpstreamDirect,
-+            source: ModeSource::CompatibilityDefault,
-+        }),
 +    }
 +}
-+
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
 index 000000000..a3a9a4dba
@@ -141073,10 +140991,10 @@ index 000000000..2dbe93eba
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..e3708d8a7
+index 000000000..4fb804ecf
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,253 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -141190,17 +141108,6 @@ index 000000000..e3708d8a7
 +            "Mods, plugins, skills and hooks. If a mod breaks Codex, turn it off below.",
 +        )];
 +        let mut items = Vec::new();
-+        if let Some(command) = crate::mod_runtime::find("mods") {
-+            items.push(SelectionItem {
-+                name: "Mods".to_string(),
-+                description: Some("See what each mod adds and turn mods on or off".to_string()),
-+                actions: vec![Box::new(move |tx| {
-+                    tx.send(AppEvent::OmdRunModCommand(command.clone()));
-+                })],
-+                dismiss_on_select: true,
-+                ..Default::default()
-+            });
-+        }
 +        items.push(SelectionItem {
 +            name: "Plugins".to_string(),
 +            description: Some("Installed plugins and their toggles".to_string()),
@@ -141278,9 +141185,7 @@ index 000000000..e3708d8a7
 +                    );
 +                    items.push(SelectionItem {
 +                        name: "All mods…".to_string(),
-+                        description: Some(
-+                            "Turn any installed mod on or off without /mods".to_string(),
-+                        ),
++                        description: Some("Turn any installed mod on or off".to_string()),
 +                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenAllMods))],
 +                        dismiss_on_select: true,
 +                        ..Default::default()
@@ -158190,7 +158095,7 @@ index 000000000..fdbccb32c
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..b59fd6f4c
+index 000000000..03eedba7f
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
 @@ -0,0 +1,698 @@
@@ -158239,7 +158144,7 @@ index 000000000..b59fd6f4c
 +}
 +
 +pub(crate) fn is_active() -> bool {
-+    effective_mode().is_ok_and(|mode| mode.mode.mod_host_enabled())
++    effective_mode().is_ok_and(codex_omd::RuntimeMode::mod_host_enabled)
 +}
 +
 +/// Every frame asks for this, so the parsed view is reused until `mod-view.json` or `mod-status.json` changes.
@@ -158528,7 +158433,7 @@ index 000000000..b59fd6f4c
 +        && session_repository().is_some_and(|repository| scoped_repository(&repository).is_some())
 +}
 +
-+pub(crate) fn effective_mode() -> Result<codex_omd::EffectiveMode, String> {
++pub(crate) fn effective_mode() -> Result<codex_omd::RuntimeMode, String> {
 +    codex_omd::effective_mode()
 +}
 +
@@ -158536,9 +158441,9 @@ index 000000000..b59fd6f4c
 +    daemon_exclusion_for(effective_mode())
 +}
 +
-+fn daemon_exclusion_for(mode: Result<codex_omd::EffectiveMode, String>) -> Option<&'static str> {
++fn daemon_exclusion_for(mode: Result<codex_omd::RuntimeMode, String>) -> Option<&'static str> {
 +    match mode {
-+        Ok(mode) if mode.mode == codex_omd::RuntimeMode::UpstreamDirect => None,
++        Ok(codex_omd::RuntimeMode::UpstreamDirect) => None,
 +        Ok(_) => Some("Oh My Diff mode"),
 +        Err(_) => Some("an invalid Oh My Diff mode"),
 +    }
@@ -158677,7 +158582,7 @@ index 000000000..b59fd6f4c
 +
 +pub(crate) fn compact_status() -> Option<String> {
 +    Some(match effective_mode() {
-+        Ok(mode) if mode.mode == codex_omd::RuntimeMode::UpstreamDirect => return None,
++        Ok(codex_omd::RuntimeMode::UpstreamDirect) => return None,
 +        Ok(_) => {
 +            let status = mod_status();
 +            match snapshot_with_status(status.as_ref().unwrap_or(&Value::Null), false) {

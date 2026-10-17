@@ -162,7 +162,7 @@ def selected_text(record):
                   "unset OH_MY_DIFF_UPDATED",
                   f"[ {root}/update/next -nt {root}/sessions/$$ ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
                   f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/state.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/state.json; export OH_MY_DIFF_UPDATE"]
-    lines.append("unset OMD_INSTALL_PROFILE OMD_CONTROLLED_MANIFEST OMD_MOD_STORE")
+    lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":
         lines.append("export OMD_MODE=upstream_direct")
