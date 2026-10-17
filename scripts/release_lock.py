@@ -116,7 +116,6 @@ def build(artifact_dir, package_mode=False, version=None):
         "runtime_patch_sha256": patch["patch"]["sha256"],
         "mod_api": mods["mod_api"],
         "node": mods["node"],
-        "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "build_provenance": provenance,
         "platform_tools": list(profiles.HOST_TOOLS),
