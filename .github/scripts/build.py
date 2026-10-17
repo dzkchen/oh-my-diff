@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -43,6 +44,11 @@ def run(*args, cwd=None, allowed=(0,)):
 
 def git(tree, *args, allowed=(0,)):
     return run("git", *args, cwd=tree, allowed=allowed)
+
+
+@functools.cache
+def node():
+    return run("mise", "which", "node", cwd=ROOT).decode().strip()
 
 
 def sha(data):
@@ -92,7 +98,7 @@ def cargo_env(batch):
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
         "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
-        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or run("mise", "which", "node", cwd=ROOT).decode().strip(),
+        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or node(),
         "RUST_MIN_STACK": "16777216",
     })
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
@@ -131,10 +137,10 @@ def sync(args):
     batch = batch_dir(args.batch)
     source = batch / "codex"
     base = base_tag()
-    patch = git(source, "diff", "--binary", "--abbrev=9", "--no-renames", base, "--", "codex-rs")
+    patch = git(source, "diff", "--binary", "--full-index", "--no-renames", base, "--", "codex-rs")
     changed = set(git(source, "diff", "--name-only", "--no-renames", base, "--", "codex-rs").decode().splitlines())
     for name in git(source, "ls-files", "--others", "--exclude-standard", "--", "codex-rs").decode().splitlines():
-        patch += git(source, "diff", "--no-index", "--binary", "--abbrev=9", "--", "/dev/null", name, allowed=(0, 1))
+        patch += git(source, "diff", "--no-index", "--binary", "--full-index", "--", "/dev/null", name, allowed=(0, 1))
         changed.add(name)
     # Git accepts an empty patch context line; omit its otherwise trailing marker space.
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))

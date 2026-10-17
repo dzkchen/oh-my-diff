@@ -1,6 +1,8 @@
 name: Nightly
 
 on:
+  schedule:
+    - cron: '17 7 * * *'
   workflow_dispatch:
 
 permissions:
@@ -35,4 +37,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
-        run: python3 .github/scripts/nightly_ci.py publish --directory release
+        run: python3 .github/scripts/ci.py publish --directory release

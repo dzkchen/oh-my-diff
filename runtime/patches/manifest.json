@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "8fbb375cdf83f18d115d2eb3dab46ee53db0e710316cc7810e63b98e8bb4bfb9"
+    "sha256": "98d07dabb524f6095a425e8f15b036014c4a98bc3ff2ce10466cb504857b352b"
   },
   "files": {
     "codex-rs/Cargo.lock": {

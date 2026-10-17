@@ -42,7 +42,7 @@ RELEASE_HOSTS = ("api.github.com", "localhost", "127.0.0.1")
 TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
-POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta", "nightly"), "cadence": ("daily", "weekly")}
+POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "prerelease", "nightly"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
 RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
@@ -192,6 +192,7 @@ def profile_choice(args):
     try:
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff\n"
+                           "OMD 1.0 is labeled beta: not every planned capability is included yet. It does not mean unstable.\n"
                            "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
                            "2) OMD+: also the first-party mod collection and bundled plugins.\n"
                            "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
@@ -710,7 +711,7 @@ def releases(url, channel="stable", pin=""):
 
 def on_channel(channel, item):
     is_nightly = "-nightly." in item["version"]
-    return is_nightly if channel == "nightly" else not is_nightly and (channel == "beta" or not item.get("prerelease"))
+    return is_nightly if channel == "nightly" else not is_nightly and (channel == "prerelease" or not item.get("prerelease"))
 
 
 def channel_newer(channel, version, installed):
@@ -718,7 +719,7 @@ def channel_newer(channel, version, installed):
     if candidate[:3] != current[:3]:
         return candidate[:3] > current[:3]
     if (channel == "nightly" and "-nightly." not in installed
-            or channel == "beta" and "-nightly." in installed):
+            or channel == "prerelease" and "-nightly." in installed):
         return version != installed
     return candidate > current
 
@@ -983,7 +984,7 @@ def manual(args, root, current):
         return set_policy(root, record, action, value)
     if action == "pin":
         if value != "none" and not version_key(value):
-            fail("omd update pin takes an exact version such as 0.2.0 or 0.2.0-beta.1, or none")
+            fail("omd update pin takes an exact version such as 0.2.0 or 0.2.0-rc.1, or none")
         return set_policy(root, record, "pin", "" if value == "none" else value)
     if action == "status":
         saved = state(root)
@@ -1106,7 +1107,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
-               "omd update channel stable|beta|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
+               "omd update channel stable|prerelease|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
     parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "tick", "launch"),
                         default="install")
     parser.add_argument("action", nargs="?", choices=("now", "status", "check", "enable", "disable", "rollback", "pin", *POLICY),

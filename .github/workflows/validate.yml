@@ -11,19 +11,17 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  OMD_RELEASE_VERSION: ${{ inputs.version }}
+
 jobs:
-  validate:
+  test:
     runs-on: macos-15
     timeout-minutes: 360
-    env:
-      CARGO_INCREMENTAL: '0'
-      CARGO_BUILD_JOBS: '2'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      CARGO_PROFILE_RELEASE_LTO: 'off'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
-      CARGO_PROFILE_RELEASE_DEBUG: '0'
-    steps:
+    steps: &rust-job
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
@@ -38,14 +36,66 @@ jobs:
           OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
-      - name: Full hosted validation
-        env:
-          OMD_RELEASE_VERSION: ${{ inputs.version }}
-        run: python3 .github/scripts/nightly_ci.py validate ${OMD_RELEASE_VERSION:+--release}
-      - name: Build and validate package
-        env:
-          OMD_RELEASE_VERSION: ${{ inputs.version }}
-        run: python3 .github/scripts/nightly_ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+      - name: Validate
+        run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
+      - name: Pack host binaries
+        if: github.job == 'build'
+        run: tar -cf /private/tmp/omd-nightly/host-binaries.tar -C /private/tmp/omd-bnightly artifacts
+      - name: Upload host binaries
+        if: github.job == 'build'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: host-binaries
+          path: /private/tmp/omd-nightly/host-binaries.tar
+          retention-days: 1
+          compression-level: 0
+      - name: Preserve validation logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validation-report-${{ github.job }}
+          path: |
+            /private/tmp/omd-nightly/report.md
+            /private/tmp/omd-nightly/logs/
+            /private/tmp/omd-bnightly/logs/
+          retention-days: 14
+
+  build:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps: *rust-job
+
+  package:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: node python@3.14.6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          package_json_file: mods/package.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: host-binaries
+          path: /private/tmp/omd-nightly
+      - name: Unpack host binaries
+        run: mkdir -p /private/tmp/omd-bnightly && tar -xf /private/tmp/omd-nightly/host-binaries.tar -C /private/tmp/omd-bnightly
+      - name: Validate
+        run: python3 .github/scripts/ci.py validate --job package
+      - name: Build and test the package
+        run: python3 .github/scripts/ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
       - name: Upload validated package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -58,10 +108,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: validation-report
+          name: validation-report-package
           path: |
             /private/tmp/omd-nightly/report.md
             /private/tmp/omd-nightly/logs/
             /private/tmp/omd-nightly/profile-acceptance.json
-            /private/tmp/omd-bnightly/logs/
           retention-days: 14

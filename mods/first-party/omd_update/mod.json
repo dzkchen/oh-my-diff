@@ -24,7 +24,7 @@
     "properties": {
       "checks": {"type": "string", "enum": ["on", "off"], "default": "on"},
       "auto": {"type": "string", "enum": ["off", "on"], "default": "off"},
-      "channel": {"type": "string", "enum": ["stable", "beta", "nightly"], "default": "stable"},
+      "channel": {"type": "string", "enum": ["stable", "prerelease", "nightly"], "default": "stable"},
       "cadence": {"type": "string", "enum": ["daily", "weekly"], "default": "daily"},
       "pin": {"type": "string", "default": ""}
     }
