@@ -39,7 +39,9 @@ jobs:
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
       - name: Full hosted validation
-        run: python3 .github/scripts/nightly_ci.py validate
+        env:
+          OMD_RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 .github/scripts/nightly_ci.py validate ${OMD_RELEASE_VERSION:+--release}
       - name: Build and validate package
         env:
           OMD_RELEASE_VERSION: ${{ inputs.version }}

@@ -37,7 +37,7 @@ omd-package mod enable omd_preview
 - Highlighting, math and browser diagrams load pinned files from a CDN. Offline they stay as plain source.
 - Browser pages escape source HTML but can load remote and local images.
 - Terminal diagrams cover flowcharts, sequence, class, state and ER diagrams and bar and line charts, up to 4 per response. Others keep their original fence.
-- Thumbnails cover PNG and JPEG up to 8 MiB. Other attachments show a text tile.
+- Thumbnails cover the first 16 images in the draft, PNG and JPEG up to 8 MiB. Other attachments show a text tile.
 - There is no PDF export.
 
 Credit: based on [pi-markdown-preview](https://github.com/omaclaren/pi-markdown-preview) by Oliver MacLaren, [claude-mermaid](https://github.com/galElmalah/claude-mods) by Gal Elmalah and [Claude Image View](https://github.com/jarrodwatts/claude-image-view) by Jarrod Watts (all MIT); reimplemented, no code copied.

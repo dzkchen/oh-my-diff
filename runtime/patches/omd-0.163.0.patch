@@ -20921,10 +20921,10 @@ index 991ad9083..e11f561fe 100644
 
  pub(crate) async fn request_mcp_tool_user_approval(
 diff --git a/codex-rs/core/src/mcp_tool_call_tests.rs b/codex-rs/core/src/mcp_tool_call_tests.rs
-index 1dc06e3d0..9095a142f 100644
+index 1dc06e3d0..7b3444362 100644
 --- a/codex-rs/core/src/mcp_tool_call_tests.rs
 +++ b/codex-rs/core/src/mcp_tool_call_tests.rs
-@@ -2801,6 +2801,109 @@ async fn approve_mode_skips_when_annotations_do_not_require_approval() {
+@@ -2801,6 +2801,107 @@ async fn approve_mode_skips_when_annotations_do_not_require_approval() {
      assert_eq!(decision, None);
  }
 
@@ -20940,9 +20940,7 @@ index 1dc06e3d0..9095a142f 100644
 +            input.host_decision.to_owned(),
 +            "gate".to_owned(),
 +        ));
-+        Box::pin(std::future::ready(ApprovalGate::Deny(
-+            "mod: no MCP".into(),
-+        )))
++        Box::pin(std::future::ready(ApprovalGate::Deny("mod: no MCP".into())))
 +    }
 +
 +    fn on_approval_result<'a>(
@@ -21433,7 +21431,7 @@ index d2599a4d5..f37165f05 100644
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index a541c5529..6a551361c 100644
+index a541c5529..95dcf6197 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -259,6 +259,7 @@ mod mcp_prewarm;
@@ -21444,7 +21442,7 @@ index a541c5529..6a551361c 100644
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -554,7 +555,50 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -554,7 +555,55 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -21461,18 +21459,23 @@ index a541c5529..6a551361c 100644
 +            continue;
 +        }
 +        for path in std::iter::once(&selection.cwd).chain(&selection.workspace_roots) {
-+            let local = path
-+                .to_abs_path()
-+                .map_err(|_| std::io::Error::other("workspace_local_path_invalid"))?;
-+            paths.insert(canonical_workspace_path(&local).map_err(std::io::Error::other)?);
++            if let Ok(local) = path.to_abs_path() {
++                paths.extend(existing_workspace_path(&local)?);
++            }
 +        }
 +    }
 +    Ok(paths)
 +}
 +
-+fn canonical_workspace_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
-+    path.canonicalize()
-+        .map_err(|error| anyhow::anyhow!("Cannot initialize workspace {}: {error}", path.display()))
++fn existing_workspace_path(path: &std::path::Path) -> std::io::Result<Option<std::path::PathBuf>> {
++    match path.canonicalize() {
++        Ok(path) => Ok(Some(path)),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
++        Err(error) => Err(std::io::Error::new(
++            error.kind(),
++            format!("Cannot initialize workspace {}: {error}", path.display()),
++        )),
++    }
 +}
 +
  impl Session {
@@ -21495,7 +21498,7 @@ index a541c5529..6a551361c 100644
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1164,6 +1208,22 @@ impl SessionIo {
+@@ -1164,6 +1213,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -21518,7 +21521,7 @@ index a541c5529..6a551361c 100644
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1545,6 +1605,99 @@ impl Session {
+@@ -1545,6 +1610,99 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -21618,7 +21621,7 @@ index a541c5529..6a551361c 100644
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -2006,6 +2159,20 @@ impl Session {
+@@ -2006,6 +2164,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -21627,9 +21630,9 @@ index a541c5529..6a551361c 100644
 +                    &self.services.turn_environments.environment_manager(),
 +                    &updated.environments,
 +                )?;
-+                paths.insert(updated.cwd().canonicalize()?.to_path_buf());
++                paths.extend(existing_workspace_path(updated.cwd())?);
 +                for root in &updated.runtime_workspace_roots {
-+                    paths.insert(root.canonicalize()?.to_path_buf());
++                    paths.extend(existing_workspace_path(root)?);
 +                }
 +                self.retain_workspace_paths(paths)
 +            };
@@ -21639,7 +21642,7 @@ index a541c5529..6a551361c 100644
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -3907,6 +4074,7 @@ impl Session {
+@@ -3907,6 +4079,7 @@ impl Session {
          let environments = environments.or_cancel(cancellation_token).await?;
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -21647,7 +21650,7 @@ index a541c5529..6a551361c 100644
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3914,6 +4082,27 @@ impl Session {
+@@ -3914,6 +4087,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -21675,7 +21678,7 @@ index a541c5529..6a551361c 100644
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4406,6 +4595,10 @@ impl Session {
+@@ -4406,6 +4600,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -21686,7 +21689,7 @@ index a541c5529..6a551361c 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4415,6 +4608,7 @@ impl Session {
+@@ -4415,6 +4613,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21694,7 +21697,7 @@ index a541c5529..6a551361c 100644
                  })
                  .await
              {
-@@ -4503,6 +4697,10 @@ impl Session {
+@@ -4503,6 +4702,10 @@ impl Session {
                  }
              }
          }
@@ -21705,7 +21708,7 @@ index a541c5529..6a551361c 100644
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4512,6 +4710,7 @@ impl Session {
+@@ -4512,6 +4715,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -21713,7 +21716,7 @@ index a541c5529..6a551361c 100644
                  })
                  .await
              {
-@@ -4709,7 +4908,7 @@ impl Session {
+@@ -4709,7 +4913,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -21776,7 +21779,7 @@ index 8c4203bf1..930f6ad99 100644
                  .map_err(std::io::Error::other)?;
          }
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index a617d9367..d1f040473 100644
+index a617d9367..fb9c3e065 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,9 @@ type McpToolApprovalMetadataMap =
@@ -21810,9 +21813,9 @@ index a617d9367..d1f040473 100644
 +                &inherited.all_selections(),
 +            )?);
 +        }
-+        workspace_paths.insert(canonical_workspace_path(session_configuration.cwd())?);
++        workspace_paths.extend(existing_workspace_path(session_configuration.cwd())?);
 +        for root in &session_configuration.runtime_workspace_roots {
-+            workspace_paths.insert(canonical_workspace_path(root)?);
++            workspace_paths.extend(existing_workspace_path(root)?);
 +        }
 +        let workspace_leases = workspace_paths
 +            .into_iter()
@@ -30146,7 +30149,7 @@ index 3fd35cdf7..5e3c49f0a 100644
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 8c42d78f1..bf143652a 100644
+index 8c42d78f1..9a3be1302 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -65,8 +65,9 @@ impl App {
@@ -30227,7 +30230,7 @@ index 8c42d78f1..bf143652a 100644
          let bottom =
              chat_widget.bottom_pane_renderable(crate::bottom_pane::ComposerRenderOptions {
                  max_height: Some(max_composer_height),
-@@ -156,38 +169,25 @@ impl App {
+@@ -156,20 +169,13 @@ impl App {
              .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
              .is_some();
          let bottom_height = if dashboard_visible {
@@ -30252,10 +30255,9 @@ index 8c42d78f1..bf143652a 100644
          let mut rendered_cursor = None;
          let mut footer_height_changed = false;
          let mut feedback_tick = None;
-         let mut blossom_tick = None;
-         let mut transcript_bottom = available.saturating_sub(u16::from(composer_gap.is_none()));
+@@ -178,16 +184,11 @@ impl App {
          tui.draw(screen_size.height, |frame| {
--            chat_widget.rendered_selection.borrow_mut().areas.clear();
+             chat_widget.rendered_selection.borrow_mut().areas.clear();
              ratatui::widgets::Clear.render(
 -                Rect::new(/*x*/ 0, /*y*/ 0, screen_size.width, available),
 +                Rect::new(area.x, area.y, area.width, available),
@@ -30272,7 +30274,7 @@ index 8c42d78f1..bf143652a 100644
                  frame.buffer,
                  &self.transcript_cells,
                  completion_tip,
-@@ -228,45 +228,44 @@ impl App {
+@@ -228,45 +229,44 @@ impl App {
                      ..Default::default()
                  });
              footer_height_changed = !dashboard_visible
@@ -30344,7 +30346,7 @@ index 8c42d78f1..bf143652a 100644
              bottom.render(bottom_area, frame.buffer);
              if let (Some(tip), Some(area)) = (completion_tip, completion_tip_area) {
                  tip.render(area, frame.buffer);
-@@ -279,8 +278,8 @@ impl App {
+@@ -279,8 +279,8 @@ impl App {
              } else {
                  (available > 0).then(|| {
                      Rect::new(
@@ -30355,7 +30357,7 @@ index 8c42d78f1..bf143652a 100644
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -301,16 +300,22 @@ impl App {
+@@ -301,16 +301,22 @@ impl App {
                  .rendered_selection
                  .borrow_mut()
                  .render(frame.buffer);
@@ -30385,7 +30387,7 @@ index 8c42d78f1..bf143652a 100644
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -321,12 +326,14 @@ impl App {
+@@ -321,12 +327,14 @@ impl App {
                  frame.set_cursor_style(foreground.cursor_style(foreground_area));
                  frame.set_cursor_position(position);
              }
@@ -33053,7 +33055,7 @@ index ae9405e9f..48cfa647a 100644
          let mut updated = false;
          for composer in std::iter::once(&mut self.composer)
 diff --git a/codex-rs/tui/src/bottom_pane/paste_burst.rs b/codex-rs/tui/src/bottom_pane/paste_burst.rs
-index c07712b27..125547144 100644
+index c07712b27..8418a3cec 100644
 --- a/codex-rs/tui/src/bottom_pane/paste_burst.rs
 +++ b/codex-rs/tui/src/bottom_pane/paste_burst.rs
 @@ -324,6 +324,20 @@ impl PasteBurst {
@@ -33077,12 +33079,6 @@ index c07712b27..125547144 100644
      /// Accumulate a newline or tab into the burst instead of invoking a shortcut.
      /// A held first character is promoted into the buffer before the control character.
      ///
-@@ -590,4 +604,5 @@ mod tests {
-         let t3 = t1 + PASTE_ENTER_SUPPRESS_WINDOW + Duration::from_millis(1);
-         assert!(!burst.newline_should_insert_instead_of_submit(t3));
-     }
-+
- }
 diff --git a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs b/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
 index fb95a9701..e1a7846e0 100644
 --- a/codex-rs/tui/src/bottom_pane/request_user_input/render.rs
@@ -37019,7 +37015,7 @@ index 821027058..854627d07 100644
              .iter()
              .map(line_to_text)
 diff --git a/codex-rs/tui/src/notifications/mod.rs b/codex-rs/tui/src/notifications/mod.rs
-index ee6694b35..48351ba33 100644
+index ee6694b35..c9d3d4f8f 100644
 --- a/codex-rs/tui/src/notifications/mod.rs
 +++ b/codex-rs/tui/src/notifications/mod.rs
 @@ -1,14 +1,20 @@
@@ -37081,12 +37077,6 @@ index ee6694b35..48351ba33 100644
 +
  pub fn detect_backend(method: NotificationMethod) -> DesktopNotificationBackend {
      DesktopNotificationBackend::for_method(method)
- }
-@@ -132,4 +170,5 @@ mod tests {
-             );
-         }
-     }
-+
  }
 diff --git a/codex-rs/tui/src/pager_overlay/transcript.rs b/codex-rs/tui/src/pager_overlay/transcript.rs
 index 4aaae519b..b11e26680 100644
@@ -37903,7 +37893,7 @@ index 65ef9f651..0faa9b0b2 100644
          if let Some(account_value) = account_value {
              lines.push(formatter.line("Account", vec![Span::from(account_value)]));
 diff --git a/codex-rs/tui/src/status/rate_limits.rs b/codex-rs/tui/src/status/rate_limits.rs
-index c22868b62..7d4b66c53 100644
+index c22868b62..2a0befaea 100644
 --- a/codex-rs/tui/src/status/rate_limits.rs
 +++ b/codex-rs/tui/src/status/rate_limits.rs
 @@ -113,6 +113,7 @@ pub(crate) struct RateLimitSnapshotDisplay {
@@ -37963,12 +37953,6 @@ index c22868b62..7d4b66c53 100644
          };
 
          let rows = match compose_rate_limit_data_many(&[other], now) {
-@@ -547,4 +562,5 @@ mod tests {
-             ]
-         );
-     }
-+
- }
 diff --git a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap b/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap
 index a00c3ae09..348b69554 100644
 --- a/codex-rs/tui/src/status/snapshots/codex_tui__status__tests__status_server_auth_not_required.snap
@@ -38669,7 +38653,7 @@ index f81693545..b747c37f5 100644
              );
              let mut expected_replay = vec![b'x'; 2_048];
 diff --git a/codex-rs/tui/src/thread_transcript/exploration_groups.rs b/codex-rs/tui/src/thread_transcript/exploration_groups.rs
-index 5b6194e5f..9376e7c8a 100644
+index 5b6194e5f..95e850d75 100644
 --- a/codex-rs/tui/src/thread_transcript/exploration_groups.rs
 +++ b/codex-rs/tui/src/thread_transcript/exploration_groups.rs
 @@ -47,7 +47,11 @@ fn adjacent_items<'a>(
@@ -38685,11 +38669,6 @@ index 5b6194e5f..9376e7c8a 100644
          return None;
      }
      let ids = older
-@@ -76,3 +80,4 @@ pub(super) fn completed_group(items: &[ThreadItem]) -> Option<ExecCell> {
-     }
-     group
- }
-+
 diff --git a/codex-rs/tui/src/thread_transcript/other_items.rs b/codex-rs/tui/src/thread_transcript/other_items.rs
 index 681161339..ea9ccdb62 100644
 --- a/codex-rs/tui/src/thread_transcript/other_items.rs
@@ -50258,10 +50237,10 @@ index 000000000..ef9df41e0
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..f8acfc544
+index 000000000..f31442191
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1219 @@
+@@ -0,0 +1,1218 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -51480,7 +51459,6 @@ index 000000000..f8acfc544
 +        vec![(true, Some(500)), (true, Some(700))]
 +    );
 +}
-+
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
 index 000000000..48d421b6c
@@ -54741,10 +54719,10 @@ index 000000000..000743581
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/credential_gateway_tests.rs b/codex-rs/ext/omd/src/credential_gateway_tests.rs
 new file mode 100644
-index 000000000..e5671c8da
+index 000000000..4f7fc6d92
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/credential_gateway_tests.rs
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,262 @@
 +use super::*;
 +
 +fn get(url: &str) -> (u16, String) {
@@ -55007,7 +54985,6 @@ index 000000000..e5671c8da
 +        closed(&mut upstream);
 +    }
 +}
-+
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
 index 000000000..81169d2c6
@@ -56078,10 +56055,10 @@ index 000000000..096710ab2
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..b36398d5d
+index 000000000..08c359434
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,713 @@
+@@ -0,0 +1,712 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -56793,14 +56770,13 @@ index 000000000..b36398d5d
 +        std::fs::write(root.join(config::HOST_CONFIG), br#"{"schema":2}"#).unwrap();
 +        assert!(HostConfig::load(&root, &root.join("repo")).is_err());
 +    }
-+
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..c8158f055
+index 000000000..1a9f67136
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2486 @@
+@@ -0,0 +1,2490 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -58372,11 +58348,15 @@ index 000000000..c8158f055
 +            blit: None,
 +        };
 +        let found = processes
-+            .call(owner, "process.which", json!({"names":["python3"]}), || {
-+                true
-+            })
++            .call(owner, "process.which", json!({"names":["sh"]}), || true)
 +            .unwrap();
-+        let python = &found["found"][0];
++        let sh = &found["found"][0];
++        let python = Command::new("python3")
++            .args(["-c", "import sys; print(sys.executable)"])
++            .output()
++            .unwrap()
++            .stdout;
++        let python = String::from_utf8(python).unwrap();
 +        let probe = r#"import ctypes,errno,json,os
 +lib=ctypes.CDLL(None,use_errno=True)
 +name=('/omdprobe_'+str(os.getpid())).encode()
@@ -58392,8 +58372,8 @@ index 000000000..c8158f055
 +            .call(
 +                owner,
 +                "process.start",
-+                json!({"session":"probe","name":"python3","path":python["path"],
-+            "sha256":python["sha256"],"arguments":["-c",probe],"framing":"ndjson"}),
++                json!({"session":"probe","name":"sh","path":sh["path"],"sha256":sh["sha256"],
++            "arguments":["-c","exec \"$0\" -c \"$1\"",python.trim(),probe],"framing":"ndjson"}),
 +                || true,
 +            )
 +            .unwrap();
@@ -59015,7 +58995,7 @@ index 000000000..c8158f055
 +                },
 +            );
 +            frames.offer(json!({"pixels": {}}));
-+            receiver.recv_timeout(Duration::from_secs(8)).unwrap();
++            receiver.recv_timeout(Duration::from_secs(60)).unwrap();
 +            assert_eq!(
 +                attempts.load(std::sync::atomic::Ordering::SeqCst),
 +                failures + 1
@@ -62586,10 +62566,10 @@ index 000000000..7cb48ccd1
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..a90aaa67c
+index 000000000..7930e1515
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2581 @@
+@@ -0,0 +1,2580 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -63033,7 +63013,6 @@ index 000000000..a90aaa67c
 +        assert!(selected_history(items[..2].iter().cloned(), Some(&["one".into()])).is_err());
 +        assert!(selected_history(items.into_iter(), Some(&["missing".into()])).is_err());
 +    }
-+
 +}
 +
 +type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
@@ -69035,10 +69014,10 @@ index 000000000..61aa70f12
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..3579d3ea2
+index 000000000..3e927ec17
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4045 @@
+@@ -0,0 +1,4049 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -69578,6 +69557,10 @@ index 000000000..3579d3ea2
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "Serialize tests that replace the shared dispatcher"
++)]
 +async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let Some(mut fixture) = fixture(&[Package {
@@ -75513,10 +75496,10 @@ index 000000000..36f1dc61b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..f7efbb97e
+index 000000000..2d079ec35
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,870 @@
+@@ -0,0 +1,874 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -76338,7 +76321,12 @@ index 000000000..f7efbb97e
 +    async fn endpoint_handoff_reads_only_the_granted_file() {
 +        let home = tempfile::tempdir().unwrap();
 +        let repository = tempfile::tempdir().unwrap();
-+        let store = tempfile::tempdir().unwrap();
++        let user_temp = std::process::Command::new("/usr/bin/getconf")
++            .arg("DARWIN_USER_TEMP_DIR")
++            .output()
++            .unwrap()
++            .stdout;
++        let store = tempfile::tempdir_in(String::from_utf8(user_temp).unwrap().trim()).unwrap();
 +        let root = repository.path().canonicalize().unwrap();
 +        let store = store.path().canonicalize().unwrap();
 +        let endpoint = store.join("pane.json");
@@ -76385,7 +76373,6 @@ index 000000000..f7efbb97e
 +        .unwrap();
 +        assert_eq!(output["stdout"], "denied");
 +    }
-+
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
@@ -77290,10 +77277,10 @@ index 000000000..88b18991e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..a13f2fad8
+index 000000000..d8f561fd4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,225 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -77518,7 +77505,6 @@ index 000000000..a13f2fad8
 +        assert_eq!(views.current_presentation()["phase"], "resumed");
 +        assert_eq!(views.current_presentation()["thread_id"], "forked");
 +    }
-+
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
@@ -78535,10 +78521,10 @@ index 000000000..2908f9615
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 000000000..51a13fb26
+index 000000000..ab4f49d2c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,109 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -78578,12 +78564,22 @@ index 000000000..51a13fb26
 +        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
-+    std::fs::write(dir.path().join("src/a.txt"), "x").unwrap();
-+    let (watch_id, paths) =
-+        tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)))
-+            .await
-+            .unwrap()
-+            .unwrap();
++    let file = dir.path().join("src/a.txt");
++    let (watch_id, paths) = tokio::task::spawn_blocking(move || {
++        let mut seen = Vec::new();
++        for round in 0..20 {
++            std::fs::write(&file, round.to_string()).unwrap();
++            while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
++                if batch.1.iter().any(|p| p == "src/a.txt") {
++                    return batch;
++                }
++                seen.push(batch);
++            }
++        }
++        panic!("{seen:?}")
++    })
++    .await
++    .unwrap();
 +    assert_eq!(watch_id, id);
 +    assert!(paths.iter().any(|p| p == "src/a.txt"), "{paths:?}");
 +    assert!(watches.unwatch("m", &id));
@@ -79700,39 +79696,31 @@ index 000000000..38c5a1de4
 +security-framework-sys = "=2.15.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
-index 000000000..82e68d714
+index 000000000..b4c796786
 --- /dev/null
 +++ b/codex-rs/omd/README.md
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,21 @@
 +# codex-omd
 +
-+Feature-agnostic host primitives linked by the pinned Codex patch. The native
-+extension in [`runtime/native`](../native) registers them; feature behavior
-+lives in TypeScript mods under [`mods/`](../../mods). See
-+[the runtime overview](../README.md).
++Feature-agnostic host primitives linked by the pinned Codex patch. The native extension in
++[`runtime/native`](../native) registers them; features live in TypeScript mods under [`mods/`](../../mods). See the
++[runtime overview](../README.md).
 +
-+| Module | Owns |
-+| --- | --- |
-+| `mode` | `OMD_MODE=omd` and `upstream_direct`; retired modes fail closed |
-+| `mods` | Mod host, package manager, runner bridge, terminal view model and source-use analysis |
-+| `host` | Generic `exec.*`, `workspace.*` and backup operations with permission, cancellation and size checks |
-+| `admission` | Task ledger: request/exposure admission, reservations, explicit resume |
-+| `contract_document` | Schema-2 contract documents, digest-pinned selections, receipts and finding ledgers |
-+| `data_store`, `resource_data`, `scoped_data` | Namespaced `store.*`, immutable evidence resources and `evidence.*`/`sessions.*` scoping |
-+| `sessions`, `session_policy` | Read-only, repository-scoped session listing and paging |
-+| `workspace` | Snapshots, fingerprints and transactional writes |
-+| `builtins`, `owner`, `turn_evidence`, `plugin_component` | Built-in command/mode controls, policy ownership, turn evidence packets and plugin component inspection |
++The crate covers the mod host and package manager, the host operations mods call (`exec.*`, `workspace.*`, data
++stores, sessions, credentials, drafts and events), the task ledger and workflow contracts, and the terminal view model.
++`src/lib.rs` lists the modules.
 +
-+Binaries:
++Binaries in this crate:
 +
-+- `omd-mod` — install, trust, enable, test and inspect mod packages.
-+- `omd-contract` — select or inspect a schema-2 contract document.
-+- `omd` — run an enabled extension's CLI export outside a session, or `omd store export|reset --mod ID` to recover one mod's store without running mod code.
++- `omd`: runs an enabled mod's CLI export outside a session; `omd install` and `omd mods` manage mod packages;
++  `omd store export|reset --mod ID` recovers one mod's store without running mod code. The installed `omd` launcher
++  also routes `omd update` to the installer.
++- `omd-contract`: inspects, plans, selects, requires or clears a workflow contract.
++- `omd-broker`: the helper for the OS-separated authority broker (see `omd-package broker`).
 +
-+`omd-mod` with no arguments prints its commands. With no
-+first-party mods installed the host runs as modded Codex with no feature
-+behavior; `scripts/check_native_ownership.py` fails if a native operation,
-+event, capability or host configuration field names a feature.
++`omd-mod`, the package and store manager, is built from [`runtime/native`](../native). With no first-party mods
++installed the host is modded Codex with no feature behavior; `scripts/check_native_ownership.py` fails if native
++code names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
 index 000000000..346034fc7
@@ -84436,10 +84424,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 000000000..b10cafed0
+index 000000000..9200a94ef
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,665 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -85104,7 +85092,6 @@ index 000000000..b10cafed0
 +                .is_empty()
 +        );
 +    }
-+
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
@@ -87362,10 +87349,10 @@ index 000000000..71d22704d
 +mod tests;
 diff --git a/codex-rs/omd/src/builtins_tests.rs b/codex-rs/omd/src/builtins_tests.rs
 new file mode 100644
-index 000000000..074c134f7
+index 000000000..320c013e6
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins_tests.rs
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,38 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -87404,7 +87391,6 @@ index 000000000..074c134f7
 +            .unwrap();
 +    assert!(restored.replaced_commands.is_empty());
 +}
-+
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
 index 000000000..f17108e43
@@ -88929,10 +88915,10 @@ index 000000000..f17108e43
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..a68f87f31
+index 000000000..12a0dc6af
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,609 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89542,7 +89528,6 @@ index 000000000..a68f87f31
 +    assert!(decode_image(b"GIF89a").is_err());
 +    assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 +}
-+
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
 index 000000000..e2bb56cbe
@@ -89724,10 +89709,10 @@ index 000000000..e2bb56cbe
 +mod tests;
 diff --git a/codex-rs/omd/src/consents_tests.rs b/codex-rs/omd/src/consents_tests.rs
 new file mode 100644
-index 000000000..9e912b132
+index 000000000..107b0d39f
 --- /dev/null
 +++ b/codex-rs/omd/src/consents_tests.rs
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,65 @@
 +use super::*;
 +
 +#[test]
@@ -89793,7 +89778,6 @@ index 000000000..9e912b132
 +    );
 +    assert!(grant(root, "../escape", "queue", &sha, "c3").is_err());
 +}
-+
 diff --git a/codex-rs/omd/src/contract_cli.rs b/codex-rs/omd/src/contract_cli.rs
 new file mode 100644
 index 000000000..948462abe
@@ -92096,10 +92080,10 @@ index 000000000..af6c25365
 +mod tests;
 diff --git a/codex-rs/omd/src/event_bus_tests.rs b/codex-rs/omd/src/event_bus_tests.rs
 new file mode 100644
-index 000000000..76ccb6036
+index 000000000..ccd1e0c13
 --- /dev/null
 +++ b/codex-rs/omd/src/event_bus_tests.rs
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,231 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -92331,7 +92315,6 @@ index 000000000..76ccb6036
 +    assert_eq!(bus.pending("slow"), 1);
 +    assert_eq!(bus.drain("slow", usize::MAX)[0].dropped, 0);
 +}
-+
 diff --git a/codex-rs/omd/src/frame_metrics.rs b/codex-rs/omd/src/frame_metrics.rs
 new file mode 100644
 index 000000000..7f016fb39
@@ -96248,10 +96231,10 @@ index 000000000..a3a9a4dba
 +mod tests;
 diff --git a/codex-rs/omd/src/model_request_tests.rs b/codex-rs/omd/src/model_request_tests.rs
 new file mode 100644
-index 000000000..9d7328ac6
+index 000000000..c66282acc
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request_tests.rs
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,384 @@
 +use super::*;
 +
 +fn message(role: &str, parts: &[(&str, &str)]) -> Value {
@@ -96636,13 +96619,12 @@ index 000000000..9d7328ac6
 +            .contains("no longer JSON")
 +    );
 +}
-+
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..de54508c2
+index 000000000..f93575cbb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6108 @@
+@@ -0,0 +1,6111 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99325,7 +99307,10 @@ index 000000000..de54508c2
 +            "turn-activity",
 +            "turn-activity/thread.jsonl",
 +        ] {
-+            let mode = std::fs::metadata(root.join(path)).unwrap().permissions().mode();
++            let mode = std::fs::metadata(root.join(path))
++                .unwrap()
++                .permissions()
++                .mode();
 +            assert_eq!(mode & 0o077, 0, "{path}: {mode:o}");
 +        }
 +    }
@@ -102753,10 +102738,10 @@ index 000000000..de54508c2
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..1068b6b12
+index 000000000..6f17df021
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1085 @@
+@@ -0,0 +1,1091 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -103833,14 +103818,20 @@ index 000000000..1068b6b12
 +        });
 +        redact_value(&mut bundle, None, &[("/store".into(), "$STORE".into())]);
 +        let encoded = bundle.to_string();
-+        for secret in ["gho_abc123", "AKIAABCDEFGHIJKLMNOP", "MIIEsecretbody", "k1", "k2", "k3"] {
++        for secret in [
++            "gho_abc123",
++            "AKIAABCDEFGHIJKLMNOP",
++            "MIIEsecretbody",
++            "k1",
++            "k2",
++            "k3",
++        ] {
 +            assert!(!encoded.contains(secret), "{encoded}");
 +        }
 +        assert!(encoded.contains("at $STORE/x"), "{encoded}");
 +        assert_eq!(bundle["settings"]["enabled"], true);
 +        assert_eq!(bundle["settings_keys"], json!(["theme"]));
 +    }
-+
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
@@ -113644,10 +113635,10 @@ index 000000000..7779d6098
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..bf3b4cfc7
+index 000000000..389978990
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1494 @@
+@@ -0,0 +1,1500 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -113698,7 +113689,8 @@ index 000000000..bf3b4cfc7
 +type RunnerDigests = HashMap<PathBuf, (FileStamp, String)>;
 +
 +static RUNNER_DIGESTS: LazyLock<Mutex<RunnerDigests>> = LazyLock::new(Default::default);
-+static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> = LazyLock::new(Default::default);
++static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> =
++    LazyLock::new(Default::default);
 +
 +/// The runner binary's digest, rehashed only when its file stamp changes.
 +fn runner_digest(node: &Path) -> Result<String> {
@@ -114186,7 +114178,12 @@ index 000000000..bf3b4cfc7
 +
 +    /// The configured `node`, refused when the broker holds no runner grant for it.
 +    pub(super) fn verified_node(&self, node: &Path) -> Result<()> {
-+        verify_runner(node, brokered_grants(&self.root)?.as_ref().map(|(_, grants)| grants))
++        verify_runner(
++            node,
++            brokered_grants(&self.root)?
++                .as_ref()
++                .map(|(_, grants)| grants),
++        )
 +    }
 +
 +    /// Points the store at another `node` binary, authorizing it as the runner when the broker is deployed.
@@ -117342,10 +117339,10 @@ index 000000000..bcdb1932b
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..678571a48
+index 000000000..e975fc388
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,202 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -117548,7 +117545,6 @@ index 000000000..678571a48
 +    assert_eq!(sidebar["mode"], "replace");
 +    assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 +}
-+
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
 index 000000000..257d49d33
@@ -118188,10 +118184,10 @@ index 000000000..1a442a170
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 000000000..8bceb657d
+index 000000000..75b33c38a
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,281 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -118473,7 +118469,6 @@ index 000000000..8bceb657d
 +        "reload"
 +    );
 +}
-+
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
 index 000000000..ee873ae8a
@@ -119265,10 +119260,10 @@ index 000000000..f8b869378
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644
-index 000000000..be39dfbf1
+index 000000000..c1f5c1254
 --- /dev/null
 +++ b/codex-rs/omd/src/process_raster.rs
-@@ -0,0 +1,714 @@
+@@ -0,0 +1,713 @@
 +use serde_json::Value;
 +use std::collections::BTreeMap;
 +use std::fs::File;
@@ -119981,7 +119976,6 @@ index 000000000..be39dfbf1
 +        assert!(!send(None, "owner", "pr-frame", json!(3)));
 +        assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
 +    }
-+
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
@@ -120732,10 +120726,10 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..13450bb66
+index 000000000..a2e9619bb
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,749 @@
 +use crate::mods::{FileStamp, file_stamp};
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
@@ -121485,7 +121479,6 @@ index 000000000..13450bb66
 +        Ok(result)
 +    }
 +}
-+
 diff --git a/codex-rs/omd/src/tool_schema.rs b/codex-rs/omd/src/tool_schema.rs
 new file mode 100644
 index 000000000..98681031f
@@ -122182,10 +122175,10 @@ index 000000000..83ea284fd
 +mod tests;
 diff --git a/codex-rs/omd/src/turn_activity_tests.rs b/codex-rs/omd/src/turn_activity_tests.rs
 new file mode 100644
-index 000000000..07f901162
+index 000000000..ac3355496
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity_tests.rs
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,149 @@
 +use super::*;
 +use ActivityRecord::*;
 +
@@ -122335,7 +122328,6 @@ index 000000000..07f901162
 +        (Some("unknown"), Some(false))
 +    );
 +}
-+
 diff --git a/codex-rs/omd/src/turn_evidence.rs b/codex-rs/omd/src/turn_evidence.rs
 new file mode 100644
 index 000000000..2b4fccce5
@@ -122432,10 +122424,10 @@ index 000000000..2b4fccce5
 +}
 diff --git a/codex-rs/omd/src/watch_filter.rs b/codex-rs/omd/src/watch_filter.rs
 new file mode 100644
-index 000000000..f26b3fb2e
+index 000000000..fe9f4ff31
 --- /dev/null
 +++ b/codex-rs/omd/src/watch_filter.rs
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,23 @@
 +use ignore::gitignore::{Gitignore, GitignoreBuilder};
 +use std::path::Path;
 +
@@ -122459,13 +122451,12 @@ index 000000000..f26b3fb2e
 +            .is_ignore()
 +    }
 +}
-+
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..cffa69a6f
+index 000000000..7b8df9149
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1252 @@
+@@ -0,0 +1,1251 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -123716,14 +123707,13 @@ index 000000000..cffa69a6f
 +        assert!(missing_sink.apply(&root, || true).is_err());
 +        assert!(root.join("keep.txt").exists());
 +    }
-+
 +}
 diff --git a/codex-rs/omd/src/workspace_lease.rs b/codex-rs/omd/src/workspace_lease.rs
 new file mode 100644
-index 000000000..42655c1f8
+index 000000000..0db11ea81
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace_lease.rs
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,149 @@
 +use std::fs::{self, File};
 +use std::io;
 +use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -123872,7 +123862,6 @@ index 000000000..42655c1f8
 +        drop(exclusive);
 +        assert!(shared(root.path()).is_ok());
 +    }
-+
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
@@ -128046,10 +128035,10 @@ index 000000000..8ef5a1e8f
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..007995135
+index 000000000..702578968
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4774 @@
+@@ -0,0 +1,4777 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -131084,18 +131073,18 @@ index 000000000..007995135
 +#[test]
 +fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
 +    let (temp, _, _) = fixture(
-+        "export default api => { api.command('nap', () => api.time.sleep(300)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
++        "export default api => { api.command('nap', () => api.time.sleep(300)); api.command('doze', () => api.time.sleep(5000)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
 +        &["commands", "events", "composer"],
 +    );
 +    let runtime = std::sync::Mutex::new(host(&temp));
 +    let generation = runtime.lock().unwrap().generation();
-+    let nap = |active: &dyn Fn() -> bool| {
++    let nap = |name: &str, active: &dyn Fn() -> bool| {
 +        codex_omd::invoke_shared(
 +            &runtime,
 +            "fixture",
 +            generation,
 +            "command",
-+            "nap",
++            name,
 +            Value::Null,
 +            active,
 +            |_, _| Err(std::io::Error::other("unexpected host call")),
@@ -131103,7 +131092,7 @@ index 000000000..007995135
 +        )
 +    };
 +    std::thread::scope(|scope| {
-+        let sleeper = scope.spawn(|| nap(&|| true));
++        let sleeper = scope.spawn(|| nap("nap", &|| true));
 +        std::thread::sleep(std::time::Duration::from_millis(150));
 +        assert!(
 +            runtime.try_lock().is_ok(),
@@ -131116,11 +131105,14 @@ index 000000000..007995135
 +    });
 +    let checks = std::sync::atomic::AtomicUsize::new(0);
 +    let started = std::time::Instant::now();
-+    let woken = nap(&|| checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6).unwrap_err();
++    let woken = nap("doze", &|| {
++        checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6
++    })
++    .unwrap_err();
 +    assert!(woken.to_string().contains("callback_cancelled"), "{woken}");
 +    assert!(
-+        started.elapsed() < std::time::Duration::from_millis(300),
-+        "the sleep woke early"
++        started.elapsed() < std::time::Duration::from_secs(2),
++        "the sleep wakes on cancellation"
 +    );
 +    let held = runtime
 +        .lock()
@@ -139214,10 +139206,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..643866332
+index 000000000..f7b625fff
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2063 @@
+@@ -0,0 +1,2064 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -140088,7 +140080,8 @@ index 000000000..643866332
 +                .canonicalize()
 +                .map_err(|_| "pty_cwd_invalid")?;
 +            let argv = crate::mod_pty::argv(arguments)?;
-+            let program = codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
++            let program =
++                codex_omd::host::unrestricted_program(&access, &argv[0], &paths.repository)?;
 +            if let Some(expected) = arguments["sha256"].as_str()
 +                && codex_omd::host::program_hash(&program)? != expected
 +            {
@@ -143131,10 +143124,10 @@ index 000000000..4fb804ecf
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 000000000..df3a2cbc8
+index 000000000..a8c7d25c1
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -143159,7 +143152,9 @@ index 000000000..df3a2cbc8
 +        .as_str()
 +        .unwrap()
 +        .to_owned();
-+    store.trust(package.clone(), &source, Vec::new(), "user").unwrap();
++    store
++        .trust(package.clone(), &source, Vec::new(), "user")
++        .unwrap();
 +    store.enable(&package, true).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&root.join("store"));
 +    let (mut chat, _tx, mut rx, _op_rx) =
@@ -144346,7 +144341,7 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..47708b591
+index 000000000..3b93aaa9c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,686 @@
@@ -144387,7 +144382,7 @@ index 000000000..47708b591
 +        codex_omd::resource_data::ResourceRef,
 +        Vec<String>,
 +        Option<String>,
-+        Option<Authority>,
++        Box<Option<Authority>>,
 +    ),
 +    Diff(String),
 +}
@@ -144789,7 +144784,7 @@ index 000000000..47708b591
 +            (*reference).clone(),
 +            owners.to_vec(),
 +            crate::mod_surface::current_thread(),
-+            authority(),
++            Box::new(authority()),
 +        )),
 +        _ => None,
 +    };
@@ -145038,7 +145033,7 @@ index 000000000..47708b591
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..49d330991
+index 000000000..227cc200e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
 @@ -0,0 +1,181 @@
@@ -145065,7 +145060,7 @@ index 000000000..49d330991
 +            reference.clone(),
 +            owners.clone(),
 +            crate::mod_surface::current_thread(),
-+            revoked,
++            Box::new(revoked),
 +        ),
 +    ] {
 +        documents().insert(
@@ -145194,7 +145189,7 @@ index 000000000..49d330991
 +                reference.clone(),
 +                Vec::new(),
 +                crate::mod_surface::current_thread(),
-+                authority(),
++                Box::new(authority()),
 +            ),
 +            lines: Arc::new(vec!["resolved document".into()]),
 +            spans: Arc::new(vec![vec![Span::raw("resolved document")]]),
@@ -145225,10 +145220,10 @@ index 000000000..49d330991
 +}
 diff --git a/codex-rs/tui/src/mod_document.rs b/codex-rs/tui/src/mod_document.rs
 new file mode 100644
-index 000000000..bc92d0bdb
+index 000000000..059b5f215
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_document.rs
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,266 @@
 +use regex_lite::RegexBuilder;
 +use std::ops::Range;
 +
@@ -145494,14 +145489,13 @@ index 000000000..bc92d0bdb
 +                .starts_with("find_pattern_invalid")
 +        );
 +    }
-+
 +}
 diff --git a/codex-rs/tui/src/mod_kitty.rs b/codex-rs/tui/src/mod_kitty.rs
 new file mode 100644
-index 000000000..d11794ca3
+index 000000000..444a73f47
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_kitty.rs
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,24 @@
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
 +
@@ -145526,7 +145520,6 @@ index 000000000..d11794ca3
 +pub(crate) fn kitty_remove(image_id: u32) -> String {
 +    format!("\x1b_Ga=d,d=I,i={image_id},q=2;\x1b\\")
 +}
-+
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
 index 000000000..bcd52799f
@@ -148826,10 +148819,10 @@ index 000000000..d64019e63
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..690e9852a
+index 000000000..bc89c39e0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1566 @@
+@@ -0,0 +1,1565 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -149070,16 +149063,15 @@ index 000000000..690e9852a
 +    if active() {
 +        let prepared = snapshot.is_some();
 +        crate::mod_ui::startup_preview(snapshot, repository);
-+        if prepared {
-+            if let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
-+            {
-+                std::thread::spawn(move || {
-+                    let _ = codex_omd::ModStore::open(store).and_then(|store| {
-+                        store.verify_selections()?;
-+                        codex_omd::package_controls::list(&store, None)
-+                    });
++        if prepared
++            && let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
++        {
++            std::thread::spawn(move || {
++                let _ = codex_omd::ModStore::open(store).and_then(|store| {
++                    store.verify_selections()?;
++                    codex_omd::package_controls::list(&store, None)
 +                });
-+            }
++            });
 +        }
 +    }
 +}
@@ -152158,10 +152150,10 @@ index 000000000..474adaed6
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..9da1a5c19
+index 000000000..e4760ff46
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,965 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -152987,8 +152979,8 @@ index 000000000..9da1a5c19
 +}
 +
 +fn conformance_list(key: &str) -> std::collections::BTreeSet<String> {
-+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-+        .join("../../mods/conformance/tui-surface.json");
++    let path =
++        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mods/conformance/tui-surface.json");
 +    let surface: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
 +    serde_json::from_value(surface[key].clone()).unwrap()
 +}
@@ -152999,8 +152991,7 @@ index 000000000..9da1a5c19
 +    use strum::IntoEnumIterator;
 +    let names: std::collections::BTreeSet<String> = crate::slash_command::SlashCommand::iter()
 +        .flat_map(|command| {
-+            std::iter::once(command.command())
-+                .chain(command.get_serializations().iter().copied())
++            std::iter::once(command.command()).chain(command.get_serializations().iter().copied())
 +        })
 +        .map(str::to_owned)
 +        .collect();
@@ -153078,15 +153069,22 @@ index 000000000..9da1a5c19
 +    with(|state| state.checked = None);
 +
 +    let snapshot = codex_omd::ModViewSnapshot {
-+        view: codex_omd::ModView::parse(json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
-+            {"type": "document", "id": "doc", "label": "Doc", "lines": [[{"text": "line"}]]}
-+        ]}}}))
++        view: codex_omd::ModView::parse(
++            json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
++                {"type": "document", "id": "doc", "label": "Doc", "lines": [[{"text": "line"}]]}
++            ]}}}),
++        )
 +        .unwrap(),
 +        component_owners: [("doc".to_owned(), "owner".to_owned())].into(),
 +        ..Default::default()
 +    };
 +    let area = ratatui::layout::Rect::new(0, 0, 100, 24);
-+    crate::mod_ui::render(area, area, &mut ratatui::buffer::Buffer::empty(area), &snapshot);
++    crate::mod_ui::render(
++        area,
++        area,
++        &mut ratatui::buffer::Buffer::empty(area),
++        &snapshot,
++    );
 +    assert!(
 +        crate::mod_components::handle("doc", crate::mod_document::DocumentKey::Activate).is_some()
 +    );
@@ -159995,10 +159993,10 @@ index 000000000..db98ef5d7
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644
-index 000000000..fdbccb32c
+index 000000000..32cc50725
 --- /dev/null
 +++ b/codex-rs/tui/src/notifications/titled.rs
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,116 @@
 +use std::fmt;
 +
 +use crossterm::Command;
@@ -160114,14 +160112,13 @@ index 000000000..fdbccb32c
 +        );
 +        assert_eq!(sanitize(&"x".repeat(100), TITLE_CHARS).len(), TITLE_CHARS);
 +    }
-+
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..601fec31a
+index 000000000..d9c3ae40b
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,704 @@
+@@ -0,0 +1,703 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -160824,7 +160821,6 @@ index 000000000..601fec31a
 +            Some("Oh My Diff · mods off in this directory · see /omd")
 +        );
 +    }
-+
 +}
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_box_model_120.snap
 new file mode 100644

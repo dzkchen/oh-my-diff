@@ -1,4 +1,3 @@
-import argparse
 import json
 from pathlib import Path
 import re
@@ -260,12 +259,9 @@ def first_party(root):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--report", action="store_true")
-    args = parser.parse_args()
     findings = inspect(ROOT)
     print(json.dumps({"schema": 1, "violations": findings, "count": len(findings)}, indent=2))
-    if findings and not args.report:
+    if findings:
         raise SystemExit(1)
 
 

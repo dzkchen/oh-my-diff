@@ -4,7 +4,7 @@ For the mods that ship with OMD+, see [Included mods](collection.md).
 
 ## Install a mod
 
-In `codex`: `/mods` → **Browse the directory**. From a shell:
+In `codex`: `/mods`, then Browse or Add from source. From a shell:
 
 ```sh
 omd install some_mod                                        # curated directory
@@ -17,8 +17,8 @@ omd mods enable some_mod                                    # installing doesn't
 Each step shows the source, license and permissions and asks first. The mod runs from your next message.
 
 Curated mods are pinned to a commit and hash; OMD refuses a changed download (`package_integrity_failure`) or an
-unsupported API (`incompatible_api`). Try a Claude Code port from [`mods/ports`](../mods/ports): `burn_meter`,
-`token_weather` or `blast_radius`.
+unsupported API (`incompatible_api`). The curated directory also lists three Claude Code ports from
+[`mods/ports`](../mods/ports): `burn_meter`, `token_weather` and `blast_radius`.
 
 ## See and change mods
 
@@ -29,7 +29,7 @@ omd mods inspect REFERENCE     # preview without installing
 omd mods update some_mod       # also: disable, remove, rollback
 ```
 
-Settings live in `/mods`. `--scope project` installs for one project and overrides your own copy.
+Settings live in `/mods`. `--scope project` installs for the current project instead of for you (`--scope user`, the default).
 
 ## When a mod misbehaves
 
@@ -49,7 +49,7 @@ Lower-level repair on the store (`~/.local/share/oh-my-diff/stores/full`, or `..
 ```sh
 omd-mod selection-status STORE         # what's selected, without running mods
 omd-mod package-disable STORE ID       # an installed mod off
-omd-mod disable STORE PACKAGE          # a folder-trusted mod off
+omd-mod disable STORE PATH             # a folder-trusted mod (by source folder) off
 omd-mod package-enable STORE ID        # back on, data kept
 ```
 

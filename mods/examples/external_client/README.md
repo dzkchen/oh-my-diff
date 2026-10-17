@@ -5,7 +5,7 @@ Shows a mod that owns its client adapter: a text renderer process that joins the
 ## What it shows
 
 - **Roster view:** the `terminal` handler lists attached clients from `input.clients` in the `external_clients` list. Space or Enter on a row, or `omd/action` from a client, runs `external_client:pick` with that client's id.
-- **Rich components:** a status line, an 8×1 `raster` drawn once by a timer with `terminal.blit`, and an SVG `image` written with `evidence.write` on `start`. The terminal shows the image's alt text.
+- **Rich components:** a status line, an 8×1 `raster` drawn once by a timer with `terminal.blit` (experimental), and an SVG `image` written with `evidence.write` on `start`. The terminal shows the image's alt text.
 - **Pointer source:** a press on the badge records `component_event.client`, so the status line names the client that clicked.
 - **Launching a process:** slash commands can't start processes, so `launch` hops through `events.publish` to the mod's `channel` handler. It finds `node` with `process.which` and starts `node <client_path>` with `process.start {sandbox: 'none'}` under the `os` grant (`os_access.programs: ['node']`, network on for `ws://`). The URL and token file path arrive as `EXTERNAL_CLIENT_URL` and `EXTERNAL_CLIENT_AUTH_FILE` (both in `exec_environment`), so the mod never sees the token.
 - **The client:** `client.mjs` connects with `kind: 'text'` and prints to stderr, since a process the mod starts uses stdout for framed messages. It prints each `omd/view/updated` snapshot as text (components it can't show become the SDK's `unsupported()` error plus fallback text), sends one action on its own roster row, and prints the result. The SDK re-attaches after a disconnect.

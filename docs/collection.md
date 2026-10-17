@@ -2,6 +2,13 @@
 
 What ships with OMD+, and which mods are on.
 
+- **Installed:** the mod is on disk and listed in `/mods`.
+- **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
+- **Experimental:** the mod API is experimental and the mods are labeled preview, so behavior can change between
+  releases.
+- **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
+  turn them on; it does not review them.
+
 ## Turn a mod on or off
 
 Type `/mods` in `codex`, or run:
@@ -40,7 +47,7 @@ OMD Core includes only the first three.
 | `omd_privacy` | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | `omd_usage` | A usage display: context, cache, cost and quota (Alt+a) | |
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
-| `omd_lsp_sync` | Shows the errors each edit introduces; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
+| `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
 | `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. See [Claude](#claude). |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
@@ -74,15 +81,13 @@ More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
 ## Plugins
 
-OMD+ also includes three Codex plugins: anchored edit, artifact reading and code execution. To add them, see
-[plugins/README.md](../plugins/README.md).
+OMD+ stages three Codex plugins: `omd-anchored-edit`, `omd-artifact-reading` and `omd-code-execution`. They are
+installed on disk but inert until you add them with `codex plugin add`; see [plugins/README.md](../plugins/README.md).
+OMD Core stages none.
 
-## Not in this release
+## Not included
 
-Coming later:
-
-- Right after `1.0.0`: source knowledge, mini, cursor, programmable context, and an account switcher and usage meter
-  for `omd_profiles`.
-- After that: the other first-party mods and plugins, the browser and the bridge.
+Further first-party mods and plugins are planned. After release the creator expects to focus mainly on critical
+fixes, so treat plans as intentions, not commitments.
 
 OMD has no desktop app, VS Code extension, Linux build or hosted service.

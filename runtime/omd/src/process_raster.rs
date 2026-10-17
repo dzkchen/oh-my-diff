@@ -710,5 +710,4 @@ mod tests {
         assert!(!send(None, "owner", "pr-frame", json!(3)));
         assert_eq!(*seen.lock().unwrap(), vec![json!(2)]);
     }
-
 }

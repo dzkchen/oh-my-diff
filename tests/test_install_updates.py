@@ -408,6 +408,8 @@ class UpdateSelection(unittest.TestCase):
             (generation / "prefix").mkdir(exist_ok=True)
             (generation / "prefix/install.json").touch()
             (generation / "receipt.json").write_text("{}")
+            (generation / self.module.RELEASE_MANIFEST).write_text("{}")
+            (generation / self.module.RELEASE_SIGNATURE).write_text("sig")
         (older / "prefix/personal.txt").write_text("keep")
         (self.root / "previous").symlink_to(older)
         (self.root / "releases/failed-stranded/prefix").mkdir(parents=True)

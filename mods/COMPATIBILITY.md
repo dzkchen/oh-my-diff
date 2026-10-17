@@ -3,9 +3,10 @@
 Which hosts a mod runs on. The source is [compatibility.json](compatibility.json); `python3 scripts/mod_compatibility.py`
 checks it against the host.
 
-The launch API is frozen at `0.2.0-experimental.5` through `2027-03-20` for entries marked frozen in
-[the conformance registry](conformance/contract.json). Experimental entries are outside the freeze, and the host
-and SDK are still pre-release.
+API `0.2.0-experimental.5` is supported through `2027-03-20`. Entries marked frozen in
+[the conformance registry](conformance/contract.json) keep their shape until then. Experimental entries
+(including the raster surfaces `terminal.blit` and `process_raster_v1`) may change, and the host and SDK are
+pre-release.
 
 ## Supported versions
 
@@ -43,6 +44,11 @@ These reject older hosts before activation, even when the API version matches.
 
 `mise run mods:check` checks the last three.
 
+## Terminals
+
+Supported terminals: Kitty, Ghostty, WezTerm and Orca's terminal. Images use Kitty graphics in
+Kitty and Ghostty, and inline images in Orca and WezTerm. Other terminals aren't tested; the host falls back to half-block cells or text.
+
 ## Services
 
 Service contracts use `x.y.z` versions. A consumer asks for an exact version or a caret range.
@@ -65,11 +71,12 @@ The host never rewrites a mod's code or settings.
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.163.0, the OMD+ and OMD Core collections, and the shipped plugins together.
+Tested: Apple Silicon macOS with Codex 0.163.0, the OMD+ and OMD Core collections, and the bundled plugins.
 
 Not tested:
 
 - Linux or Intel macOS.
+- Terminals other than those above.
 - Third-party mods combined with the OMD+ collection.
 - Upgrading from an earlier OMD release (there is none yet).
 - Artifact reading and code execution together in one live task.

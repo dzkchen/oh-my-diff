@@ -1,9 +1,10 @@
 # Write your first mod
 
-Build a `/hello` command, test it, run it in `codex` and share it. About ten minutes.
+Build a `/hello` command, test it, run it in `codex` and share it.
 
 A **mod** is a small TypeScript package that runs inside OMD. It can add commands and tools, change what the model
-sees, and draw on screen.
+sees, and draw on screen. The mod API is experimental: only the current API loads, so a mod may need changes
+after an update ([compatibility](../mods/COMPATIBILITY.md)).
 
 ## Before you begin
 
@@ -20,7 +21,9 @@ You get a folder with:
 
 - `index.ts`: the code, with a `/hello` command.
 - `mod.json`: the mod's name, version and requested permissions.
-- `mod.test.json`: an offline test that runs `/hello`.
+- `mod.test.json` and `debug.test.json`: offline scenarios that run `/hello`.
+- `package.json` and `tsconfig.json`: the `pnpm` scripts (`check`, `test`, `run`, `debug`, `package`, `watch`) and
+  TypeScript settings.
 
 ## 2. Test it
 
@@ -43,10 +46,11 @@ pnpm add -D typescript@5.9.3
 
 ## 3. Try it in `codex`
 
-Use a practice mod store so experiments don't touch your real one:
+Use a practice mod store so experiments don't touch your real one. `omd-mod init` records the Node binary the store
+runs mods with; give it a real `node` path, not a version-manager shim:
 
 ```sh
-omd-mod init /tmp/my-store "$(mise which node)"
+omd-mod init /tmp/my-store "$(mise which node 2>/dev/null || command -v node)"
 pnpm watch /tmp/my-store
 ```
 
@@ -55,7 +59,7 @@ pnpm watch /tmp/my-store
 In a second terminal, start `codex` on that store:
 
 ```sh
-OMD_MODE=omd OMD_MOD_STORE=/tmp/my-store OMD_NODE="$(mise which node)" ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
+OMD_MODE=omd OMD_MOD_STORE=/tmp/my-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
 ```
 
 Type `/hello`. You should see `Hello world`.
@@ -77,7 +81,7 @@ Each command shows what the mod can do and asks first. After later code changes,
 Build a release copy:
 
 ```sh
-pnpm run package
+pnpm --dir my_mod run package
 ```
 
 To rebuild, delete `dist/` first or bump `version`.
