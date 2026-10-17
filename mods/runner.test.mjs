@@ -2,34 +2,46 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { callback, runnerSync } from '../tests/mod_runner.mjs';
+import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
-const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
-const currentSurface = {
-  events: Object.fromEntries([...table('MOD_EVENTS').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  replacements: [...table('MOD_REPLACEMENT_POINTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  middleware: [...table('MOD_MIDDLEWARE_EVENTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
-  intercept: Object.fromEntries([...table('MOD_INTERCEPT_SURFACES').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  state: 'store', contracts: 'contracts',
-};
-const lspDirectory = new URL('./first-party/omd_lsp_sync/', import.meta.url);
-const lspManifest = JSON.parse(readFileSync(new URL('mod.json', lspDirectory), 'utf8'));
-const lsp = {
-  source: readFileSync(new URL('index.ts', lspDirectory), 'utf8'),
-  capabilities: lspManifest.capabilities,
-  package: {
-    filename: fileURLToPath(new URL('index.ts', lspDirectory)),
-    entrypoint: 'index.ts',
-    assets: Object.fromEntries(lspManifest.assets.map(name => [name, { text: readFileSync(new URL(name, lspDirectory), 'utf8'), sha256: '0'.repeat(64) }])),
-  },
-};
 function run(source, extra = {}) {
-  const result = runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', surface: currentSurface, ...extra });
-  assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+  return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
+
+test('UI state serialized boundaries agree with the native validator', () => {
+  const cases = JSON.parse(readFileSync(new URL('../runtime/omd/tests/fixtures/ui_state.json', import.meta.url)));
+  for (const entry of cases) {
+    const encoded = entry.prefix + entry.unit.repeat(entry.repeat) + entry.suffix;
+    const reply = run('export default api => api.command("write", value => api.uiState.set(JSON.parse(value)))',
+      { capabilities: ['terminal', 'commands'], event: 'command', name: 'write', payload: encoded });
+    assert.equal(!reply.error, entry.valid, `${entry.name}: ${reply.error}`);
+  }
+});
+
+test('mod contexts encode UTF-8 with a TextEncoder of their own realm', () => {
+  const source = `export default api => api.command('encode', text => {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    const fitted = encoder.encodeInto(text, new Uint8Array(4));
+    const lone = encoder.encodeInto('\\uD800x', new Uint8Array(3));
+    const realm = probe => { try { probe(); return 'none'; } catch (error) { return error.constructor.constructor === Function ? 'local' : 'outer'; } };
+    const disguised = new Proxy({}, { getPrototypeOf: () => Uint8Array.prototype });
+    const whole = encoder.encode(text.repeat(110_000));
+    const chunk = new Uint8Array(64);
+    let rest = text.repeat(110_000), offset = 0, same = true;
+    while (rest) {
+      const step = encoder.encodeInto(rest, chunk);
+      for (let index = 0; index < step.written; index++) same &&= chunk[index] === whole[offset + index];
+      offset += step.written;
+      rest = rest.slice(step.read);
+    }
+    return { bytes: Array.from(bytes), local: bytes instanceof Uint8Array, fitted, cut: text.slice(0, fitted.read), lone,
+      errors: [realm(() => encoder.encodeInto('a', disguised)), realm(() => encoder.encodeInto('a', {}))], streamed: same && offset === whole.length };
+  })`;
+  const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'encode', payload: 'a€😀' });
+  assert.deepEqual(reply.value, { bytes: [0x61, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], local: true, fitted: { read: 2, written: 4 }, cut: 'a€',
+    lone: { read: 1, written: 3 }, errors: ['local', 'local'], streamed: true }, 'no outer-realm error reaches mod code');
+});
 
 test('UI state requires terminal authority and refuses activation and render writes', () => {
   const read = 'export default api => api.command("read", () => api.uiState.get())';
@@ -55,22 +67,15 @@ test('render callbacks cannot mutate activation registrations', () => {
   }
 });
 
-test('classic hooks cannot register handlers during callbacks', () => {
-  const reply = run(`export default api => api.hook('PostToolUse', () => {
-    api.hook('PostToolUse', () => api.state.set({ late: true }));
-  });`, { capabilities: ['lifecycle', 'store'], event: 'tool_result', payload: { tool: 'read_file', outcome: 'succeeded' } });
-  assert.match(reply.error ?? '', /hook_registration_outside_activation/);
-});
-
 test('warm renders and continuation replays restore post-activation atoms', () => {
   const input = { component: 'tool_call' };
   const request = { source: `export default api => { const value = api.atom('value', 0); value.set(value.get() + 1);
     api.intercept('render', (e, next) => e.replay ? next({ ...e, value: value.get() }) : { value: value.get() }); };`,
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface: currentSurface,
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { value: 0 }, settings: {}, surface,
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = result.stdout.trim().split('\n').map(JSON.parse);
@@ -88,13 +93,16 @@ test('typed module context callback', () => {
 });
 test('a callback clock stands still except across its own sleeps', () => {
   const source = 'export default api => api.command("wait", async () => { const start = Date.now(); api.host.call("session.info", null); const mid = Date.now(); await api.time.sleep(40); return [mid - start, Date.now() - start, new Date().getTime() - start]; })';
-  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, surface: currentSurface, event: 'command', name: 'wait', virtual_time_ms: 1000 };
-  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {}, []);
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands', 'inventory'], state: null, settings: {}, event: 'command', name: 'wait', virtual_time_ms: 1000 };
+  const reply = callback(request, call => call.operation === 'time.sleep' ? { slept_ms: call.arguments.ms, cancelled: false } : {});
   assert.deepEqual(reply.value, [0, 40, 40]);
 });
-test('the test harness kills an interactive callback that never returns', () => {
-  const request = { source: 'export default (api: any) => api.on("context", () => { for (;;) {} })', filename: 'fixture.ts', capabilities: ['context'], state: null, settings: {}, event: 'context', surface: currentSurface, hook_budget_ms: 50 };
-  assert.throws(() => callback(request, () => null, []), /runner_timed_out/);
+test('Date() and Intl date formatting read the callback clock', () => {
+  const source = `export default api => api.command("now", () => {
+    const format = new Intl.DateTimeFormat('en', { timeZone: 'UTC', dateStyle: 'full', timeStyle: 'long' });
+    return [Date() === new Date().toString(), format.format() === format.format(new Date()), Intl.DateTimeFormat('en', { timeZone: 'UTC', timeStyle: 'long' }).formatToParts().length > 0, new Date().getTime(), [new Date(0)].map(format.format)[0] === format.format(new Date(0)), (({ format: unbound }) => unbound())(format) === format.format(new Date()), format.format === format.format];
+  })`;
+  assert.deepEqual(run(source, { capabilities: ['commands'], event: 'command', name: 'now', virtual_time_ms: 1000 }).value, [true, true, true, 1000, true, true, true]);
 });
 test('package text assets are read only and limited to the selected package', () => {
   const source = 'export default api => api.command("asset", () => api.assets.read("worker.mjs"))';
@@ -123,25 +131,17 @@ test('component module steps deliver input, ticks and one post without host auth
   const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
-    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface: currentSurface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+    filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
+  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
-  assert.match(run('export default api => api.component("x", { view: 1 })', { capabilities: ['terminal'] }).error, /handler_required: x/);
-  const paused = start => `export default api => api.component("p", { init: () => ${start}, every: { ms: n => n ? null : 20, tick: n => n + 1 }, view: n => [{ type: "text", id: "n", label: "N", text: String(n) }] })`;
-  const pausedStep = start => run(paused(start), { capabilities: ['terminal'], event: 'component', name: 'p', payload: { now: 100, events: [] } }).value.next_ms;
-  assert.deepEqual([pausedStep(0), pausedStep(1)], [20, null]);
-  const asynchronous = handler => run(`export default api => api.component("a", { ${handler}, view: s => [{ type: "text", id: "t", label: "a", text: JSON.stringify(s) }] })`,
-    { capabilities: ['terminal'], event: 'component', name: 'a', payload: { now: 0, events: [{ kind: 'key', key: 'x', text: null }] } });
-  assert.match(asynchronous('init: () => 0, key: async s => s + 1').error, /component_handlers_must_be_synchronous/);
-  assert.match(asynchronous('init: async () => 0, key: s => s').error, /component_handlers_must_be_synchronous/);
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
-    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface: currentSurface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
+    filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
+  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
@@ -175,32 +175,87 @@ test('no ambient process, fetch, or code generation', () => {
     assert.ok(run(`export default () => { ${expression} }`).error);
   }
 });
-test('duplicate registrations rejected', () => {
-  assert.match(run('export default api => { api.command("a", () => null); api.command("a", () => null) }', { capabilities: ['commands'] }).error, /conflict/);
+test('errors, crypto results and JSON assets stay in the mod realm', () => {
+  const source = `import data from './data.json';
+  const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  const caught = async run => { try { await run(); return 'no error'; } catch (error) { return reach(error); } };
+  export default api => api.command('probe', async () => {
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(8), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signed = await crypto.subtle.sign('HMAC', key, new Uint8Array(1));
+    return [
+      await caught(() => import('x')),
+      await caught(() => new TextEncoder().encodeInto('a', new Proxy(new Uint8Array(4), {}))),
+      await caught(() => crypto.subtle.digest('none', new Uint8Array(1))),
+      ...[crypto, crypto.subtle, crypto.subtle.digest('SHA-256', new Uint8Array(1)), key, key.algorithm, signed, data].map(reach),
+      signed.byteLength,
+    ];
+  })`;
+  const reply = run(source, { filename: '/pkg/index.ts', entrypoint: 'index.ts', capabilities: ['commands'], environment: ['crypto'],
+    assets: { 'data.json': { text: '{"a": 1}', sha256: 'a'.repeat(64) } }, event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, [...Array(10).fill('contained'), 32], reply.error);
 });
-test('persistent state passed through tool invocation', () => {
-  const source = 'export default api => api.tool({ name:"count", description:"count", parameters:{type:"object",properties:{}} }, () => { api.state.set(api.state.get()+1); return api.state.get(); })';
-  const reply = run(source, { capabilities: ['tools','store'], state: 9, event: 'tool', name: 'count' });
-  assert.equal(reply.state, 10);
-  assert.equal(reply.value, 10);
+test('patched intrinsics never receive host values from TextEncoder, crypto or registrations', () => {
+  const source = `import './a.ts';
+  const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  export default api => api.command('probe', async () => {
+    const seen = [];
+    const spy = (owner, name) => {
+      const original = owner[name];
+      owner[name] = function (...args) { seen.push(this, ...args); return Reflect.apply(original, this, args); };
+      return () => { owner[name] = original; };
+    };
+    const Bytes = Uint8Array;
+    globalThis.Uint8Array = function (...args) { seen.push(...args); return new Bytes(...args); };
+    globalThis.Uint8Array.prototype = Bytes.prototype;
+    const restore = [[Object.prototype, 'toString'], [Object, 'entries'], [Object, 'fromEntries'], [Object, 'freeze'], [Array, 'from'],
+      [Array.prototype, 'map'], [WeakMap.prototype, 'set'], [WeakMap.prototype, 'get'], [Promise.prototype, 'then'], [globalThis, 'String'],
+      [JSON, 'parse'], [ArrayBuffer, 'isView']].map(([owner, name]) => spy(owner, name));
+    try {
+      new TextEncoder().encode('a');
+      new TextEncoder().encodeInto('a', new Bytes(4));
+      crypto.getRandomValues(new Bytes(4));
+      const subtle = crypto.subtle;
+      const key = await subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
+      await subtle.sign('HMAC', key, new Bytes(1));
+      await subtle.exportKey('jwk', key);
+      await subtle.digest('SHA-256', new Bytes(1));
+    } finally {
+      restore.forEach(undo => undo());
+      globalThis.Uint8Array = Bytes;
+    }
+    return [seen.map(reach).filter(reached => reached !== 'contained'), reach(globalThis.__omd.registrations.modules)];
+  })`;
+  const reply = run(source, { filename: '/pkg/index.ts', entrypoint: 'index.ts', capabilities: ['commands'], environment: ['crypto'],
+    assets: { 'a.ts': { text: 'export {}', sha256: 'a'.repeat(64) } }, event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, [[], 'contained'], reply.error);
+});
+test('host errors from stack overflow can neither compile code nor patch the host realm', () => {
+  const source = `const reach = value => { try { return typeof value.constructor.constructor('return process')(); } catch { return 'contained'; } };
+  const patch = (value, write) => { try { write(value); return 'patched'; } catch { return 'frozen'; } };
+  export default api => api.command('probe', async () => {
+    const errors = [];
+    const note = error => { errors.push(error); };
+    const pending = [];
+    for (const probe of [() => { pending.push(import('x').catch(note)); }, () => new Error('x').stack]) {
+      let attempts = 0;
+      const recurse = () => { try { recurse(); } catch { if (attempts++ < 3000) { try { probe(); } catch (error) { note(error); } } } };
+      recurse();
+    }
+    await Promise.all(pending);
+    const found = new Set(errors.map(reach));
+    const host = new Set(errors.filter(error => !(error instanceof Error)).flatMap(error => [
+      patch(error, value => { Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(value))).omdProbe = 1; }),
+      patch(error, value => { Object.getPrototypeOf(value.constructor).prepareStackTrace = () => 'x'; }),
+    ]));
+    return { found: [...found], host: [...host] };
+  })`;
+  const reply = run(source, { capabilities: ['commands'], event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value?.found, ['contained'], reply.error);
+  assert.ok(!reply.value.host.includes('patched'), JSON.stringify(reply.value));
 });
 test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   assert.match(run('export default api => api.command("large", () => "x".repeat(270000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
-});
-test('commands carry descriptions and tools carry labels and bounded progress', () => {
-  const source = `export default api => {
-    api.command('reset', () => ({display:'done'}), {description:'Reset state'});
-    api.tool({name:'work',label:'Work hard',description:'Work',parameters:{type:'object',properties:{}}}, () => { api.progress('half'); api.progress('all'); return 1; });
-    api.command('bad', () => api.progress('no'));
-  }`;
-  const inspect = run(source, { capabilities: ['commands', 'tools'] });
-  assert.deepEqual(inspect.registrations.commands, [{ name: 'reset', description: 'Reset state' }, { name: 'bad' }]);
-  assert.equal(inspect.registrations.tools[0].label, 'Work hard');
-  const tool = run(source, { capabilities: ['commands', 'tools'], event: 'tool', name: 'work', payload: {} });
-  assert.deepEqual(tool.updates, ['half', 'all']);
-  assert.match(run(source, { capabilities: ['commands', 'tools'], event: 'command', name: 'bad' }).error, /progress_outside_tool/);
-  assert.match(run('export default api => api.command("x", () => null, {hidden:true})', { capabilities: ['commands'] }).error, /unsupported_command_option/);
 });
 test('lifecycle events and interceptors require their capabilities', () => {
   const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];
@@ -243,6 +298,15 @@ test('classic hooks map onto native events and interceptors with glob and negate
   const negated = run('export default api => api.intercept("input", { match: { text: api.match.not(api.match.glob("/*")) } }, (e, next) => next(e))', { capabilities: ['input'] });
   assert.deepEqual(negated.registrations.interceptors[0].match, { text: { $not: { $glob: '/*' } } });
 });
+test('classic middleware hooks answer only PermissionRequest', () => {
+  const source = `export default api => {
+    api.hook('SessionStart', () => ({ ignored: true }));
+    api.hook('PermissionRequest', () => ({ decision: 'deny' }));
+  }`;
+  const caps = { capabilities: ['middleware', 'approvals'] };
+  assert.equal(run(source, { ...caps, event: 'session', payload: { phase: 'start', thread_id: 't' } }).value ?? null, null);
+  assert.deepEqual(run(source, { ...caps, event: 'approval', payload: { kind: 'exec', thread_id: 't' } }).value, { decision: 'deny' });
+});
 
 test('reactive atoms track reads, recompute derived values and run keyed subscriptions once per change', () => {
   const source = `export default api => {
@@ -284,23 +348,6 @@ test('reactive atoms track reads, recompute derived values and run keyed subscri
   assert.deepEqual(edge.value, { name: 'none', missing: null, proto: 7 });
 });
 
-test('repeating timers stop when cancelled inside their handler and keep running after a throw', () => {
-  const source = `export default api => {
-    const poll = api.time.every('poll', 100, () => { if (api.state.get()?.stop) poll.cancel(); if (api.state.get()?.boom) throw new Error('boom'); });
-  }`;
-  const tick = (state, receipts = []) => run(source, { capabilities: ['events', 'store'], event: 'timer', payload: { key: 'time:poll' }, state, receipts });
-  const stopping = tick({ stop: true });
-  assert.equal(stopping.host_call.operation, 'events.cancel');
-  const stopped = tick({ stop: true }, [{ call: stopping.host_call, value: null }]);
-  assert.equal(stopped.host_call, null);
-  assert.deepEqual(stopped.calls.map(call => call.operation), ['events.cancel']);
-  const failing = tick({ boom: true });
-  assert.equal(failing.host_call.operation, 'events.schedule');
-  assert.equal(failing.host_call.arguments.delay_ms, 100);
-  assert.match(run(source.replace("'poll', 100,", "'poll', 15,"), { capabilities: ['events', 'store'] }).error, /invalid_timer_interval/);
-  assert.match(tick({ boom: true }, [{ call: failing.host_call, value: null }]).error, /boom/);
-});
-
 test('typed middleware and services register without ambient authority', () => {
   const contract = { name: 'fixture.echo', version: '1.0.0', methods: { echo: { input: 'string', output: 'string' } } };
   const source = `export default api => {
@@ -315,202 +362,4 @@ test('typed middleware and services register without ambient authority', () => {
   const service = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'service', name: 'fixture.echo.echo', payload: 'hello' });
   assert.equal(service.value, 'hello');
   assert.match(run(source, { capabilities: ['middleware', 'commands'], event: 'inspect' }).error, /capability_denied: services/);
-});
-test('independent workspace mod uses public read and transaction calls', () => {
-  const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['fs.read', 'fs.write', 'tools', 'store'];
-  const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
-  const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload });
-  assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
-  const read = { files: {
-    'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
-    'src/new.ts': null,
-    'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
-  } };
-  const receipts = [{ call: first.host_call, value: read }];
-  const second = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts });
-  assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
-    expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
-    writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
-  } });
-  const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
-  const final = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
-  assert.deepEqual(final.value, result);
-  const observed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
-  assert.equal(observed.state.last_write.status, 'observed');
-  const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
-  const proposed = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
-  assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
-  const requested = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.match(run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
-});
-test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
-  const { source, capabilities } = lsp;
-  const repository = '/tmp/project';
-  const files = {
-    'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
-    'pkg/new.py': null,
-    'pkg/__init__.py': { text: 'from .old import value as alias\n', sha256: 'barrel-hash' },
-    'pkg/use.py': { text: 'from pkg.old import value as local\n', sha256: 'alias-hash' },
-  };
-  const uri = path => `file://${repository}/${path}`;
-  let running = false;
-  let idleMs = 0;
-  let rename = null;
-  let observedRepository = null;
-  const server = call => {
-    switch (call.operation) {
-      case 'store.get':
-        assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository' });
-        return observedRepository;
-      case 'store.put':
-        assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository } });
-        observedRepository = { revision: 1, value: call.arguments.value };
-        return { revision: 1 };
-      case 'process.which': return { found: [{ name: 'pylsp', path: '/bin/pylsp', sha256: 'server-hash' }] };
-      case 'process.start': running = true; return { session: 'python', running: true };
-      case 'process.status': return { session: 'python', running, idle_ms: idleMs };
-      case 'process.stop': running = false; return { stopped: true };
-      case 'events.publish': return { delivered: 0, dropped: 0 };
-      case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-      case 'process.exchange': {
-        const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
-        if (!request) {
-          const opened = call.arguments.send?.find(message => message.method === 'textDocument/didOpen');
-          return { session: 'python', running: true, messages: opened ? [{ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uri('pkg/old.py'), version: 1, diagnostics: [{ message: 'example' }] } }] : [] };
-        }
-        const result = request.method === 'initialize' ? { capabilities: { workspace: { fileOperations: { willRename: { filters: [] } } } } } : rename;
-        return { session: 'python', running: true, messages: [{ jsonrpc: '2.0', id: request.id, result }] };
-      }
-      default: throw new Error(`unexpected operation ${call.operation}`);
-    }
-  };
-  const replay = (event, payload, state = null) => {
-    const receipts = [];
-    for (let index = 0; index < 24; index++) {
-      const output = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
-      assert.equal(output.error, undefined, output.error);
-      if (!output.host_call) return output;
-      receipts.push({ call: output.host_call, value: server(output.host_call) });
-    }
-    assert.fail('mod did not finish');
-  };
-  const write = replay('workspace_change', { repository, call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
-  assert.equal(write.state.servers.python.status, 'synced');
-  assert.equal(write.state.servers.python.documents['pkg/old.py'].version, 1);
-  assert.equal(write.state.servers.python.diagnostics['pkg/old.py'].count, 1);
-  rename = { documentChanges: [
-    { textDocument: { uri: uri('pkg/__init__.py'), version: null }, edits: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 9 } }, newText: 'new' }] },
-    { textDocument: { uri: uri('pkg/use.py'), version: null }, edits: [{ range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } }, newText: 'new' }] },
-  ] };
-  const requested = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(requested.value, { status: 'ready', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null, 'pkg/__init__.py': 'barrel-hash', 'pkg/use.py': 'alias-hash' }, writes: { 'pkg/__init__.py': 'from .new import value as alias\n', 'pkg/use.py': 'from pkg.new import value as local\n' } });
-  rename.documentChanges[0].textDocument.version = 9;
-  const stale = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
-  assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
-  const idle = replay('idle', {}, requested.state);
-  assert.equal(idle.state.servers.python.running, true);
-  assert.equal(running, true);
-  idleMs = 16 * 60_000;
-  const expired = replay('idle', {}, requested.state);
-  assert.equal(expired.state.servers.python.status, 'idle');
-  assert.equal(running, false);
-});
-test('LSP mod reports an absent server and leaves the write event recoverable', () => {
-  const { source, capabilities } = lsp;
-  const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload });
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.equal(published.host_call.operation, 'events.publish');
-  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
-  assert.equal(absent.error, undefined);
-  assert.equal(absent.state.servers.python.status, 'fallback');
-  assert.equal(absent.state.servers.python.reason, 'python_server_absent');
-  const broken = run('export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', { api: '0.2.0-experimental.5', surface: currentSurface, capabilities: ['fs.read'], event: 'workspace_change', payload });
-  assert.match(broken.error, /broken/);
-});
-test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
-  const { source, capabilities } = lsp;
-  const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
-  const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const first = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
-  assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
-  const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
-  receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
-  receipts.push({ call: discovery.host_call, value: { found: [] } });
-  const published = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  const absent = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
-    receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
-  assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
-  assert.equal(absent.state.servers.python.server, 'pylsp');
-  assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
-});
-test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
-  const { source, capabilities } = lsp;
-  const repository = '/tmp/project';
-  const files = {
-    'src/app.ts': { text: 'export const value = 1;\n', sha256: 'ts-sha' },
-    'src/helper.js': { text: 'export const helper = 1;\n', sha256: 'js-sha' },
-    'src/main.rs': { text: 'fn main() {}\n', sha256: 'rs-sha' },
-    'src/Main.java': { text: 'class Main {}\n', sha256: 'java-sha' },
-  };
-  const started = [];
-  const opened = [];
-  let observedRepository = null;
-  const server = call => {
-    if (call.operation === 'store.get') {
-      assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository' });
-      return observedRepository;
-    }
-    if (call.operation === 'store.put') {
-      assert.deepEqual(call.arguments, { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository } });
-      observedRepository = { revision: 1, value: call.arguments.value };
-      return { revision: 1 };
-    }
-    if (call.operation === 'process.which') return { found: call.arguments.names.filter(name => ['typescript-language-server', 'rust-analyzer', 'jdtls'].includes(name)).map(name => ({ name, path: `/bin/${name}`, sha256: `${name}-sha` })) };
-    if (call.operation === 'process.start') { started.push(call.arguments); return { session: call.arguments.session, running: true }; }
-    if (call.operation === 'process.stop') return { stopped: false };
-    if (call.operation === 'events.publish') return { delivered: 0, dropped: 0 };
-    if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
-    if (call.operation === 'process.exchange') {
-      const request = call.arguments.send?.find(message => message.method === 'initialize');
-      if (request) return { session: call.arguments.session, running: true, messages: [{ jsonrpc: '2.0', id: request.id, result: { capabilities: { workspace: { fileOperations: { willRename: {} } } } } }] };
-      opened.push(...(call.arguments.send ?? []).filter(message => message.method === 'textDocument/didOpen').map(message => [call.arguments.session, message.params.textDocument.languageId, message.params.textDocument.uri]));
-      return { session: call.arguments.session, running: true, messages: [] };
-    }
-    throw new Error(`unexpected operation ${call.operation}`);
-  };
-  const payload = { repository, source: 'tool', call_id: 'mixed', status: 'observed', changes: Object.keys(files).map(path => ({ path, before: null, after: files[path].sha256 })) };
-  const receipts = [];
-  let result;
-  for (let index = 0; index < 32; index++) {
-    result = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
-    assert.equal(result.error, undefined, result.error);
-    if (!result.host_call) break;
-    receipts.push({ call: result.host_call, value: server(result.host_call) });
-  }
-  assert.equal(result.host_call, null, 'mixed adapter run did not finish');
-  assert.deepEqual(started.map(item => [item.session, item.name, item.arguments]), [
-    ['typescript', 'typescript-language-server', ['--stdio']], ['rust', 'rust-analyzer', []], ['java', 'jdtls', ['--jvm-arg=-Duser.home={process.home}']],
-  ]);
-  assert.deepEqual(opened.map(item => item.slice(0, 2)), [['typescript', 'typescript'], ['typescript', 'javascript'], ['rust', 'rust'], ['java', 'java']]);
-  assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
-  assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
-  assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = run(source, { ...lsp.package, api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
-    payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
-  assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });

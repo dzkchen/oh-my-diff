@@ -27,7 +27,7 @@ omd-package mod enable omd_preview
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `thumbnails` | `true` | Show up to three draft images above the prompt, with a Preview button. |
+| `thumbnails` | `true` | Show your draft's images in one row above the prompt, each with a Preview button. Tiles shrink to fit; the rest are listed with the `/preview image` command that opens them. |
 | `diagrams` | `unicode` | Draw Mermaid diagrams with box-drawing characters. `ascii` uses plain characters, `off` leaves the source. |
 
 ## Needs and limits

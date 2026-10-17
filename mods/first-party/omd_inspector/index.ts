@@ -6,7 +6,7 @@ const EMPTY: Snapshot = { open: false, ledger: null, contract: 'unavailable', li
 export default function activate(api: ModAPI) {
   const saved = (): Snapshot => ({ ...EMPTY, ...(api.state.get() as Partial<Snapshot> | null ?? {}) });
   const save = (state: Snapshot) => api.state.set(state);
-  const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, limit);
+  const visible = (value: string, limit = 160) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')].slice(0, limit).join('');
   const summary = (value: Json): string => value && typeof value === 'object' && !Array.isArray(value)
     ? visible(Object.entries(value).map(([key, item]) => `${key.replace(/_/g, ' ')} ${typeof item === 'object' ? '…' : String(item)}`).join(' · '), 200)
     : value === null ? 'unavailable' : visible(String(value));
@@ -59,10 +59,10 @@ export default function activate(api: ModAPI) {
     if (channel === 'omd_inspector/refresh') save(capture(saved()));
   });
   api.on('component_event', event => {
-    if (event.component.startsWith('omd_inspector_') && event.events?.some(input => 'key' in input && input.key === 'Esc')) save({ ...saved(), open: false });
+    if (event.component.startsWith('omd_inspector_') && event.kind === 'close') save({ ...saved(), open: false });
   });
-  api.on('terminal', input => {
-    if (input.event === 'startup' && saved().open) save({ ...saved(), open: false });
-    return view(input.identity, input.ledger);
+  api.on('resume', () => {
+    if (saved().open) save({ ...saved(), open: false });
   });
+  api.on('terminal', input => view(input.identity, input.ledger));
 }

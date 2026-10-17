@@ -9,7 +9,6 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
-use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixListener;
@@ -225,7 +224,6 @@ pub fn anchor(stream: &Path, sha256: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Anchors state that existed before its stream was ever anchored, for example before broker install.
 pub fn seed(stream: &Path, count: u64, head: &str, last: &str) -> io::Result<()> {
     if deployed() {
         call(
@@ -317,14 +315,6 @@ struct Request {
 pub struct Broker {
     root: PathBuf,
     state: Mutex<()>,
-}
-
-fn private_directory(path: &Path) -> io::Result<PathBuf> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(path)?;
-    Ok(path.to_path_buf())
 }
 
 fn write_private(path: &Path, value: &Value) -> io::Result<()> {
@@ -438,6 +428,48 @@ impl Broker {
             *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
             return Ok(Value::String(nonce));
         }
+        // Store and anchor state is keyed by path, so only the path's owner may name it; a stream not
+        // written yet belongs to its directory's owner.
+        for (field, refused) in [
+            ("store", "authority_store_unowned"),
+            ("stream", "authority_stream_unowned"),
+        ] {
+            let Some(path) = request
+                .arguments
+                .get(field)
+                .and_then(Value::as_str)
+                .map(Path::new)
+            else {
+                continue;
+            };
+            let metadata = fs::metadata(path).or_else(|error| match path.parent() {
+                Some(parent) if field == "stream" && error.kind() == io::ErrorKind::NotFound => {
+                    fs::metadata(parent)
+                }
+                _ => Err(error),
+            });
+            let uid = platform::peer_uid(peer);
+            if !metadata
+                .is_ok_and(|metadata| Some(std::os::unix::fs::MetadataExt::uid(&metadata)) == uid)
+            {
+                return Err(failure(refused));
+            }
+            // The first owner to name a path keeps its state, so a path deleted and recreated by another user is refused.
+            let directory = crate::workspace::private_path(
+                &self.root,
+                &["owners"],
+                "authority_directory_invalid",
+            )?;
+            let record = directory.join(format!(
+                "{field}-{}.json",
+                sha256(path.as_os_str().as_encoded_bytes())
+            ));
+            match read_json(&record, Value::Null)? {
+                Value::Null => write_private(&record, &json!(uid))?,
+                owner if owner != json!(uid) => return Err(failure(refused)),
+                _ => {}
+            }
+        }
         let right = self.right(&request.op, &request.arguments)?;
         if let Some(right) = right {
             let digest = request_digest(&request.op, &request.arguments)?;
@@ -464,7 +496,11 @@ impl Broker {
         if !Path::new(store).is_absolute() {
             return Err(failure("authority_request_invalid"));
         }
-        private_directory(&self.root.join("stores").join(sha256(store.as_bytes())))
+        crate::workspace::private_path(
+            &self.root,
+            &["stores", &sha256(store.as_bytes())],
+            "authority_directory_invalid",
+        )
     }
 
     fn profiles(&self, arguments: &Value) -> io::Result<crate::credentials::CredentialProfiles> {
@@ -655,8 +691,12 @@ impl Broker {
             }
             "anchor.get" | "anchor.append" | "anchor.seed" => {
                 let stream = text(&arguments, "stream")?;
-                let path = private_directory(&self.root.join("anchors"))?
-                    .join(format!("{}.json", sha256(stream.as_bytes())));
+                let path = crate::workspace::private_path(
+                    &self.root,
+                    &["anchors"],
+                    "authority_directory_invalid",
+                )?
+                .join(format!("{}.json", sha256(stream.as_bytes())));
                 let mut anchor = read_json(
                     &path,
                     json!({"stream": stream, "count": 0, "head": "", "last": null}),
@@ -789,6 +829,12 @@ mod platform {
         let (mut id, mut attributes) = (0, 0);
         let status = unsafe { SessionGetInfo(CALLER_SESSION, &mut id, &mut attributes) };
         status != 0 || attributes & HAS_GRAPHIC_ACCESS != 0
+    }
+
+    pub(super) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+        let (mut uid, mut gid) = (0, 0);
+        // SAFETY: both out-pointers are valid for the call.
+        (unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
     }
 
     fn peer_user(stream: &UnixStream) -> Option<std::ffi::CString> {
@@ -925,6 +971,10 @@ mod platform {
 
     pub(super) fn graphic_session() -> bool {
         true
+    }
+
+    pub(super) fn peer_uid(_stream: &UnixStream) -> Option<u32> {
+        None
     }
 
     pub(super) fn authorize(

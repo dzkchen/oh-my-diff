@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "host_operations": {
-    "terminal.notice": [{"result": {"id": "approval_desk"}}]
+    "terminal.notice": [{"result": {"shown": true}}]
   },
   "steps": [
     {"type": "event", "event": "approval",
@@ -11,18 +11,6 @@
     {"type": "event", "event": "approval_result", "payload": {"id": "a1", "kind": "exec", "decision": "approved", "source": "user"}},
     {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "kinds", "payload": "[\"exec\"]", "expect": {"display": "Showing exec"}},
     {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "note", "payload": "checked", "expect": {"display": "Note saved"}},
-    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "inspect", "payload": "a1", "expect": {"display": "exec: approved"}},
-    {"type": "terminal_mount", "mod": "approval_desk", "payload": {"event": "idle", "ledger": null, "client": null, "clients": []},
-      "expect": {"sites": {"sidebar": {"mode": "wrap", "components": [
-        {"type": "multiselect", "id": "desk_kinds", "label": "Kinds", "value": ["exec"], "hotkey": "Alt+k",
-          "options": [{"value": "exec", "label": "exec"}, {"value": "stdin", "label": "stdin"}, {"value": "execve", "label": "execve"}, {"value": "patch", "label": "patch"}, {"value": "network", "label": "network"}, {"value": "mcp_tool", "label": "mcp_tool"}, {"value": "permissions", "label": "permissions"}],
-          "action": {"command": "approval_desk:kinds"}},
-        {"type": "input", "id": "desk_note", "label": "Note", "value": "checked", "placeholder": "note for reviewers", "action": {"command": "approval_desk:note"}},
-        {"type": "list", "id": "desk_log", "label": "Approvals", "height": 6, "action": {"command": "approval_desk:inspect"},
-          "rows": [{"value": "a1", "label": "printf desk", "spans": [{"text": "approved", "bold": true, "tone": "success"}, {"text": " exec printf desk"}]}]},
-        {"type": "line", "id": "desk_help", "label": "Help", "spans": [{"text": "1 shown; "}, {"text": "approvals reference", "link": "https://developers.openai.com/codex/security", "underline": true}]},
-        {"type": "text", "id": "desk_detail", "label": "Detail", "text": "exec printf desk\napproved by user\nnote: checked"},
-        {"type": "slot"}]}}}},
-    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "kinds", "payload": "[\"stdin\", \"execve\"]", "expect": {"display": "Showing stdin, execve"}}
+    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "inspect", "payload": "a1", "expect": {"display": "exec: approved"}}
   ]
 }

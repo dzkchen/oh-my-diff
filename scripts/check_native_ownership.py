@@ -2,15 +2,19 @@ import argparse
 import json
 from pathlib import Path
 import re
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
-IDENTIFIERS = {"git", "lsp", "graph", "health", "knowledge", "guideline", "workflow",
-               "review", "recovery", "checkpoint", "contributor", "controlled", "pi", "preset", "presets"}
+REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
+HOST_WORDS = {"artifact", "auto", "cli", "code", "compact", "continue", "edit", "execution", "idle", "lines", "model",
+              "mods", "panel", "picker", "plan", "preview", "read", "reading", "removal", "sync", "tool", "update",
+              "usage", "view"}
 GENERIC_LITERALS = {
     "git": "Git executable used for tracked-path discovery",
-    "recovery": "package rollback directory",
-    "session_review": "upstream Codex session metadata field",
+    "github_pat_": "GitHub token prefix redacted from mod output",
+    "profiles": "upstream Codex config profiles table",
+    "profiles.json": "credential profile store",
 }
 NATIVE_SOURCES = ("runtime/omd/src", "runtime/native/src")
 PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "plugins/**/mod.json")
@@ -19,14 +23,70 @@ PATCH_DIRECTORY = "runtime/patches"
 PATCH_MIRRORS = ("codex-rs/omd/", "codex-rs/ext/omd/")
 SURFACES = ("MOD_HOST_FEATURES", "MOD_HOST_OPERATIONS", "MOD_CAPABILITIES", "MOD_EVENTS",
             "MOD_REPLACEMENT_POINTS", "MOD_MIDDLEWARE_EVENTS")
+FORBIDDEN_DEPENDENCIES = {
+    "omd": {"codex-omd-extension", "codex-core", "codex-tui", "codex-app-server"},
+    "native": {"codex-tui", "codex-app-server"},
+}
 
 
-def feature(name):
-    words = set(re.split(r"[^a-z0-9]+", name.lower()))
-    return sorted(words & IDENTIFIERS)
+def dependencies(root):
+    findings = []
+    inherited = {}
+    workspace = root / "Cargo.toml"
+    if workspace.exists():
+        inherited.update(tomllib.loads(workspace.read_text()).get("workspace", {}).get("dependencies", {}))
+    for patch in (root / PATCH_DIRECTORY).glob("*.patch"):
+        path = None
+        declarations = []
+        for line in patch.read_text().splitlines():
+            if line.startswith("diff --git"):
+                path = None
+            if line.startswith("+++ b/"):
+                path = line[6:]
+            elif path == "codex-rs/Cargo.toml" and line[:1] in ("+", " "):
+                declarations.append(line[1:])
+        text = "\n".join(declarations)
+        for match in re.finditer(r'(?m)^[\w".-]+\s*=\s*\{[^}]*\}', text):
+            values = tomllib.loads(match.group())
+            inherited.update({name: value for name, value in values.items()
+                              if isinstance(value, dict) and "package" in value})
+        for match in re.finditer(r'(?m)^\[workspace\.dependencies\.[^\]\n]+\][^\[]*', text):
+            inherited.update(tomllib.loads(match.group())["workspace"]["dependencies"])
+    for directory, forbidden in FORBIDDEN_DEPENDENCIES.items():
+        path = root / "runtime" / directory / "Cargo.toml"
+        if not path.exists():
+            continue
+        text = path.read_text()
+        manifest = tomllib.loads(text)
+        scopes = [manifest, *manifest.get("target", {}).values()]
+        for scope in scopes:
+            for section in ("dependencies", "build-dependencies", "dev-dependencies"):
+                for alias, spec in scope.get(section, {}).items():
+                    if isinstance(spec, dict) and spec.get("workspace"):
+                        spec = inherited.get(alias, spec)
+                    package = spec.get("package", alias) if isinstance(spec, dict) else alias
+                    if package in forbidden:
+                        findings.append({"path": str(path.relative_to(root)),
+                                         "line": 1, "surface": "dependency",
+                                         "name": package, "feature": directory})
+    return findings
+
+
+def words(name):
+    return set(re.split(r"[^a-z0-9]+", name.lower()))
+
+
+def feature(name, vocabulary):
+    return sorted(words(name) & vocabulary)
+
+
+def identifiers(root):
+    derived = {word for name in package_identifiers(root) for word in words(name)}
+    return (derived - HOST_WORDS - {"omd", ""}) | REVIEWED_IDENTIFIERS
 
 
 def inspect(root):
+    vocabulary = identifiers(root)
     findings = []
     source = root / "runtime/omd/src/mods.rs"
     text = source.read_text()
@@ -36,7 +96,7 @@ def inspect(root):
             raise ValueError(f"native_surface_missing:{surface}")
         for token in re.finditer(r'"([^"\n]+)"', match.group(1)):
             name = token.group(1)
-            for identifier in feature(name):
+            for identifier in feature(name, vocabulary):
                 offset = match.start(1) + token.start()
                 findings.append({"path": str(source.relative_to(root)), "line": text.count("\n", 0, offset) + 1,
                                  "surface": surface, "name": name, "feature": identifier})
@@ -48,20 +108,66 @@ def inspect(root):
     for block in blocks:
         for field in re.finditer(r"pub ([a-z_]+):", block.group(2)):
             name = field.group(1)
-            for identifier in feature(name):
+            for identifier in feature(name, vocabulary):
                 offset = block.start(2) + field.start()
                 findings.append({"path": str(config.relative_to(root)), "line": text.count("\n", 0, offset) + 1,
                                  "surface": block.group(1), "name": name, "feature": identifier})
-    findings.extend(literals(root))
-    findings.extend(runner(root))
+    findings.extend(literals(root, vocabulary))
+    findings.extend(runner(root, vocabulary))
     findings.extend(first_party(root))
+    findings.extend(dependencies(root))
     return findings
 
 
 def production(path):
     text = path.read_text()
-    cut = text.find("#[cfg(test)]")
-    return text if cut < 0 else text[:cut]
+    if path.suffix != ".rs":
+        return text
+    masked = list(text)
+    token = re.compile(r'//[^\n]*|/\*|(?:br|r)(\#*)"|b?"(?:\\.|[^"\\])*"|b?\'(?:\\.|[^\'\\])\'', re.S)
+    cursor = 0
+    while match := token.search(text, cursor):
+        end = match.end()
+        if match.group() == "/*":
+            depth = 1
+            while depth and end < len(text):
+                nested = re.search(r"/\*|\*/", text[end:])
+                if not nested:
+                    end = len(text)
+                    break
+                depth += 1 if nested.group() == "/*" else -1
+                end += nested.end()
+        elif match.group(1) is not None:
+            close = '"' + match.group(1)
+            stop = text.find(close, end)
+            end = len(text) if stop < 0 else stop + len(close)
+        masked[match.start():end] = ['\n' if c == '\n' else ' ' for c in text[match.start():end]]
+        cursor = end
+    syntax = ''.join(masked)
+    result = list(text)
+    cursor = 0
+    cfg = re.compile(r'#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]')
+    while match := cfg.search(syntax, cursor):
+        stack = []
+        opened = False
+        end = match.end()
+        for end in range(end, len(syntax)):
+            char = syntax[end]
+            if char in '([{':
+                stack.append(char)
+                opened |= char == '{' and len(stack) == 1
+            elif char in ')]}':
+                if not stack or stack.pop() != {')': '(', ']': '[', '}': '{'}[char]:
+                    raise ValueError(f"unbalanced test item in {path}")
+                if opened and not stack:
+                    break
+            elif char == ';' and not stack:
+                break
+        else:
+            raise ValueError(f"unterminated test item in {path}")
+        cursor = end + 1
+        result[match.start():cursor] = ['\n' if c == '\n' else ' ' for c in text[match.start():cursor]]
+    return ''.join(result)
 
 
 def native_files(root):
@@ -71,7 +177,7 @@ def native_files(root):
                 yield path
 
 
-def literals(root):
+def literals(root, vocabulary):
     findings = []
     for path in native_files(root):
         text = production(path)
@@ -79,13 +185,13 @@ def literals(root):
             name = token.group(1)
             if name in GENERIC_LITERALS:
                 continue
-            for identifier in feature(name):
+            for identifier in feature(name, vocabulary):
                 findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
                                  "surface": "literal", "name": name, "feature": identifier})
     return findings
 
 
-def runner(root):
+def runner(root, vocabulary):
     path = root / "runtime/omd/src/mods/runner.mjs"
     if not path.exists():
         return []
@@ -93,8 +199,7 @@ def runner(root):
     findings = []
     for token in re.finditer(r"'([^'\n]*)'|\"([^\"\n]*)\"|\b([A-Za-z_][A-Za-z0-9_]*)\b", text):
         name = next(group for group in token.groups() if group is not None)
-        words = set(re.split(r"[^a-z0-9]+", re.sub(r"([a-z])([A-Z])", r"\1_\2", name).lower()))
-        for identifier in sorted(words & IDENTIFIERS):
+        for identifier in feature(re.sub(r"([a-z])([A-Z])", r"\1_\2", name), vocabulary):
             findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
                              "surface": "runner", "name": name, "feature": identifier})
     return findings

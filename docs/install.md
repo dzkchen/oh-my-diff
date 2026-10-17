@@ -7,7 +7,7 @@ This page covers installing, updating and removing OMD.
 You need:
 
 - An Apple Silicon Mac. Linux and Intel Macs aren't supported.
-- Codex `0.162.x`. Check with `codex --version`.
+- Codex `0.163.x`. Check with `codex --version`.
 - Node 24.18 or later 24.x, installed with [mise](https://mise.jdx.dev).
 - Python 3.12 or later. macOS ships 3.9; install a newer one with `brew install python@3.12`.
 
@@ -72,8 +72,9 @@ settings in `~/.local/share/oh-my-diff/stores`. Delete that folder too if you wa
 | Message | Fix |
 | --- | --- |
 | `Python 3.12 or newer is required` | Install a newer Python, then rerun the install command. |
-| `upstream Codex 0.162.x is required` | Install Codex `0.162.x`, or pass its path with `--upstream /path/to/codex`. |
+| `upstream Codex 0.163.x is required` | Install Codex `0.163.x`, or pass its path with `--upstream /path/to/codex`. |
 | `move the upstream codex out of ~/.local/bin` | OMD's `codex` goes in `~/.local/bin`. Move your Codex elsewhere and pass `--upstream`. |
+| `codex on PATH is ..., not the OMD launcher` | Add the `export PATH=...` line it prints to your shell profile and open a new shell. |
 | `Node 24.18 or a later 24.x is required` | Install Node with mise, or pass `--node /path/to/node`. |
 | `No terminal is available` | Add `--profile full` or `--profile platform` to the command. |
 | A mod breaks `codex` | Run `omd mods disable ID`. See [Install and manage mods](manage-mods.md#when-a-mod-misbehaves). |

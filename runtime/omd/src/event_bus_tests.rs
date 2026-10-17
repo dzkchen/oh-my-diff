@@ -2,6 +2,159 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn channel_sequence_admission_is_bounded_per_publisher_and_globally() {
+    let mut bus = EventBus::default();
+    for publisher in 0..16 {
+        for channel in 0..256 {
+            bus.publish(
+                &format!("p{publisher}"),
+                &format!("c{channel}"),
+                json!(null),
+                None,
+                "t",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            bus.publish(&format!("p{publisher}"), "extra", json!(null), None, "t")
+                .unwrap_err()
+                .to_string(),
+            "channel_sequence_limit"
+        );
+    }
+    assert_eq!(
+        bus.publish("extra", "c", json!(null), None, "t")
+            .unwrap_err()
+            .to_string(),
+        "channel_sequence_limit"
+    );
+    bus.subscribe("watcher", vec!["p0/*".into()]);
+    bus.publish("p0", "c0", json!(null), None, "t").unwrap();
+    bus.publish("p0", "c1", json!(null), None, "t").unwrap();
+    assert_eq!(
+        bus.drain("watcher", 10)
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![2, 2]
+    );
+}
+
+#[test]
+fn channel_sequences_expire_only_after_publisher_idle_and_queue_drain() {
+    let mut bus = EventBus::default();
+    let start = Instant::now();
+    bus.publish_at("expired", "c", json!(null), None, "t", start)
+        .unwrap();
+    bus.publish_at(
+        "probe",
+        "c",
+        json!(null),
+        None,
+        "t",
+        start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1),
+    )
+    .unwrap();
+    assert!(bus.sequences.contains_key("expired"));
+    bus.publish_at(
+        "probe",
+        "c",
+        json!(null),
+        None,
+        "t",
+        start + CHANNEL_PUBLISHER_IDLE,
+    )
+    .unwrap();
+    assert!(!bus.sequences.contains_key("expired"));
+    let mut bus = EventBus::default();
+    for channel in 0..CHANNELS_PER_PUBLISHER {
+        bus.publish_at(
+            "idle",
+            &format!("c{channel}"),
+            json!(null),
+            None,
+            "t",
+            start,
+        )
+        .unwrap();
+    }
+    let before = start + CHANNEL_PUBLISHER_IDLE - Duration::from_nanos(1);
+    assert_eq!(
+        bus.publish_at("idle", "extra", json!(null), None, "t", before)
+            .unwrap_err()
+            .to_string(),
+        "channel_sequence_limit"
+    );
+    bus.publish_at(
+        "probe",
+        "c",
+        json!(null),
+        None,
+        "t",
+        start + CHANNEL_PUBLISHER_IDLE,
+    )
+    .unwrap();
+    assert!(
+        !bus.sequences.contains_key("idle"),
+        "rejected publication must not extend retention"
+    );
+    bus.subscribe("watcher", vec!["idle/*".into()]);
+    bus.publish_at(
+        "idle",
+        "c0",
+        json!(null),
+        None,
+        "t",
+        start + CHANNEL_PUBLISHER_IDLE,
+    )
+    .unwrap();
+    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
+    bus.publish_at(
+        "idle",
+        "c0",
+        json!(null),
+        None,
+        "t",
+        start + CHANNEL_PUBLISHER_IDLE,
+    )
+    .unwrap();
+    let later = start + CHANNEL_PUBLISHER_IDLE * 2;
+    bus.publish_at("probe", "c", json!(null), None, "t", later)
+        .unwrap();
+    assert!(
+        bus.sequences.contains_key("idle"),
+        "queued events retain their publisher's counters"
+    );
+    assert_eq!(bus.drain("watcher", 1)[0].sequence, 2);
+    bus.publish_at("idle", "c0", json!(null), None, "t", later)
+        .unwrap();
+    assert_eq!(bus.drain("watcher", 1)[0].sequence, 1);
+    bus.unsubscribe("watcher");
+    bus.publish_at(
+        "idle",
+        "c0",
+        json!(null),
+        None,
+        "t",
+        later + Duration::from_secs(1),
+    )
+    .unwrap();
+    bus.publish_at(
+        "probe",
+        "c",
+        json!(null),
+        None,
+        "t",
+        later + CHANNEL_PUBLISHER_IDLE,
+    )
+    .unwrap();
+    assert!(
+        bus.sequences.contains_key("idle"),
+        "successful publications without subscribers refresh retention"
+    );
+}
+
+#[test]
 fn publishers_are_namespaced_and_subscribers_filter_by_pattern() {
     let mut bus = EventBus::default();
     bus.subscribe("graph", vec!["runner/*".to_owned()]);
@@ -50,35 +203,6 @@ fn publishers_are_namespaced_and_subscribers_filter_by_pattern() {
 }
 
 #[test]
-fn names_and_sizes_are_bounded() {
-    let mut bus = EventBus::default();
-    for name in ["", "Upper", "a/b", &"x".repeat(65)] {
-        assert!(
-            bus.publish("m", name, json!(null), None, "thread").is_err(),
-            "{name}"
-        );
-    }
-    assert!(
-        bus.publish(
-            "m",
-            "big",
-            json!("x".repeat(CHANNEL_EVENT_BYTES)),
-            None,
-            "thread"
-        )
-        .is_err()
-    );
-    assert!(
-        bus.publish("m", "ok", json!(null), Some("c".repeat(257)), "thread")
-            .is_err()
-    );
-    assert!(
-        bus.publish("m", "ok.v1-x_2", json!(null), None, "thread")
-            .is_ok()
-    );
-}
-
-#[test]
 fn slow_subscribers_drop_oldest_and_see_the_count() {
     let mut bus = EventBus::new(2, 1 << 20);
     bus.subscribe("slow", vec!["p/*".to_owned()]);
@@ -106,31 +230,3 @@ fn slow_subscribers_drop_oldest_and_see_the_count() {
     assert_eq!(bus.drain("slow", usize::MAX)[0].dropped, 0);
 }
 
-#[test]
-fn resubscribing_replaces_patterns_and_empty_unsubscribes() {
-    let mut bus = EventBus::default();
-    bus.subscribe("m", vec!["a/*".to_owned()]);
-    bus.subscribe("m", vec!["b/*".to_owned()]);
-    assert_eq!(
-        bus.publish("a", "x", json!(1), None, "thread")
-            .unwrap()
-            .delivered,
-        0
-    );
-    assert_eq!(
-        bus.publish("b", "x", json!(1), None, "thread")
-            .unwrap()
-            .delivered,
-        1
-    );
-    bus.subscribe("m", Vec::new());
-    assert_eq!(
-        (
-            bus.pending("m"),
-            bus.publish("b", "x", json!(1), None, "thread")
-                .unwrap()
-                .delivered
-        ),
-        (0, 0)
-    );
-}

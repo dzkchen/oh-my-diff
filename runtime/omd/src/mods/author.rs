@@ -5,12 +5,16 @@ use std::collections::VecDeque;
 struct OfflineHost {
     replies: BTreeMap<String, VecDeque<Value>>,
     calls: Vec<Value>,
+    violations: Vec<String>,
     now_ms: u64,
-    timers: BTreeMap<(String, String), u64>,
+    /// Live timers are per thread: (thread, owner, key), firing in the thread that scheduled them.
+    timers: BTreeMap<(Option<String>, String, String), u64>,
+    thread: Option<String>,
+    /// Mods with `state_scope: "thread"`; the others' timers share the one session thread, as live.
+    thread_scoped: std::collections::BTreeSet<String>,
     environment: Option<BTreeMap<String, String>>,
     clients: Vec<Value>,
     attached: u64,
-    /// The owner of the component module runners this scenario mounts.
     owner: String,
 }
 
@@ -69,12 +73,77 @@ impl OfflineHost {
             }
             let values = values
                 .as_array()
-                .cloned()
-                .unwrap_or_else(|| vec![values.clone()]);
+                .ok_or_else(|| failure("offline_mock_replies_must_be_an_array"))?;
+            for response in values {
+                let fields = response
+                    .as_object()
+                    .ok_or_else(|| failure("offline_mock_reply_must_be_an_object"))?;
+                if fields.keys().any(|name| {
+                    !matches!(
+                        name.as_str(),
+                        "result" | "error" | "optional" | "arguments" | "unsafe"
+                    )
+                }) || fields.contains_key("result") == fields.contains_key("error")
+                    || fields.get("error").is_some_and(|value| !value.is_string())
+                    || fields
+                        .get("optional")
+                        .is_some_and(|value| !value.is_boolean())
+                {
+                    return Err(failure("offline_mock_reply_invalid"));
+                }
+                if let Some(unsafe_fields) = fields.get("unsafe") {
+                    let flags = unsafe_fields
+                        .as_object()
+                        .ok_or_else(|| failure("offline_mock_unsafe_invalid"))?;
+                    if flags.iter().any(|(name, value)| {
+                        !matches!(name.as_str(), "arguments" | "result") || !value.is_boolean()
+                    }) {
+                        return Err(failure("offline_mock_unsafe_invalid"));
+                    }
+                }
+                if response.get("error").and_then(Value::as_str).is_none()
+                    && response["unsafe"]["result"] != true
+                {
+                    operation_validation::validate(operation, "result", &response["result"])
+                        .map_err(failure)?;
+                }
+            }
             host.replies
-                .insert(operation.clone(), VecDeque::from(values));
+                .insert(operation.clone(), VecDeque::from(values.clone()));
         }
         Ok(host)
+    }
+
+    fn finish(&self) -> Result<()> {
+        if !self.violations.is_empty() {
+            return Err(failure(format!(
+                "offline_mock_violation: {}",
+                self.violations.join("; ")
+            )));
+        }
+        let remaining = self
+            .replies
+            .iter()
+            .flat_map(|(operation, replies)| {
+                replies
+                    .iter()
+                    .filter(|reply| reply["optional"] != true)
+                    .map(move |_| operation.as_str())
+            })
+            .collect::<Vec<_>>();
+        if !remaining.is_empty() {
+            return Err(failure(format!(
+                "offline_unused_mock_replies: {}",
+                remaining.join(", ")
+            )));
+        }
+        Ok(())
+    }
+
+    fn timer_thread(&self, caller: &str) -> Option<String> {
+        self.thread
+            .clone()
+            .filter(|_| self.thread_scoped.contains(caller))
     }
 
     fn call(&mut self, caller: &str, call: ModHostCall) -> Result<Value> {
@@ -82,11 +151,55 @@ impl OfflineHost {
             json!({"at_ms":self.now_ms,"caller":caller,"operation":call.operation,
             "arguments":call.arguments}),
         );
+        let intrinsic = !self.replies.contains_key(&call.operation)
+            && (matches!(call.operation.as_str(), "events.schedule" | "events.cancel")
+                || call.operation == "environment.read" && self.environment.is_some());
+        let response = if intrinsic {
+            None
+        } else {
+            let replies = self.replies.entry(call.operation.clone()).or_default();
+            while replies.front().is_some_and(|reply| {
+                reply["optional"] == true
+                    && reply
+                        .get("arguments")
+                        .is_some_and(|expected| expected != &call.arguments)
+            }) {
+                replies.pop_front();
+            }
+            let Some(response) = replies.front() else {
+                let reason = format!(
+                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
+                    call.operation
+                );
+                self.violations.push(reason.clone());
+                return Err(failure(reason));
+            };
+            if response
+                .get("arguments")
+                .is_some_and(|expected| expected != &call.arguments)
+            {
+                let reason = format!(
+                    "offline_mock_arguments_mismatch: {}: expected {}, got {}",
+                    call.operation, response["arguments"], call.arguments
+                );
+                self.violations.push(reason.clone());
+                return Err(failure(reason));
+            }
+            replies.pop_front()
+        };
+        if !response
+            .as_ref()
+            .is_some_and(|reply| reply["unsafe"]["arguments"] == true)
+        {
+            operation_validation::validate(&call.operation, "arguments", &call.arguments)
+                .map_err(failure)?;
+        }
         let key = call.arguments["key"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        if call.operation == "environment.read"
+        if intrinsic
+            && call.operation == "environment.read"
             && let Some(environment) = &self.environment
         {
             let names = call.arguments["names"]
@@ -108,36 +221,36 @@ impl OfflineHost {
                 .collect::<serde_json::Map<_, _>>();
             return Ok(json!({"values": values}));
         }
-        match call.operation.as_str() {
-            "events.schedule" => {
+        match (intrinsic, call.operation.as_str()) {
+            (true, "events.schedule") => {
                 let delay = call.arguments["delay_ms"]
                     .as_u64()
                     .filter(|delay| (16..=86_400_000).contains(delay))
                     .ok_or_else(|| failure("timer_delay_invalid"))?;
-                self.timers
-                    .insert((caller.to_owned(), key.clone()), self.now_ms + delay);
+                let deadline = self
+                    .now_ms
+                    .checked_add(delay)
+                    .ok_or_else(|| failure("offline_time_overflow"))?;
+                self.timers.insert(
+                    (self.timer_thread(caller), caller.to_owned(), key.clone()),
+                    deadline,
+                );
                 return Ok(json!({"key": key, "delay_ms": delay}));
             }
-            "events.cancel" => {
-                let cancelled = self.timers.remove(&(caller.to_owned(), key)).is_some();
+            (true, "events.cancel") => {
+                let cancelled = self
+                    .timers
+                    .remove(&(self.timer_thread(caller), caller.to_owned(), key))
+                    .is_some();
                 return Ok(json!({"cancelled": cancelled}));
             }
             _ => {}
         }
-        let response = self
-            .replies
-            .get_mut(&call.operation)
-            .and_then(VecDeque::pop_front)
-            .ok_or_else(|| {
-                failure(format!(
-                    "offline_unmocked_host_operation: {}; add a deterministic host_operations fixture",
-                    call.operation
-                ))
-            })?;
+        let response = response.expect("mocked operation reply");
         if let Some(error) = response.get("error").and_then(Value::as_str) {
             return Err(failure(error));
         }
-        Ok(response.get("result").cloned().unwrap_or(response))
+        Ok(response["result"].clone())
     }
 }
 
@@ -257,7 +370,12 @@ impl ModHost {
                 .ok_or_else(|| failure(format!("offline_tier_unknown_mod: {id}")))?;
             tiers.insert(id.clone(), (tier, loaded.selection.clone()));
         }
+        self.tier_selections = tiers
+            .iter()
+            .map(|(id, (_, selection))| (id.clone(), selection.clone()))
+            .collect();
         let result = self.offline_steps(steps, &tiers, &mut host, &mut now_ms);
+        self.tier_selections.clear();
         process::detach(&host.owner);
         for (id, (_, selection)) in tiers {
             if let Some(loaded) = self
@@ -271,11 +389,12 @@ impl ModHost {
         }
         self.virtual_time_ms = None;
         let outputs = result?;
+        host.finish()?;
         let remaining = host
             .replies
             .iter()
-            .filter(|(_, replies)| !replies.is_empty())
-            .map(|(operation, replies)| json!({"operation":operation,"remaining":replies.len()}))
+            .filter(|(_, replies)| replies.iter().any(|reply| reply["optional"] != true))
+            .map(|(operation, replies)| json!({"operation":operation,"remaining":replies.iter().filter(|reply| reply["optional"] != true).count()}))
             .collect::<Vec<_>>();
         Ok(
             json!({"schema":1,"offline":true,"paid_requests":0,"virtual_time_ms":now_ms,
@@ -284,7 +403,6 @@ impl ModHost {
         )
     }
 
-    /// Runs the steps with `tiers` mods simulated as administrator-managed packages in that tier.
     fn offline_steps(
         &mut self,
         steps: &[Value],
@@ -310,6 +428,12 @@ impl ModHost {
                 .unwrap_or(false);
             self.virtual_time_ms = Some(*now_ms);
             host.now_ms = *now_ms;
+            host.thread_scoped = self
+                .loaded
+                .iter()
+                .filter(|(_, loaded)| loaded.package.state_scope == "thread")
+                .map(|(id, _)| id.clone())
+                .collect();
             let result = self.offline_step(kind, step, !cancelled, host, now_ms);
             let output = match result {
                 Ok(value) => {
@@ -356,6 +480,10 @@ impl ModHost {
         now_ms: &mut u64,
     ) -> Result<Value> {
         let payload = step.get("payload").cloned().unwrap_or(Value::Null);
+        let _thread = StateThread::enter(
+            state_thread(&payload).or_else(|| step["thread_id"].as_str().map(str::to_owned)),
+        );
+        host.thread = bound_thread();
         match kind {
             "advance_time" => {
                 let delta = step
@@ -367,7 +495,7 @@ impl ModHost {
                     .ok_or_else(|| failure("offline_virtual_time_overflow"))?;
                 let mut fired = Vec::new();
                 // Due timers fire in due order at their own virtual time; a handler may reschedule.
-                while let Some(((owner, key), due)) = host
+                while let Some(((thread, owner, key), due)) = host
                     .timers
                     .iter()
                     .filter(|(_, due)| **due <= until)
@@ -377,9 +505,12 @@ impl ModHost {
                     if fired.len() >= 256 {
                         return Err(failure("offline_timer_limit"));
                     }
-                    host.timers.remove(&(owner.clone(), key.clone()));
+                    host.timers
+                        .remove(&(thread.clone(), owner.clone(), key.clone()));
                     (*now_ms, host.now_ms) = (due, due);
                     self.virtual_time_ms = Some(due);
+                    host.thread = thread.clone().or_else(bound_thread);
+                    let _thread = StateThread::enter(host.thread.clone());
                     let value = self.invoke_scoped_with(
                         &owner,
                         self.generation,
@@ -635,6 +766,7 @@ impl ModHost {
                     || active,
                     |caller, call| host.call(caller, call),
                 )?;
+                ModViewPatch::parse(view.clone())?;
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
                     return Ok(view);
@@ -909,4 +1041,58 @@ fn redact_text(text: &str) -> String {
         }
     }
     output
+}
+
+#[cfg(test)]
+mod mock_boundary_tests {
+    use super::*;
+
+    fn call(operation: &str, arguments: Value) -> ModHostCall {
+        ModHostCall {
+            operation: operation.into(),
+            arguments,
+        }
+    }
+
+    #[test]
+    fn offline_mock_boundary_rejects_bad_requests_results_and_arguments() {
+        assert!(
+            OfflineHost::from_scenario(
+                &json!({"host_operations": {
+                    "store.delete": [{"result":{"deleted":"yes"}}]
+                }}),
+                0
+            )
+            .is_err()
+        );
+        let mut host = OfflineHost::from_scenario(
+            &json!({"host_operations": {
+                "store.put": [{"result":{"revision":1}}],
+                "store.get": [{"arguments":{"key":"expected"},"result":null}]
+            }}),
+            0,
+        )
+        .unwrap();
+        assert!(
+            host.call(
+                "test",
+                call(
+                    "store.put",
+                    json!({"key":"k","value":null,"expected_revision":null})
+                )
+            )
+            .is_err()
+        );
+        assert!(
+            host.call("test", call("store.get", json!({"key":"other"})))
+                .is_err()
+        );
+        assert!(
+            host.finish()
+                .unwrap_err()
+                .to_string()
+                .contains("offline_mock_violation")
+        );
+    }
+
 }

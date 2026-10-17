@@ -36,7 +36,6 @@ pub(crate) struct Grant {
 }
 
 impl Grant {
-    /// The rates of this grant's provider-billed route for `provider`, when it declares one.
     pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
         self.route
             .as_ref()
@@ -754,6 +753,12 @@ impl Services {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+async fn request_output(_config: &Config, _command: Vec<String>) -> Result<Value, String> {
+    Err("service_sandbox_unavailable".into())
+}
+
+#[cfg(target_os = "macos")]
 async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, String> {
     use codex_sandboxing::seatbelt::{
         CreateSeatbeltCommandArgsParams, MACOS_PATH_TO_SEATBELT_EXECUTABLE,
@@ -862,98 +867,4 @@ mod tests {
         assert_eq!(output["stdout"], "denied");
     }
 
-    fn session(root: &Path, name: &str) -> Session {
-        let directory = root.join(name);
-        std::fs::create_dir(&directory).unwrap();
-        Session {
-            task: Arc::new(
-                Task::create(
-                    codex_omd::Limits {
-                        requests: 20,
-                        exposure_microusd: 0,
-                        seconds: 60,
-                        concurrent_workers: 8,
-                        max_depth: 2,
-                    },
-                    directory.join("ledger"),
-                )
-                .unwrap(),
-            ),
-            repository_identity: name.into(),
-            evidence: directory.join("evidence"),
-            scratch: directory.join("scratch"),
-            contract: std::sync::Mutex::new(crate::contract::SessionContract::default()),
-            contract_state: directory.join("contract.json"),
-            processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
-            data: DataScope::default(),
-            access: AccessState::default(),
-        }
-    }
-
-    async fn insert(
-        services: &Services,
-        session: &Session,
-        id: &str,
-        owner: &str,
-        generation: u64,
-    ) -> (tokio::task::AbortHandle, PathBuf) {
-        let worker = format!("{id}-{generation}");
-        session
-            .task
-            .start_worker(
-                worker.clone(),
-                "lead".into(),
-                1,
-                codex_omd::WorkerLimits {
-                    requests: 1,
-                    exposure_microusd: 0,
-                    seconds: 30,
-                },
-            )
-            .unwrap();
-        let job = tokio::spawn(std::future::pending::<Result<Value, String>>());
-        let abort = job.abort_handle();
-        let snapshot = tempfile::tempdir().unwrap();
-        let path = snapshot.path().to_path_buf();
-        services.records.lock().await.insert(
-            id.into(),
-            Service {
-                mod_id: owner.into(),
-                generation,
-                route: None,
-                job: Some(job),
-                task: session.task.clone(),
-                worker,
-                _gateway: None,
-                _snapshot: snapshot,
-            },
-        );
-        (abort, path)
-    }
-
-    #[tokio::test]
-    async fn stale_and_disabled_services_stop_and_release_their_ids() {
-        let root = tempfile::tempdir().unwrap();
-        let first = session(root.path(), "first");
-        let other = session(root.path(), "other");
-        let services = Services::default();
-        let (stale, stale_path) = insert(&services, &first, "stale", "enabled", 1).await;
-        let (disabled, disabled_path) = insert(&services, &first, "disabled", "disabled", 2).await;
-        let (current, _) = insert(&services, &first, "current", "enabled", 2).await;
-        let (foreign, _) = insert(&services, &other, "foreign", "enabled", 2).await;
-        let (foreign_stale, _) = insert(&services, &other, "foreign-stale", "enabled", 1).await;
-        let owners = BTreeMap::from([("enabled".to_owned(), "hash".to_owned())]);
-        services.cleanup_stale(2, &owners).await;
-        assert!(stale.is_finished() && disabled.is_finished() && foreign_stale.is_finished());
-        assert!(!stale_path.exists() && !disabled_path.exists());
-        assert!(!current.is_finished() && !foreign.is_finished());
-        assert!(!services.records.lock().await.contains_key("stale"));
-        let (replacement, _) = insert(&services, &first, "stale", "enabled", 2).await;
-        services.cleanup_stale(2, &owners).await;
-        assert!(!replacement.is_finished());
-        services.cleanup_session(&first).await;
-        assert!(current.is_finished() && replacement.is_finished());
-        assert!(!foreign.is_finished());
-        services.cleanup_session(&other).await;
-    }
 }

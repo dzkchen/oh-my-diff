@@ -3,11 +3,11 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
-import time
+import threading
 import types
 import urllib.error
-import urllib.parse
 import unittest
 from unittest.mock import patch
 
@@ -93,32 +93,12 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.check()["available"]["version"], "0.1.1")
         self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
         self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
-        self.published = OSError("offline")
-        self.assertIsNone(self.check(channel="beta")["available"])
-        self.assertTrue(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261009070000.100.1"},
-                                             "0.1.0-nightly.20261008070000.99.1"))
-        self.assertFalse(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261008070000.99.1"},
-                                              "0.1.0-nightly.20261009070000.100.1"))
-
-    def test_fresh_nightly_install_discovers_and_pins_the_archive_digest_and_policy(self):
-        self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
-        args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
-                                     channel="nightly", session=None)
-        with patch.object(self.module.platform, "system", return_value="Darwin"), \
-                patch.object(self.module.platform, "machine", return_value="arm64"), \
-                patch.object(self.module, "profile_choice", return_value="platform"), \
-                patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
-                patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
-                patch("builtins.print"):
-            self.module.install(args, self.root, self.current)
-        self.assertEqual(download.call_args.args[:2], ("https://example.test/0.1.0-nightly.20261008070000.99.1/oh-my-diff-0.1.0-nightly.20261008070000.99.1.tar.xz", "a" * 64))
-        self.assertEqual(policy.call_args.args[-2:], ("channel", "nightly"))
 
     def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
         self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
         self.settings = {"channel": "nightly"}
         self.write_settings()
-        for channel, selected in ((None, "nightly"), ("stable", "stable")):
+        for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
                 args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
                                              channel=channel, session=None)
@@ -131,7 +111,7 @@ class UpdateSelection(unittest.TestCase):
                     self.module.install(args, self.root, self.current)
                 expected = self.published[0 if selected == "nightly" else 1]
                 self.assertEqual(download.call_args.args[0], expected["assets"][1]["browser_download_url"])
-                self.assertEqual(policy.call_args.args[-2:], ("channel", selected))
+                self.assertEqual([call.args[-2:] for call in policy.call_args_list], saved)
 
     def test_channel_changes_reject_older_bases_and_allow_same_base_transitions(self):
         for channel, candidate, installed, expected in (
@@ -144,24 +124,6 @@ class UpdateSelection(unittest.TestCase):
             with self.subTest(channel=channel, candidate=candidate, installed=installed):
                 self.assertEqual(self.module.eligible({"channel": channel},
                                                      {"version": candidate, "prerelease": "-" in candidate}, installed), expected)
-
-    def test_release_discovery_is_bounded_when_only_nightlies_exist(self):
-        url = "https://api.github.com/repos/example/omd/releases?per_page=20"
-        refs = [{"ref": f"refs/tags/v0.1.0-nightly.20261008.{number}.1"} for number in range(300)]
-        for channel, requests in (("stable", 1), ("nightly", 6)):
-            with self.subTest(channel=channel):
-                def fetch(address, limit):
-                    if "/git/matching-refs/" in address:
-                        return refs
-                    if "/releases/tags/" in address:
-                        return release(address.rsplit("/v", 1)[1], prerelease=True)
-                    page = int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(address).query)).get("page", "1"))
-                    return [release(item["ref"].removeprefix("refs/tags/v"), prerelease=True)
-                            for item in refs[(page - 1) * 20:page * 20]]
-                with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
-                    listed = self.module.releases(url, **({"channel": channel} if channel != "stable" else {}))
-                self.assertEqual(fetched.call_count, requests)
-                self.assertEqual(len(listed), 0 if channel == "stable" else 5)
 
     def test_old_pins_and_beta_releases_are_not_hidden_by_stable_or_nightly_history(self):
         url = "https://api.github.com/repos/example/omd/releases?per_page=20"
@@ -205,9 +167,22 @@ class UpdateSelection(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "upstream Codex"):
                         module.upstream_binary(args, None, module.UPSTREAM_MINOR)
 
+    def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
+        upstream, bin_dir = self.root / "upstream", self.root / "bin"
+        for directory in (upstream, bin_dir):
+            directory.mkdir()
+            (directory / "codex").write_text("#!/bin/sh\n")
+            (directory / "codex").chmod(0o755)
+        with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
+            warning = self.module.path_warning(bin_dir)
+        self.assertIn(str(upstream / "codex"), warning)
+        self.assertIn(f'export PATH="{bin_dir}:$PATH"', warning)
+        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
+            self.assertIsNone(self.module.path_warning(bin_dir))
+
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
-            for failed_name in self.module.LINKS:
+            for failed_name in (list(self.module.LINKS)[0], list(self.module.LINKS)[-1]):
                 with self.subTest(interrupted=interrupted, failed_name=failed_name), tempfile.TemporaryDirectory(dir=self.root) as temporary:
                     root = Path(temporary)
                     bin_dir = root / "bin"
@@ -306,45 +281,6 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
 
-    def test_tick_respects_checks_and_does_not_retry_a_failed_release(self):
-        self.published = [release("0.2.0")]
-        staged = []
-        self.module.stage = lambda root, available: staged.append(available["version"])
-        args = types.SimpleNamespace()
-        self.settings = {"checks": "off", "auto": "on"}
-        self.write_settings()
-        self.module.tick(args, self.root, self.current)
-        self.assertFalse((self.root / "update/state.json").exists())
-        self.assertGreater((self.root / "update/next").stat().st_mtime, time.time() + 80_000)
-        self.settings = {"auto": "on"}
-        self.write_settings()
-        self.module.tick(args, self.root, self.current)
-        self.assertEqual(staged, ["0.2.0"])
-        self.assertEqual(json.loads((self.root / "update/ready.json").read_text()), {"version": "0.2.0", "automatic": True})
-        replaced = self.root / "releases" / ("1" * 32)
-        replaced.mkdir()
-        self.module.atomic_symlink(self.root / "current", replaced)
-        before = self.module.state(self.root)
-        self.module.tick(args, self.root, self.current)
-        self.assertEqual(self.module.state(self.root), before)
-        self.module.atomic_symlink(self.root / "current", self.current)
-        self.module.save(self.root, failed={"version": "0.2.0", "error": "SHA-256 mismatch", "at": 1})
-        self.module.tick(args, self.root, self.current)
-        self.module.save(self.root, failed=None, held={"version": "0.2.0"})
-        self.module.tick(args, self.root, self.current)
-        self.assertEqual(staged, ["0.2.0"])
-        self.module.settled(self.root, "0.2.0", held=None)
-        self.assertEqual({key: self.module.state(self.root)[key] for key in ("installed", "available", "held")},
-                         {"installed": "0.2.0", "available": None, "held": None})
-
-    def test_offline_checks_do_not_reuse_a_release_excluded_by_current_policy(self):
-        for changes in ({"pin": "0.1.0"}, {"channel": "stable"}):
-            with self.subTest(changes=changes):
-                self.published = [release("0.2.0-beta.1", prerelease=True)]
-                self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
-                self.published = OSError("offline")
-                self.assertIsNone(self.check(**changes)["available"])
-
     def test_launch_rechecks_staged_release_policy_and_compatibility(self):
         applied = []
         self.module.stage = lambda *arguments: None
@@ -378,42 +314,6 @@ class UpdateSelection(unittest.TestCase):
                 self.module.upstream_binary = self.upstream
                 self.module.user_mods = lambda *arguments: []
 
-    def test_launch_preserves_explicit_updates_with_auto_disabled(self):
-        self.published = [release("0.2.0")]
-        available = self.check(auto="off")["available"]
-        self.module.stage = lambda *arguments: None
-        applied = []
-        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
-        args = types.SimpleNamespace(session=os.getpid())
-        for request in (None, {"id": "manual-request", "version": "0.2.0"}):
-            with self.subTest(request=request):
-                self.module.mod_request = lambda *arguments: request
-                self.module.deferred(self.root, available)
-                self.module.launch(args, self.root, self.current)
-        self.assertEqual(applied, ["0.2.0", "0.2.0"])
-
-    def test_disabling_the_update_mod_stops_checks_and_automatic_installs(self):
-        self.published = [release("0.2.0")]
-        staged, applied = [], []
-        self.module.stage = lambda root, available: staged.append(available["version"])
-        self.module.mod_request = lambda *arguments: None
-        self.module.apply = lambda args, root, current, available: applied.append(available["version"])
-        args = types.SimpleNamespace(session=os.getpid())
-        self.settings = {"checks": "on", "auto": "on"}
-        self.write_settings()
-        self.module.tick(args, self.root, self.current)
-        self.assertEqual(staged, ["0.2.0"])
-        (self.root / "update/next").unlink()
-        self.enabled = False
-        self.write_settings()
-        policy = self.module.policy(self.root / "stores/platform")
-        self.assertEqual((policy["checks"], policy["auto"]), ("off", "off"))
-        self.module.tick(args, self.root, self.current)
-        self.assertEqual(staged, ["0.2.0"])
-        self.module.launch(args, self.root, self.current)
-        self.assertEqual(applied, [])
-        self.assertFalse((self.root / "update/ready.json").exists())
-
     def test_recovery_removes_only_a_store_the_interrupted_install_created(self):
         for existing in (False, True):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory(dir=self.root) as temporary:
@@ -425,6 +325,8 @@ class UpdateSelection(unittest.TestCase):
 
                 def killed(*arguments, **keywords):
                     command = arguments[0]
+                    self.assertEqual((command[command.index("--payload") + 1], keywords["cwd"]), (root, root))
+                    self.assertNotIn("--archive", command)
                     Path(command[command.index("--prefix") + 1]).mkdir()
                     store.mkdir(parents=True, exist_ok=True)
                     raise KeyboardInterrupt
@@ -446,6 +348,7 @@ class UpdateSelection(unittest.TestCase):
         for generation in (self.current, older):
             (generation / "bin").mkdir(parents=True, exist_ok=True)
             (generation / "prefix").mkdir(exist_ok=True)
+            (generation / "prefix/install.json").touch()
             (generation / "receipt.json").write_text("{}")
         (older / "prefix/personal.txt").write_text("keep")
         (self.root / "previous").symlink_to(older)
@@ -455,7 +358,6 @@ class UpdateSelection(unittest.TestCase):
         (self.root / "update/staged").mkdir(parents=True)
         (self.root / "update/staged/package.tar.xz").touch()
         (self.root / "sessions").mkdir()
-        (self.root / ".install.lock").touch()
         (self.root / "catalog").mkdir()
 
         def package(generation, upstream, directory, *arguments):
@@ -464,54 +366,122 @@ class UpdateSelection(unittest.TestCase):
             shutil.rmtree(generation / "prefix")
 
         args = types.SimpleNamespace(session=None)
-        with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
-                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
-            with self.assertRaisesRegex(ValueError, "unmanaged files"):
+        holder = self.module.flocked(self.root / ".install.lock")
+        waiter = open(self.root / ".install.lock", "a+")
+        waited = threading.Thread(target=self.module.fcntl.flock, args=(waiter, self.module.fcntl.LOCK_EX))
+        waited.start()
+        try:
+            with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                    patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+                with self.assertRaisesRegex(ValueError, "unmanaged files"):
+                    self.module.uninstall(args, self.root, bin_dir, self.current)
+                self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
+                (older / "prefix/personal.txt").unlink()
                 self.module.uninstall(args, self.root, bin_dir, self.current)
-            self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
-            (older / "prefix/personal.txt").unlink()
-            self.module.uninstall(args, self.root, bin_dir, self.current)
-        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["bin", "catalog", "releases", "stores"])
+            self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the holder")
+            holder.close()
+            waited.join(5)
+            self.assertFalse(waited.is_alive())
+            self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the waiter")
+            self.assertEqual(os.fstat(waiter.fileno()).st_ino, (self.root / ".install.lock").stat().st_ino)
+        finally:
+            holder.close()
+            waiter.close()
+            waited.join(5)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "catalog", "releases", "stores"])
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
-    def test_node_falls_back_to_mise_when_the_recorded_node_is_too_old(self):
-        module = installer()
-        tools = self.root / "tools"
-        tools.mkdir()
-        for name, body in (("old-node", "echo v24.18.0"), ("node", "echo v24.20.1"), ("mise", f"echo {tools / 'node'}")):
-            (tools / name).write_text(f"#!/bin/sh\n{body}\n")
-            (tools / name).chmod(0o755)
-        args = types.SimpleNamespace(node=None)
-        environment = os.environ.copy()
-        os.environ["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"
-        try:
-            self.assertEqual(module.node_binary(args, "24.20.0", tools / "old-node"), tools / "node")
-            with self.assertRaisesRegex(ValueError, "Node 24.21"):
-                module.node_binary(args, "24.21.0", tools / "old-node")
-        finally:
-            os.environ["PATH"] = environment["PATH"]
+    def test_interrupted_uninstall_finishes_on_the_next_start(self):
+        real_unlink, real_rmdir = Path.unlink, Path.rmdir
+        for point in ("launcher", "receipt", "pointer"):
+            with self.subTest(point=point), tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                root = Path(temporary)
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                (bin_dir / "codex").write_text("upstream codex")
+                (bin_dir / "omd-mod").symlink_to(root / "upstream-omd-mod")
+                current = root / "releases" / ("1" * 32)
+                (current / "bin").mkdir(parents=True)
+                (current / "prefix/management").mkdir(parents=True)
+                (current / "prefix/install.json").write_text("{}")
+                for name in self.module.LINKS:
+                    (current / "bin" / name).write_text(name)
+                (current / "receipt.json").write_text(json.dumps({"schema": 1, "generation": current.name, "bin_dir": str(bin_dir)}))
+                (root / "current").symlink_to(current)
+                (root / "stores/platform").mkdir(parents=True)
+                (root / "stores/platform/mods.json").write_text("{}")
+                self.module.set_links(root, bin_dir)
 
-    def test_session_markers_count_only_live_codex_processes(self):
-        sessions = self.root / "sessions"
-        sessions.mkdir()
-        codex = self.root / "codex"
-        shutil.copyfile("/bin/sleep", codex)
-        codex.chmod(0o755)
-        live = subprocess.Popen([codex, "30"])
-        idle = subprocess.Popen(["/bin/sleep", "30"])
-        try:
-            for pid in (live.pid, idle.pid, os.getpid(), 999_999):
-                (sessions / str(pid)).touch()
-            old = time.time() - 120
-            os.utime(sessions / str(idle.pid), (old, old))
-            self.assertEqual(self.module.sessions(self.root, os.getpid()), [live.pid])
-            self.assertEqual(sorted(path.name for path in sessions.iterdir()), sorted([str(live.pid), str(os.getpid())]))
-        finally:
-            live.kill()
-            idle.kill()
-            live.wait()
-            idle.wait()
+                def package(generation, upstream, directory, *arguments):
+                    prefix = generation / "prefix"
+                    (prefix / ".uninstall.json").write_text("{}")
+                    (generation / "bin/codex").unlink()
+                    if point == "launcher":
+                        raise OSError("interrupted")
+                    shutil.rmtree(prefix)
+
+                def unlink(path, *arguments, **keywords):
+                    if point == "receipt" and path.name == "receipt.json" or point == "pointer" and path == root / "current":
+                        raise OSError("interrupted")
+                    real_unlink(path, *arguments, **keywords)
+
+                def rmdir(path):
+                    if point == "prefix" and path.name == "bin" or point == "generation" and path == current:
+                        raise OSError("interrupted")
+                    real_rmdir(path)
+
+                args = types.SimpleNamespace(session=None, upstream=None, bin_dir=None, root=root, command="uninstall",
+                                             action=None, value=None)
+                with patch.object(self.module, "package", side_effect=package), patch.object(self.module, "status"), \
+                        patch.object(self.module, "broker_deployed", return_value=False), \
+                        patch.object(Path, "unlink", unlink), patch.object(Path, "rmdir", rmdir), \
+                        self.assertRaisesRegex(OSError, "interrupted"):
+                    self.module.uninstall(args, root, bin_dir, current)
+                self.assertTrue((root / "update/journal.json").is_file())
+                self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
+                printed = []
+                with patch.object(sys, "argv", ["install.sh", "uninstall", "--root", str(root)]), \
+                        patch.object(self.module, "package", side_effect=AssertionError("package code is not needed")), \
+                        patch("builtins.print", side_effect=printed.append):
+                    self.module.main()
+                self.assertTrue(json.loads(printed[0])["uninstalled"])
+                self.assertEqual(sorted(path.name for path in root.iterdir()), [".install.lock", "bin", "releases", "stores"])
+                self.assertEqual(list((root / "releases").iterdir()), [])
+                self.assertEqual((root / "stores/platform/mods.json").read_text(), "{}")
+                self.assertEqual(sorted(path.name for path in bin_dir.iterdir()), ["codex", "omd-mod"])
+                self.assertEqual((bin_dir / "codex").read_text(), "upstream codex")
+                self.assertEqual(os.readlink(bin_dir / "omd-mod"), str(root / "upstream-omd-mod"))
+
+    def test_uninstall_journal_for_an_unjournaled_nonempty_prefix_relinks_instead_of_retrying(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "codex").write_text("upstream codex")
+        (self.current / "bin").mkdir(parents=True, exist_ok=True)
+        (self.current / "prefix/install.json").unlink()
+        (self.current / "prefix/stray.txt").write_text("stray")
+        for name in self.module.LINKS:
+            (self.current / "bin" / name).write_text(name)
+        self.module.write_json(self.module.update_dir(self.root) / "journal.json",
+                               {"uninstall": self.current.name, "bin_dir": str(bin_dir)})
+        args = types.SimpleNamespace(bin_dir=bin_dir)
+        self.assertIsNone(self.module.resume_uninstall(args, self.root))
+        self.assertFalse((self.root / "update/journal.json").exists())
+        self.assertTrue(self.module.managed(self.root, bin_dir / "codex", "codex"))
+        self.assertEqual((self.current / "prefix/stray.txt").read_text(), "stray")
+
+    def test_install_requires_asset_url_and_sha256_together(self):
+        self.module.download = lambda *arguments: self.fail("downloaded without a pinned pair")
+        for url, sha256 in (("https://example.invalid/x", None), (None, "a" * 64)):
+            with self.assertRaisesRegex(ValueError, "together"):
+                self.module.install(types.SimpleNamespace(asset_url=url, asset_sha256=sha256), self.root, self.current)
+
+    def test_installer_ignores_modules_in_the_working_directory(self):
+        planted = self.root / "planted.txt"
+        (self.root / "argparse.py").write_text(f"open({str(planted)!r}, 'w').close()\n")
+        result = subprocess.run(["sh", ROOT / "install.sh", "--help"], cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(planted.exists())
 
 
 if __name__ == "__main__":

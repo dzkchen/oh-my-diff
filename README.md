@@ -26,7 +26,7 @@ context and screen. OMD ships with a small set of mods, and you can write your o
 
 ## Quickstart
 
-You need an Apple Silicon Mac with Codex `0.162.x`, Node 24.18+ and Python 3.12+ installed.
+You need an Apple Silicon Mac with Codex `0.163.x`, Node 24.18+ and Python 3.12+ installed.
 
 1. Install OMD with its mod collection:
 

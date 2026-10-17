@@ -65,7 +65,6 @@ fn local(value: &Value) -> Option<std::path::PathBuf> {
         .or_else(|| value.as_str().map(std::path::PathBuf::from))
 }
 
-/// Checks a mod approval against its current delegated grant: kind, tool, roots and hosts.
 pub(super) fn within_grant(
     grants: Option<&codex_omd::ModGrants>,
     kind: &str,
@@ -107,7 +106,6 @@ pub(super) fn within_grant(
                 _ => command[0].as_str().unwrap_or_default().to_owned(),
             }
         }
-        "execve" => details["program"].as_str().unwrap_or_default().to_owned(),
         "mcp_tool" => format!(
             "{}/{}",
             details["server"].as_str().unwrap_or_default(),
@@ -127,7 +125,7 @@ pub(super) fn within_grant(
     }
     let paths: Vec<Value> = match kind {
         "patch" => details["files"].as_array().cloned().unwrap_or_default(),
-        "exec" | "execve" | "stdin" => vec![details["cwd"].clone()],
+        "exec" | "stdin" => vec![details["cwd"].clone()],
         _ => Vec::new(),
     };
     if !scope.roots.is_empty() && !scope.roots.iter().any(|root| root == "*") {

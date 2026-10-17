@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | `pull-request.yml` | pull requests | Conventional Commits title; changelog and Markdown link check |
 | `validate.yml` | called by nightly and release | Full hosted validation and the verified Apple Silicon package |
-| `nightly.yml` | daily 07:17 UTC, **Run workflow** | Validates; on `main` publishes a nightly prerelease and reports failures |
+| `nightly.yml` | **Run workflow** (daily once the repository is public) | Validates; on `main` publishes a nightly prerelease and reports failures |
 | `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags, **Run workflow** (dry run) | Checks versions, validates, publishes the GitHub Release |
 
 ## Validation
@@ -16,25 +16,27 @@ generated lock/document drift, offline host scenarios and scripted client accept
 home and exclude the recorded upstream `filtered_host_additional_permissions` baseline. Provider credentials and
 administrator broker deployment are not used.
 
-Hosted builds use two Cargo workers, no incremental artifacts and no debug information. Rust test targets run
-serially and finished test executables are removed. A shallow upstream checkout avoids its history. The debug
-target is removed before the release build. No Cargo cache is restored: patch replay always starts clean.
+Hosted builds use a shallow upstream checkout, two Cargo workers, no incremental artifacts and no debug
+information. Rust test targets run serially and finished test executables are removed. No Cargo cache is restored:
+patch replay always starts clean.
 
-The macOS job builds hardened signed release binaries and packages one archive for OMD Core and OMD+, exercises
-both profiles' install, reinstall and uninstall, and checks the installer's size limit. The `package` artifact holds
+The macOS job builds hardened signed release binaries once, removes the Cargo target, packages one archive for OMD
+Core and OMD+, exercises both profiles' install, reinstall, uninstall and recovery from the unpacked archive, and
+checks the installer's size limit. The `package` artifact holds
 the archive, `omd-release.json`, `provenance.json`, `install.sh`, a `git archive` source tarball and `SHA256SUMS`.
-Logs are in `validation-report-*` (14 days).
+Logs are in `validation-report-*` (14 days). Hosted orchestration lives in `.github/scripts/` and uses only
+tracked build inputs.
 
 ## Nightly
 
-Only successful runs on `main` publish. Versions are `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`, where `NEXT` is the
+Only successful runs on `main` publish; branch dispatches validate without publication. Versions are `NEXT-nightly.UTC_TIMESTAMP.RUN_ID.ATTEMPT`, where `NEXT` is the
 committed release version (its next patch once that version is released); tags are `vVERSION`, always prereleases
 and never GitHub's latest. A failed run opens one issue with its job/step names, report tails and log link; reruns
 update it and a successful rerun closes it.
 
 ## Releases
 
-The release version lives in `runtime/lean-release.lock.json` and the entry in `changelog.json`; `CHANGELOG.md`
+The release version lives in `runtime/release.lock.json` and the entry in `changelog.json`; `CHANGELOG.md`
 and the release notes are generated from it. One command runs the whole flow:
 
 1. `mise run release -- 1.2.0 --summary "One sentence."` branches from `origin/main`, sets the version, adds a

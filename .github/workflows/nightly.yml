@@ -1,8 +1,6 @@
 name: Nightly
 
 on:
-  schedule:
-    - cron: '17 7 * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +24,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: python@3.14.6
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: package
@@ -33,7 +34,7 @@ jobs:
       - name: Publish passing prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/nightly_ci.py publish --directory release
+        run: python3 .github/scripts/nightly_ci.py publish --directory release
 
   report:
     needs: [validate, publish]
@@ -47,6 +48,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: python@3.14.6
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: validation-report-*
@@ -57,4 +61,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NIGHTLY_VALIDATION_RESULT: ${{ needs.validate.result }}
           NIGHTLY_PUBLICATION_RESULT: ${{ needs.publish.result }}
-        run: python3 scripts/nightly_ci.py report
+        run: python3 .github/scripts/nightly_ci.py report

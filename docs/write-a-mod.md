@@ -36,7 +36,9 @@ To check types as well, add TypeScript once with `pnpm add -D typescript@5.9.3`,
 
 `pnpm test` also runs any `*.test.ts` or `*.test.mjs` file next to `mod.test.json`. Use the helpers in
 `@oh-my-diff/mod-api/testing` there; see [TypeScript tests](../mods/REFERENCE.md#typed-tool-declarations).
-Tests never call a real model: a host call you didn't mock fails the test.
+Tests never call a real model: a host call you didn't mock fails the test. Mock one with a typed reply, such as
+`hostOperations({ 'store.get': [{ arguments: { key: 'theme' }, result: null }] })`; unexpected calls, mismatched
+arguments and unused replies fail too.
 
 The real host loads the package, runs its callbacks, validates views and advances virtual time. The test helpers
 can seed and read state, invoke commands and tools, mount views, inspect host calls and step component modules

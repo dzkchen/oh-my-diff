@@ -52,28 +52,12 @@ impl Environment {
     }
 
     pub(super) fn set(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Input {
-            name: String,
-            value: Value,
-        }
-        let input: Input =
-            serde_json::from_value(arguments).map_err(|_| "environment_arguments_invalid")?;
+        let (name, value) = validate_environment_set(&arguments)?;
         let thread = caller.thread.ok_or("environment_thread_required")?;
-        let name = &input.name;
-        if !caller.exec_environment.contains(name) {
+        if !caller.exec_environment.contains(&name) {
             return Err("exec_environment_undeclared".into());
         }
-        if !environment_name_valid(name) {
-            return Err("environment_name_invalid".into());
-        }
-        let set = !input.value.is_null();
-        let value = match input.value {
-            Value::Null => None,
-            Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
-            _ => return Err("environment_value_invalid".into()),
-        };
+        let set = value.is_some();
         let mut scopes = self.0.lock().map_err(|_| "environment_state_poisoned")?;
         let key = (
             thread.to_owned(),
@@ -84,7 +68,7 @@ impl Environment {
         if let Some(value) = value {
             values.insert(name.clone(), value);
         } else {
-            values.remove(name);
+            values.remove(&name);
         }
         validate_environment(&values)?;
         if values.is_empty() {

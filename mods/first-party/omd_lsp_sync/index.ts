@@ -8,7 +8,7 @@ const IDLE_STOP_MS = 15 * 60_000;
 const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
 const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
-const MENTION = /[\w@+.\/-]+\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
+const MENTION = /[\w@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const errorText = (entry: string) => entry.slice(entry.indexOf(' ') + 1);
@@ -158,7 +158,7 @@ export default function activate(api: ModAPI) {
       const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
       if (!settled.ok) { incomplete(s, settled.error); continue; }
       const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
-      const synced = synchronize(s, changed);
+      const synced = synchronize(s, changed, files);
       if (!synced.ok) { incomplete(s, synced.error); continue; }
       let reason = '';
       for (let wait = 0; wait < DIAGNOSTIC_WAITS && [...edited, ...opened].some(path => !s.diagnostics[path]); wait++) {
@@ -325,11 +325,15 @@ export default function activate(api: ModAPI) {
       return done(items);
     }
     if (op === 'diagnostics') {
+      let reason = '';
       for (let wait = 0; wait < 4 && !s.diagnostics[path]; wait++) {
         const batch = exchange(s, [], 250);
-        if (!batch.ok || !settle(s, handle(s, batch.value)).ok) break;
+        const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+        if (!settled.ok) { reason = settled.error; break; }
       }
       save(s);
+      if (reason) return failed(reason);
+      if (!s.diagnostics[path]) return failed('diagnostics pending: the language server has not published diagnostics for this file yet; try again');
       return done(errors(s, path));
     }
     if (op === 'actions') {

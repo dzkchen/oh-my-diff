@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "omd_idle_compact",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Compacts a large idle conversation just before the provider prompt cache expires, so resuming reprocesses a summary instead of the whole context",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_idle_compact"},
+  "capabilities": ["store", "events", "lifecycle", "model", "threads", "approvals", "terminal", "inventory"],
+  "subscriptions": {
+    "app": ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request"]
+  },
+  "compatibility": {"required_features": ["app_v1", "events_v1", "lifecycle_events_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "cache_ttl_minutes": {"type": "number", "default": 0},
+      "min_tokens": {"type": "number", "default": 100000}
+    },
+    "additionalProperties": false
+  }
+}

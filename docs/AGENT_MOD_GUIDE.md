@@ -1,7 +1,7 @@
 # Agent mod guide
 
 For coding agents building an Oh My Diff (OMD) mod. Follow it top to bottom. Everything here is for mod API
-`0.2.0-experimental.5`, Codex `0.162.1`, Apple Silicon macOS and Node 24.18 or a later 24.x. The API is
+`0.2.0-experimental.5`, Codex `0.163.0`, Apple Silicon macOS and Node 24.18 or a later 24.x. The API is
 experimental: check `api` in a mod's `mod.json` against this version before reusing older code.
 
 Ground rules:

@@ -45,6 +45,7 @@ impl ModHostCall {
                 .and_then(crate::app_routes::route)
                 .map(|route| route.class.as_str())
                 .ok_or_else(|| failure("app_method_unrouted")),
+            "app.respond" => Ok("approvals"),
             "app.routes" | "session.info" | "tools.list" => Ok("inventory"),
             "time.sleep" => Ok("events"),
             "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
@@ -105,7 +106,7 @@ impl ModHostCall {
     pub fn capabilities(&self) -> Result<Vec<&'static str>> {
         let mut capabilities = vec![self.capability()?];
         if self.operation == "model.fork" {
-            capabilities.push("sessions");
+            capabilities.extend(["sessions", "sessions_tools"]);
         }
         if self.operation == "terminal.pty" {
             if self.arguments["write"] == true {
@@ -142,15 +143,6 @@ impl ModHostCall {
 
 fn authorize(loaded: &Loaded, call: &ModHostCall) -> Result<()> {
     let capabilities = call.capabilities()?;
-    if call.operation.starts_with("context.")
-        && !loaded
-            .package
-            .capabilities
-            .iter()
-            .any(|cap| cap == "context")
-    {
-        return Err(failure("capability_denied: context"));
-    }
     if let Some(missing) = capabilities
         .iter()
         .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
@@ -189,7 +181,6 @@ impl std::ops::Index<&str> for Request<'_> {
     }
 }
 
-/// The request fields fixed for a loaded package, and their digest: the package's runner identity.
 fn metadata(loaded: &Loaded) -> (Value, String) {
     let mut request = json!({"source": loaded.source.as_ref(), "filename": loaded.selection.path.join(&loaded.package.entrypoint),
         "api": MOD_API_VERSION,
@@ -253,11 +244,7 @@ pub(super) fn run(
         metadata,
         invocation: json!({"state": loaded.state, "ui_state": loaded.ui_state, "ui_revision": loaded.ui_revision, "event": event, "name": name, "payload": payload, "interactive": true}),
     };
-    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(|| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_millis() as u64)
-    }));
+    request.invocation["virtual_time_ms"] = json!(now_ms.unwrap_or_else(crate::peers::now_ms));
     let render = event == "intercept" && request["payload"]["surface"] == "render";
     let component = event == "component";
     let warm = (render || component || loaded.package.environment.is_empty()).then(|| {
@@ -283,6 +270,9 @@ pub(super) fn run(
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     request.invocation["receipts"] = Value::Array(receipts.clone());
+    if event == "history" {
+        fit_history(&mut request)?;
+    }
     let mut answer = |frame: Value| -> Result<Value> {
         if event == "inspect" {
             return Err(failure("invalid_host_call_sequence"));
@@ -311,10 +301,9 @@ pub(super) fn run(
             // Clipboard delivery is external work bounded by the surface call lifetime.
             || call.operation == "terminal.copy";
         scope.charge_call()?;
-        let (receipt, receipt_bytes) = {
-            let _profile = super::Profile::new("host_call");
-            receipt_for(&call, host(call.clone()), receipts_bytes, scope)?
-        };
+        let separator = usize::from(!receipts.is_empty());
+        let (receipt, receipt_bytes) =
+            receipt_for(&call, host(call.clone()), receipts_bytes + separator, scope)?;
         expected.push(call);
         receipts_bytes += receipt_bytes + usize::from(!receipts.is_empty());
         receipts.push(receipt.clone());
@@ -354,6 +343,37 @@ pub(super) fn run(
     forward(event, &reply.updates, &mut forwarded, progress)?;
     reply.receipts = receipts;
     Ok(reply)
+}
+
+fn fit_history(request: &mut Request) -> Result<()> {
+    if serde_json::to_vec(&*request)?.len() <= process::INPUT_LIMIT {
+        return Ok(());
+    }
+    let Some(items) = request
+        .invocation
+        .get_mut("payload")
+        .and_then(|payload| payload.get_mut("items"))
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+    else {
+        return Ok(());
+    };
+    let Some(mut room) = process::INPUT_LIMIT.checked_sub(serde_json::to_vec(&*request)?.len())
+    else {
+        request.invocation["payload"]["items"] = Value::Array(items);
+        return Ok(());
+    };
+    let mut kept = 0;
+    for item in items.iter().rev() {
+        let bytes = serde_json::to_vec(item)?.len() + usize::from(kept > 0);
+        if bytes > room {
+            break;
+        }
+        room -= bytes;
+        kept += 1;
+    }
+    request.invocation["payload"]["items"] = Value::Array(items[items.len() - kept..].to_vec());
+    Ok(())
 }
 
 fn receipt_for(

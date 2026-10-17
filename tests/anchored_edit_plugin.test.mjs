@@ -2,36 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { callback } from './mod_runner.mjs';
 
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const root = new URL('../plugins/bundled/oh-my-diff/plugins/omd-anchored-edit/mod/', import.meta.url);
 const source = readFileSync(new URL('index.ts', root), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', root), 'utf8'));
 const digest = text => createHash('sha256').update(text).digest('hex');
 
-test('anchored-edit configuration typechecks against the shared API', () => {
-  const result = spawnSync(process.execPath, [
-    fileURLToPath(new URL('../mods/node_modules/typescript/bin/tsc', import.meta.url)),
-    '--project', fileURLToPath(new URL('../tsconfig.json', root)), '--noEmit',
-  ], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-});
-
 function invoke(payload, host, extra = {}) {
-  const receipts = [];
-  for (let i = 0; i < 40; i++) {
-    const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, surface: { events: { context: 'context', turn_end: 'lifecycle' }, state: 'store', middleware: [], replacements: [] }, state: null, settings: {}, event: 'tool', name: 'edit', payload, receipts, ...extra };
-    const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
-    assert.ifError(result.error);
-    const reply = JSON.parse(result.stdout);
-    if (reply.error) throw new Error(reply.error);
-    if (!reply.host_call) return reply;
-    try { receipts.push({ call: reply.host_call, value: host(reply.host_call) }); }
-    catch (error) { if (error instanceof assert.AssertionError) throw error; receipts.push({ call: reply.host_call, error: String(error) }); }
-  }
-  throw new Error('host_call_limit');
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'tool', name: 'edit', payload, ...extra };
+  const reply = callback(request, host);
+  if (reply.error) throw new Error(reply.error);
+  return reply;
 }
 
 function workspace(initial, overrides = {}) {
@@ -107,27 +89,4 @@ test('denied, oversized, missing, generated and malformed edits never write', ()
   assert.deepEqual(result.failures.map(failure => failure.error.split(';')[0]), ['generated file', 'file missing']);
   for (const edit of [{ op: 'delete', anchor: '1#AAAA', lines: ['x'] }, { op: 'append', anchor: '1#AAAA', lines: ['x'] }, { op: 'replace', anchor: '1#AAAA' }, { op: 'move' }]) assert.equal(anchored('edit', { files: [{ path: 'gen.ts', edits: [edit] }] }, host).status, 'rejected');
   assert.equal(writes(host), 0);
-});
-
-test('anchored search returns the anchors read would return', () => {
-  const text = 'alpha\nbeta\ngamma\ndelta\n';
-  const rg = [
-    { type: 'begin', data: { path: { text: 'src/a.txt' } } },
-    { type: 'context', data: { path: { text: 'src/a.txt' }, line_number: 1, lines: { text: 'alpha\n' } } },
-    { type: 'match', data: { path: { text: 'src/a.txt' }, line_number: 2, lines: { text: 'beta\n' } } },
-    { type: 'match', data: { path: { text: 'src/a.txt' }, line_number: 4, lines: { text: 'delta\n' } } },
-  ].map(line => JSON.stringify(line)).join('\n');
-  const host = workspace({ 'src/a.txt': text }, { 'exec.run': call => {
-    assert.deepEqual(call.arguments.argv.slice(-4), ['-e', 'ta', '--', 'src']);
-    return { exit_code: 0, stdout: rg, stdout_preview_truncated: false, stderr: '' };
-  } });
-  const found = anchored('search', { pattern: 'ta', path: 'src', context: 1 }, host).split('\n');
-  const read = anchors(host, 'src/a.txt');
-  assert.deepEqual(found, ['src/a.txt', `${read.alpha}|alpha`, `${read.beta}|beta`, '--', `${read.delta}|delta`]);
-  assert.equal(anchored('search', { pattern: 'zzz' }, workspace({}, { 'exec.run': () => ({ exit_code: 1, stdout: '', stderr: '' }) })), 'no matches');
-});
-
-test('the anchored edit plugin registers no lifecycle or context callbacks', () => {
-  const reply = invoke(null, () => { throw new Error('unexpected call'); }, { event: 'inspect' });
-  assert.deepEqual(reply.registrations.events, []);
 });

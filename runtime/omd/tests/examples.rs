@@ -35,17 +35,12 @@ const HOST_FEATURES: &[&str] = &[
     "session_ports_v1",
     "command_config_middleware_v1",
     "admission_api_policy_v1",
-    "state_scopes_v1",
-    "composer_key_v1",
-    "completion_tokens_v1",
-    "mention_read_v1",
 ];
 
 #[test]
 fn host_feature_examples_load_and_register_together() {
-    let Some(node) = std::env::var_os("OMD_TEST_NODE") else {
-        return;
-    };
+    let node = std::env::var_os("OMD_TEST_NODE")
+        .expect("OMD_TEST_NODE required; sandbox tests must actually execute");
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples");
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

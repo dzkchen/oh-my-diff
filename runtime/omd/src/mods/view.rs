@@ -51,8 +51,6 @@ pub struct ModView {
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<ModLayout>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,8 +96,6 @@ pub struct ModViewPatch {
     pub placeholder: Option<String>,
     #[serde(default)]
     pub layout: Option<ModLayout>,
-    #[serde(default)]
-    pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
     #[serde(default)]
@@ -239,7 +235,7 @@ impl ModLayout {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ModBackdropOffset {
+pub struct ModOffset {
     pub x: i16,
     pub y: i16,
 }
@@ -260,123 +256,12 @@ pub struct ModSurfacePaint {
 }
 
 fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
+    let unit = |value: Option<f32>| {
+        value.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    };
     styles.iter().all(|(name, paint)| {
-        matches!(name.as_str(), "composer" | "backdrop" | "approval")
-            && paint
-                .opacity
-                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+        matches!(name.as_str(), "composer" | "approval") && unit(paint.opacity)
     })
-}
-
-fn valid_backdrop_transform(
-    position: &Option<String>,
-    scale: Option<f32>,
-    opacity: Option<f32>,
-    offset: &Option<ModBackdropOffset>,
-) -> bool {
-    position
-        .as_deref()
-        .is_none_or(|value| matches!(value, "center" | "fill" | "fit" | "tile"))
-        && scale.is_none_or(|value| value.is_finite() && (0.1..=4.0).contains(&value))
-        && opacity.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-        && offset.as_ref().is_none_or(|value| {
-            (-4096..=4096).contains(&value.x) && (-4096..=4096).contains(&value.y)
-        })
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModAsciiBackdrop {
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dim: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<ModColor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModImageBackdrop {
-    pub resource: crate::resource_data::ResourceRef,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dim: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<ModColor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub overlay: Option<ModSurfacePaint>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ModAsciiFallback {
-    pub ascii: ModAsciiBackdrop,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(untagged)]
-pub enum ModBackdrop {
-    Ascii {
-        ascii: ModAsciiBackdrop,
-    },
-    Image {
-        image: ModImageBackdrop,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        fallback: Option<ModAsciiFallback>,
-    },
-}
-
-impl ModBackdrop {
-    pub fn valid(&self) -> bool {
-        let dim = |dim: &Option<f32>| dim.is_none_or(|dim| (0.0..=1.0).contains(&dim));
-        let ascii = |ascii: &ModAsciiBackdrop| {
-            !ascii.text.is_empty()
-                && ascii.text.len() <= 8192
-                && multiline(&ascii.text, 8192)
-                && dim(&ascii.dim)
-                && valid_backdrop_transform(
-                    &ascii.position,
-                    ascii.scale,
-                    ascii.opacity,
-                    &ascii.offset,
-                )
-        };
-        match self {
-            Self::Ascii { ascii: backdrop } => ascii(backdrop),
-            Self::Image { image, fallback } => {
-                dim(&image.dim)
-                    && image.overlay.as_ref().is_none_or(|paint| {
-                        paint
-                            .opacity
-                            .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
-                    })
-                    && valid_backdrop_transform(
-                        &image.position,
-                        image.scale,
-                        image.opacity,
-                        &image.offset,
-                    )
-                    && fallback
-                        .as_ref()
-                        .is_none_or(|fallback| ascii(&fallback.ascii))
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -443,7 +328,7 @@ pub enum ModOverlayClip {
 pub struct ModOverlay {
     pub anchor: ModAnchor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<ModBackdropOffset>,
+    pub offset: Option<ModOffset>,
     pub width: u16,
     pub height: u16,
     #[serde(default)]
@@ -472,7 +357,6 @@ pub enum ModDirection {
     Row,
 }
 
-/// Cells around a box: one value for every side, or `[vertical, horizontal]`.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ModSpacing {
@@ -546,7 +430,6 @@ impl ModBoxStyle {
         self.valid() && self.hover.is_none() && self.focus.is_none()
     }
 
-    /// Fields set here win over `base`.
     pub fn over(self, base: Self) -> Self {
         Self {
             border: self.border.or(base.border),
@@ -883,7 +766,6 @@ impl ModComponent {
         }
     }
 
-    /// Pushes this component and every descendant, parents first.
     pub fn descendants<'a>(&'a self, into: &mut Vec<&'a ModComponent>) {
         into.push(self);
         if let Self::Box { children, .. }
@@ -1261,7 +1143,6 @@ impl ModView {
         Some((width?, height?))
     }
 
-    /// The declared width and height of raster `id`; a side that fills its layout region is `None`.
     pub fn raster_declared(&self, id: &str) -> Option<(Option<u16>, Option<u16>)> {
         fn find(components: &[ModComponent], id: &str) -> Option<(Option<u16>, Option<u16>)> {
             components.iter().find_map(|component| match component {
@@ -1282,7 +1163,6 @@ impl ModView {
             .find_map(|site| find(&site.components, id))
     }
 
-    /// The registered module and props a `module` component `id` mounts.
     pub fn module(&self, id: &str) -> Option<(&str, &Value)> {
         let mut found = Vec::new();
         for site in self.sites.values() {
@@ -1332,7 +1212,6 @@ pub fn mod_key_name(key: &str) -> bool {
     key_name(key, false)
 }
 
-/// A key name a `composer_key` handler may produce: a bindable key or an unmodified named key.
 pub fn composer_key_name(key: &str) -> bool {
     key_name(key, true)
 }
@@ -1373,6 +1252,15 @@ fn key_name(key: &str, bare: bool) -> bool {
         && (function
             || modified && (character || named)
             || (parts == ["Shift"] || bare && parts.is_empty()) && named)
+}
+
+/// A view action runs only its owner's commands: a bare name is the owner's, another mod's is refused.
+pub fn owned_command(owner: &str, command: &str) -> Option<String> {
+    match command.split_once(':') {
+        Some((id, _)) if id != owner => None,
+        Some(_) => Some(command.to_owned()),
+        None => Some(format!("{owner}:{command}")),
+    }
 }
 
 pub fn mod_command_reference(value: &str) -> bool {
@@ -1784,7 +1672,15 @@ fn valid_site(name: &str) -> bool {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
             })
     };
-    ["sidebar", "header", "above_composer", "dialog", "welcome"].contains(&name)
+    [
+        "sidebar",
+        "header",
+        "above_composer",
+        "below_composer",
+        "dialog",
+        "welcome",
+    ]
+    .contains(&name)
         || name
             .split_once('/')
             .is_some_and(|(owner, site)| part(owner, 24) && part(site, 32))
@@ -1840,7 +1736,6 @@ fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>) -> Option<String> {
     })
 }
 
-/// Every component id rendered in these sites, including nested children.
 pub fn site_component_ids(sites: &BTreeMap<String, ModRenderSite>) -> BTreeSet<String> {
     component_ids_of(sites.values().flat_map(|site| &site.components))
 }
@@ -2008,13 +1903,6 @@ impl ModViewPatch {
                 patch.layout.as_ref().is_some_and(|layout| !layout.valid()),
             ),
             (
-                "backdrop",
-                patch
-                    .backdrop
-                    .as_ref()
-                    .is_some_and(|backdrop| !backdrop.valid()),
-            ),
-            (
                 "surface_styles",
                 !valid_surface_styles(&patch.surface_styles),
             ),
@@ -2092,9 +1980,6 @@ impl ModViewPatch {
         if self.layout.is_some() && claim("layout".into()) {
             candidate.layout = self.layout;
         }
-        if self.backdrop.is_some() && claim("backdrop".into()) {
-            candidate.backdrop = self.backdrop;
-        }
         if self.placeholder.is_some() && claim("placeholder".into()) {
             candidate.placeholder = self.placeholder;
         }
@@ -2126,10 +2011,16 @@ impl ModViewPatch {
             candidate.sites.insert(name, composed);
         }
         let composed = site_component_ids(&candidate.sites);
-        for (key, action) in self.keybindings {
+        for (key, mut action) in self.keybindings {
             // A focus key into a site this patch lost has nothing to focus.
             if matches!(&action, ModKeyAction::Focus { focus } if !composed.contains(focus)) {
                 continue;
+            }
+            if let ModKeyAction::Command { command, .. } = &mut action {
+                let Some(owned) = owned_command(id, command) else {
+                    continue;
+                };
+                *command = owned;
             }
             if claim(format!("keybindings.{key}")) {
                 candidate.keybindings.insert(key, action);
@@ -2239,12 +2130,6 @@ impl ModView {
                 view.layout.as_ref().is_some_and(|layout| !layout.valid()),
             ),
             (
-                "backdrop",
-                view.backdrop
-                    .as_ref()
-                    .is_some_and(|backdrop| !backdrop.valid()),
-            ),
-            (
                 "surface_styles",
                 !valid_surface_styles(&view.surface_styles),
             ),
@@ -2265,13 +2150,6 @@ impl ModView {
 }
 
 impl ModViewSnapshot {
-    pub fn clock() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or_default()
-    }
-
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;

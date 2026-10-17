@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Check the public mod API contract against the host source and its executable evidence."""
+"""Check the public mod API source inventory; optionally require release execution receipts."""
+import argparse
 import json
-from functools import cache
 import re
+import sys
 from pathlib import Path
+
+from scripts import execution_evidence
+from scripts.execution_evidence import resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
@@ -11,10 +15,6 @@ CLASSIC = ROOT / "mods/conformance/classic-hooks.json"
 RUNNER = ROOT / "runtime/omd/src/mods/runner.mjs"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
-RUST_TESTS = ROOT / "runtime/omd/tests"
-PATCH = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
-RUNNER_TESTS = ROOT / "mods/runner.test.mjs"
-PYTHON_TESTS = ROOT / "tests"
 GROUPS = {
     "coordination": "Coordination decisions",
     "context_recovery": "Context and recovery decisions",
@@ -50,22 +50,11 @@ def host_sets():
     }
 
 
-@cache
-def resolve(reference):
-    kind, _, name = reference.partition(":")
-    if kind == "rust":
-        return any(f"fn {name}(" in path.read_text() for path in RUST_TESTS.glob("*.rs"))
-    if kind == "patch":
-        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", PATCH.read_text(), re.M) is not None
-    if kind == "node":
-        if ":" in name:
-            file, name = name.split(":", 1)
-            path = (ROOT / file).resolve()
-            return path.is_relative_to(ROOT / "tests") and path.suffix == ".mjs" and path.is_file() and f"test('{name}'" in path.read_text()
-        return f"test('{name}'" in RUNNER_TESTS.read_text()
-    if kind == "python":
-        return any(f"def {name}(" in path.read_text() for path in PYTHON_TESTS.glob("test_*.py"))
-    return False
+def release_evidence(contract):
+    decisions = {entry["id"]: entry for entry in contract["decisions"]}
+    return {reference for entry in contract.get("launch", {}).values()
+            if entry.get("status") == "frozen"
+            for reference in entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))}
 
 
 def declaration(source, name):
@@ -194,18 +183,25 @@ def check(contract, version, sets):
     return problems + check_launch(contract, sets)
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    args = parser.parse_args(argv)
     contract = json.loads(CONTRACT.read_text())
     version, sets = host_sets()
     problems = check(contract, version, sets)
+    if args.release or args.executed_evidence:
+        problems += execution_evidence.verify(release_evidence(contract), args.executed_evidence)
     if problems:
         raise SystemExit("\n".join(problems))
     print(
         f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
         f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points, intercept surfaces and host operations documented with resolved evidence"
+        f"replacement points, intercept surfaces and host operations documented with resolved source inventory; "
+        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

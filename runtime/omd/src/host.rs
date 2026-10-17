@@ -143,7 +143,6 @@ fn credential_paths() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Serves one session host call under an optional captured source binding.
 pub type SessionDispatcher = Arc<
     dyn Fn(
             &str,
@@ -157,13 +156,60 @@ pub type SessionDispatcher = Arc<
         + Sync,
 >;
 
-static SESSION_DISPATCHER: Mutex<Option<SessionDispatcher>> = Mutex::new(None);
+static SESSION_DISPATCHER: Mutex<Option<(Arc<()>, Option<SessionDispatcher>)>> = Mutex::new(None);
 
-/// Lets callbacks outside the session (terminal commands) reach the session's model operations.
-pub fn install_session_dispatcher(dispatcher: SessionDispatcher) {
-    if let Ok(mut installed) = SESSION_DISPATCHER.lock() {
-        *installed = Some(dispatcher);
+pub struct SessionRegistration(Arc<()>);
+
+impl SessionRegistration {
+    pub fn install(&self, dispatcher: SessionDispatcher) -> std::io::Result<()> {
+        let mut installed = SESSION_DISPATCHER
+            .lock()
+            .map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+        match installed.as_mut() {
+            Some((owner, slot)) if Arc::ptr_eq(owner, &self.0) && slot.is_none() => {
+                *slot = Some(dispatcher);
+                Ok(())
+            }
+            _ => Err(std::io::Error::other("host_installation_stale")),
+        }
     }
+}
+
+impl Drop for SessionRegistration {
+    fn drop(&mut self) {
+        let mut installed = SESSION_DISPATCHER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if installed
+            .as_ref()
+            .is_some_and(|(owner, _)| Arc::ptr_eq(owner, &self.0))
+        {
+            *installed = None;
+        }
+    }
+}
+
+pub fn install_session_dispatcher(
+    dispatcher: SessionDispatcher,
+) -> std::io::Result<SessionRegistration> {
+    let registration = reserve_session_dispatcher()?;
+    registration.install(dispatcher)?;
+    Ok(registration)
+}
+
+pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
+    let mut installed = SESSION_DISPATCHER
+        .lock()
+        .map_err(|_| std::io::Error::other("host_installation_poisoned"))?;
+    if installed.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "host_already_installed",
+        ));
+    }
+    let owner = Arc::new(());
+    *installed = Some((owner.clone(), None));
+    Ok(SessionRegistration(owner))
 }
 
 pub fn session_call(
@@ -177,14 +223,17 @@ pub fn session_call(
     let dispatcher = SESSION_DISPATCHER
         .lock()
         .ok()
-        .and_then(|installed| installed.clone())
+        .and_then(|installed| {
+            installed
+                .as_ref()
+                .and_then(|(_, dispatcher)| dispatcher.clone())
+        })
         .ok_or_else(|| {
             std::io::Error::other("host_operation_unavailable: no session in this process")
         })?;
     dispatcher(thread, caller, source, policy, call, active)
 }
 
-/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
 pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
     for root in protected.iter().cloned().chain(credential_paths()) {
         for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
@@ -244,20 +293,68 @@ impl Authority for ExternalRoot {
     }
 }
 
-fn environment(
-    state: Option<&Environment>,
-    caller: &Caller<'_>,
-    arguments: Value,
-) -> Result<Value, String> {
+pub fn validate_environment_read(arguments: &Value) -> Result<Vec<String>, String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Input {
         names: Vec<String>,
     }
-    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+    let input: Input =
+        serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
     if input.names.is_empty() || input.names.len() > 16 {
         return Err("environment_names_invalid".into());
     }
+    Ok(input.names)
+}
+
+pub fn validate_environment_set(arguments: &Value) -> Result<(String, Option<String>), String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        name: String,
+        value: Value,
+    }
+    let input: Input =
+        serde_json::from_value(arguments.clone()).map_err(|_| "environment_arguments_invalid")?;
+    if !environment::environment_name_valid(&input.name) {
+        return Err("environment_name_invalid".into());
+    }
+    let value = match input.value {
+        Value::Null => None,
+        Value::String(value) if value.len() <= 4096 && !value.contains('\0') => Some(value),
+        _ => return Err("environment_value_invalid".into()),
+    };
+    Ok((input.name, value))
+}
+
+pub fn validate_timer_request(operation: &str, arguments: &Value) -> Result<(String, u64), String> {
+    if operation == "events.cancel" {
+        return arguments["key"]
+            .as_str()
+            .map(|key| (key.to_owned(), 0))
+            .ok_or_else(|| "timer_invalid".into());
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        key: String,
+        delay_ms: u64,
+    }
+    let input: Input =
+        serde_json::from_value(arguments.clone()).map_err(|error| error.to_string())?;
+    if input.key.is_empty() || input.key.len() > 64 || !(16..=86_400_000).contains(&input.delay_ms)
+    {
+        return Err("timer_invalid".into());
+    }
+    Ok((input.key, input.delay_ms))
+}
+
+fn environment(
+    state: Option<&Environment>,
+    caller: &Caller<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
+    let names = validate_environment_read(&arguments)?;
     let mut values = serde_json::Map::new();
     let overrides = state
         .map(|state| {
@@ -270,7 +367,7 @@ fn environment(
         })
         .transpose()?
         .unwrap_or_default();
-    for name in input.names {
+    for name in names {
         if !caller.exec_environment.contains(&name) {
             return Err(format!("exec_environment_undeclared: {name}"));
         }
@@ -315,13 +412,6 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
                 .map_err(|_| "backup_record_invalid".into())
         })
         .collect()
-}
-
-fn now_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default()
 }
 
 fn relative(name: &str) -> bool {
@@ -408,14 +498,16 @@ pub fn unrestricted_program(access: &crate::ModOsAccess, name: &str) -> Result<P
     Ok(resolved)
 }
 
-/// The command for an unsandboxed program: no Seatbelt, or one that only denies IP networking.
+/// The command for an unsandboxed program: no Seatbelt with network, otherwise a macOS Seatbelt denying only IP networking.
 pub fn unrestricted_command(
     access: &crate::ModOsAccess,
     program: &Path,
     exec_environment: &[String],
-) -> Command {
+) -> Result<Command, String> {
     let mut command = if access.network {
         Command::new(program)
+    } else if !cfg!(target_os = "macos") {
+        return Err("exec_sandbox_unavailable".to_owned());
     } else {
         let mut command = Command::new("/usr/bin/sandbox-exec");
         command
@@ -439,7 +531,7 @@ pub fn unrestricted_command(
             command.env(name, value);
         }
     }
-    command
+    Ok(command)
 }
 
 fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
@@ -523,27 +615,20 @@ impl Host<'_> {
         {
             return Err("exec_output_binding_invalid".into());
         }
-        let mut path = self.data_root.to_owned();
-        for part in [
-            "exec-output",
-            &repository_key(self.repository()),
-            caller.id,
-            thread,
-            caller.source_sha256,
-        ] {
-            path.push(part);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error.to_string()),
-            }
-            if path.canonicalize().map_err(|error| error.to_string())? != path
-                || !fs::symlink_metadata(&path)
-                    .map_err(|error| error.to_string())?
-                    .is_dir()
-            {
-                return Err("exec_output_directory_invalid".into());
-            }
+        let path = crate::workspace::private_path(
+            self.data_root,
+            &[
+                "exec-output",
+                &repository_key(self.repository()),
+                caller.id,
+                thread,
+                caller.source_sha256,
+            ],
+            "exec_output_directory_invalid",
+        )
+        .map_err(|error| error.to_string())?;
+        if path.canonicalize().map_err(|error| error.to_string())? != path {
+            return Err("exec_output_directory_invalid".into());
         }
         Ok(path)
     }
@@ -596,7 +681,7 @@ impl Host<'_> {
                     }
                 }
             }
-            let temporary = directory.join(format!(".{digest}.{}.tmp", now_ms()));
+            let temporary = directory.join(format!(".{digest}.{}.tmp", crate::peers::now_ms()));
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -682,7 +767,6 @@ impl Host<'_> {
         )
     }
 
-    /// Runs a workspace read, list, stat or transaction against a granted root outside the workspace.
     fn external(
         &self,
         caller: &Caller<'_>,
@@ -1111,7 +1195,7 @@ impl Host<'_> {
         let scratch = Scratch(scratch.canonicalize().map_err(|error| error.to_string())?);
         let mut command = match unrestricted {
             Some(access) => {
-                let mut command = unrestricted_command(access, &program, caller.exec_environment);
+                let mut command = unrestricted_command(access, &program, caller.exec_environment)?;
                 command.args(input.argv);
                 command
             }
@@ -1478,20 +1562,12 @@ impl Host<'_> {
         {
             return Err("backup_root_invalid".into());
         }
-        let mut path = self.data_root.to_path_buf();
-        for component in ["backups", &repository_key(self.repository()), caller.id] {
-            path.push(component);
-            match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => (),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error.to_string()),
-            }
-            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err("backup_directory_invalid".into());
-            }
-        }
-        Ok(path)
+        crate::workspace::private_path(
+            self.data_root,
+            &["backups", &repository_key(self.repository()), caller.id],
+            "backup_directory_invalid",
+        )
+        .map_err(|error| error.to_string())
     }
 
     fn save_backup(
@@ -1506,7 +1582,7 @@ impl Host<'_> {
             "schema": 1,
             "owner": caller.id,
             "repository": repository_key(self.repository()),
-            "created_ms": now_ms() as u64,
+            "created_ms": crate::peers::now_ms(),
             "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
         });
         let bytes = serde_json::to_vec(&record)?;
@@ -1654,5 +1730,39 @@ impl Host<'_> {
             .apply(self.repository(), || (self.active)())
             .map_err(|error| error.to_string())?;
         Ok(json!({"files": result.files}))
+    }
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+
+    #[test]
+    fn singleton_rejects_replacement_and_stale_teardown() {
+        let dispatcher = || {
+            Arc::new(
+                |_: &str,
+                 _: &str,
+                 _: Option<&str>,
+                 _: Option<&Value>,
+                 _: crate::ModHostCall,
+                 _: &dyn Fn() -> bool| Ok(Value::Null),
+            ) as SessionDispatcher
+        };
+        let pending = reserve_session_dispatcher().unwrap();
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(pending);
+        let first = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(
+            matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists)
+        );
+        let stale = SessionRegistration(first.0.clone());
+        drop(first);
+        let second = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(stale.install(dispatcher()).is_err());
+        drop(stale);
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(second);
+        assert!(install_session_dispatcher(dispatcher()).is_ok());
     }
 }

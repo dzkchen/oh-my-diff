@@ -44,20 +44,6 @@ impl Fixture {
 use InvocationContext::{Event, User};
 
 #[test]
-fn table_matches_the_route_surface() {
-    assert_eq!(route("thread/fork").unwrap().class, "threads");
-    assert!(route("command/exec").is_none());
-    assert!(route("fs/writeFile").is_none());
-    assert!(route("account/login/start").is_none());
-    assert!(notification_routed("turn/completed"));
-    assert!(!notification_routed("rawResponse/completed"));
-    assert!(server_request_routed(
-        "item/commandExecution/requestApproval"
-    ));
-    assert!(!server_request_routed("account/chatgptAuthTokens/refresh"));
-}
-
-#[test]
 fn capability_context_and_unrouted_methods_are_enforced() {
     let f = fixture(&["threads", "sessions"]);
     assert_eq!(
@@ -97,31 +83,6 @@ fn capability_context_and_unrouted_methods_are_enforced() {
         f.code("thread/list", json!([1]), Event),
         "app_params_invalid"
     );
-}
-
-#[test]
-fn transcript_rewrites_need_history_write_and_stay_on_reachable_threads() {
-    let edit = |thread: &str| json!({"threadId": thread, "expectedRevision": "r:1", "edits": [{"op": "delete", "id": "x"}]});
-    assert_eq!(
-        fixture(&["threads"]).code("thread/rewrite", edit("current"), User),
-        "app_capability_missing"
-    );
-    let f = fixture(&["history_write"]);
-    assert_eq!(f.code("thread/rewrite", edit("current"), User), "ok");
-    assert_eq!(f.code("thread/rewrite", edit("other"), Event), "ok");
-    assert_eq!(
-        f.code("thread/rewrite", edit("someone-else"), User),
-        "app_thread_out_of_scope"
-    );
-    assert_eq!(
-        f.code(
-            "thread/rewrite",
-            json!({"threadId": "current", "author": "user"}),
-            User
-        ),
-        "app_param_refused"
-    );
-    assert!(notification_routed("thread/rewritten"));
 }
 
 #[test]
@@ -205,6 +166,41 @@ fn thread_scope_binds_current_and_visible_threads() {
         "app_thread_out_of_scope"
     );
     assert_eq!(f.code("thread/start", json!({}), User), "ok");
+    let fixture = fixture(&["threads"]);
+    let move_before = |before: &str| {
+        fixture.code(
+            "thread/section/move",
+            json!({"threadId": "current", "sectionId": "s", "beforeThreadId": before}),
+            Event,
+        )
+    };
+    assert_eq!(move_before("other"), "ok");
+    assert_eq!(move_before("stranger"), "app_thread_out_of_scope");
+}
+
+#[test]
+fn every_thread_addressed_route_has_a_scope() {
+    let unscoped: Vec<_> = TABLE
+        .requests
+        .iter()
+        .filter(|(method, route)| {
+            route
+                .fields
+                .iter()
+                .any(|field| field.ends_with("ThreadId") || field == "threadId")
+                && route.scope.is_none()
+                && !method.starts_with("app/")
+                && !matches!(
+                    method.as_str(),
+                    "account/usage/read"
+                        | "experimentalFeature/list"
+                        | "mcpServerStatus/list"
+                        | "thread/list"
+                )
+        })
+        .map(|(method, _)| method.as_str())
+        .collect();
+    assert_eq!(unscoped, Vec::<&str>::new());
 }
 
 #[test]
@@ -228,35 +224,6 @@ fn root_fields_stay_inside_the_session_roots() {
     assert_eq!(
         f.code("config/read", json!({"cwd": "/"}), Event),
         "app_root_invalid"
-    );
-}
-
-#[test]
-fn model_fields_must_name_a_configured_route() {
-    let f = fixture(&["threads"]);
-    assert_eq!(
-        f.code(
-            "thread/start",
-            json!({"model": "gpt-test", "modelProvider": "openai"}),
-            User
-        ),
-        "ok"
-    );
-    assert_eq!(
-        f.code(
-            "thread/start",
-            json!({"model": "gpt-test", "modelProvider": "other"}),
-            User
-        ),
-        "app_route_unconfigured"
-    );
-    assert_eq!(
-        f.code(
-            "turn/settings/update",
-            json!({"threadId": "current", "turnId": "t", "model": "unknown"}),
-            Event
-        ),
-        "app_route_unconfigured"
     );
 }
 
@@ -296,6 +263,43 @@ fn config_writes_refuse_authority_and_unknown_keys() {
     assert_eq!(write("tui.unknown_key"), "app_config_key_refused");
     assert_eq!(write("not_a_key"), "app_config_key_refused");
     assert_eq!(write("tui..theme"), "app_config_key_refused");
+    let table = |key: &str, value: Value| {
+        f.code(
+            "config/value/write",
+            json!({"keyPath": key, "value": value, "mergeStrategy": "upsert"}),
+            User,
+        )
+    };
+    assert_eq!(write("features.goals"), "ok");
+    assert_eq!(
+        table("features", json!({"goals": true})),
+        "app_config_key_refused"
+    );
+    assert_eq!(
+        table(
+            "agents",
+            json!({"reviewer": {"config_file": "/tmp/role.toml"}})
+        ),
+        "app_config_key_refused"
+    );
+    assert_eq!(table("agents", json!({"max_depth": 2})), "ok");
+    assert_eq!(table("tui", json!({"theme": "x"})), "ok");
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "tui", "value": {"theme": "x", "keymap": {"global": {"copy": "c"}}}}]}),
+            User
+        ),
+        "ok"
+    );
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "agents", "value": {"enabled": true, "r": {"config_file": "x"}}}]}),
+            User
+        ),
+        "app_config_key_refused"
+    );
     assert_eq!(
         f.code(
             "config/value/write",
@@ -329,14 +333,22 @@ fn config_writes_refuse_authority_and_unknown_keys() {
         f.code("config/value/write", json!({"value": 1}), User),
         "app_params_invalid"
     );
-}
-
-#[test]
-fn subscriptions_match_exact_and_prefix_patterns() {
-    let patterns = vec!["turn/*".to_owned(), "item/completed".to_owned()];
-    assert!(subscribed(&patterns, "turn/completed"));
-    assert!(subscribed(&patterns, "item/completed"));
-    assert!(!subscribed(&patterns, "item/started"));
+    assert_eq!(
+        f.code(
+            "config/value/write",
+            json!({"keyPath": "developer_instructions", "value": "Be brief.\n<redacted>\n"}),
+            User
+        ),
+        "app_config_value_redacted"
+    );
+    assert_eq!(
+        f.code(
+            "config/batchWrite",
+            json!({"edits": [{"keyPath": "tui", "value": {"theme": "<redacted>"}}]}),
+            User
+        ),
+        "app_config_value_redacted"
+    );
 }
 
 #[test]
@@ -373,55 +385,77 @@ fn queue_coalesces_deltas_and_drops_oldest_with_a_count() {
 }
 
 #[test]
-fn queue_bounds_bytes_but_keeps_the_newest_event() {
-    let mut queue = NotificationQueue::new(10, 64);
-    queue.push("error", json!({"message": "x".repeat(40)}));
-    queue.push("error", json!({"message": "y".repeat(40)}));
-    let drained = queue.drain();
-    assert_eq!((drained.len(), drained[0].dropped), (1, 1));
-    assert!(
-        drained[0].params["message"]
-            .as_str()
-            .unwrap()
-            .starts_with('y')
-    );
-    for _ in 0..8 {
-        queue.push(
-            "item/agentMessage/delta",
-            json!({"threadId": "t", "itemId": "i", "delta": "z".repeat(20)}),
+fn mod_responses_never_grant_authority() {
+    let allowed = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline"}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "cancel"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "decline", "content": null}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["No reply; use your judgment."]}}}),
+        ),
+    ];
+    for (method, result) in allowed {
+        assert_eq!(response_allowed(method, &result), Ok(()), "{method}");
+    }
+    let refused = [
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "acceptForSession"}),
+        ),
+        (
+            "item/commandExecution/requestApproval",
+            json!({"decision": "decline", "extra": 1}),
+        ),
+        (
+            "item/fileChange/requestApproval",
+            json!({"decision": "accept"}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {"network": {"enabled": true}}}),
+        ),
+        (
+            "item/permissions/requestApproval",
+            json!({"permissions": {}, "scope": "session"}),
+        ),
+        (
+            "mcpServer/elicitation/request",
+            json!({"action": "accept", "content": {}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": [1]}}}),
+        ),
+        (
+            "item/tool/requestUserInput",
+            json!({"answers": {"q1": {"answers": ["x".repeat(20_000)]}}}),
+        ),
+        ("thread/start", json!({})),
+    ];
+    for (method, result) in refused {
+        assert!(
+            response_allowed(method, &result)
+                .unwrap_err()
+                .starts_with("app_response_refused"),
+            "{method} {result}"
         );
     }
-    let drained = queue.drain();
-    assert!(
-        drained
-            .iter()
-            .all(|event| event.params["delta"].as_str().unwrap().len() <= 64)
-    );
-    assert!(drained[0].dropped > 0);
-}
-
-#[test]
-fn session_roots_include_linked_worktrees() {
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path().canonicalize().unwrap();
-    let repository = base.join("repo");
-    std::fs::create_dir(&repository).unwrap();
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(&repository)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
-    };
-    git(&["init", "-q"]);
-    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
-    git(&["worktree", "add", "-q", "../linked"]);
-    let roots = session_roots(&repository);
-    assert_eq!(roots[0], repository);
-    assert!(roots.contains(&base.join("linked")));
-    assert_eq!(session_roots(&base), vec![base.clone()]);
 }

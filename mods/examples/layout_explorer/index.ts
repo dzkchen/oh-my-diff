@@ -11,7 +11,6 @@ export default function activate(api: ModAPI) {
         { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }], active: tab },
         { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
       ] },
-      backdrop: { ascii: { text: '·  ', dim: 0.6 } },
       sites: {
         'layout_explorer/diff': { mode: 'replace', components: [{ type: 'diff', id: 'explorer_diff', label: 'Working diff', unified: '+++ b/README.md\n@@ -1 +1 @@\n-old\n+new' }] },
         'layout_explorer/notes': { mode: 'replace', components: [

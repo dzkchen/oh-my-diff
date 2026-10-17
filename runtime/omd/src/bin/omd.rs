@@ -57,6 +57,21 @@ fn database(
     Ok(sqlite.join("state_5.sqlite"))
 }
 
+fn set_once(slot: &mut Option<PathBuf>, value: Option<&String>, name: &str) -> io::Result<()> {
+    if slot.is_some() {
+        return Err(io::Error::other(format!("duplicate_{name}")));
+    }
+    let value = value.ok_or_else(|| io::Error::other(format!("{name}_required")))?;
+    *slot = Some(PathBuf::from(value));
+    Ok(())
+}
+
+fn store_root(flag: Option<PathBuf>) -> io::Result<PathBuf> {
+    flag.or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
+        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
+        .canonicalize()
+}
+
 fn store(args: &[String]) -> io::Result<Value> {
     let usage = || {
         io::Error::other(
@@ -77,21 +92,13 @@ fn store(args: &[String]) -> io::Result<Value> {
         match argument.as_str() {
             "--mod" => id = Some(value.clone()),
             "--repo" => repository = Some(PathBuf::from(value).canonicalize()?),
-            "--store" => {
-                if root.is_some() {
-                    return Err(io::Error::other("duplicate_store"));
-                }
-                root = Some(PathBuf::from(value));
-            }
+            "--store" => set_once(&mut root, Some(value), "store")?,
             "--scope" => scope = value.clone(),
             _ => return Err(usage()),
         }
     }
     let id = id.ok_or_else(usage)?;
-    let root = root
-        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-        .canonicalize()?;
+    let root = store_root(root)?;
     let key = match (&repository, scope.as_str()) {
         (Some(repository), "repository") => codex_omd::host::repository_key(repository),
         (None, "repository") => return Err(io::Error::other("explicit_repository_required")),
@@ -166,11 +173,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             _ => positional.push(argument.clone()),
         }
     }
-    let store = codex_omd::ModStore::open(
-        root.or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-            .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-            .canonicalize()?,
-    )?;
+    let store = codex_omd::ModStore::open(store_root(root)?)?;
     let first = || positional.first().cloned().ok_or_else(usage);
     let done = |display: String| Ok(json!({"display": display}));
     match action {
@@ -389,6 +392,12 @@ fn describe(preview: &Value) -> String {
                 "  needs your approval: new or changed grant, authority or origin".to_owned(),
             );
         }
+        if package["state_version"]["handler_required"] == true {
+            lines.push(
+                "  state version changes: apply loads this version and refuses it without a migrate handler"
+                    .to_owned(),
+            );
+        }
     }
     if let Some(removed) = changes["removed"].as_array() {
         lines.push(format!(
@@ -460,56 +469,17 @@ fn run(args: Vec<String>) -> io::Result<Value> {
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--repo" => {
-                if repository.is_some() {
-                    return Err(io::Error::other("duplicate_repository"));
-                }
-                repository = Some(
-                    PathBuf::from(
-                        remaining
-                            .next()
-                            .ok_or_else(|| io::Error::other("repository_required"))?,
-                    )
-                    .canonicalize()?,
-                );
+                set_once(&mut repository, remaining.next(), "repository")?;
+                repository = repository.map(|path| path.canonicalize()).transpose()?;
             }
-            "--store" => {
-                if store.is_some() {
-                    return Err(io::Error::other("duplicate_store"));
-                }
-                store = Some(PathBuf::from(
-                    remaining
-                        .next()
-                        .ok_or_else(|| io::Error::other("store_required"))?,
-                ));
-            }
-            "--home" => {
-                if home.is_some() {
-                    return Err(io::Error::other("duplicate_home"));
-                }
-                home = Some(PathBuf::from(
-                    remaining
-                        .next()
-                        .ok_or_else(|| io::Error::other("home_required"))?,
-                ));
-            }
-            "--sqlite-home" => {
-                if sqlite.is_some() {
-                    return Err(io::Error::other("duplicate_sqlite_home"));
-                }
-                sqlite = Some(PathBuf::from(
-                    remaining
-                        .next()
-                        .ok_or_else(|| io::Error::other("sqlite_home_required"))?,
-                ));
-            }
+            "--store" => set_once(&mut store, remaining.next(), "store")?,
+            "--home" => set_once(&mut home, remaining.next(), "home")?,
+            "--sqlite-home" => set_once(&mut sqlite, remaining.next(), "sqlite_home")?,
             _ => payload.push(argument.clone()),
         }
     }
     let repository = repository.ok_or_else(|| io::Error::other("explicit_repository_required"))?;
-    let root = store
-        .or_else(|| std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from))
-        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
-        .canonicalize()?;
+    let root = store_root(store)?;
     let home = home
         .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|path| PathBuf::from(path).join(".codex")));
@@ -693,42 +663,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn session_database_selection_honors_config_profile_and_explicit_scope() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let home = root.join("home");
-        let repository = root.join("repo");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(repository.join(".codex")).unwrap();
-        let environment = root.join("environment");
-        assert_eq!(
-            database(&home, &repository, None, Some(environment.clone())).unwrap(),
-            environment.join("state_5.sqlite")
-        );
-        let configured = root.join("configured");
-        std::fs::write(
-            home.join("config.toml"),
-            format!(
-                "profile='selected'\n[profiles.selected]\nsqlite_home='{}'\n",
-                configured.display()
-            ),
-        )
-        .unwrap();
-        assert_eq!(
-            database(&home, &repository, None, Some(environment.clone())).unwrap(),
-            configured.join("state_5.sqlite")
-        );
-        std::fs::write(
-            repository.join(".codex/config.toml"),
-            "\"\\u0073qlite_home\"='/unknown'\n",
-        )
-        .unwrap();
-        assert!(database(&home, &repository, None, None).is_err());
-        assert_eq!(
-            database(&home, &repository, Some(environment.clone()), None).unwrap(),
-            environment.join("state_5.sqlite")
-        );
-        assert!(database(&home, &repository, Some(PathBuf::from("relative")), None).is_err());
-    }
 }

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub const PROFILE_LIMIT: usize = 32;
@@ -39,6 +39,15 @@ struct Index {
     schema: u32,
     next: u64,
     profiles: Vec<CredentialProfile>,
+}
+
+impl Index {
+    fn profile(&self, id: &str) -> io::Result<&CredentialProfile> {
+        self.profiles
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| failure(format!("credential_profile_unknown: {id}")))
+    }
 }
 
 pub struct CredentialProfiles {
@@ -81,7 +90,6 @@ fn text(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
 }
 
-/// `scheme://host[:port]` of `url`, lowercased and without a default port.
 pub fn url_origin(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
@@ -135,16 +143,8 @@ impl CredentialProfiles {
         if store.canonicalize()? != store {
             return Err(failure("credential_root_invalid"));
         }
-        let root = store.join("credentials");
-        match fs::DirBuilder::new().mode(0o700).create(&root) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
-        let metadata = fs::symlink_metadata(&root)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(failure("credential_root_invalid"));
-        }
+        let root =
+            crate::workspace::private_path(store, &["credentials"], "credential_root_invalid")?;
         Ok(Self { root, broker: None })
     }
 
@@ -255,22 +255,12 @@ impl CredentialProfiles {
     }
 
     fn home(&self, id: &str) -> io::Result<PathBuf> {
-        let known =
-            self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
-        if !known {
-            return Err(failure(format!("credential_profile_unknown: {id}")));
-        }
-        let home = self.root.join(id);
-        match fs::DirBuilder::new().mode(0o700).create(&home) {
-            Ok(()) => (),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
-        let metadata = fs::symlink_metadata(&home)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(failure("credential_home_invalid"));
-        }
-        Ok(home)
+        self.with_index(false, |index| self.indexed_home(index, id))
+    }
+
+    fn indexed_home(&self, index: &Index, id: &str) -> io::Result<PathBuf> {
+        index.profile(id)?;
+        crate::workspace::private_path(&self.root, &[id], "credential_home_invalid")
     }
 
     /// A `provider` profile is bound to an `https` origin; the other kinds have a fixed destination.
@@ -404,19 +394,42 @@ impl CredentialProfiles {
         ) {
             return result.map(drop);
         }
-        if self.profile(id)?.kind != "secret" || value.is_empty() || value.len() > SECRET_BYTES {
+        if value.is_empty() || value.len() > SECRET_BYTES {
             return Err(failure("credential_secret_invalid"));
         }
-        let path = self.home(id)?.join("secret");
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)?;
-        file.write_all(value.as_bytes())?;
-        file.sync_all()
+        self.replace(
+            id,
+            "secret",
+            value,
+            |kind| kind == "secret",
+            "credential_secret_invalid",
+        )
+    }
+
+    /// Publishes a profile's credential file whole, with private permissions, under the profile lock.
+    fn replace(
+        &self,
+        id: &str,
+        name: &str,
+        value: &str,
+        kind: impl FnOnce(&str) -> bool,
+        refusal: &str,
+    ) -> io::Result<()> {
+        self.with_index(false, |index| {
+            if !kind(&index.profile(id)?.kind) {
+                return Err(failure(refusal));
+            }
+            let home = self.indexed_home(index, id)?;
+            let path = home.join(name);
+            if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
+                return Err(failure("credential_store_invalid"));
+            }
+            let mut staged = tempfile::NamedTempFile::new_in(&home)?;
+            staged.write_all(value.as_bytes())?;
+            staged.as_file().sync_all()?;
+            staged.persist(&path).map_err(|error| error.error)?;
+            fs::File::open(&home)?.sync_all()
+        })
     }
 
     pub fn store_auth(&self, id: &str, auth: &str) -> io::Result<()> {
@@ -427,21 +440,16 @@ impl CredentialProfiles {
         ) {
             return result.map(drop);
         }
-        if self.profile(id)?.kind == "secret"
-            || auth.len() > 65_536
-            || serde_json::from_str::<serde_json::Value>(auth).is_err()
-        {
+        if auth.len() > 65_536 || serde_json::from_str::<serde_json::Value>(auth).is_err() {
             return Err(failure("credential_auth_invalid"));
         }
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(self.home(id)?.join("auth.json"))?;
-        file.write_all(auth.as_bytes())?;
-        file.sync_all()
+        self.replace(
+            id,
+            "auth.json",
+            auth,
+            |kind| kind != "secret",
+            "credential_auth_invalid",
+        )
     }
 
     pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {
@@ -470,8 +478,7 @@ impl CredentialProfiles {
         fs::read_to_string(path)
     }
 
-    /// Refuses unless `origin` is the profile's enrolled destination and, when a mod
-    /// (`owner`) asks for a `secret` profile, that mod owns it.
+    /// Refuses unless `origin` is the profile's enrolled destination and, for a `secret` profile asked by a mod (`owner`), that mod owns it.
     pub fn secret(
         &self,
         id: &str,
@@ -549,9 +556,7 @@ impl CredentialProfiles {
             return result.map(drop);
         }
         self.with_index(true, |index| {
-            if !index.profiles.iter().any(|p| p.id == id) {
-                return Err(failure(format!("credential_profile_unknown: {id}")));
-            }
+            index.profile(id)?;
             for profile in &mut index.profiles {
                 profile.default = profile.id == id;
             }

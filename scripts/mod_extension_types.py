@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import json
-import re
 from pathlib import Path
 
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
-ROLES = {"bundled", "candidate", "author_example", "conformance_fixture"}
+ROLES = {"bundled", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
 PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party")
 
@@ -17,12 +17,6 @@ def package_paths():
         for base in PACKAGE_ROOTS
         for path in base.rglob("mod.json")
     }
-
-
-def author_examples():
-    source = (ROOT / "mods/author/cli.mjs").read_text()
-    match = re.search(r"const publicExamples = \[(.*?)\];", source, re.S)
-    return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
 def identified(registry):
@@ -57,21 +51,18 @@ def check(registry):
             problems.append(f"{label}: missing mod rationale")
 
     bundled = {package["path"]: package for package in packages if package["role"] == "bundled"}
-    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
-    locked = {package["source"]: package for package in preview["packages"].values()}
+    locked = {package["source"]: package for package in support.mods_lock()["packages"].values()}
     if set(bundled) != set(locked):
-        problems.append("bundled classifications differ from runtime/preview-v1.lock.json")
+        problems.append("bundled classifications differ from runtime/mods.lock.json")
     for path, package in bundled.items():
         if locked.get(path, {}).get("extension_type") != package["extension_type"]:
-            problems.append(f"{path}: preview lock extension type differs")
+            problems.append(f"{path}: mods lock extension type differs")
 
     published = {
         Path(package["path"]).name
         for package in packages
         if package["role"] == "author_example"
     }
-    if set(author_examples()) != published:
-        problems.append(f"author CLI examples differ: declared={author_examples()}, classified={sorted(published)}")
     files = json.loads((ROOT / "mods/package.json").read_text())["files"]
     shipped = {value.removeprefix("examples/") for value in files if value.startswith("examples/")}
     if shipped != published:

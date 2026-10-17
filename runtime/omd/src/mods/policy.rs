@@ -59,7 +59,6 @@ pub struct ManagedIndex {
     pub locations: Vec<PathBuf>,
 }
 
-/// Administrator policy for mods: controls over user and project selections plus required packages.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedPolicy {
@@ -175,7 +174,6 @@ impl ManagedPolicy {
         Ok(policy)
     }
 
-    /// Why this policy refuses a user or project selection; `source` is its package-manager source, if any.
     pub fn refusal(
         &self,
         id: &str,
@@ -215,7 +213,6 @@ impl ManagedPolicy {
         }
     }
 
-    /// Why this policy refuses a user install, or with `update` a version change, from `source`.
     pub fn install_refusal(
         &self,
         id: &str,
@@ -267,7 +264,6 @@ pub fn load_managed() -> Result<Option<Managed>> {
     load_managed_from(Path::new(MANAGED_POLICY_FILE), 0)
 }
 
-/// Like `load_managed`, trusting `owner` besides root for the policy file and its folders.
 pub fn load_managed_from(file: &Path, owner: u32) -> Result<Option<Managed>> {
     if crate::broker::deployed() {
         let value = crate::broker::call("policy.get", json!({"key": MANAGED_POLICY_KEY}))?;
@@ -302,7 +298,6 @@ pub fn load_managed_from(file: &Path, owner: u32) -> Result<Option<Managed>> {
     managed(value, canonical.display().to_string()).map(Some)
 }
 
-/// The account name policy `users` entries and rollout cohorts match.
 pub fn login() -> String {
     let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
     let mut buffer = vec![0 as libc::c_char; 4096];
@@ -324,14 +319,12 @@ pub fn login() -> String {
         .into_owned()
 }
 
-/// Deterministic 0-99 rollout cohort of a user for a package ID.
 fn cohort(user: &str, id: &str) -> u8 {
     let hash = digest(format!("{user}\0{id}").as_bytes());
     (u64::from_str_radix(&hash[..8], 16).unwrap_or_default() % 100) as u8
 }
 
 impl ManagedPackage {
-    /// Whether the entry targets `user`: listed users and the rollout cohort.
     pub fn assigned(&self, user: &str) -> bool {
         self.users
             .as_ref()
@@ -371,7 +364,6 @@ pub struct DeployedPackage {
     pub version: String,
     pub sha256: String,
     pub path: PathBuf,
-    /// The sha256 of each direct dependency.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
 }
@@ -387,7 +379,6 @@ impl Managed {
             .collect()
     }
 
-    /// Every entry `package-sync` installs for `user`, whatever the project, once per ID and content.
     pub fn deployable(&self, user: &str) -> Vec<&ManagedPackage> {
         let mut seen = BTreeSet::new();
         self.policy
@@ -399,9 +390,7 @@ impl Managed {
             .collect()
     }
 
-    /// Each target loads when deployed; otherwise the first applicable deployed entry keeps running
-    /// until the next sync. The deployed dependencies of running entries load with them under their
-    /// own policy entry. Content the policy no longer lists never loads.
+    /// Each target loads when deployed; otherwise the first applicable deployed entry keeps running until the next sync; deployed dependencies of running entries load under their own policy entry; content the policy no longer lists never loads.
     pub(super) fn selections(
         &self,
         deployment: &ManagedDeployment,
@@ -487,7 +476,6 @@ impl Managed {
     }
 }
 
-/// The policy-facing reference of a package source, which `sources` prefixes match.
 pub fn source_reference(source: &package_manager::ModPackageSource) -> String {
     match source {
         package_manager::ModPackageSource::Local { path } => path.display().to_string(),

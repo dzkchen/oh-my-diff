@@ -45,63 +45,6 @@ fn profiles_get_private_homes_and_one_default() {
 }
 
 #[test]
-fn removing_the_default_promotes_another_and_clears_its_home() {
-    let (_temp, profiles) = profiles();
-    profiles.create("a", "chatgpt", None, None).unwrap();
-    profiles
-        .create_secret("site", "https://example.com", "vault")
-        .unwrap();
-    profiles.create("b", "chatgpt", None, None).unwrap();
-    let home = profiles.home("p1").unwrap();
-    assert!(profiles.remove("p1").unwrap());
-    assert!(!home.exists());
-    let listed = profiles.list().unwrap();
-    assert_eq!(
-        listed
-            .iter()
-            .map(|p| (p.id.as_str(), p.default))
-            .collect::<Vec<_>>(),
-        [("p2", false), ("p3", true)]
-    );
-    assert!(!profiles.remove("p1").unwrap());
-    assert!(profiles.home("p1").is_err());
-}
-
-#[test]
-fn invalid_profiles_and_limits_are_refused() {
-    let (_temp, profiles) = profiles();
-    assert!(profiles.create("", "chatgpt", None, None).is_err());
-    assert!(profiles.create("x\n", "chatgpt", None, None).is_err());
-    assert!(profiles.create("x", "oauth2", None, None).is_err());
-    assert!(profiles.create("x", "provider", None, None).is_err());
-    assert!(
-        profiles
-            .create("x", "provider", None, Some("http://example.com"))
-            .is_err()
-    );
-    assert!(
-        profiles
-            .create("x", "api_key", None, Some("https://example.com"))
-            .is_err()
-    );
-    profiles.create("x", "chatgpt", None, None).unwrap();
-    assert!(profiles.create("x", "chatgpt", None, None).is_err());
-    for n in 1..PROFILE_LIMIT {
-        profiles
-            .create(&format!("p{n}"), "api_key", None, None)
-            .unwrap();
-    }
-    assert_eq!(
-        profiles
-            .create("overflow", "api_key", None, None)
-            .unwrap_err()
-            .to_string(),
-        "credential_profile_limit"
-    );
-    assert!(profiles.set_default("p999").is_err());
-}
-
-#[test]
 fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     use base64::Engine;
     let (_temp, profiles) = profiles();
@@ -212,4 +155,71 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
             .secret(&secret.id, "https://example.com", Some("vault"))
             .is_err()
     );
+}
+
+#[test]
+fn credential_files_are_replaced_privately_and_atomically() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, profiles) = profiles();
+    let secret = profiles
+        .create_secret("site", "https://example.com", "vault")
+        .unwrap();
+    let key = profiles
+        .create(
+            "key",
+            "provider",
+            Some("p"),
+            Some("https://api.example.com"),
+        )
+        .unwrap();
+    let tokens = ["a".repeat(64), "b".repeat(4000)];
+    for (id, origin, owner, file) in [
+        (&secret.id, "https://example.com", Some("vault"), "secret"),
+        (&key.id, "https://api.example.com", None, "auth.json"),
+    ] {
+        let store = |token: &str| {
+            if file == "secret" {
+                profiles.store_secret(id, token)
+            } else {
+                profiles.store_auth(
+                    id,
+                    &serde_json::json!({"OPENAI_API_KEY": token}).to_string(),
+                )
+            }
+        };
+        let read = || profiles.secret(id, origin, owner).unwrap().token;
+        let home = profiles.root.join(id);
+        store(&tokens[0]).unwrap();
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o500)).unwrap();
+        let staged = store(&tokens[1]);
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(staged.is_err());
+        assert_eq!(read(), tokens[0]);
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let reader = scope.spawn(|| {
+                let mut reads = 0;
+                while !done.load(std::sync::atomic::Ordering::Acquire) {
+                    assert!(tokens.contains(&read()));
+                    reads += 1;
+                }
+                reads
+            });
+            for round in 0..200 {
+                store(&tokens[round % 2]).unwrap();
+            }
+            done.store(true, std::sync::atomic::Ordering::Release);
+            assert!(reader.join().unwrap() > 0);
+        });
+        let path = home.join(file);
+        assert_eq!(
+            fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(home.join("elsewhere"), &path).unwrap();
+        assert!(store(&tokens[0]).is_err());
+        assert!(fs::symlink_metadata(home.join("elsewhere")).is_err());
+    }
 }

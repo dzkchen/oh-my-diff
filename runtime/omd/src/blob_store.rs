@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 pub const BLOB_BYTES: usize = 16 * 1024 * 1024;
@@ -144,25 +144,12 @@ fn sha(value: &str) -> bool {
 
 impl ResourceStore<'_> {
     fn blob_directory(&self) -> io::Result<PathBuf> {
-        private_directory(self.directory()?.join("blobs"))
+        crate::workspace::private_path(&self.directory()?, &["blobs"], "blob_directory_invalid")
     }
 
     pub(crate) fn rotating_directory(&self) -> io::Result<PathBuf> {
-        private_directory(self.directory()?.join("rotating"))
+        crate::workspace::private_path(&self.directory()?, &["rotating"], "blob_directory_invalid")
     }
-}
-
-fn private_directory(path: PathBuf) -> io::Result<PathBuf> {
-    match fs::DirBuilder::new().mode(0o700).create(&path) {
-        Ok(()) => (),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-        Err(error) => return Err(error),
-    }
-    let metadata = fs::symlink_metadata(&path)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(io::Error::other("blob_directory_invalid"));
-    }
-    Ok(path)
 }
 
 fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {

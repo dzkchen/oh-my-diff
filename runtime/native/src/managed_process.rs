@@ -1,13 +1,23 @@
+#[cfg(target_os = "macos")]
 use codex_network_proxy::ManagedNetworkSandboxContext;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemAccessMode;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemPath;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemSandboxEntry;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+#[cfg(target_os = "macos")]
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::process_group::kill_process_group;
 use serde::Deserialize;
@@ -26,6 +36,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -198,9 +209,14 @@ pub(super) struct ProcessNotice {
 
 pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
 
-/// Draws one `terminal.blit` for the process's owner while `active` holds.
-pub(super) type BlitSink =
-    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, String> + Send + Sync>;
+pub(super) type BlitSink = Arc<
+    dyn Fn(
+            Value,
+            Arc<dyn Fn() -> bool + Send + Sync>,
+        ) -> Result<Value, codex_omd::client_surface::BlitError>
+        + Send
+        + Sync,
+>;
 
 const BLIT_RETRY: Duration = Duration::from_millis(100);
 const BLIT_ATTEMPTS: u32 = 50;
@@ -374,13 +390,13 @@ fn blit_worker(
                 )),
                 Ok(_) => None,
                 Err(_) if !active() => return,
-                Err(error) if error == "process_raster_revoked" => {
+                Err(error) if error.kind == codex_omd::client_surface::BlitErrorKind::Revoked => {
                     stop();
                     return;
                 }
                 Err(error)
                     if image.get("pixels").is_some()
-                        && !codex_omd::client_surface::blit_retryable(&error) =>
+                        && error.kind == codex_omd::client_surface::BlitErrorKind::Fatal =>
                 {
                     stop();
                     return;
@@ -589,6 +605,7 @@ fn send_message(stdin: &mut impl Write, message: &Value) -> Result<(), String> {
     stdin.flush().map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn read_policy(
     policy: &FileSystemSandboxPolicy,
     scratch: &Path,
@@ -643,10 +660,13 @@ impl ManagedProcesses {
     }
 
     pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
-        let records = self.records.lock().ok()?;
-        let (_, process) = records
-            .iter()
-            .find(|((id, _, name), _)| id == owner && name == session)?;
+        let process = {
+            let records = self.records.lock().ok()?;
+            let (_, process) = records
+                .iter()
+                .find(|((id, _, name), _)| id == owner && name == session)?;
+            process.clone()
+        };
         let process = process.lock().ok()?;
         Some(!process.exited().ok()?)
     }
@@ -928,10 +948,16 @@ impl ManagedProcesses {
                     let mut command = match unrestricted {
                         Some(access) => {
                             let mut command =
-                                codex_omd::host::unrestricted_command(access, &input.path, &[]);
+                                codex_omd::host::unrestricted_command(access, &input.path, &[])?;
                             command.args(arguments);
                             command
                         }
+                        #[cfg(not(target_os = "macos"))]
+                        None => {
+                            let _ = (policy, protected);
+                            return Err("managed_process_requires_native_sandbox".into());
+                        }
+                        #[cfg(target_os = "macos")]
                         None => {
                             let scope = read_policy(policy, &scratch)?;
                             let loopback_network = input.network.as_deref() == Some("loopback");
@@ -1353,6 +1379,7 @@ impl ManagedProcesses {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn raster_input_queue_bounds_bytes_messages_and_coalesces_in_order() {
@@ -1639,7 +1666,6 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             self.call("process.start", arguments)
         }
 
-        /// Exchanges until the session ends, returning every message and the ending error.
         fn drain(&self, session: &str, mut send: Value) -> (Vec<Value>, String) {
             let mut messages = Vec::new();
             loop {
@@ -1652,6 +1678,40 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 }
             }
         }
+    }
+
+    #[test]
+    fn liveness_releases_registry_before_waiting_for_process() {
+        let fixture = Arc::new(Fixture::new());
+        fixture.start("locked", "read line", json!({})).unwrap();
+        let key = ("fixture".to_owned(), 1, "locked".to_owned());
+        let session = fixture.processes.session(&key).unwrap();
+        let held = session.lock().unwrap();
+        let count = Arc::strong_count(&session);
+        let reader = fixture.clone();
+        let reader = std::thread::spawn(move || reader.processes.running("fixture", "locked"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&session) == count
+            && fixture.processes.records.try_lock().is_ok()
+            && Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        let remover = fixture.clone();
+        let removing = session.clone();
+        let (sent, received) = mpsc::channel();
+        let remover = std::thread::spawn(move || {
+            remover.processes.remove(&key, &removing);
+            sent.send(()).unwrap();
+        });
+        let removed = received.recv_timeout(Duration::from_secs(2));
+        drop(held);
+        remover.join().unwrap();
+        assert_eq!(reader.join().unwrap(), Some(true));
+        assert!(
+            removed.is_ok(),
+            "removal blocked behind liveness while the process was locked"
+        );
     }
 
     #[test]
@@ -1735,13 +1795,10 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         }
         std::thread::sleep(Duration::from_millis(200));
         let (mut exchanges, mut total) = (0, 0);
-        loop {
-            let Ok(answer) = fixture.call(
-                "process.exchange",
-                json!({"session":"flood","wait_ms":2000}),
-            ) else {
-                break;
-            };
+        while let Ok(answer) = fixture.call(
+            "process.exchange",
+            json!({"session":"flood","wait_ms":2000}),
+        ) {
             let messages = answer["messages"].as_array().unwrap();
             assert!(
                 serde_json::to_vec(messages).unwrap().len() <= EXCHANGE_BYTES,
@@ -2127,6 +2184,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             "terminal_blit_unknown",
             "terminal_blit_not_owned",
             "terminal_blit_limit",
+            "unrelated explanatory wording",
         ] {
             let (sender, receiver) = mpsc::channel();
             let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2142,7 +2200,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 "raw-retry".into(),
                 Arc::new(move |_, _| {
                     if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < failures {
-                        Err(error.into())
+                        Err(codex_omd::client_surface::BlitError::retryable(error))
                     } else {
                         sender.send(()).unwrap();
                         Ok(Value::Null)
@@ -2186,7 +2244,12 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             let (sender, receiver) = mpsc::channel();
             let frames = blit_worker(
                 "revoked".into(),
-                Arc::new(|_, _| Err("process_raster_revoked".into())),
+                Arc::new(|_, _| {
+                    Err(codex_omd::client_surface::BlitError::new(
+                        codex_omd::client_surface::BlitErrorKind::Revoked,
+                        "authority removed",
+                    ))
+                }),
                 Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 move || {
                     sender.send(()).unwrap();

@@ -24,13 +24,11 @@ pub fn now_ms() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
-/// Countersigns and checks message digests.
 pub trait Seal: Send + Sync {
     fn seal(&self, sha256: &str) -> io::Result<String>;
     fn verify(&self, sha256: &str, tag: &str) -> io::Result<bool>;
 }
 
-/// A broker listening at a socket; only peers its gate admits reach it.
 pub struct SocketSeal(pub PathBuf);
 
 impl Seal for SocketSeal {
@@ -73,7 +71,6 @@ impl Seal for BrokerSeal {
     }
 }
 
-/// A package's peer endpoint in this session: its id, source digest and project scope.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Endpoint {
     pub package: String,
@@ -81,7 +78,6 @@ pub struct Endpoint {
     pub projects: String,
 }
 
-/// A verified message waiting for its recipient package.
 #[derive(Clone, Debug)]
 pub struct Inbound {
     pub message: Value,
@@ -93,7 +89,6 @@ struct Sent {
     expires_at_ms: u64,
 }
 
-/// One lead thread's registration, inbox and receipts.
 pub struct Peers {
     root: PathBuf,
     session: String,
@@ -204,7 +199,6 @@ impl Peers {
         &self.session
     }
 
-    /// Publishes the packages this session accepts messages for.
     pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
         write_atomic(
             &self
@@ -240,7 +234,6 @@ impl Peers {
             })
     }
 
-    /// Other live sessions where `package` accepts messages within both sides' project scope.
     pub fn list(&self, from: &Endpoint, package: &str) -> io::Result<Vec<Value>> {
         let mut sessions = Vec::new();
         for entry in fs::read_dir(self.root.join("sessions"))? {
@@ -262,7 +255,6 @@ impl Peers {
         Ok(sessions)
     }
 
-    /// Writes a sealed message into the recipient's inbox and returns its receipt.
     #[allow(clippy::too_many_arguments)]
     pub fn send(
         &self,
@@ -364,13 +356,11 @@ impl Peers {
         Ok(messages)
     }
 
-    /// Whether `endpoint`'s own project scope admits the message's sender.
     pub fn admits(&self, endpoint: &Endpoint, message: &Value) -> bool {
         endpoint.projects == "any"
             || message["from"]["repository"].as_str() == self.repository.to_str()
     }
 
-    /// Writes a sealed receipt for `message` back to its sender.
     pub fn receipt(
         &self,
         seal: &dyn Seal,
@@ -398,8 +388,7 @@ impl Peers {
         )
     }
 
-    /// Verified receipts for messages this session sent, with the sending package, plus
-    /// `expired` or `closed` for messages whose time ran out without one.
+    /// Verified receipts for messages this session sent, plus `expired` or `closed` for messages whose time ran out without one.
     pub fn receipts(&self, seal: &dyn Seal) -> io::Result<Vec<(String, Value)>> {
         let directory = self.root.join("receipts").join(&self.session);
         let (mut settled, complete) = drain(&directory, |envelope| {

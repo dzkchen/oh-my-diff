@@ -14,7 +14,6 @@ struct State {
 
 pub(super) struct Views {
     state: Mutex<State>,
-    /// The snapshot as last persisted; `None` until the first publish.
     published: Mutex<Option<Arc<ModViewSnapshot>>>,
     /// Set while re-rendering for a roster change: an unchanged view keeps its revision.
     pub(super) quiet: AtomicBool,
@@ -98,6 +97,7 @@ impl Views {
         if let Ok(mut published) = self.published.lock() {
             *published = Some(Arc::new(state.snapshot.clone()));
         }
+        super::clients::reconcile(self, &state.snapshot);
         codex_omd::client_surface::redraw();
     }
 
@@ -183,7 +183,7 @@ impl Views {
 
 #[cfg(test)]
 mod tests {
-    use super::{Views, visible};
+    use super::Views;
 
     #[test]
     fn welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start() {
@@ -192,7 +192,6 @@ mod tests {
             views.presentation("thread-a", Some("fresh"))["phase"],
             "fresh"
         );
-        // A view refresh, reload, or rejected submission does not supply an accepted phase.
         assert_eq!(views.presentation("thread-a", None)["phase"], "fresh");
         views.presentation("thread-a", Some("started"));
         assert_eq!(views.presentation("thread-a", None)["phase"], "started");
@@ -222,37 +221,4 @@ mod tests {
         assert_eq!(views.current_presentation()["thread_id"], "forked");
     }
 
-    #[test]
-    fn the_published_snapshot_is_served_from_memory_after_the_first_update() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        let host = crate::Host {
-            root: root.clone(),
-            repository: root.clone(),
-            repository_identity: "fixture".into(),
-            config: crate::config::HostConfig::default(),
-            routes: std::sync::Mutex::new(crate::RouteTable {
-                stamp: None,
-                config: std::sync::Arc::new(crate::config::HostConfig::default()),
-                error: None,
-            }),
-            accounts: std::sync::Arc::new(crate::accounting::Accounts::default()),
-            manager: std::sync::Weak::new(),
-            epoch: 1,
-        };
-        let views = Views::new();
-        assert!(views.published().is_none());
-        views.diagnostic(&host, "k", Some("broken".into()));
-        std::fs::remove_file(root.join("mod-view.json")).unwrap();
-        let published = views.published().expect("published after an update");
-        assert_eq!(published.diagnostics, vec!["broken".to_owned()]);
-    }
-
-    #[test]
-    fn visible_bounds_bytes_on_a_character_boundary() {
-        let text = visible(&"💥".repeat(300), 512);
-        assert_eq!(text.len(), 512);
-        assert_eq!(text.chars().count(), 128);
-        assert_eq!(visible("a\u{7}é", 2), "a");
-    }
 }

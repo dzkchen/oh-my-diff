@@ -34,7 +34,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
         with:
           install_args: node python@3.14.6
-      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           package_json_file: mods/package.json
       - name: Linux build dependencies and fixture paths
@@ -51,12 +51,12 @@ jobs:
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
       - name: Full hosted validation
-        run: mise run nightly -- --hosted
+        run: python3 .github/scripts/nightly.py
       - name: Build and validate package
         if: runner.os == 'macOS'
         env:
           OMD_RELEASE_VERSION: ${{ inputs.version }}
-        run: python3 scripts/nightly_ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
+        run: python3 .github/scripts/nightly_ci.py package ${OMD_RELEASE_VERSION:+--version "$OMD_RELEASE_VERSION"}
       - name: Upload validated package
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

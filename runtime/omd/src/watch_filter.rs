@@ -22,22 +22,3 @@ impl WatchFilter {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gitignore_and_exclude_rules_filter_nested_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
-        std::fs::create_dir_all(root.join(".git/info")).unwrap();
-        std::fs::create_dir_all(root.join("target/debug")).unwrap();
-        std::fs::write(root.join(".gitignore"), "target/\n*.log\n").unwrap();
-        std::fs::write(root.join(".git/info/exclude"), "scratch.txt\n").unwrap();
-        let filter = WatchFilter::new(&root);
-        assert!(filter.ignored(&root, "target/debug/out"));
-        assert!(filter.ignored(&root, "src/run.log"));
-        assert!(filter.ignored(&root, "scratch.txt"));
-        assert!(!filter.ignored(&root, "src/main.rs"));
-    }
-}

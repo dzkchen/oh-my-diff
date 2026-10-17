@@ -55,8 +55,8 @@ export default function activate(api: ModAPI) {
   });
 
   api.command('profile', value => {
-    const [op = '', label = '', extra = ''] = String(value ?? '').trim().split(/\s+/);
-    const { profiles, current, notice } = saved();
+    const [op = '', label = '', extra = '', provider = '', origin = ''] = String(value ?? '').trim().split(/\s+/);
+    const { profiles, current, notice, ours } = saved();
     if (!op || op === 'list') {
       if (!profiles.length) return { display: 'No provider profiles. Enroll a credential with `/profile add`, then run the printed `omd-package profiles --setup` command.' };
       return { display: [...notice ? [`Last switch failed: ${notice}`] : [], ...profiles.map(profile =>
@@ -65,22 +65,20 @@ export default function activate(api: ModAPI) {
     if (op === 'use') {
       const profile = profiles.find(item => item.name === label);
       if (!profile) return { display: `Unknown profile ${label || '(none)'}. ${USAGE}` };
-      if (!saved().ours) return { display: 'Start this thread with omd-package profiles before switching profiles.' };
+      if (!ours) return { display: 'Start this thread with omd-package profiles before switching profiles.' };
       if (!profile.available) return { display: `Profile ${profile.name} is unavailable.` };
       if (profile.billing !== 'included_subscription') {
         const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Use a paid API profile', message: `${profile.name} (${profile.model}) bills its API account per request. Switch at the next request?` });
         if (!answer.ok || answer.value.status !== 'accepted') return { display: 'Kept the current profile.' };
       }
-      const before = api.host.call('store.get', { key: 'thread' });
-      api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
-      const threadId = api.host.call('store.get', { key: 'thread' })?.provenance.thread_id;
-      if (!threadId) return { display: 'Profile switch failed: current thread unavailable.' };
+      const session = api.host.tryCall('session.info', null);
+      if (!session.ok) return { display: 'Profile switch failed: current thread unavailable.' };
+      const threadId = session.value.thread_id;
       const updated = api.host.tryCall('app.request', { method: 'thread/settings/update', params: { threadId, model: profile.model, effort: profile.reasoning } });
       if (!updated.ok) return { display: `Profile switch failed: ${updated.error}` };
       store({ pending: profile.name, notice: null });
       return { display: `Switching this thread to ${profile.name} at its next turn; its attachments and tool history are kept. Earlier reasoning is not sent to another account, and Chat Completions or Anthropic profiles get no hosted tools.` };
     }
-    const [, , , provider = '', origin = ''] = String(value ?? '').trim().split(/\s+/);
     if (op === 'add' && ['chatgpt', 'api_key', 'provider'].includes(label) && extra && (label === 'provider') === Boolean(provider && origin)) {
       const enrolled = api.host.tryCall('credentials.request', label === 'provider'
         ? { action: 'enroll', kind: 'provider', label: extra, provider, origin }

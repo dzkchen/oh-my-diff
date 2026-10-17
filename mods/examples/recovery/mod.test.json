@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "event",
+      "event": "compaction",
+      "payload": {
+        "token_limit": 32000,
+        "context_window": 64000
+      },
+      "expect": [
+        {
+          "mod": "recovery",
+          "value": {
+            "threshold": 16000,
+            "prompt": "Summarize the conversation for continuation. Keep failed hypotheses, remaining acceptance criteria, and exact file paths."
+          }
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "event": "context",
+      "payload": {
+        "thread_id": "t",
+        "turn_id": "u"
+      },
+      "expect": [
+        {
+          "mod": "recovery",
+          "value": {
+            "text": "Recovery policy: revalidate failed hypotheses and remaining acceptance work before retrying."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -11,7 +11,7 @@ the host and SDK remain pre-release.
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.162.1 | 0.1.0 | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or `^x.y.z` | 1 | 2027-03-20 |
+| 0.163.0 | 0.1.0 | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or `^x.y.z` | 1 | 2027-03-20 |
 
 Only the current API loads. Until `1.0.0`, every API change drops the previous version.
 
@@ -36,13 +36,14 @@ later 1.x providers but not 2.x, and for 0.x contracts the range stays within th
 
 ## State changes
 
-The host never rewrites a mod's code or settings. When `state_version` changes, the mod stays off until its
-`migrate` handler runs. Migration backs up the old state first; `omd-mod rollback STORE PACKAGE BACKUP` restores
+The host never rewrites a mod's code or settings. When `state_version` changes, a mod with `"store"` state stays
+off until its `migrate` handler runs. Thread and checkout state migrates through the same handler before the mod's
+next callback there, so an update that changes their `state_version` needs one. Migration backs up the old state first; `omd-mod rollback STORE PACKAGE BACKUP` restores
 it while the mod is off.
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.162.0, the OMD+ and OMD Core collections, and the shipped plugins
+Tested: Apple Silicon macOS with Codex 0.163.0, the OMD+ and OMD Core collections, and the shipped plugins
 together. Not tested:
 
 - Linux or Intel macOS.

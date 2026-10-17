@@ -54,6 +54,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: python@3.14.6
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: package
@@ -64,7 +67,7 @@ jobs:
         run: |
           python3 scripts/release.py notes "$VERSION" > notes.md
           cat notes.md
-          python3 scripts/nightly_ci.py publish --directory release --notes notes.md --dry-run
+          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md --dry-run
 
   publish:
     needs: [check, validate]
@@ -76,6 +79,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: python@3.14.6
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: package
@@ -86,4 +92,4 @@ jobs:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           python3 scripts/release.py notes "$VERSION" > notes.md
-          python3 scripts/nightly_ci.py publish --directory release --notes notes.md
+          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md

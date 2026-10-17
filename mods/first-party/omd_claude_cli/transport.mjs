@@ -4,32 +4,72 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-export const CLI_VERSION = '2.1.285 (Claude Code)';
-const overrides = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_FOUNDRY_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_API_KEY',
-  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'];
+export const CLI_VERSION = '2.1.296 (Claude Code)';
+const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
+const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 
-export function checkCli(claude, home = process.env.HOME, username = process.env.USER) {
-  const conflicts = overrides.filter(name => process.env[name]);
-  if (conflicts.length) throw new Error(`conflicting_api_or_cloud_overrides:${conflicts.join(',')}`);
+export function cliEnv(values = {}) {
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !override.test(name))), ...values };
+}
+
+export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER) {
   const version = spawnSync(claude, ['--version'], { encoding: 'utf8', timeout: 10000 });
   if (version.status !== 0 || version.stdout.trim() !== CLI_VERSION) {
     throw new Error(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`);
   }
   const probe = spawnSync(claude, ['auth', 'status'], { encoding: 'utf8', timeout: 10000,
-    env: { ...process.env, HOME: home, USER: username, LOGNAME: username } });
+    env: cliEnv({ HOME: home, USER: username, LOGNAME: username }) });
   let status;
   try { status = JSON.parse(probe.stdout); } catch { status = {}; }
-  if (probe.status !== 0 || status.loggedIn !== true || status.authMethod !== 'claude.ai' ||
-      status.apiProvider !== 'firstParty' || !['pro', 'max'].includes(status.subscriptionType)) {
-    throw new Error('claude_ai_pro_or_max_login_required');
+  const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
+  if (billing === 'api') {
+    if (!signedIn || status.authMethod !== 'api_key' || status.apiKeySource !== '/login managed key') {
+      throw new Error('claude_console_api_key_login_required');
+    }
+  } else if (!signedIn || status.authMethod !== 'claude.ai' || !PLANS[status.subscriptionType]) {
+    throw new Error('claude_ai_subscription_login_required');
   }
+  return status;
+}
+
+export function providerNote(billing, plan, headers = {}, extraUsage = true) {
+  if (billing === 'api') return 'Anthropic API credits (Console); no plan limits; balance: console.anthropic.com/settings/billing';
+  const overage = headers['anthropic-ratelimit-unified-overage-status'];
+  const state = usingOverage(headers) ? 'in use' : ['allowed', 'allowed_warning'].includes(overage) ? 'on'
+    : overage === 'rejected' ? 'off' : 'unknown';
+  return `Claude ${PLANS[plan] ?? 'subscription'} plan limits; extra usage ${state}${extraUsage ? '' : ', OMD stops at it'}; claude.ai/settings/usage`;
+}
+
+export function usingOverage(headers) {
+  return headers['anthropic-ratelimit-unified-overage-in-use'] === 'true' ||
+    (headers['anthropic-ratelimit-unified-status'] === 'rejected' &&
+      ['allowed', 'allowed_warning'].includes(headers['anthropic-ratelimit-unified-overage-status']));
+}
+
+const cliEnvironment = /^# Environment\nYou have been invoked in the following environment: /;
+const cliReminder = /\s*<system-reminder>\nAs you answer the user's questions, you can use the following context:\n(?:(?!<\/system-reminder>)[\s\S])*Claude Code attached this context automatically;(?:(?!<\/system-reminder>)[\s\S])*<\/system-reminder>\s*$/;
+
+// The CLI adds its own temp-directory environment and account context; OMD's history already carries the session's.
+export function withoutCliContext(body) {
+  const strip = block => {
+    if (typeof block.text === 'string') block.text = block.text.replace(cliReminder, '');
+    if (typeof block.content === 'string') block.content = block.content.replace(cliReminder, '');
+    else if (Array.isArray(block.content)) {
+      block.content.forEach(strip);
+      block.content = block.content.filter(child => child.type !== 'text' || child.text);
+    }
+  };
+  if (!Array.isArray(body.messages)) return body;
+  body.messages.forEach(strip);
+  body.messages = body.messages.filter(message => message.content?.length !== 0 && !(message.role === 'system' && (typeof message.content === 'string'
+    ? cliEnvironment.test(message.content) : message.content?.some?.(block => cliEnvironment.test(block.text ?? '')))));
+  return body;
 }
 
 async function bodyOf(request, limit = BODY_LIMIT) {
@@ -43,30 +83,66 @@ async function bodyOf(request, limit = BODY_LIMIT) {
   return Buffer.concat(chunks);
 }
 
-// Maps the subscription's unified 5-hour and 7-day windows onto Codex's primary/secondary rate-limit headers.
-export function limitHeaders(headers) {
-  const out = {};
+// Maps the subscription's unified 5-hour and 7-day windows onto a `claude` rate-limit header family for /status.
+export function limitHeaders(headers, note) {
+  const out = { 'x-claude-limit-name': 'Claude', 'x-omd-provider-note': note };
   for (const [window, slot, minutes] of [['5h', 'primary', 300], ['7d', 'secondary', 10080]]) {
     const used = Number(headers[`anthropic-ratelimit-unified-${window}-utilization`]);
     if (headers[`anthropic-ratelimit-unified-${window}-utilization`] == null || !Number.isFinite(used)) continue;
-    out[`x-codex-${slot}-used-percent`] = String(Math.round(used * 10000) / 100);
-    out[`x-codex-${slot}-window-minutes`] = String(minutes);
+    out[`x-claude-${slot}-used-percent`] = String(Math.round(used * 10000) / 100);
+    out[`x-claude-${slot}-window-minutes`] = String(minutes);
     const reset = Number(headers[`anthropic-ratelimit-unified-${window}-reset`]);
-    if (Number.isFinite(reset) && reset > 0) out[`x-codex-${slot}-reset-at`] = String(Math.round(reset));
+    if (Number.isFinite(reset) && reset > 0) out[`x-claude-${slot}-reset-at`] = String(Math.round(reset));
   }
   return out;
 }
 
-export function upstreamFailure(status, headers, body) {
+function resetAt(headers, window) {
+  const reset = Number(headers[`anthropic-ratelimit-unified-${window}-reset`] ?? headers['anthropic-ratelimit-unified-reset']);
+  return Number.isFinite(reset) && reset > 0 ? reset * 1000 : null;
+}
+
+function resetText(headers, window) {
+  const reset = resetAt(headers, window);
+  return reset ? `; resets ${new Date(reset).toISOString()}` : '';
+}
+
+function overageWindow(headers) {
+  return headers['anthropic-ratelimit-unified-representative-claim']?.startsWith('seven_day') ? '7d' : '5h';
+}
+
+// After a response reports extra usage, later requests stay stopped until the reported reset; without a usable reset they stay stopped until the provider restarts or extra_usage is enabled.
+export function stoppedForExtraUsage(headers, now = Date.now()) {
+  if (!usingOverage(headers)) return false;
+  const reset = resetAt(headers, overageWindow(headers));
+  return reset === null || reset > now;
+}
+
+export function extraUsageStop(headers) {
+  const until = resetAt(headers, overageWindow(headers)) ? 'that reset' : 'the provider restarts or extra_usage is on';
+  return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, overageWindow(headers))}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests until ${until}; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
+}
+
+export function upstreamFailure(status, headers, body, billing = 'subscription') {
   const kind = headers['anthropic-ratelimit-unified-representative-claim'];
-  if (status === 429 || headers['anthropic-ratelimit-unified-status'] === 'rejected') {
-    const reset = Number(headers[`anthropic-ratelimit-unified-${kind === 'seven_day' ? '7d' : '5h'}-reset`] ??
-      headers['anthropic-ratelimit-unified-reset']);
-    const when = Number.isFinite(reset) && reset > 0 ? `; resets ${new Date(reset * 1000).toISOString()}` : '';
-    return { code: 'rate_limit_exceeded', message: `Claude ${kind ?? 'subscription'} limit reached${when}` };
+  if (status === 429 || (status !== 200 && headers['anthropic-ratelimit-unified-status'] === 'rejected')) {
+    const overage = headers['anthropic-ratelimit-unified-overage-status'] === 'rejected'
+      ? `; extra usage unavailable (${headers['anthropic-ratelimit-unified-overage-disabled-reason'] ?? 'not enabled'})` : '';
+    return { code: 'rate_limit_exceeded', message: `Claude ${kind ?? (billing === 'api' ? 'API' : 'subscription')} limit reached${resetText(headers, overageWindow(headers))}${overage}` };
   }
   if (status === 400 && /prompt is too long/i.test(body)) {
     return { code: 'context_length_exceeded', message: 'Claude prompt is too long for the model context window' };
+  }
+  if (billing === 'api' && status === 400 && /credit balance is too low/i.test(body)) {
+    return { code: 'claude_api_credits_exhausted', message: 'Anthropic API credit balance is too low. OMD never falls back to your subscription; purchased credits and auto-reload are managed at console.anthropic.com/settings/billing.' };
+  }
+  if (status === 401 || (status === 403 && /oauth|revoked|authentication/i.test(body))) {
+    return { code: 'claude_login_expired', message: billing === 'api'
+      ? 'Anthropic API key was rejected; run `claude auth login --console` and retry'
+      : 'Claude login expired or was revoked; run `claude auth login` and retry' };
+  }
+  if ((status === 403 || status === 404) && /model/i.test(body)) {
+    return { code: 'claude_model_not_entitled', message: `Claude refused this model for your account (${status}); pick another model or check ${billing === 'api' ? 'your Console workspace at console.anthropic.com' : 'your plan at claude.ai/settings'}` };
   }
   return null;
 }
@@ -149,7 +225,9 @@ export class Capture {
 }
 
 export class Relay {
-  constructor(upstream, onEvent = () => {}, onHeaders = () => {}) {
+  constructor(upstream, onEvent = () => {}, onHeaders = () => {}, policy = {}) {
+    this.policy = { billing: 'subscription', extraUsage: true, ...policy };
+    this.refusal = null;
     this.upstream = new URL(upstream);
     this.prefix = `/admit/${randomBytes(24).toString('base64url')}`;
     this.used = 0;
@@ -191,7 +269,19 @@ export class Relay {
     this.used = 1;
     this.sockets.add(request.socket);
     try {
-      const payload = await bodyOf(request);
+      const body = JSON.parse(await bodyOf(request));
+      const api = this.policy.billing === 'api';
+      if (api ? !request.headers['x-api-key'] || request.headers.authorization
+        : !/^Bearer /.test(request.headers.authorization ?? '') || request.headers['x-api-key']) {
+        this.refusal = { code: 'claude_billing_route_mismatch', message: `The Claude CLI did not authenticate with the selected ${api ? 'Console API key' : 'claude.ai subscription'}; OMD sent nothing upstream. Check \`claude auth status\` or rerun setup.` };
+      } else if (this.policy.model && body.model !== this.policy.model) {
+        this.refusal = { code: 'claude_model_mismatch', message: `The Claude CLI asked for a model other than ${this.policy.model}; OMD sent nothing upstream.` };
+      }
+      if (this.refusal) {
+        response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
+          type: 'error', error: { type: 'invalid_request_error', message: this.refusal.code } }));
+        return;
+      }
       const target = new URL('/v1/messages', this.upstream);
       const headers = { ...request.headers, 'accept-encoding': 'identity' };
       for (const key of ['host', 'connection', 'content-length', 'transfer-encoding', 'proxy-authorization', 'proxy-connection']) delete headers[key];
@@ -202,6 +292,13 @@ export class Relay {
           this.headers = incoming.headers;
           this.requestId = incoming.headers['request-id'] ?? incoming.headers['x-request-id'] ?? null;
           this.onHeaders(incoming.statusCode, incoming.headers);
+          if (!this.policy.extraUsage && usingOverage(incoming.headers)) {
+            this.refusal = extraUsageStop(incoming.headers);
+            incoming.destroy();
+            response.destroy();
+            resolve();
+            return;
+          }
           const forwarded = { ...incoming.headers, connection: 'close' };
           for (const key of ['transfer-encoding', 'server', 'date']) delete forwarded[key];
           response.writeHead(incoming.statusCode, forwarded);
@@ -222,7 +319,7 @@ export class Relay {
         this.sockets.add(upstream);
         upstream.on('timeout', () => upstream.destroy(new Error('upstream_timeout')));
         upstream.on('error', reject);
-        upstream.end(payload);
+        upstream.end(JSON.stringify(withoutCliContext(body)));
       });
     } catch (error) {
       this.failure = error?.constructor?.name ?? 'relay_error';
@@ -265,33 +362,42 @@ export function cliArgs(entry, effort) {
 
 export async function runClaude(request, entry, claude, signal, onEvent, {
   upstream = 'https://api.anthropic.com', home = process.env.HOME, username = process.env.USER,
-  translated = null, onHeaders = () => {} } = {}) {
-  if (signal.aborted) throw new Error('claude_request_cancelled');
+  translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true } = {}) {
+  const cancelled = () => { if (signal.aborted) throw new Error('claude_request_cancelled'); };
+  cancelled();
   translated ??= translateRequest(request, entry.slug);
-  const root = await mkdtemp('/private/tmp/omd-claude-');
-  const relay = new Relay(upstream, onEvent, onHeaders);
+  const relay = new Relay(upstream, onEvent, onHeaders, { billing, extraUsage, model: entry.slug });
+  let root;
   let child;
+  let fault;
   const cancel = () => { cancelChild(child); relay.abort(); };
   signal.addEventListener('abort', cancel, { once: true });
   try {
+    root = await mkdtemp('/private/tmp/omd-claude-');
+    cancelled();
     await relay.listen();
-    await writeFile(join(root, 'tools.json'), JSON.stringify(translated.manifest));
-    await writeFile(join(root, 'settings.json'), JSON.stringify({ env: {
-      CLAUDE_CODE_EXTRA_BODY: JSON.stringify(translated.extra) } }));
-    await writeFile(join(root, 'system.md'), translated.system);
+    cancelled();
+    await Promise.all([
+      writeFile(join(root, 'tools.json'), JSON.stringify(translated.manifest)),
+      writeFile(join(root, 'settings.json'), JSON.stringify({ env: {
+        CLAUDE_CODE_EXTRA_BODY: JSON.stringify(translated.extra) } })),
+      writeFile(join(root, 'system.md'), translated.system)]);
+    cancelled();
     const mcp = { mcpServers: { omd: { command: process.execPath,
       args: [file, 'inert', join(root, 'tools.json')] } } };
     const argv = [...cliArgs(entry, translated.effort), '--system-prompt-file', join(root, 'system.md'),
       '--settings', join(root, 'settings.json'), '--mcp-config', JSON.stringify(mcp)];
-    const env = { ...process.env, HOME: home, USER: username, LOGNAME: username, TMPDIR: root,
+    const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root,
       ANTHROPIC_BASE_URL: relay.url,
       ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_MAX_RETRIES: '0', DISABLE_AUTO_COMPACT: '1', DISABLE_COMPACT: '1',
-      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' };
+      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'off' });
     delete env.OMD_CLAUDE_LOCAL_TOKEN;
     delete env.OMD_READY_TOKEN;
     if (translated.extra.max_tokens) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(translated.extra.max_tokens);
     child = spawn(claude, argv, { cwd: root, env, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    child.on('error', error => { fault ??= error; });
+    child.stdin.on('error', () => {});
     const exited = new Promise(resolve => child.once('close', resolve));
     const next = eventQueue(child);
     for (const [index, source] of translated.frames.entries()) {
@@ -322,21 +428,29 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     }
     await exited;
     if (signal.aborted) throw new Error('claude_request_cancelled');
-    const failure = upstreamFailure(relay.status, relay.headers, relay.error);
+    const failure = relay.refusal ?? upstreamFailure(relay.status, relay.headers, relay.error, billing);
     if (failure) throw Object.assign(new Error(failure.message), { code: failure.code });
     if (relay.used !== 1 || relay.status !== 200 || !relay.capture.complete) {
-      throw new Error(`claude_upstream_incomplete:${relay.status ?? 'no_request'}:${relay.failure ?? 'none'}`);
+      let detail = relay.failure ?? 'none';
+      try { detail = JSON.parse(relay.error).error.message ?? detail; } catch {}
+      throw new Error(`claude_upstream_incomplete:${relay.status ?? 'no_request'}:${String(detail).slice(0, 300)}`);
     }
     if (results.length !== 1 || !stopped) throw new Error('claude_result_incomplete');
+    const servedModel = String(relay.capture.message.model);
+    if (servedModel !== entry.slug && !new RegExp(`^${entry.slug.replace(/[.]/g, '\\.')}-\\d{8}$`).test(servedModel)) {
+      throw Object.assign(new Error(`Claude served ${relay.capture.message.model} instead of ${entry.slug}`), { code: 'claude_model_mismatch' });
+    }
     const served = results[0].modelUsage?.[entry.cli]?.contextWindow;
     if (served !== entry.window) throw new Error(`claude_context_window_changed:${served}:rerun_claude_setup`);
     const admission = { upstream_requests: relay.used, blocked_requests: relay.denied,
       request_id: relay.requestId };
-    return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd);
+    return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd, billing);
+  } catch (error) {
+    throw signal.aborted ? new Error('claude_request_cancelled') : fault ?? error;
   } finally {
     signal.removeEventListener('abort', cancel);
     cancel();
-    await rm(root, { recursive: true, force: true });
+    if (root) await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -374,14 +488,26 @@ async function claim(server, port, token, ready) {
   }
 }
 
+// An unreadable setting stops at extra usage rather than silently allowing paid overage.
+export async function extraUsageAllowed(routePath, mod = dirname(file)) {
+  const store = resolve(dirname(routePath), '../..');
+  const paths = [mod, join(store, 'sources', 'omd_claude_cli')];
+  try {
+    const config = JSON.parse(await readFile(join(store, 'mods.json'), 'utf8'));
+    const selection = config.mods.find(item => paths.includes(resolve(item.path)));
+    return selection ? selection.settings?.extra_usage !== false : false;
+  } catch { return false; }
+}
+
 async function serve(routePath, home, username) {
   const route = JSON.parse(await readFile(routePath, 'utf8'));
-  checkCli(route.claude, home, username);
+  const { subscriptionType } = checkCli(route.claude, route.billing, home, username);
   const token = process.env.OMD_CLAUDE_LOCAL_TOKEN ?? '';
   const ready = process.env.OMD_READY_TOKEN ?? '';
   if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
   const active = new Set();
   let nonce = ready;
+  let limits = {};
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/_omd/ready') {
       response.writeHead(200).end(`OMD_READY:${nonce}`);
@@ -408,14 +534,20 @@ async function serve(routePath, home, username) {
     const controller = new AbortController();
     active.add(controller);
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
+    const extraUsage = await extraUsageAllowed(routePath);
     const head = (headers = {}) => {
       if (!response.headersSent) response.writeHead(200, { 'content-type': 'text/event-stream',
-        'cache-control': 'no-store', ...limitHeaders(headers) });
+        'cache-control': 'no-store', ...limitHeaders(headers, providerNote(route.billing, subscriptionType, headers, extraUsage)) });
     };
     const send = event => { head(); response.write(`data: ${JSON.stringify(event)}\n\n`); };
     try {
+      if (!extraUsage && stoppedForExtraUsage(limits)) {
+        head(limits);
+        throw Object.assign(new Error(extraUsageStop(limits).message), { code: 'claude_extra_usage_blocked' });
+      }
       const events = await runClaude(payload, entry, route.claude, controller.signal, send,
-        { home, username, translated, onHeaders: (_, headers) => head(headers) });
+        { home, username, translated, billing: route.billing, extraUsage,
+          onHeaders: (_, headers) => { limits = headers; head(headers); } });
       for (const event of events) send(event);
     } catch (error) {
       const message = String(error?.message ?? 'claude_transport_failed').slice(0, 500);

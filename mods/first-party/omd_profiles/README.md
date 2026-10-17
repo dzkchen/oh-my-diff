@@ -18,7 +18,8 @@ omd-package profiles --setup --add work --credential work --protocol responses \
 omd-package profiles --model work
 ```
 
-For a paid API key or provider, setup also needs `--paid INPUT_USD:OUTPUT_USD` (per million tokens) and `--allowance USD`. Add `--window TOKENS` if the model isn't in the Codex catalog. `--max-output TOKENS` and `--reasoning` are optional. `--setup --remove NAME` drops a profile.
+For a paid API key or provider, setup also needs `--paid INPUT_USD:OUTPUT_USD` (per million tokens) and `--allowance USD`. Add `--window TOKENS` if the model isn't in the Codex catalog. `--max-output TOKENS` and `--reasoning` are optional. `--text-only` marks a model that can't take images, so Codex
+sends a text note in place of each image. `--setup --remove NAME` drops a profile.
 
 For Chat Completions providers that accept cache marks, such as OpenRouter, add `--cache-control`. It is off by
 default because strict servers reject that extra field. Anthropic profiles always receive cache marks.

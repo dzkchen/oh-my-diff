@@ -9,7 +9,6 @@ use std::sync::OnceLock;
 pub trait ResponseAttempt: Send + Sync {
     /// Observes one raw event; replacing it with `Value::Null` drops it.
     fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError>;
-    /// Raw events to deliver after the one just observed.
     fn injected(&mut self) -> Vec<Value> {
         Vec::new()
     }
@@ -35,7 +34,6 @@ pub trait ResponseObserver: Send + Sync {
     fn policed(&self) -> bool {
         false
     }
-    /// Raw events answering an admitted request without sending it.
     fn answer(&self, request: &Request) -> Option<Vec<Value>> {
         let _ = request;
         None

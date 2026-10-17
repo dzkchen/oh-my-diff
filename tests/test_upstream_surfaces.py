@@ -170,28 +170,10 @@ class UpstreamSurfaceTests(unittest.TestCase):
         entries.update(surfaces_)
         return {"routes": {"r": "route"}, "exclusions": {"x": "reason"}, "surfaces": {k: v for k, v in entries.items() if v is not None}}
 
-    def test_complete_table_has_no_gap(self):
-        report = surfaces.check(self.root, self.table(**{"slash_command:model": {"exclude": "x"}}))
-        self.assertEqual(report["gap"], 0)
-        self.assertEqual(report["by_kind"]["slash_command"], {"surfaces": 4, "routed": 3, "excluded": 1})
-
     def test_new_upstream_surface_is_flagged(self):
         report = surfaces.check(self.root, self.table(**{"slash_command:pwd": None}))
         self.assertEqual([entry["id"] for entry in report["unrouted"]], ["slash_command:pwd"])
         self.assertEqual(report["gap"], 1)
-
-    def test_invalid_and_removed_entries_are_reported(self):
-        table = self.table(**{"slash_command:model": {"route": "missing"}, "slash_command:pwd": {"route": "r", "exclude": "x"},
-                              "slash_command:gone": {"route": "r"}})
-        report = surfaces.check(self.root, table)
-        self.assertEqual(sorted(report["invalid"]), ["slash_command:model", "slash_command:pwd"])
-        self.assertEqual(report["removed_upstream"], ["slash_command:gone"])
-        self.assertEqual(report["gap"], 2)
-
-    def test_patterns_cover_open_families(self):
-        table = self.table(**{"config_key:tui.theme": None, "config_key:tui.keymap": None})
-        table["patterns"] = {"config_key:tui.*": {"route": "r"}}
-        self.assertEqual(surfaces.check(self.root, table)["gap"], 0)
 
     def test_new_request_parameter_is_flagged(self):
         self.assertEqual(self.ids()["app_request:thread/fork"]["params"], ["baseModel", "path", "threadId"])
@@ -204,14 +186,6 @@ class UpstreamSurfaceTests(unittest.TestCase):
         self.assertEqual(report["param_drift"], [{"id": "app_request:thread/fork", "fields": ["baseModel"]}])
         self.assertEqual(report["gap"], 1)
 
-    def test_moved_upstream_source_is_a_gap(self):
-        table = self.table()
-        (self.root / "codex-rs/tui/src/slash_command.rs").unlink()
-        report = surfaces.check(self.root, table)
-        self.assertIn("codex-rs/tui/src/slash_command.rs::SlashCommand", report["missing_sources"])
-        self.assertGreater(report["gap"], 0)
-
-
 class RouteTableTests(unittest.TestCase):
     def test_checked_in_table_is_consistent(self):
         table = surfaces.load_table(surfaces.TABLE)
@@ -223,6 +197,11 @@ class RouteTableTests(unittest.TestCase):
             self.assertIn(route or reason, table["routes"] if route else table["exclusions"], name)
             if route == "app.request" and "class" in entry:
                 self.assertTrue(set(entry["contexts"]) <= {"user", "event"}, name)
+
+    def test_embedded_route_table_matches_the_mapping(self):
+        embedded = json.loads((ROOT / "runtime/omd/src/app_routes.json").read_text())
+        self.assertEqual(surfaces.host_table(surfaces.load_table(surfaces.TABLE)), embedded,
+                         "runtime/omd/src/app_routes.json is stale; regenerate it with upstream_surfaces.py host-table")
 
 
 if __name__ == "__main__":

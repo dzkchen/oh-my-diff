@@ -1,0 +1,251 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "intercept",
+      "surface": "model_request",
+      "payload": {
+        "request_id": "r1",
+        "route": "sol",
+        "routes": [
+          {
+            "name": "sol",
+            "available": true,
+            "billing": "included_subscription"
+          },
+          {
+            "name": "astra",
+            "available": true,
+            "billing": "included_subscription"
+          }
+        ],
+        "effort": null,
+        "sections": []
+      },
+      "core": [
+        {
+          "value": {
+            "route": "astra",
+            "effort": null,
+            "cache": {
+              "from": null
+            }
+          }
+        }
+      ],
+      "expect": {
+        "result": {
+          "route": "astra",
+          "effort": null,
+          "cache": {
+            "from": null
+          }
+        },
+        "input": {
+          "request_id": "r1",
+          "route": "astra",
+          "routes": [
+            {
+              "name": "sol",
+              "available": true,
+              "billing": "included_subscription"
+            },
+            {
+              "name": "astra",
+              "available": true,
+              "billing": "included_subscription"
+            }
+          ],
+          "effort": null,
+          "sections": []
+        },
+        "answered_by": null,
+        "trace": [
+          {
+            "index": 1,
+            "mod": "engine",
+            "outcome": "returned",
+            "attempts": 1,
+            "returned": {
+              "route": "astra",
+              "effort": null,
+              "cache": {
+                "from": null
+              }
+            },
+            "received": {
+              "request_id": "r1",
+              "route": "astra",
+              "routes": [
+                {
+                  "name": "sol",
+                  "available": true,
+                  "billing": "included_subscription"
+                },
+                {
+                  "name": "astra",
+                  "available": true,
+                  "billing": "included_subscription"
+                }
+              ],
+              "effort": null,
+              "sections": []
+            }
+          },
+          {
+            "index": 0,
+            "mod": "kernel",
+            "outcome": "passed",
+            "attempts": 1,
+            "returned": {
+              "route": "astra",
+              "effort": null,
+              "cache": {
+                "from": null
+              }
+            },
+            "received": {
+              "request_id": "r1",
+              "route": "sol",
+              "routes": [
+                {
+                  "name": "sol",
+                  "available": true,
+                  "billing": "included_subscription"
+                },
+                {
+                  "name": "astra",
+                  "available": true,
+                  "billing": "included_subscription"
+                }
+              ],
+              "effort": null,
+              "sections": []
+            },
+            "location": "index.ts:4:7",
+            "required": false
+          }
+        ],
+        "core_calls": [
+          {
+            "request_id": "r1",
+            "route": "astra",
+            "routes": [
+              {
+                "name": "sol",
+                "available": true,
+                "billing": "included_subscription"
+              },
+              {
+                "name": "astra",
+                "available": true,
+                "billing": "included_subscription"
+              }
+            ],
+            "effort": null,
+            "sections": []
+          }
+        ]
+      }
+    },
+    {
+      "type": "intercept",
+      "surface": "response_stream",
+      "payload": {
+        "kind": "text",
+        "index": 0,
+        "text": "experimental API",
+        "protected": false
+      },
+      "core": [
+        {
+          "value": {
+            "chunks": [
+              {
+                "kind": "text",
+                "index": 0,
+                "text": "preview API",
+                "protected": false
+              }
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "result": {
+          "chunks": [
+            {
+              "kind": "text",
+              "index": 0,
+              "text": "preview API",
+              "protected": false
+            }
+          ]
+        },
+        "input": {
+          "kind": "text",
+          "index": 0,
+          "text": "preview API",
+          "protected": false
+        },
+        "answered_by": null,
+        "trace": [
+          {
+            "index": 1,
+            "mod": "engine",
+            "outcome": "returned",
+            "attempts": 1,
+            "returned": {
+              "chunks": [
+                {
+                  "kind": "text",
+                  "index": 0,
+                  "text": "preview API",
+                  "protected": false
+                }
+              ]
+            },
+            "received": {
+              "kind": "text",
+              "index": 0,
+              "text": "preview API",
+              "protected": false
+            }
+          },
+          {
+            "index": 0,
+            "mod": "kernel",
+            "outcome": "passed",
+            "attempts": 1,
+            "returned": {
+              "chunks": [
+                {
+                  "kind": "text",
+                  "index": 0,
+                  "text": "preview API",
+                  "protected": false
+                }
+              ]
+            },
+            "received": {
+              "kind": "text",
+              "index": 0,
+              "text": "experimental API",
+              "protected": false
+            },
+            "location": "index.ts:8:7",
+            "required": false
+          }
+        ],
+        "core_calls": [
+          {
+            "kind": "text",
+            "index": 0,
+            "text": "preview API",
+            "protected": false
+          }
+        ]
+      }
+    }
+  ]
+}

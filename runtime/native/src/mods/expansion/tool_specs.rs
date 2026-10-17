@@ -75,7 +75,6 @@ impl State {
     }
 }
 
-/// Turns the composed tool list into hide, defer and re-describe decisions against the original.
 pub(super) fn adjustment(original: &[Value], tools: &Value) -> ToolSpecAdjustment {
     let tools = tools.as_array().cloned().unwrap_or_default();
     let mut adjustment = ToolSpecAdjustment::default();
@@ -157,7 +156,7 @@ impl ToolSpecContributor for Mods {
         let route = self
             .host
             .accounts
-            .0
+            .by_thread
             .lock()
             .ok()?
             .get(&lead.thread.to_string())

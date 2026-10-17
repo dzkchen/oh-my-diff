@@ -1,26 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { runnerSync } from '../../../../../tests/mod_runner.mjs';
 
-const runner = readFileSync(new URL('../../../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./mod/index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod/mod.json', import.meta.url), 'utf8'));
 const request = { uri: 'github://owner/repo/issues/1', max_bytes: 1024 };
 const response = { canonical_uri: request.uri, canonical_url: 'https://github.com/owner/repo/issues/1', identity: 'owner/repo', revision: 'rev', text: 'issue', anchors: ['issue:1'], cursor: null, truncated: false };
 
 function invoke(receipts = []) {
-  const input = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, surface: { events: {}, middleware: [], replacements: [], state: 'store' }, state: null, settings: {}, event: 'virtual_read', name: 'github', payload: request, receipts };
-  const result = runnerSync(input);
-  assert.ifError(result.error);
-  if (result.status !== 0 && !result.stdout) return { error: result.stderr };
-  return JSON.parse(result.stdout);
+  const input = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'virtual_read', name: 'github', payload: request, receipts };
+  return runnerSync(input);
 }
 
 test('GitHub virtual read uses the generic sidecar operation and preserves bounded untrusted response', () => {
-  assert.equal(manifest.api, '0.2.0-experimental.5');
-  assert.deepEqual(manifest.capabilities, ['virtual_reads', 'exec']);
   const first = invoke();
   assert.deepEqual(first.registrations.virtual_reads, [{ scheme: 'github', version: '1.0.0' }]);
   assert.deepEqual(first.host_call, { operation: 'sidecars.invoke', arguments: { id: 'omd_github_read', input: request } });

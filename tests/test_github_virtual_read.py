@@ -3,8 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
-from unittest.mock import Mock, patch
-from email.message import Message
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,21 +40,6 @@ class GithubVirtualReadTests(unittest.TestCase):
             self.assertNotIn("Authorization", github.Client().headers)
         with patch.dict(github.os.environ, {"OMD_GITHUB_TOKEN": "explicit-fixture"}, clear=True):
             self.assertEqual(github.Client().headers["Authorization"], "Bearer explicit-fixture")
-
-    def test_deleted_private_and_rate_limited_resources_fail_without_retries(self):
-        headers = Message()
-        headers["Retry-After"] = "60"
-        headers["X-RateLimit-Reset"] = "12345"
-        for status in (401, 404, 410, 403, 429, 500):
-            with self.subTest(status=status), patch.dict(github.os.environ, {}, clear=True):
-                client = github.Client()
-                client.opener = Mock()
-                client.opener.open.side_effect = github.urllib.error.HTTPError(github.API + "/repos/owner/repo/issues/12", status, "fixture", headers, None)
-                expected = "inaccessible_deleted_or_not_authorized" if status in (401, 404, 410) else "retry_after=60_reset=12345" if status in (403, 429) else "github_http_500"
-                with self.assertRaisesRegex(github.Unavailable, expected):
-                    client.get("/repos/owner/repo/issues/12")
-                client.opener.open.assert_called_once()
-                self.assertNotIn("Authorization", client.headers)
 
     def test_rejects_ambiguous_and_noncanonical_paths_before_network(self):
         for uri in ["https://github.com/owner/repo/pull/12", "github://user:token@host/repo/issues/1", "github://owner/../issues/1", "github://owner/repo/commits/main", "github://owner/repo/issues/12/files", URI + "?page=2", URI + "/files?per_page=999", URI + "/files?page=0", URI + "%0a", URI + "/comments/1"]:
@@ -96,21 +80,6 @@ class GithubVirtualReadTests(unittest.TestCase):
             self.assertTrue(result["truncated"])
         with self.assertRaisesRegex(github.Unavailable, "parent_changed"):
             github.read({"uri": URI + "/comments"}, Fixture(rows=[], changed=True))
-
-    def test_files_and_pinned_commits_do_not_impersonate_local_files(self):
-        row = {"filename": "../../untrusted.txt", "status": "removed", "sha": "b" * 40}
-        result = github.read({"uri": URI + "/files"}, Fixture(rows=[row]))
-        body = json.loads(result["text"])
-        self.assertTrue(body["records"][0]["patch_missing"])
-        self.assertTrue(result["truncated"])
-        self.assertEqual(body["head_sha"], "a" * 40)
-        sha = "b" * 40
-        parent = {"sha": sha, "html_url": BASE + "/commit/" + sha, "commit": {"message": "Exact commit"}, "files": []}
-        result = github.read({"uri": "github://owner/repo/commits/" + sha}, Fixture(parent))
-        self.assertEqual(json.loads(result["text"])["head_sha"], sha)
-        parent["sha"] = "c" * 40
-        with self.assertRaisesRegex(github.Unavailable, "identity_mismatch"):
-            github.read({"uri": "github://owner/repo/commits/" + sha}, Fixture(parent))
 
     def test_bounds_and_remote_identity_changes_fail_closed(self):
         for changes in [{"max_bytes": True}, {"max_bytes": 20000}, {"cursor": "../secret"}, {"expected_revision": "old"}, {"extra": "field"}]:

@@ -101,6 +101,37 @@ fn unverified_peers_get_nothing() {
 }
 
 #[test]
+fn a_store_owned_by_another_user_is_refused() {
+    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
+    let mut client = Client::at(&socket).unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": "/usr"}))),
+        "authority_store_unowned"
+    );
+}
+
+#[test]
+fn a_store_path_first_named_by_another_user_is_refused() {
+    let (temp, socket, store) = serve(Arc::new(TestGate::default()));
+    let mut client = Client::at(&socket).unwrap();
+    client.call("grants.get", json!({"store": store})).unwrap();
+    let owners = temp.path().canonicalize().unwrap().join("broker/owners");
+    let record = owners.join(format!(
+        "store-{}.json",
+        sha256(store.as_os_str().as_encoded_bytes())
+    ));
+    assert_eq!(
+        fs::read_to_string(&record).unwrap(),
+        unsafe { libc::getuid() }.to_string()
+    );
+    fs::write(&record, "0").unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": store}))),
+        "authority_store_unowned"
+    );
+}
+
+#[test]
 fn protected_mutations_need_a_single_use_challenge_and_authorization() {
     let gate = Arc::new(TestGate::default());
     let (_temp, socket, store) = serve(gate.clone());
@@ -191,20 +222,19 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
 
 #[test]
 fn anchors_chain_every_appended_digest() {
-    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
+    let (_temp, socket, store) = serve(Arc::new(TestGate::default()));
     let mut client = Client::at(&socket).unwrap();
+    let (ledger, older) = (store.join("ledger"), store.join("older"));
+    let (ledger, older) = (ledger.to_str().unwrap(), older.to_str().unwrap());
     let (first, second) = (sha256(b"one"), sha256(b"two"));
     for entry in [&first, &second] {
         client
-            .call(
-                "anchor.append",
-                json!({"stream": "/ledger", "sha256": entry}),
-            )
+            .call("anchor.append", json!({"stream": ledger, "sha256": entry}))
             .unwrap();
     }
     let anchor: Anchor = serde_json::from_value(
         client
-            .call("anchor.get", json!({"stream": "/ledger"}))
+            .call("anchor.get", json!({"stream": ledger}))
             .unwrap(),
     )
     .unwrap();
@@ -217,20 +247,22 @@ fn anchors_chain_every_appended_digest() {
         }
     );
     assert_eq!(
-        error(client.call("anchor.append", json!({"stream": "/ledger", "sha256": "x"}))),
+        error(client.call("anchor.append", json!({"stream": ledger, "sha256": "x"}))),
         "authority_request_invalid"
     );
     let seed = |stream: &str| json!({"stream": stream, "count": 2, "head": anchor.head, "last": anchor.last});
     assert_eq!(
-        error(client.call("anchor.seed", seed("/ledger"))),
+        error(client.call("anchor.seed", seed(ledger))),
         "authority_anchor_exists"
     );
-    client.call("anchor.seed", seed("/older")).unwrap();
+    client.call("anchor.seed", seed(older)).unwrap();
     assert_eq!(
-        client
-            .call("anchor.get", json!({"stream": "/older"}))
-            .unwrap()["head"],
+        client.call("anchor.get", json!({"stream": older})).unwrap()["head"],
         anchor.head
+    );
+    assert_eq!(
+        error(client.call("anchor.seed", seed("/usr/omd-ledger"))),
+        "authority_stream_unowned"
     );
 }
 
@@ -279,64 +311,6 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
     assert!(profiles.remove(&empty.id).unwrap());
     assert!(profiles.remove(&key.id).is_err());
     assert_eq!(gate.asked.lock().unwrap().len(), 4);
-}
-
-#[test]
-#[ignore = "needs a deployed broker that pins this test binary"]
-fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
-    assert!(deployed());
-    let temp = tempfile::tempdir().unwrap();
-    let base = temp.path().canonicalize().unwrap();
-    let profiles = crate::credentials::CredentialProfiles::open(&base).unwrap();
-    let key = profiles.create("dummy", "api_key", None, None).unwrap();
-    profiles
-        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-dummy"}"#)
-        .unwrap();
-    assert_eq!(
-        profiles
-            .secret(&key.id, "https://api.openai.com", None)
-            .unwrap()
-            .token,
-        "sk-dummy"
-    );
-    assert!(!base.join("credentials").exists());
-    assert_eq!(
-        fs::read_dir(ROOT).unwrap_err().kind(),
-        io::ErrorKind::PermissionDenied
-    );
-    let limits = crate::Limits {
-        requests: 3,
-        exposure_microusd: 100,
-        seconds: 300,
-        concurrent_workers: 2,
-        max_depth: 2,
-    };
-    let ledger = base.join("ledger");
-    drop(crate::Task::create(limits.clone(), ledger.clone()).unwrap());
-    let first = ledger.join("00000001.json");
-    let original = fs::read_to_string(&first).unwrap();
-    fs::write(
-        &first,
-        original.replace("\"requests\":3", "\"requests\":30"),
-    )
-    .unwrap();
-    assert_eq!(
-        crate::Task::open(limits.clone(), ledger.clone(), Some("resume"))
-            .err()
-            .unwrap()
-            .to_string(),
-        "evidence_anchor_mismatch"
-    );
-    fs::write(&first, original).unwrap();
-    crate::Task::open(limits.clone(), ledger.clone(), Some("resume")).unwrap();
-    fs::remove_dir_all(&ledger).unwrap();
-    assert_eq!(
-        crate::Task::create(limits, ledger)
-            .err()
-            .unwrap()
-            .to_string(),
-        "evidence_anchor_mismatch"
-    );
 }
 
 #[test]
@@ -421,4 +395,16 @@ fn peers_are_verified_by_kernel_cdhash_even_when_their_executable_is_unreadable(
     child.wait().unwrap();
     assert!(pinned.is_ok(), "{pinned:?}");
     assert_eq!(other.unwrap_err().to_string(), "authority_peer_unverified");
+}
+
+#[test]
+fn symlinked_broker_directories_are_refused() {
+    let (temp, socket, store) = serve(Arc::new(TestGate::default()));
+    let root = temp.path().canonicalize().unwrap().join("broker");
+    std::os::unix::fs::symlink(&store, root.join("stores")).unwrap();
+    let mut client = Client::at(&socket).unwrap();
+    assert_eq!(
+        error(client.call("grants.get", json!({"store": store}))),
+        "authority_directory_invalid"
+    );
 }

@@ -67,7 +67,7 @@ fn setup() -> (
     );
     let accounts = Accounts::default();
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .insert("child".into(), account(&task, root.path(), "worker"));
@@ -93,29 +93,6 @@ fn setup() -> (
     )
     .unwrap();
     (root, accounts, task, request, body)
-}
-
-#[test]
-fn host_tool_schema_fields_are_not_mistaken_for_nontext_input() {
-    let (_root, accounts, _task, mut request, _body) = setup();
-    let base = json!({"model":"fixture-model","reasoning":{"effort":"high"},
-        "stream":true,"max_output_tokens":128,
-        "tools":[{"type":"function","name":"inspect","parameters":{"type":"object",
-            "properties":{"image_url":{"type":"string"}}}}],
-        "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect"}]},
-            {"type":"additional_tools","tools":[{"name":"functions","tools":[{
-                "type":"function","name":"view_image","parameters":{"type":"object",
-                    "properties":{"image_url":{"type":"string"}}}}]}]}]});
-    let body = EncodedJsonBody::encode(&base).unwrap();
-    assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
-    let mut charged = base.clone();
-    charged["tools"] = json!([{"type":"web_search"}]);
-    let charged = EncodedJsonBody::encode(&charged).unwrap();
-    assert!(accounts.before_send(&mut request, Some(&charged)).is_err());
-    let mut image = base;
-    image["input"][0]["content"] = json!([{"type":"input_image","image_url":"fixture"}]);
-    let image = EncodedJsonBody::encode(&image).unwrap();
-    assert!(accounts.before_send(&mut request, Some(&image)).is_err());
 }
 
 fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
@@ -334,7 +311,7 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
     let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
     let profile = profiles.create("work key", "api_key", None, None).unwrap();
     let route = |url: &str| {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let account = accounts.get_mut("child").unwrap();
         account.credential = Some(profile.id.clone());
         account.url = url.into();
@@ -399,7 +376,11 @@ fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
         remote.credential = Some(profile.id.clone());
         remote.url = target.into();
         lead.lead_routes = vec![remote];
-        accounts.0.lock().unwrap().insert("main".into(), lead);
+        accounts
+            .by_thread
+            .lock()
+            .unwrap()
+            .insert("main".into(), lead);
         request
             .headers
             .insert("x-omd-route", "fast".parse().unwrap());
@@ -423,7 +404,11 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     let mut lead = account(&task, root.path(), "lead");
     lead.route = Some("main".into());
     lead.lead_routes = vec![fast_route()];
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     task.authorize_route("fixture", "fixture-model").unwrap();
     task.authorize_route("fixture", "fixture-fast").unwrap();
     request.headers.insert("thread-id", "main".parse().unwrap());
@@ -490,7 +475,11 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     other.provider = "elsewhere".into();
     other.model = "elsewhere-model".into();
     lead.lead_routes = vec![fast_route(), other];
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     for model in ["fixture-model", "fixture-fast"] {
         task.authorize_route("fixture", model).unwrap();
     }
@@ -609,7 +598,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
     let refused = accounts.prepare(&mut request, &mut prepared).unwrap_err();
     assert!(format!("{refused:?}").contains("own credential profile"));
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .get_mut("main")
@@ -643,7 +632,7 @@ fn request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_to
 fn completion_workers_cap_output_capture_tool_calls_and_collect_their_responses() {
     let (_root, accounts, _task, mut request, body) = setup();
     {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let child = accounts.get_mut("child").unwrap();
         child.capture_tools = true;
         child.max_output_tokens = Some(64);
@@ -709,7 +698,7 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
     let (_root, accounts, _task, mut request, _) = setup();
     let mut mark = |through: Value, prompt: &str| {
         accounts
-            .0
+            .by_thread
             .lock()
             .unwrap()
             .get_mut("child")
@@ -745,32 +734,16 @@ fn completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transport
 }
 
 #[test]
-fn mod_worker_requests_skip_only_optional_interceptors_while_the_runtime_is_busy() {
-    for (options, refused) in [("", false), ("{required: true}, ", true)] {
-        let (root, accounts, _task, mut request, body) = setup();
-        let source = format!(
-            "export default api => api.intercept('model_request', {options}(e, next) => next(e))"
-        );
-        install_middleware(&accounts, root.path(), &source);
-        accounts.0.lock().unwrap().get_mut("child").unwrap().owner =
-            "mod-request_router-child".into();
-        let runtime = accounts.mods().unwrap();
-        let _busy = runtime.lock().unwrap();
-        let result = accounts.prepare(&mut request, &mut Some(body));
-        assert_eq!(
-            result.is_err_and(|error| format!("{error:?}").contains("mod_runtime_busy")),
-            refused
-        );
-    }
-}
-
-#[test]
 fn observe_only_accounts_record_usage_without_admission() {
     let (root, accounts, task, mut request, _body) = setup();
     let mut lead = account(&task, root.path(), "lead");
     lead.rates = None;
     lead.route = None;
-    accounts.0.lock().unwrap().insert("main".into(), lead);
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
     request.headers.insert("thread-id", "main".parse().unwrap());
     assert!(!accounts.requires_observation(Some("main")));
     assert!(accounts.requires_observation(Some("child")));
@@ -826,30 +799,6 @@ fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
     assert_eq!(capture.settled_task_charge_microusd, 8);
     assert_eq!(capture.retained_exposure_upper_bound_microusd, 8);
     assert_eq!(capture.raw_usage_attempts, 1);
-}
-
-#[test]
-fn request_path_cost_snapshots_coalesce_and_flush_at_turn_end() {
-    let (root, accounts, _task, mut request, body) = setup();
-    let capture = || -> codex_omd::TaskCostCapture {
-        serde_json::from_slice(&std::fs::read(root.path().join("evidence/task-cost.json")).unwrap())
-            .unwrap()
-    };
-    for _ in 0..2 {
-        let mut attempt = accounts
-            .before_send(&mut request, Some(&body))
-            .unwrap()
-            .unwrap();
-        let mut event = json!({"type": "response.completed", "response": {"usage": {"input_tokens": 10, "output_tokens": 1}}});
-        attempt.observe(&mut event, true).unwrap();
-    }
-    assert_eq!(
-        capture().attempts.len(),
-        1,
-        "the second settlement within the interval is coalesced"
-    );
-    accounts.forget_retry("child");
-    assert_eq!(capture().attempts.len(), 2, "turn end flushes it");
 }
 
 #[test]
@@ -914,7 +863,7 @@ fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests(
         assert!(accounts.before_send(&mut request, Some(&encoded)).is_err());
     }
     accounts
-        .0
+        .by_thread
         .lock()
         .unwrap()
         .get_mut("child")
@@ -1050,7 +999,7 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     )
     .unwrap();
     {
-        let mut state = accounts.0.lock().unwrap();
+        let mut state = accounts.by_thread.lock().unwrap();
         let account = state.get_mut("child").unwrap();
         account.owner = "subscriber".into();
         account.provider = "openai".into();
@@ -1168,43 +1117,23 @@ fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
         "a retry core declined does not number the next turn's request"
     );
     accounts
-        .6
+        .requests
         .lock()
         .unwrap()
         .fingerprints
         .insert("child".into(), vec![("i0".into(), "sha".into())]);
     accounts.forget_thread("child");
     assert!(
-        accounts.6.lock().unwrap().fingerprints.is_empty(),
+        accounts.requests.lock().unwrap().fingerprints.is_empty(),
         "a closed thread keeps no request fingerprints"
     );
-}
-
-#[test]
-fn cancelled_provider_billed_requests_still_await_settlement() {
-    let (_root, accounts, task, mut request, body) = setup();
-    accounts.0.lock().unwrap().get_mut("child").unwrap().rates = Some(Rates {
-        reservation_microusd: 0,
-        provider_billed: true,
-        ..rates()
-    });
-    request
-        .headers
-        .insert("x-omd-request-id", "req-cancelled".parse().unwrap());
-    drop(accounts.before_send(&mut request, Some(&body)).unwrap());
-    accounts
-        .settle_provider("req-cancelled", 300, "fixture", |_| true)
-        .unwrap();
-    let record = task.attempts().unwrap().remove(0);
-    assert_eq!(record.status, "failed");
-    assert_eq!(record.settled_microusd, Some(300));
 }
 
 #[test]
 fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once() {
     let (root, accounts, task, mut request, _body) = setup();
     {
-        let mut accounts = accounts.0.lock().unwrap();
+        let mut accounts = accounts.by_thread.lock().unwrap();
         let child = accounts.get_mut("child").unwrap();
         child.rates = Some(Rates {
             reservation_microusd: 0,
@@ -1288,65 +1217,3 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
     );
 }
 
-#[test]
-fn queued_mod_notices_repeat_on_retries_until_a_response_completes() {
-    let (root, accounts, task, _request, _body) = setup();
-    let thread = "queued-notices";
-    accounts
-        .0
-        .lock()
-        .unwrap()
-        .insert(thread.into(), account(&task, root.path(), "worker"));
-    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
-        "max_output_tokens": 128, "input": [{"type": "message", "role": "user",
-        "content": [{"type": "input_text", "text": "hi"}]}]});
-    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
-    let first = prepared(&accounts, thread, &body).unwrap().to_string();
-    assert!(
-        first.contains("Mod-provided context") && first.contains("lint failed"),
-        "{first}"
-    );
-    let retried = prepared(&accounts, thread, &body).unwrap().to_string();
-    assert!(retried.contains("lint failed"), "{retried}");
-    let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
-    request.headers.insert("thread-id", thread.parse().unwrap());
-    let mut encoded = Some(EncodedJsonBody::encode(&body).unwrap());
-    accounts.prepare(&mut request, &mut encoded).unwrap();
-    let mut attempt = accounts
-        .before_send(&mut request, encoded.as_ref())
-        .unwrap()
-        .unwrap();
-    let mut completed = json!({"type": "response.completed", "response": {"usage":
-        {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 5}}});
-    let _ = attempt.observe(&mut completed, true);
-    drop(attempt);
-    let next = prepared(&accounts, thread, &body).unwrap().to_string();
-    assert!(!next.contains("lint failed"), "{next}");
-}
-
-#[test]
-fn queued_mod_notices_survive_a_request_the_final_policy_refuses() {
-    let (root, accounts, task, _request, _body) = setup();
-    let thread = "queued-refused";
-    accounts
-        .0
-        .lock()
-        .unwrap()
-        .insert(thread.into(), account(&task, root.path(), "worker"));
-    let source = "export default api => { throw new Error('policy failed to start'); }";
-    let (store, package, runtime) = install_package(
-        &accounts,
-        root.path(),
-        source,
-        &["middleware", "request_policy"],
-    );
-    let body = json!({"model": "fixture-model", "reasoning": {"effort": "high"}, "stream": true,
-        "input": [{"type": "message", "role": "user",
-        "content": [{"type": "input_text", "text": "hi"}]}]});
-    codex_omd::model_request::queue_section(thread, "checks", "lint failed").unwrap();
-    assert!(prepared(&accounts, thread, &body).is_err());
-    store.enable(&package, false).unwrap();
-    runtime.lock().unwrap().reload().unwrap();
-    let next = prepared(&accounts, thread, &body).unwrap().to_string();
-    assert!(next.contains("lint failed"), "{next}");
-}

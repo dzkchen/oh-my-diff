@@ -26,7 +26,6 @@ pub(super) use delivery::release_thread;
 pub(super) use delivery::retain_sources;
 pub(super) use tool_batch::tool_before_payload;
 
-/// Queues an observer event for every registered mod on the delivery task.
 pub(super) fn broadcast(state: &State, event: &'static str, payload: Value) {
     delivery::push(state, delivery::Pending::Broadcast { event, payload });
 }
@@ -165,7 +164,6 @@ impl State {
         self.leads.lock().ok()?.get(&thread)?.upgrade()
     }
 
-    /// Any live thread's own `Lead`, worker and subagent threads included.
     pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
         let threads = self.threads.lock().ok()?;
         let (handle, owner, depth) = threads.get(&thread)?;
@@ -427,15 +425,10 @@ pub(super) fn bounded_output(mut output: String) -> (String, bool) {
     if output.len() <= TOOL_RESULT_BYTES {
         return (output, false);
     }
-    let mut end = TOOL_RESULT_BYTES;
-    while !output.is_char_boundary(end) {
-        end -= 1;
-    }
-    output.truncate(end);
+    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
     (output, true)
 }
 
-/// Runs or assesses a tool through the current turn's dispatch under a mod-labelled call id.
 async fn tool_call(
     core: &Core,
     lead: &Lead,
@@ -546,9 +539,12 @@ pub(super) async fn dispatch(
                 .lock()
                 .map_err(|_| "mod_runtime_poisoned")?
                 .status();
+            let arguments = request.arguments;
             blocking(Box::new(move || {
                 codex_omd::ModStore::open(host.root.clone())
-                    .and_then(|store| codex_omd::package_controls::list(&store, Some(&runtime)))
+                    .and_then(|store| {
+                        codex_omd::package_controls::list_fields(&store, Some(&runtime), arguments)
+                    })
                     .map_err(|error| error.to_string())
             }))
             .await
@@ -601,7 +597,7 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
     let mut accounts = lead
         .host
         .accounts
-        .0
+        .by_thread
         .lock()
         .map_err(|_| "account lock poisoned")?;
     let account = accounts
@@ -640,7 +636,6 @@ pub(crate) fn take_route_selection(thread: &str) -> Option<String> {
     Some(route)
 }
 
-/// Lets a raster-bound process draw its owner's raster as the owner, without a callback per frame.
 pub(in crate::mods) fn blit_sink(
     core: &Core,
     lead: &Lead,
@@ -688,8 +683,8 @@ pub(in crate::mods) fn blit_sink(
             Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
         let result = runtime
-            .reload()
-            .map_err(|_| "callback_cancelled".to_owned())
+            .refresh_authority()
+            .map_err(|_| codex_omd::client_surface::BlitError::retryable("callback_cancelled"))
             .and_then(|_| {
                 (runtime.generation() == generation
                     && runtime.grants(&owner).is_some_and(|grants| {
@@ -697,7 +692,12 @@ pub(in crate::mods) fn blit_sink(
                             && grants.capabilities == capabilities
                     }))
                 .then_some(())
-                .ok_or_else(|| "process_raster_revoked".to_owned())
+                .ok_or_else(|| {
+                    codex_omd::client_surface::BlitError::new(
+                        codex_omd::client_surface::BlitErrorKind::Revoked,
+                        "process_raster_revoked",
+                    )
+                })
             });
         *last
             .lock()
@@ -716,7 +716,7 @@ pub(in crate::mods) fn blit_sink(
                     .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
         });
         codex_omd::client_surface::with_admission(&source, generation, None, || {
-            codex_omd::client_surface::call(
+            codex_omd::client_surface::call_classified(
                 &id,
                 "terminal.blit",
                 arguments,
@@ -784,7 +784,7 @@ async fn surface(
             let mut runtime = runtime
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if runtime.reload().is_err() {
+            if runtime.refresh_authority().is_err() {
                 return false;
             }
             runtime.generation() == generation

@@ -32,7 +32,8 @@ The component adds three tools:
 - `search` runs `rg` read-only and returns matches with anchors.
 - `edit` replaces, deletes or inserts lines by anchor, across up to 8 files and 32 edits per call.
 
-If the component is off, the normal patch tool still works. Calls are limited to 96 KB of files. Multi-file edits are not crash-safe.
+If the component is off, the normal patch tool still works. Calls are limited to 96 KB of files; an edit too large for the host's callback budget returns `edit_too_large` or
+`files_too_large` without writing, and the normal patch tool is the fallback. Multi-file edits are not crash-safe.
 
 ## Remove
 

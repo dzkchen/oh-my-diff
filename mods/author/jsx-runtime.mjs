@@ -4,6 +4,7 @@ const kinds = [...containers, ...textual, 'line', 'input', 'select', 'multiselec
 
 const flatten = children => [children].flat(Infinity).filter(child => child !== null && child !== undefined && typeof child !== 'boolean');
 
+/** @type {typeof import('../jsx-runtime.d.ts').jsx} */
 export const jsx = (tag, props) => {
   if (typeof tag === 'function') return tag(props);
   if (!kinds.includes(tag)) throw new Error(`jsx_unsupported_element: ${String(tag)}`);

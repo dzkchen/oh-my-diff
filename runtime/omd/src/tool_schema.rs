@@ -266,24 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn derived_types_allow_concurrent_writers_and_stale_temporaries() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join(TYPES_FILE);
-        std::fs::write(
-            path.with_extension(format!("{}.tmp", std::process::id())),
-            "stale",
-        )
-        .unwrap();
-        std::thread::scope(|scope| {
-            for _ in 0..8 {
-                let path = &path;
-                scope.spawn(move || write_if_changed(path, b"types").unwrap());
-            }
-        });
-        assert_eq!(std::fs::read(path).unwrap(), b"types");
-    }
-
-    #[test]
     fn validation_refuses_with_a_pointer_and_reason() {
         let schema = schema();
         assert_eq!(

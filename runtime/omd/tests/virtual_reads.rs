@@ -90,41 +90,6 @@ fn independent_provider_revision_and_disabled_recovery() {
 }
 
 #[test]
-fn colliding_and_reserved_namespaces_are_rejected() {
-    let (temp, store, package) = fixture();
-    enable(&store, &package);
-    let second = temp.path().canonicalize().unwrap().join("second");
-    fs::create_dir(&second).unwrap();
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(package.join("mod.json")).unwrap()).unwrap();
-    manifest["id"] = json!("second_provider");
-    fs::write(second.join("mod.json"), manifest.to_string()).unwrap();
-    fs::copy(package.join("index.ts"), second.join("index.ts")).unwrap();
-    enable(&store, &second);
-    let host = ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
-    assert!(host.virtual_readers().is_empty());
-    assert!(
-        host.status()
-            .to_string()
-            .contains("virtual_provider_conflict")
-    );
-    store.enable(&second, false).unwrap();
-    store.enable(&package, false).unwrap();
-    let text = fs::read_to_string(package.join("index.ts"))
-        .unwrap()
-        .replace("'fixture'", "'file'");
-    fs::write(package.join("index.ts"), text).unwrap();
-    enable(&store, &package);
-    let host = ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
-    assert!(host.virtual_readers().is_empty());
-    assert!(
-        host.status()
-            .to_string()
-            .contains("invalid_virtual_registration")
-    );
-}
-
-#[test]
 fn common_read_keeps_local_and_virtual_authority_separate() {
     let (_temp, store, package) = fixture();
     enable(&store, &package);

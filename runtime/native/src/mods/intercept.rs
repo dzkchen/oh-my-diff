@@ -15,6 +15,7 @@ pub(super) async fn chain(
     cancelled: Arc<AtomicBool>,
     executor: impl FnMut(Value) -> std::io::Result<Value> + Send + 'static,
 ) -> Result<codex_omd::ModChain, String> {
+    let secondary = !Arc::ptr_eq(&runtime, &core.runtime);
     let (facts, generation) = {
         let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
         (facts(&runtime), runtime.generation())
@@ -45,6 +46,41 @@ pub(super) async fn chain(
         .map_err(|error| error.to_string())
     });
     while let Some(call) = receiver.recv().await {
+        let generation = if secondary {
+            let authority = core.runtime.clone();
+            let caller = call.caller.clone();
+            let source = call.source.clone();
+            let capabilities = call
+                .grants
+                .as_ref()
+                .map(|grants| grants.capabilities.clone());
+            let flag = cancelled.clone();
+            let current = tokio::task::spawn_blocking(move || {
+                let mut runtime = authority
+                    .lock()
+                    .map_err(|_| "mod_runtime_poisoned".to_owned())?;
+                runtime
+                    .refresh_guarded(&|| !flag.load(Ordering::Acquire))
+                    .map_err(|error| error.to_string())?;
+                let grants = runtime.grants(&caller).ok_or("host_caller_inactive")?;
+                if grants.source_sha256 != source || Some(grants.capabilities) != capabilities {
+                    return Err("callback_authority_changed".into());
+                }
+                Ok(runtime.generation())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+            match current {
+                Ok(generation) => generation,
+                Err(error) => {
+                    let _ = call.reply.send(Err(std::io::Error::other(error)));
+                    continue;
+                }
+            }
+        } else {
+            generation
+        };
         let value = operations::dispatch(
             &core,
             &lead,
@@ -68,8 +104,7 @@ pub(super) async fn chain(
     result
 }
 
-/// The mod whose result settled last, i.e. the outermost link that answered or transformed it.
-pub(super) fn settled_by(chain: &codex_omd::ModChain) -> String {
+pub(crate) fn settled_by(chain: &codex_omd::ModChain) -> String {
     chain
         .trace
         .iter()
@@ -80,8 +115,7 @@ pub(super) fn settled_by(chain: &codex_omd::ModChain) -> String {
         .to_owned()
 }
 
-/// Lets model-request interceptors call host operations from the transport thread.
-pub(super) fn install_dispatcher(core: &Arc<Core>) {
+pub(super) fn install_notifier(core: &Arc<Core>) {
     let notified = Arc::downgrade(core);
     core.host.accounts.install_mod_notifier(Arc::new(
         move |event: &'static str, payload: Value| {
@@ -97,6 +131,9 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             }
         },
     ));
+}
+
+pub(super) fn dispatcher(core: &Arc<Core>) -> codex_omd::host::SessionDispatcher {
     let weak = Arc::downgrade(core);
     let session = tokio::runtime::Handle::try_current().ok();
     let dispatcher: codex_omd::host::SessionDispatcher = Arc::new(
@@ -116,7 +153,12 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
                 Ok(handle)
                     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
                 {
-                    (handle, true)
+                    (
+                        session
+                            .clone()
+                            .ok_or_else(|| unavailable("no session runtime"))?,
+                        true,
+                    )
                 }
                 Ok(_) => {
                     return Err(unavailable(
@@ -154,40 +196,65 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             let policy: Option<codex_protocol::models::PermissionProfile> =
                 policy.cloned().map(serde_json::from_value).transpose()?;
             let _cancellation = Cancellation(cancelled.clone());
-            let future = async {
-                tokio::select! {
-                    value = operations::dispatch_with_policy(
-                        &core,
-                        &lead,
-                        Caller {
-                            id: caller,
-                            source: &source,
-                            grants,
-                            generation,
-                            origin: Origin::Event,
-                            record_changes: true,
-                        },
-                        None,
-                        request,
-                        &cancelled,
-                        policy.as_ref(),
-                    ) => value.map_err(std::io::Error::other),
-                    () = async {
-                        while active() {
-                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let stopped = AtomicBool::new(false);
+            let operation = || {
+                handle.block_on(async {
+                    tokio::select! {
+                        value = operations::dispatch_with_policy(
+                            &core,
+                            &lead,
+                            Caller {
+                                id: caller,
+                                source: &source,
+                                grants,
+                                generation,
+                                origin: Origin::Event,
+                                record_changes: true,
+                            },
+                            None,
+                            request,
+                            &cancelled,
+                            policy.as_ref(),
+                        ) => value.map_err(std::io::Error::other),
+                        () = async {
+                            while !stopped.load(Ordering::Acquire) {
+                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                            }
+                        } => Err(std::io::Error::other("callback_cancelled")),
+                    }
+                })
+            };
+            // Callers include small-stack callback threads; the future is built and polled on a thread with a Tokio worker's stack.
+            let wait = || {
+                std::thread::scope(|scope| {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::Builder::new()
+                        .name("omd-host-call".into())
+                        .stack_size(codex_async_utils::THREAD_STACK_SIZE_BYTES)
+                        .spawn_scoped(scope, move || {
+                            let _ = tx.send(operation());
+                        })?;
+                    loop {
+                        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
+                            Ok(result) => return result,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                if !active() {
+                                    stopped.store(true, Ordering::Release);
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                return Err(unavailable("host operation thread failed"));
+                            }
                         }
-                    } => Err(std::io::Error::other("callback_cancelled")),
-                }
+                    }
+                })
             };
             if worker {
-                tokio::task::block_in_place(|| handle.block_on(future))
+                tokio::task::block_in_place(wait)
             } else {
-                handle.block_on(future)
+                wait()
             }
         },
     );
-    core.host
-        .accounts
-        .install_mod_dispatcher(dispatcher.clone());
-    codex_omd::host::install_session_dispatcher(dispatcher);
+    dispatcher
 }

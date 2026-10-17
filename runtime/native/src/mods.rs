@@ -7,7 +7,7 @@ mod compaction;
 mod elicitation;
 mod evidence;
 mod expansion;
-mod intercept;
+pub(crate) mod intercept;
 mod inventory;
 mod launch_snapshot;
 mod mentions;
@@ -19,6 +19,10 @@ pub(crate) mod services;
 mod snapshots;
 mod tools;
 mod view;
+
+/// Serializes tests that install or observe the process-global host dispatcher and client surface.
+#[cfg(test)]
+static DISPATCHER_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 use super::*;
 use codex_extension_api::CompactionLifecycleInput;
@@ -153,13 +157,14 @@ struct TurnRecord {
 }
 
 pub(super) struct Core {
+    session_runtime: Option<tokio::runtime::Handle>,
     host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
     persist_runtime: Arc<Mutex<ModHost>>,
-    intercepted: Arc<Mutex<Vec<&'static str>>>,
-    required: Arc<Mutex<Vec<&'static str>>>,
+    persist_required: Arc<Mutex<Vec<&'static str>>>,
     environment: Arc<codex_omd::host::Environment>,
+    codex_config: Arc<Mutex<std::collections::BTreeSet<String>>>,
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
@@ -171,6 +176,7 @@ pub(super) struct Core {
 }
 
 struct Mods {
+    registration: Mutex<Option<clients::Registration>>,
     core: Arc<Core>,
     turns: Mutex<BTreeMap<String, TurnRecord>>,
     sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
@@ -185,7 +191,6 @@ struct Mods {
     elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
 }
 
-/// A tool chain waiting at its native executor for the call's result.
 struct PendingTool {
     thread: String,
     result: std::sync::mpsc::Sender<Result<Value, String>>,
@@ -194,7 +199,6 @@ struct PendingTool {
 }
 
 impl Mods {
-    /// Hands a tool's result to its waiting chain and returns the settled chain.
     async fn resume(
         &self,
         call_id: &str,
@@ -215,7 +219,6 @@ impl Mods {
         )
     }
 
-    /// Cancels chains whose call never reported a result before its turn ended, and any stream retry core declined.
     fn release_pending(&self, thread: Option<String>) {
         let Some(thread) = thread else {
             return;
@@ -409,37 +412,49 @@ pub(super) fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     host: Arc<Host>,
 ) -> Result<(), String> {
-    let validator = |schema: &Value| {
-        codex_extension_api::parse_tool_input_schema(schema)
-            .map(|_| ())
-            .map_err(std::io::Error::other)
-    };
-    let runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+    initialize(registry, host).map(|_| ())
+}
+
+pub fn validate_tool_schema(schema: &Value) -> std::io::Result<()> {
+    codex_extension_api::parse_tool_input_schema(schema)
+        .map(|_| ())
+        .map_err(std::io::Error::other)
+}
+
+fn initialize(
+    registry: &mut ExtensionRegistryBuilder<Config>,
+    host: Arc<Host>,
+) -> Result<Arc<Mods>, String> {
+    let registration =
+        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
+    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
         .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
         .map_err(|e| e.to_string())?;
-    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
-        .map_err(|e| e.to_string())?;
+    let persist_runtime =
+        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
+            .map_err(|e| e.to_string())?;
+    let persist_required = persist_runtime.required_surfaces();
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
-    let intercepted = runtime.intercepted_surfaces();
     let environment = runtime.environment();
+    let codex_config = runtime.codex_config();
     let runtime = Arc::new(Mutex::new(runtime));
-    host.accounts
-        .install_mod_runtime(runtime.clone(), required.clone());
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let persist_runtime = Arc::new(Mutex::new(persist_runtime));
     let extension = Arc::new(Mods {
+        registration: Mutex::new(None),
         core: Arc::new_cyclic(|core| Core {
+            session_runtime: tokio::runtime::Handle::try_current().ok(),
             agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
             host,
             runtime,
             input_runtime,
             persist_runtime,
-            intercepted,
-            required,
+            persist_required,
             environment,
+            codex_config,
             services: services::Services::default(),
             views,
             expansion: expansion::State::default(),
@@ -458,8 +473,26 @@ pub(super) fn install(
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
     });
-    intercept::install_dispatcher(&extension.core);
-    clients::install(&extension.core);
+    let dispatcher = intercept::dispatcher(&extension.core);
+    registration
+        .install(dispatcher.clone())
+        .map_err(|error| error.to_string())?;
+    *extension
+        .registration
+        .lock()
+        .map_err(|_| "host_installation_poisoned")? =
+        Some(clients::install(&extension.core, registration)?);
+    extension
+        .core
+        .host
+        .accounts
+        .install_mod_runtime(extension.core.runtime.clone(), required);
+    extension
+        .core
+        .host
+        .accounts
+        .install_mod_dispatcher(dispatcher);
+    intercept::install_notifier(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -472,8 +505,8 @@ pub(super) fn install(
     registry.agent_role_contributor(extension.clone());
     registry.token_usage_contributor(extension.clone());
     registry.tool_batch_contributor(extension.clone());
-    registry.tool_contributor(extension);
-    Ok(())
+    registry.tool_contributor(extension.clone());
+    Ok(extension)
 }
 
 fn publish(
@@ -489,7 +522,7 @@ fn publish(
         "client": codex_omd::client_surface::client(),
         "clients": codex_omd::client_surface::clients()});
     let pty_scope = json!({"epoch": codex_omd::client_surface::epoch(), "admission": codex_omd::client_surface::admission(), "configuration": runtime.configuration_sha256()});
-    let rendered_ms = codex_omd::ModViewSnapshot::clock();
+    let rendered_ms = codex_omd::peers::now_ms();
     let mut terminal = runtime.terminal_view(input.clone(), active);
     input["pty_scope"] = pty_scope;
     let status = runtime.status();
@@ -552,8 +585,12 @@ fn publish(
     views.base(host, terminal, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
-    if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
-        let _ = host.persist_json(codex_omd::BUILTINS_SNAPSHOT, &builtins);
+    let name = codex_omd::builtins_snapshot(&host.repository);
+    // A missing snapshot reads as no controls, so a repository without any keeps no file.
+    if builtins == codex_omd::BuiltinSnapshot::from_controls(&[]) {
+        let _ = std::fs::remove_file(host.root.join(name));
+    } else if codex_omd::BuiltinSnapshot::read(&host.root, &host.repository) != builtins {
+        let _ = host.persist_json(&name, &builtins);
     }
 }
 
@@ -562,7 +599,6 @@ fn observes_workspace(runtime: &ModHost) -> bool {
     runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
-/// Re-reads `host.json`, mod generations and the session contract the way a turn start does.
 fn refresh_turn(host: &Host, session: &Session, runtime: &Mutex<ModHost>) {
     let _ = host.refresh_session(session);
     if let Ok(mut runtime) = runtime.lock() {
@@ -1024,6 +1060,13 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             ));
         }
         config.model_provider.supports_websockets = false;
+        if self
+            .codex_config
+            .lock()
+            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
+        {
+            config.update_plan_enabled = true;
+        }
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem
             .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
@@ -1047,8 +1090,16 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
             Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
         };
-        if let (Some(thread), Some(parent)) = (thread, forked_from) {
-            let _ = codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread);
+        if let (Some(thread), Some(parent)) = (thread, forked_from)
+            && let Err(error) =
+                codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread)
+            && error.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            self.views.diagnostic(
+                &self.host,
+                "thread_store",
+                Some(format!("fork copy failed: {error}")),
+            );
         }
         let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
         self.compaction_decision(&mut runtime, config)?;
@@ -1070,7 +1121,6 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
     }
 }
 
-/// Attachments and placeholder elements of a submitted prompt, with their source identity.
 fn submission_context(items: &[Value]) -> (Vec<Value>, Vec<Value>) {
     let (mut attachments, mut elements) = (Vec::new(), Vec::new());
     for item in items {
@@ -1119,7 +1169,6 @@ fn settings_view(config: &Config) -> Value {
         "effort": config.model_reasoning_effort, "provider": config.model_provider_id})
 }
 
-/// The `thread_settings` payload, or `None` when nothing a mod observes changed.
 fn settings_change(previous: &Value, next: &Value) -> Option<Value> {
     let roots = |value: &Value| {
         value["roots"]
@@ -1393,7 +1442,7 @@ impl TurnLifecycleContributor for Mods {
                 .into_iter()
                 .flat_map(|(_, controls)| controls.modes.disable)
                 .collect(),
-            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root)
+            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root, &self.host.repository)
                 .disabled_modes
                 .into_values()
                 .flatten()
@@ -1403,9 +1452,11 @@ impl TurnLifecycleContributor for Mods {
 
     fn rewrites_persisted_text(&self) -> bool {
         self.core
-            .intercepted
-            .lock()
-            .is_ok_and(|surfaces| surfaces.contains(&"history_persist"))
+            .persist_runtime
+            .try_lock()
+            .map_or(true, |runtime| {
+                runtime.intercepts("history_persist").is_some() || runtime.refresh_due()
+            })
     }
 
     fn rewrite_persisted_text<'a>(
@@ -1414,7 +1465,7 @@ impl TurnLifecycleContributor for Mods {
     ) -> ExtensionFuture<'a, Option<codex_extension_api::PersistedTextRewrite>> {
         Box::pin(persisted::rewrite(
             self.core.persist_runtime.clone(),
-            self.core.required.clone(),
+            self.core.persist_required.clone(),
             input,
         ))
     }
@@ -1457,10 +1508,13 @@ impl TurnLifecycleContributor for Mods {
                 })
             };
             let boundary = runtime.clone();
+            let boundary_cancelled = cancelled.clone();
             let intercepting = tokio::task::spawn_blocking(move || {
                 let _thread = codex_omd::StateThread::enter(scoped);
                 let mut runtime = boundary.lock().map_err(|_| "mod_runtime_poisoned")?;
-                runtime.turn_boundary();
+                runtime
+                    .refresh_guarded(&|| !boundary_cancelled.load(Ordering::Acquire))
+                    .map_err(|error| error.to_string())?;
                 Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
@@ -1751,7 +1805,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if self
                 .host
                 .accounts
-                .0
+                .by_thread
                 .lock()
                 .map_or(true, |accounts| accounts.contains_key(&thread.to_string()))
             {
@@ -1952,7 +2006,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
-            if let Ok(mut accounts) = self.host.accounts.0.lock() {
+            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
                 accounts.remove(&lead.thread.to_string());
             }
             self.host.accounts.forget_thread(&lead.thread.to_string());
@@ -1985,6 +2039,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
 }
 
 impl ToolLifecycleContributor for Mods {
+    fn wants_call_facts(&self) -> bool {
+        true
+    }
+
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
             let Some(lead) = input.thread_store.get::<Lead>() else {

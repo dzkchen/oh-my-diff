@@ -43,7 +43,7 @@ export default function activate(api: ModAPI) {
   const hud = (change: (hud: Hud) => void) => { const state = saved(); change(state.hud); save(state); };
   const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
   const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
-  const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, limit);
+  const visible = (value: string, limit = 160) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')].slice(0, limit).join('');
   const fit = (text: string, max: number) => [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
   const paid = (cost: Record<string, Json> | null) => typeof cost?.settled_task_charge_microusd === 'number' ? `$${(cost.settled_task_charge_microusd / 1e6).toFixed(2)} paid API` : 'no paid API use recorded';
   const usd = (value: number) => `$${value < 10 ? value.toFixed(2) : value.toFixed(1)}`;

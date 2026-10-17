@@ -1,6 +1,6 @@
 # Runtime
 
-OMD is one patch on Codex `rust-v0.162.1`: [`patches/omd-0.162.1.patch`](patches). `runtime/omd` and
+OMD is one patch on Codex `rust-v0.163.0`: [`patches/omd-0.163.0.patch`](patches). `runtime/omd` and
 `runtime/native` are byte-for-byte copies of the `codex-rs/omd` and `codex-rs/ext/omd` crates it adds, and
 `runtime/native/src/request_observer.rs` copies the patched `codex-rs/codex-api/src/request_observer.rs`.
 
@@ -17,7 +17,12 @@ Any other value fails to start.
 
 Every feature is a TypeScript mod in [`mods/first-party`](../mods/first-party) over the
 [public API](../mods/REFERENCE.md). With no mods on, `codex` behaves like upstream. `mise run native:ownership`
-fails if native code names a feature or a first-party mod.
+fails if native code names a feature or a first-party mod. It also keeps crate dependencies pointing one way:
+
+| Crate | Must not depend on |
+| --- | --- |
+| `codex-omd` | `codex-omd-extension`, `codex-core`, `codex-tui`, `codex-app-server` |
+| `codex-omd-extension` | `codex-tui`, `codex-app-server` |
 
 ## Apply the patch
 

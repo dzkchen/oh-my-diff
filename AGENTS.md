@@ -1,6 +1,6 @@
 # Agent instructions
 
-Oh My Diff (OMD) patches Codex `0.162.1` with a host for TypeScript mods.
+Oh My Diff (OMD) patches Codex `0.163.0` with a host for TypeScript mods.
 
 ## Building a mod
 
@@ -13,8 +13,8 @@ this one.
   blocks that several unrelated mods can use, never one feature.
 - Set up and check changes as described in [CONTRIBUTING.md](CONTRIBUTING.md). Run only the checks for what you
   changed; the full suite runs nightly.
-- Edit the patch in a scratch tree (`mise run batch setup NAME`), never by hand. `python3 scripts/batch_tree.py
-  sync NAME` writes it back.
+- Edit the patch in a scratch tree (`python3 .github/scripts/build.py setup NAME`), never by hand.
+  `python3 .github/scripts/build.py sync NAME` writes it back.
 - Use `pnpm`, never `npm` or `npx`. Tool versions come from `mise.toml`.
 - No compatibility shims: OMD is pre-1.0, so change or delete code and update every caller.
 - Write no code comments except one line on genuinely abstract code.

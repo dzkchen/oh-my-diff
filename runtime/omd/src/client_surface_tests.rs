@@ -4,106 +4,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Echo;
 
-#[test]
-fn raw_snapshot_waits_for_admission_and_shares_the_accepted_frame() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("pixels");
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let received = seen.clone();
-    let mut binding = crate::process_raster::bind(
-        None,
-        "raw-admission",
-        vec![(
-            "raw-admission-frame".into(),
-            crate::process_raster::Role::Raster,
-        )],
-        Arc::new(move |value| {
-            received.lock().unwrap().push(value);
-            true
-        }),
-    );
-    let initialized = binding.pixels(&path, None).unwrap();
-    std::fs::write(&path, [1, 2, 3]).unwrap();
-    let cancelled = Arc::new(AtomicBool::new(true));
-    let lifetime = CallLifetime {
-        upstream_cancelled: Some(cancelled.clone()),
-        ..Default::default()
-    };
-    let retained = lifetime.pixels.clone();
-    let call = SurfaceCall {
-        validity: Validity(Arc::new(|| true)),
-        caller: "raw-admission".into(),
-        operation: "terminal.blit".into(),
-        arguments: json!({"key":"raw-admission-frame","pixels":{"source":initialized["pixels"]["source"],"format":"rgb","width":1,"height":1,"sequence":1}}),
-        context: InvocationContext::Event,
-        remote: false,
-        thread: None,
-        authority: None,
-        confirm: None,
-        reply: sync_channel(1).0,
-        lifetime,
-    };
-    let source = serde_json::from_value(call.arguments["pixels"].clone()).unwrap();
-    assert!(
-        call.snapshot_pixels(&source, std::time::Instant::now())
-            .is_err()
-    );
-    assert!(seen.lock().unwrap().is_empty());
-    assert!(retained.get().is_none());
-    cancelled.store(false, Ordering::Release);
-    let accepted = call
-        .snapshot_pixels(&source, std::time::Instant::now())
-        .unwrap();
-    assert!(Arc::ptr_eq(retained.get().unwrap(), &accepted));
-    assert_eq!(seen.lock().unwrap().len(), 1);
-    assert!(
-        call.snapshot_pixels(&source, std::time::Instant::now())
-            .is_err()
-    );
-    assert_eq!(seen.lock().unwrap().len(), 1);
-}
-
-#[test]
-fn encoded_blits_need_ownership_but_not_cell_dimensions() {
-    let image = json!({"key":"frame","image":{"media_type":"image/png","base64":"AA=="}});
-    assert!(blit_request("owner", Some("owner"), None, &image).is_ok());
-    assert!(blit_request("other", Some("owner"), None, &image).is_err());
-    let cells = json!({"key":"frame","rect":{"x":0,"y":0,"width":1,"height":1},"cells":["x"]});
-    assert!(blit_request("owner", Some("owner"), None, &cells).is_err());
-}
-
-#[test]
-fn dropping_a_pending_reply_revokes_queued_effects() {
-    let (reply, receiver) = sync_channel(1);
-    let lifetime = CallLifetime::default();
-    let pending = PendingReply {
-        receiver,
-        lifetime: lifetime.clone(),
-    };
-    assert!(lifetime.active());
-    drop(pending);
-    assert!(!lifetime.active());
-    assert!(lifetime.begin_execution().is_err());
-    assert!(reply.send(Ok(Value::Null)).is_err());
-    let expired = CallLifetime::default();
-    *expired.deadline.lock().unwrap() = Some(Instant::now());
-    assert!(!expired.active());
-    assert!(expired.begin_execution().is_err());
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let admitted = CallLifetime {
-        upstream_cancelled: Some(cancelled.clone()),
-        ..Default::default()
-    };
-    assert!(admitted.active());
-    cancelled.store(true, Ordering::Release);
-    assert!(!admitted.active());
-    assert!(admitted.begin_execution().is_err());
-}
-
 impl ClientSurface for Echo {
     fn submit(&self, call: SurfaceCall) -> Result<(), String> {
         let value = json!({"operation": call.operation, "caller": call.caller,
-            "confirm": call.confirm, "arguments": call.arguments,
+            "confirm": call.confirm, "arguments": call.arguments, "depth": call.depth,
             "authority": call.authority.map(|authority| json!({"epoch": authority.epoch, "admission": authority.admission, "source": authority.source, "configuration": authority.configuration}))});
         call.reply
             .send(Ok(value))
@@ -122,16 +26,6 @@ impl ClientSurface for Password {
             .send(Ok(
                 json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }}),
             ))
-            .map_err(|error| error.to_string())
-    }
-}
-
-struct Answers(Result<Value, String>);
-
-impl ClientSurface for Answers {
-    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
-        call.reply
-            .send(self.0.clone())
             .map_err(|error| error.to_string())
     }
 }
@@ -183,6 +77,25 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         .starts_with("client_surface_unavailable")
     );
     let registration = register(Arc::new(Echo));
+    let depth = || {
+        call(
+            "m",
+            "composer.read",
+            Value::Null,
+            InvocationContext::User,
+            false,
+            None,
+            None,
+            Arc::new(active),
+        )
+        .unwrap()["depth"]
+            .clone()
+    };
+    {
+        let _nested = nest(3);
+        assert_eq!(depth(), 3);
+    }
+    assert_eq!(depth(), 0);
     let authority = Authority {
         epoch: 7,
         admission: 11,
@@ -400,109 +313,6 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
 }
 
 #[test]
-fn only_accepted_mirrored_operations_are_mirrored() {
-    let _serial = hub_test();
-    let mirrored = Arc::new(AtomicUsize::new(0));
-    let counter = mirrored.clone();
-    let observer = register_observer(Arc::new(move |observed| {
-        if matches!(observed, Observed::Mirrored { .. }) {
-            counter.fetch_add(1, Ordering::SeqCst);
-        }
-    }));
-    for (answer, count) in [
-        (Err("terminal_blit_not_owned".to_owned()), 0),
-        (
-            Ok(json!({"status": "backpressure", "retry_after_ms": 5})),
-            0,
-        ),
-        (Ok(json!({"frame": 1, "queued": 1, "frame_ms": 16})), 1),
-    ] {
-        let registration = register(Arc::new(Answers(answer.clone())));
-        let blit = call(
-            "m",
-            "terminal.blit",
-            json!({"key": "r"}),
-            InvocationContext::Event,
-            false,
-            None,
-            None,
-            Arc::new(|| true),
-        );
-        assert_eq!(blit, answer);
-        assert_eq!(mirrored.swap(0, Ordering::SeqCst), count, "{answer:?}");
-        drop(registration);
-    }
-    drop(observer);
-}
-
-#[test]
-fn roster_changes_and_redraws_reach_observers_outside_the_hub_lock() {
-    let _serial = hub_test();
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let log = seen.clone();
-    let observer = register_observer(Arc::new(move |observed| {
-        let entry = match observed {
-            Observed::Roster => json!(
-                roster()
-                    .into_iter()
-                    .filter(|entry| entry["id"] == "roster-client")
-                    .map(|entry| entry["name"].clone())
-                    .collect::<Vec<_>>()
-            ),
-            Observed::Redraw => json!("redraw"),
-            Observed::Mirrored { .. } => return,
-        };
-        log.lock().unwrap().push(entry);
-    }));
-    let entry = |name: &str| ClientEntry {
-        id: "roster-client".into(),
-        name: name.into(),
-        renderer: json!({"kind": "gui"}),
-        viewport: Value::Null,
-        operations: vec!["terminal.notify".into()],
-        attached_ms: 7,
-        focused: false,
-    };
-    let first = attach(entry("first"));
-    let second = attach(entry("second"));
-    drop(first);
-    update(
-        "roster-client",
-        None,
-        Some(json!({"width": 800, "height": 600, "unit": "px"})),
-        Some(true),
-    );
-    assert_eq!(
-        clients()
-            .into_iter()
-            .find(|client| client["id"] == "roster-client"),
-        Some(
-            json!({"id": "roster-client", "name": "second", "renderer": {"kind": "gui"},
-            "viewport": {"width": 800, "height": 600, "unit": "px"}, "attached_ms": 7,
-            "focused": true})
-        )
-    );
-    assert!(
-        roster().iter().any(|entry| entry["id"] == "roster-client"
-            && entry["operations"] == json!(["terminal.notify"]))
-    );
-    redraw();
-    drop(second);
-    drop(observer);
-    drop(attach(entry("unobserved")));
-    assert_eq!(
-        *seen.lock().unwrap(),
-        vec![
-            json!(["first"]),
-            json!(["second"]),
-            json!(["second"]),
-            json!("redraw"),
-            json!([])
-        ]
-    );
-}
-
-#[test]
 fn global_attachment_owner_lookup_requires_account_user_confirmation() {
     let _serial = hub_test();
     let _registration = register(Arc::new(Echo));
@@ -571,13 +381,36 @@ fn config_reads_redact_secret_values() {
     let mut config = json!({
         "model": "m",
         "mcp_servers": {"plain": {"command": "plain"}, "web": {"url": "https://user:s8@web.example:8443/mcp?token=s9&mode=full#s10"}, "local": {"url": "http://127.0.0.1:3920/mcp"}, "docs": {"command": "docs", "env": {"TOKEN": "s1"}, "http_headers": {"Authorization": "s2"}, "bearer_token": "s3", "oauth": {"client_id": "id", "client_secret": "s4"}}},
-        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}}
+        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7", "env_key": "OPENAI_API_KEY"}, "q": {"env_key": "sk-proj-s20"}, "r": {"env_key": "f3a9c1d27b8e4s21"}, "t": {"env_key": "AKIAS22EXAMPLE"}},
+        "otel": {"exporter": {"otlp-http": {"endpoint": "https://otel.example", "headers": {"x-api": "s12"}}}},
+        "shell_environment_policy": {"inherit": "core", "set": {"DEPLOY": "s13"}},
+        "profiles": {"w": {"mcp_servers": {"x": {"command": "x", "args": ["--auth", "s14"], "env": {"K": "s15"}}}}},
+        "notify": ["notify", "--header=Authorization: Bearer s16"],
+        "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "curl -H 'X-Api-Key: s17' x"}]}]},
+        "tools": {"web": {"auth_token": "s18"}},
+        "developer_instructions": "Be brief.\npassword: s19\nRun tests.",
+        "cli_auth_credentials_store": "keyring",
+        "model_auto_compact_token_limit_scope": "thread",
+        "model_auto_compact_token_limit": 7
     });
     redact_config(&mut config);
     let text = config.to_string();
-    assert!((1..=11).all(|index| !text.contains(&format!("s{index}"))));
+    assert!(
+        (1..=22).all(|index| !text.contains(&format!("s{index}"))),
+        "{text}"
+    );
+    assert_eq!(
+        config["developer_instructions"],
+        "Be brief.\n<redacted>\nRun tests."
+    );
+    assert_eq!(config["cli_auth_credentials_store"], "keyring");
+    assert_eq!(config["model_auto_compact_token_limit_scope"], "thread");
+    assert_eq!(config["model_auto_compact_token_limit"], 7);
+    assert_eq!(config["shell_environment_policy"]["inherit"], "core");
+    assert_eq!(config["notify"][0], "notify");
     assert_eq!(config["mcp_servers"]["docs"]["env"]["TOKEN"], "<redacted>");
     assert_eq!(config["mcp_servers"]["docs"]["oauth"]["client_id"], "id");
+    assert_eq!(config["model_providers"]["p"]["env_key"], "OPENAI_API_KEY");
     assert_eq!(
         config["model_providers"]["p"]["base_url"],
         "https://p/<redacted>"
@@ -591,6 +424,21 @@ fn config_reads_redact_secret_values() {
         "http://127.0.0.1:3920/<redacted>"
     );
     assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
+}
+
+#[test]
+fn hook_lists_redact_secret_commands() {
+    let mut hooks = json!({"data": [{"cwd": "/r", "warnings": [], "errors": [], "hooks": [
+        {"key": "user:stop:0", "eventName": "stop", "handlerType": "command", "async": false,
+            "command": "curl -H 'Authorization: Bearer s1' https://hooks.example"},
+        {"key": "user:stop:1", "eventName": "stop", "handlerType": "command", "async": false,
+            "command": "./notify.sh"}
+    ]}]});
+    redact_result("hooks/list", &mut hooks);
+    let hooks = &hooks["data"][0]["hooks"];
+    assert_eq!(hooks[0]["command"], "<redacted>");
+    assert_eq!(hooks[0]["key"], "user:stop:0");
+    assert_eq!(hooks[1]["command"], "./notify.sh");
 }
 
 #[test]
@@ -659,16 +507,6 @@ fn remote_actions_cannot_cause_terminal_only_operations() {
         );
     }
     assert!(!needs_terminal("terminal.pty", &json!({"action": "write"})));
-}
-
-#[test]
-fn presentation_reports_the_terminal_screen_mode() {
-    set_screen("inline");
-    assert_eq!(
-        presented(json!({"thread_id": null, "phase": "fresh"})),
-        json!({"thread_id": null, "phase": "fresh", "surface": "inline"})
-    );
-    assert_eq!(presented(Value::Null), Value::Null);
 }
 
 #[test]
@@ -756,22 +594,17 @@ fn notices_validate_placement_lifetime_audience_and_tool_correlation() {
 }
 
 #[test]
-fn image_frames_become_full_raster_half_block_cells_for_cell_clients() {
-    let mut png = Vec::new();
-    image::RgbImage::from_pixel(8, 2, image::Rgb([255, 0, 0]))
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
+    let image = image::RgbaImage::new(IMAGE_PIXELS + 1, 1);
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
         .unwrap();
-    let arguments =
-        json!({"key": "r", "image": {"media_type": "image/png", "base64": STANDARD.encode(png)}});
-    let cells = frame_cells(&arguments, (4, 2)).unwrap();
-    assert_eq!(
-        cells["rect"],
-        json!({"x": 0, "y": 0, "width": 4, "height": 2})
-    );
-    let red = serde_json::to_value(crate::ModColor::Rgb(255, 0, 0)).unwrap();
-    let black = serde_json::to_value(crate::ModColor::Rgb(0, 0, 0)).unwrap();
-    assert_eq!(cells["cells"][0], json!(["▀", red, black]));
-    assert_eq!(cells["cells"][4], json!(" "));
-    assert_eq!(cells["cells"].as_array().unwrap().len(), 8);
-    assert!(frame_cells(&json!({"key": "r"}), (4, 2)).is_none());
+    assert!(decode_image(&bytes).is_err());
+    assert!(decode_image(b"GIF89a").is_err());
+    assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 }
+

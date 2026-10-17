@@ -31,6 +31,10 @@ omd install 'git+https://github.com/author/repo#v1.2.3:mod' # a Git tag and fold
 omd install ./my-mod                                        # a folder on your machine
 ```
 
+The curated directory pins each mod to a Git commit and a package hash. OMD refuses a download whose hash differs
+(`package_integrity_failure`) or whose API it doesn't support (`incompatible_api`). Try it with the Claude Code
+ports in [`mods/ports`](../mods/ports): `burn_meter`, `token_weather` and `blast_radius`.
+
 ## See and change your mods
 
 ```sh

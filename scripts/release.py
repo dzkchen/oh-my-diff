@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
-LOCK = ROOT / "runtime/lean-release.lock.json"
+LOCK = ROOT / "runtime/release.lock.json"
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
 TITLE = re.compile(r"(?:feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(?:\([a-z0-9-]+\))?!?: \S.*")
@@ -110,7 +110,7 @@ def check(version=None):
         if not VERSION.fullmatch(version):
             problems.append(f"{version} is not vMAJOR.MINOR.PATCH or -rc.N")
         if lock_version() != version:
-            problems.append(f"runtime/lean-release.lock.json is {lock_version()}, not {version}")
+            problems.append(f"runtime/release.lock.json is {lock_version()}, not {version}")
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
@@ -144,7 +144,7 @@ def prepare(version, summary):
     run("git", "fetch", "--tags", "origin", "main")
     if run("git", "tag", "--list", tag):
         raise SystemExit(f"{tag} already exists")
-    merged = json.loads(run("git", "show", "origin/main:runtime/lean-release.lock.json"))["version"] == version
+    merged = json.loads(run("git", "show", "origin/main:runtime/release.lock.json"))["version"] == version
     if merged:
         run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", "origin/main")
         run("git", "push", "origin", tag)

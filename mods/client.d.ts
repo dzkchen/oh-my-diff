@@ -52,7 +52,7 @@ export interface Session {
   render(slot: string, props: unknown): Promise<{ original: unknown; effective: unknown; tree: unknown; answeredBy: string | null }>;
   resource(reference: string): Promise<{ mediaType: string; data: string; sha256: string }>;
   /** Reads the recovery state; `reload` applies. `enable`, `disable` and `reset` need the terminal (`/omd`) or `omd-mod` and are refused for clients, so the read's `resettable` is informational. */
-  recovery(apply?: { action: 'enable' | 'disable' | 'reload' | 'reset'; target: string }): Promise<unknown>;
+  recovery(apply?: { action: 'reload'; target: string }): Promise<unknown>;
   request<T = unknown>(method: string, params?: unknown): Promise<T>;
   close(): void;
 }
@@ -62,5 +62,3 @@ export type UnsupportedElement = Error & { code: 'unsupported_element'; componen
 export function connect(options: ConnectOptions): Promise<Session>;
 /** Null when `drawable` lists the component's type and `renderer.formats` can show it, else an `unsupported_element` error naming the fallback text to draw. */
 export function unsupported(component: { type: string; id: string; alt?: string; text?: string; label?: string }, renderer: Renderer, drawable: string[]): UnsupportedElement | null;
-export function encodeFrame(opcode: number, payload: Uint8Array, masked: boolean): Uint8Array;
-export function frameReader(onMessage: (opcode: number, payload: Uint8Array) => void): (chunk: Uint8Array) => void;

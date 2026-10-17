@@ -1,14 +1,20 @@
 use crate::workspace_operations::WorkspaceAuthority;
+#[cfg(target_os = "macos")]
 use codex_network_proxy::ManagedNetworkSandboxContext;
 use codex_omd::data_store::Origin;
 use codex_omd::host::Authority;
 use codex_omd::host::Caller;
 use codex_omd::host::ExecAccess;
 use codex_omd::host::Host;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemAccessMode;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemPath;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemSandboxEntry;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
+#[cfg(target_os = "macos")]
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 use std::path::Path;
@@ -193,7 +199,6 @@ pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
     "turn_end",
     "tool_result",
     "workspace_change",
-    "workspace_write",
     "compaction_start",
     "compaction_end",
     "agent_end",

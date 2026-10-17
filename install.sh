@@ -12,7 +12,7 @@ if [ -z "$OMD_PYTHON" ]; then
   echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
   exit 1
 fi
-exec "$OMD_PYTHON" - "$@" <<'PY'
+exec "$OMD_PYTHON" -I - "$@" <<'PY'
 import argparse
 import fcntl
 import hashlib
@@ -40,9 +40,10 @@ UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
 POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta", "nightly"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
-RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
+RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
-UPSTREAM_MINOR = "0.162"
+UNINSTALL_JOURNAL = ".uninstall.json"
+UPSTREAM_MINOR = "0.163"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
@@ -75,7 +76,7 @@ def broker_deployed():
 
 
 def package(generation, upstream, bin_dir, *arguments):
-    return run([sys.executable, "-m", "scripts.lean_profiles", "--prefix", generation / "prefix",
+    return run([sys.executable, "-m", "scripts.profiles", "--prefix", generation / "prefix",
                 "--bin-dir", generation / "bin", *arguments],
                cwd=generation / "prefix/management", env=environment(upstream, bin_dir))
 
@@ -128,8 +129,7 @@ def environment(upstream, bin_dir):
     return values
 
 
-# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a
-# recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
+# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
 def first_passing(candidates, accept):
     errors = []
     for candidate in candidates:
@@ -189,7 +189,7 @@ def profile_choice(args):
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff\n"
                            "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
-                           "2) OMD+: also the first-party mod collection and staged plugin sources.\n"
+                           "2) OMD+: also the first-party mod collection and bundled plugins.\n"
                            "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
@@ -248,7 +248,7 @@ def extract(archive_path, destination):
         if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
             fail("release archive exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or ".." in Path(item.name).parts for item in members):
+               or any(part in ("", ".", "..") for part in item.name.split("/")) for item in members):
             fail("release archive contains an unsafe member")
         if any(item.size > MAX_MEMBER_BYTES for item in members):
             fail("release archive member exceeds byte limit")
@@ -286,6 +286,14 @@ def set_links(root, bin_dir):
     return displaced
 
 
+def path_warning(bin_dir):
+    located = shutil.which("codex")
+    if located and Path(located).parent.resolve() == bin_dir:
+        return None
+    return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
+            f"add this line to your shell profile and open a new shell: export PATH=\"{bin_dir}:$PATH\"")
+
+
 def restore_displaced(bin_dir):
     for name in LINKS:
         aside = bin_dir / f"{name}.before-omd"
@@ -309,14 +317,16 @@ def status(generation, upstream, bin_dir):
 
 
 def install(args, root, current):
+    if bool(args.asset_url) != bool(args.asset_sha256):
+        fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("This release candidate supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
+    manifest = None
     if not url:
-        listed = releases(args.releases_url or RELEASES_URL, channel=channel)
-        candidates = [item for item in listed if on_channel(channel, item)]
+        candidates = [item for item in releases(args.releases_url or RELEASES_URL, channel=channel) if on_channel(channel, item)]
         if not candidates:
             fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
         manifest = release_manifest(candidates[0])
@@ -324,15 +334,16 @@ def install(args, root, current):
             fail(f"release is built for {manifest['target']}")
         url, expected = manifest["url"], manifest["sha256"]
     profile = profile_choice(args)
-    upstream = upstream_binary(args, current, minor_of(manifest) if not args.asset_url and not RELEASE_URL else UPSTREAM_MINOR)
-    node = node_binary(args, manifest["node"]) if not args.asset_url and not RELEASE_URL else node_binary(args)
+    upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
+    node = node_binary(args, manifest["node"]) if manifest else node_binary(args)
     refuse_sessions(root, args.session)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
         download(url, expected, archive)
         result = transaction(args, root, current, archive, url, expected, profile, upstream, node)
-        _, record, _ = installation(root, pointer(root, "current"))
-        set_policy(root, record, "channel", channel)
+        _, record, store = installation(root, pointer(root, "current"))
+        if policy(store)["channel"] != channel:
+            set_policy(root, record, "channel", channel)
         print(json.dumps(result, indent=2))
 
 
@@ -365,8 +376,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         store = root / "stores" / profile
         journaled(root, generation, args.session, None if store.exists() else profile)
         generation.mkdir(parents=True)
-        command = [sys.executable, "-m", "scripts.lean_package", "install",
-                   "--archive", archive, "--sha256", expected, "--upstream", upstream["path"],
+        command = [sys.executable, "-m", "scripts.package", "install",
+                   "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
                    "--bin-dir", generation / "bin", "--store", store, "--node", node]
         if store.exists():
@@ -413,7 +424,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             if old in kept or not (old / "receipt.json").is_file():
                 continue
             try:
-                remove_generation(old, Path(upstream["path"]), args.bin_dir)
+                remove_generation(old, Path(upstream["path"]), args.bin_dir, "--keep-broker")
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
@@ -424,7 +435,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                 "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
                 "pruned": pruned, "prune_failures": failures,
-                **({"authority_broker": pinned} if pinned else {})}
+                **({"authority_broker": pinned} if pinned else {}),
+                **({"path_warning": warning} if (warning := path_warning(args.bin_dir)) else {})}
 
 
 def restore_store(generation, upstream, bin_dir):
@@ -462,11 +474,26 @@ def recover(args, root, current):
     journal.unlink()
 
 
-def remove_generation(generation, upstream, bin_dir):
-    package(generation, upstream, bin_dir, "uninstall", "--keep-broker")
-    (generation / "receipt.json").unlink()
-    (generation / "bin").rmdir()
-    generation.rmdir()
+def removing(generation):
+    prefix = generation / "prefix"
+    return (prefix / UNINSTALL_JOURNAL).is_file() or not prefix.is_dir() or not any(prefix.iterdir())
+
+
+# Once the package uninstall journals, the prefix holds only validated files and removal only rolls forward.
+def remove_generation(generation, upstream, bin_dir, *flags):
+    prefix = generation / "prefix"
+    if not removing(generation):
+        package(generation, upstream, bin_dir, "uninstall", *flags)
+    if (prefix / UNINSTALL_JOURNAL).is_file():
+        shutil.rmtree(prefix)
+    elif prefix.is_dir():
+        prefix.rmdir()
+    for name in LINKS:
+        (generation / "bin" / name).unlink(missing_ok=True)
+    (generation / "receipt.json").unlink(missing_ok=True)
+    for directory in (generation / "bin", generation):
+        if directory.is_dir():
+            directory.rmdir()
 
 
 def discard(generation, upstream, bin_dir):
@@ -509,6 +536,7 @@ def rollback(args, root, bin_dir, current):
         raise
     (root / "update/journal.json").unlink()
     settled(root, receipt(previous)["version"], held={"version": receipt(current)["version"]})
+    (root / "update/ready.json").unlink(missing_ok=True)
     pinned = repin(previous, current, upstream, bin_dir)
     print(json.dumps({"restored": str(previous), "version": receipt(previous).get("version"), "profile": target["profile"],
                       "profile_label": PROFILE_LABELS[target["profile"]],
@@ -526,31 +554,51 @@ def uninstall(args, root, bin_dir, current):
     generations = sorted((root / "releases").iterdir())
     generations = [item for item in generations if (item / "receipt.json").is_file()]
     for generation in generations:
-        status(generation, upstream, bin_dir)
+        if not removing(generation):
+            status(generation, upstream, bin_dir)
     failures = []
     for generation in [item for item in generations if item != current]:
         try:
-            remove_generation(generation, upstream, bin_dir)
+            remove_generation(generation, upstream, bin_dir, "--keep-broker")
         except (OSError, ValueError) as error:
             failures.append(f"{generation.name}: {error}")
     (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
+    write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
     restore_links(root, bin_dir)
     try:
-        package(current, upstream, bin_dir, "uninstall")
+        remove_generation(current, upstream, bin_dir)
     except BaseException:
-        set_links(root, bin_dir)
+        if not removing(current):
+            set_links(root, bin_dir)
+            (root / "update/journal.json").unlink()
         raise
-    (current / "receipt.json").unlink()
-    (current / "bin").rmdir()
-    current.rmdir()
-    (root / "current").unlink()
+    print(json.dumps(uninstalled(root) | {"restored_upstream": str(upstream)}, indent=2))
+
+
+def uninstalled(root):
+    (root / "current").unlink(missing_ok=True)
     for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
         shutil.rmtree(leftover, ignore_errors=True)
-    (root / ".install.lock").unlink(missing_ok=True)
-    print(json.dumps({"uninstalled": True, "restored_upstream": str(upstream),
-                      "preserved_stores": str(root / "stores")}, indent=2))
+    return {"uninstalled": True, "preserved_stores": str(root / "stores")}
+
+
+def resume_uninstall(args, root):
+    journal = root / "update/journal.json"
+    name = read_json(journal, {}).get("uninstall") if journal.exists() else None
+    if name is None:
+        return None
+    if not (isinstance(name, str) and re.fullmatch(r"[0-9a-f]{32}", name)):
+        fail("unrecognized uninstall journal")
+    generation = root / "releases" / name
+    if not removing(generation):
+        set_links(root, args.bin_dir)
+        journal.unlink()
+        return None
+    restore_links(root, args.bin_dir)
+    remove_generation(generation, None, args.bin_dir)
+    return uninstalled(root)
 
 
 def update_dir(root):
@@ -1031,9 +1079,10 @@ def main():
         parser.error("only update takes an action")
     args.root = args.root.expanduser().resolve()
     root = args.root
-    active = pointer(root, "current") if root.is_dir() else None
-    args.bin_dir = (args.bin_dir or Path(receipt(active).get("bin_dir") or Path.home() / ".local/bin") if active
-                    else args.bin_dir or Path.home() / ".local/bin").expanduser().resolve()
+    pending = read_json(root / "update/journal.json", {}) if root.is_dir() else {}
+    active = None if "uninstall" in pending or not root.is_dir() else pointer(root, "current")
+    recorded = pending.get("bin_dir") if "uninstall" in pending else receipt(active).get("bin_dir") if active else None
+    args.bin_dir = Path(args.bin_dir or recorded or Path.home() / ".local/bin").expanduser().resolve()
     if root == Path(root.anchor) or args.bin_dir == Path(args.bin_dir.anchor):
         fail("installation paths must not be filesystem roots")
     home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser().resolve()
@@ -1046,9 +1095,12 @@ def main():
         return tick(args, root, active)
     root.mkdir(parents=True, exist_ok=True)
     with flocked(root / ".install.lock", "Waiting for another Oh My Diff install or update to finish…"):
+        finished = resume_uninstall(args, root)
         current = pointer(root, "current")
         recover(args, root, current)
-        if args.command == "launch":
+        if args.command == "uninstall" and finished:
+            print(json.dumps(finished, indent=2))
+        elif args.command == "launch":
             if current:
                 launch(args, root, current)
         elif args.command == "update" and args.action != "rollback":

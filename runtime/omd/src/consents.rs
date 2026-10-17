@@ -17,9 +17,7 @@ pub struct Consent {
     pub id: String,
     pub owner: String,
     pub sha256: String,
-    /// Set when the consent was spent on a submission.
     pub client_id: Option<String>,
-    /// Set when the submitted message was committed to the thread.
     pub turn_id: Option<String>,
 }
 
@@ -35,7 +33,6 @@ fn token(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
-/// Runs `change` on the thread's consents under an exclusive file lock.
 fn with<T>(
     root: &Path,
     thread: &str,
@@ -97,7 +94,6 @@ pub fn grant(root: &Path, thread: &str, owner: &str, sha256: &str, id: &str) -> 
     })
 }
 
-/// Spends a pending consent on exactly this content and client message id.
 pub fn consume(
     root: &Path,
     thread: &str,
@@ -122,7 +118,6 @@ pub fn consume(
     })
 }
 
-/// Returns a consent to pending after the host established nothing was submitted.
 pub fn restore(root: &Path, thread: &str, id: &str) -> io::Result<()> {
     with(root, thread, |consents| {
         if let Some(consent) = consents.iter_mut().find(|consent| consent.id == id) {
@@ -132,7 +127,6 @@ pub fn restore(root: &Path, thread: &str, id: &str) -> io::Result<()> {
     })
 }
 
-/// Marks the consent spent on `client_id` as delivered once its message is committed.
 pub fn delivered(root: &Path, thread: &str, client_id: &str, turn_id: &str) -> io::Result<()> {
     if !token(thread)
         || !root
@@ -162,7 +156,6 @@ pub fn status(root: &Path, thread: &str, owner: &str, id: &str) -> io::Result<Op
         .find(|consent| consent.id == id && consent.owner == owner))
 }
 
-/// Keeps only the consents `keep` accepts and returns how many were dropped.
 pub fn retain(root: &Path, thread: &str, keep: impl Fn(&Consent) -> bool) -> io::Result<usize> {
     with(root, thread, |consents| {
         let before = consents.len();

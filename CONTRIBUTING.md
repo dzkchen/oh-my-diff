@@ -39,10 +39,10 @@ change.
 The patch is applied to a fresh copy of upstream Codex in a scratch folder. Edit there, then save the patch back:
 
 ```sh
-mise run batch setup my-change                                        # creates /private/tmp/omd-bmy-change/codex
-python3 scripts/batch_tree.py cargo my-change log test -p codex-omd FILTER
-python3 scripts/batch_tree.py sync my-change                          # writes runtime/patches and checks it applies
-python3 scripts/batch_tree.py locks my-change                         # updates the generated lock files
+python3 .github/scripts/build.py setup my-change    # creates /private/tmp/omd-bmy-change/codex
+python3 .github/scripts/build.py cargo my-change /private/tmp/omd-bmy-change/test.log test -p codex-omd FILTER
+python3 .github/scripts/build.py sync my-change     # writes runtime/patches and checks it applies
+python3 .github/scripts/build.py locks              # updates the generated lock files
 ```
 
 ## Open a pull request

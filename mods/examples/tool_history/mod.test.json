@@ -2,18 +2,18 @@
   "schema": 1,
   "host_operations": {
     "sessions.list": [
-      {"result": {"sessions": [{"session_id": "s", "revision": "r", "handle": "h"}]}},
-      {"result": {"sessions": [{"session_id": "s", "revision": "r", "handle": "h"}]}}
+      {"result": {"sessions": [{"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}], "cursor": null, "revision": "r", "scan_truncated": false, "unavailable": 0, "projection": "full"}},
+      {"result": {"sessions": [{"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}], "cursor": null, "revision": "r", "scan_truncated": false, "unavailable": 0, "projection": "full"}}
     ],
     "sessions.read": [
-      {"result": {"records": [{"kind": "message", "role": "user", "text": "Run it."}, {"kind": "tool_call", "name": "exec_command", "call_id": "c1", "arguments": "{}"}], "cursor": 2, "projection_truncated": false}},
-      {"result": {"records": [{"kind": "tool_result", "call_id": "c1", "output": "ok\nmore"}, {"kind": "tool_call", "name": "apply_patch", "call_id": "c2", "bytes": 9, "sha256": "00"}], "cursor": null, "projection_truncated": false}},
-      {"result": {"records": [{"kind": "tool_call", "name": "a", "call_id": "p1", "arguments": "{}"}], "cursor": 1, "projection_truncated": false}},
-      {"result": {"records": [{"kind": "tool_result", "call_id": "p1", "bytes": 5, "sha256": "00"}], "cursor": 2, "projection_truncated": false}},
-      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
-      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
-      {"result": {"records": [], "cursor": 2, "projection_truncated": false}},
-      {"result": {"records": [], "cursor": 2, "projection_truncated": true}}
+      {"result": {"records": [{"kind": "message", "role": "user", "text": "Run it.", "session_id": "s", "turn_id": "turn", "item": 1, "timestamp": null, "untrusted": true, "truncated": false, "redacted": false}, {"kind": "tool_call", "name": "exec_command", "call_id": "c1", "arguments": "{}", "session_id": "s", "turn_id": "turn", "item": 2, "timestamp": null, "untrusted": true, "truncated": false, "redacted": false}], "cursor": 2, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 387, "projection": "full"}},
+      {"result": {"records": [{"kind": "tool_result", "call_id": "c1", "output": "ok\nmore", "session_id": "s", "turn_id": "turn", "item": 3, "timestamp": null, "untrusted": true, "truncated": false, "redacted": false}, {"kind": "tool_call", "name": "apply_patch", "call_id": "c2", "bytes": 9, "sha256": "00", "session_id": "s", "turn_id": "turn", "item": 4, "timestamp": null, "untrusted": true}], "cursor": null, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 364, "projection": "full"}},
+      {"result": {"records": [{"kind": "tool_call", "name": "a", "call_id": "p1", "arguments": "{}", "session_id": "s", "turn_id": "turn", "item": 5, "timestamp": null, "untrusted": true, "truncated": false, "redacted": false}], "cursor": 1, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 196, "projection": "full"}},
+      {"result": {"records": [{"kind": "tool_result", "call_id": "p1", "bytes": 5, "sha256": "00", "session_id": "s", "turn_id": "turn", "item": 6, "timestamp": null, "untrusted": true}], "cursor": 2, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 155, "projection": "full"}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 0, "projection": "full"}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 0, "projection": "full"}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": false, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 0, "projection": "full"}},
+      {"result": {"records": [], "cursor": 2, "projection_truncated": true, "session": {"session_id": "s", "task_id": "t", "parent_id": null, "timestamp": "2026-01-01T00:00:00Z", "revision": "r", "handle": "h", "history_mode": "full", "inherited_history": false, "incomplete_tail": false}, "bytes": 0, "projection": "full"}}
     ]
   },
   "steps": [

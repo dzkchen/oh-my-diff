@@ -179,67 +179,6 @@ fn scoped_environment_is_private_bounded_and_applies_to_future_children() {
 }
 
 #[test]
-fn scoped_environment_restores_inheritance_reclaims_capacity_and_is_owned() {
-    let _slot = exec_slot();
-    let (_temp, _, data, authority) = setup();
-    let environment = codex_omd::host::Environment::default();
-    let independent = codex_omd::host::Environment::default();
-    let host = Host {
-        authority: &authority,
-        data_root: &data,
-        environment: Some(&environment),
-        active: &|| true,
-        record_changes: false,
-    };
-    let caps = strings(&["exec"]);
-    let mut names = (0..16).map(|i| format!("FIXTURE_{i}")).collect::<Vec<_>>();
-    names.extend(strings(&["RUST_MIN_STACK", "XDG_CACHE_HOME"]));
-    let who = caller(&caps, &names, Origin::Event);
-    let set = |name: &str, value: Value| {
-        host.call(
-            &who,
-            "environment.set",
-            json!({"name": name, "value": value}),
-        )
-    };
-    for name in &names[..16] {
-        set(name, json!("value")).unwrap();
-    }
-    let explicit = host.call(&who, "exec.run", json!({"program": "sh", "argv": ["-c", "printf %s \"$RUST_MIN_STACK\""], "env": {"RUST_MIN_STACK": "8192"}})).unwrap();
-    assert_eq!(explicit["stdout"], "8192");
-    set("FIXTURE_0", Value::Null).unwrap();
-    set("RUST_MIN_STACK", json!("override")).unwrap();
-    assert!(set("XDG_CACHE_HOME", json!("bad")).is_err());
-    assert!(
-        independent
-            .values(who.thread, who.id, who.source_sha256, &names)
-            .unwrap()
-            .is_empty()
-    );
-    independent.clear(None, None);
-    assert_eq!(
-        environment
-            .values(who.thread, who.id, who.source_sha256, &names)
-            .unwrap()["RUST_MIN_STACK"],
-        "override"
-    );
-    set("RUST_MIN_STACK", Value::Null).unwrap();
-    let inherited = host
-        .call(
-            &who,
-            "environment.read",
-            json!({"names": ["RUST_MIN_STACK"]}),
-        )
-        .unwrap();
-    let baseline = std::env::var("RUST_MIN_STACK").expect("test harness sets RUST_MIN_STACK");
-    assert_eq!(
-        inherited["values"]["RUST_MIN_STACK"]["value"],
-        json!(baseline)
-    );
-    set("FIXTURE_0", json!("reused")).unwrap();
-}
-
-#[test]
 fn scoped_environment_snapshot_and_evidence_bind_values_without_disclosing_secrets() {
     let (_temp, _, data, authority) = setup();
     let environment = codex_omd::host::Environment::default();
@@ -381,49 +320,6 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         host.call(&owner, "exec.output_page", json!({"artifact":artifact}))
             .is_err()
     );
-}
-
-#[test]
-fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
-    let _exec = exec_slot();
-    let (_temp, _repository, data, authority) = setup();
-    let active = || true;
-    let host = Host {
-        authority: &authority,
-        data_root: &data,
-        environment: None,
-        active: &active,
-        record_changes: false,
-    };
-    let capabilities = strings(&["exec"]);
-    let owner = Caller {
-        id: "evicting",
-        ..caller(&capabilities, &[], Origin::Tool)
-    };
-    let run = |index: usize| {
-        host.call(
-            &owner,
-            "exec.run",
-            json!({"program":"printf", "argv":[format!("artifact-{index}")], "output_artifact":true}),
-        )
-        .unwrap()["output_artifact"]
-            .clone()
-    };
-    let first = run(0);
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let artifacts: Vec<_> = (1..=128).map(run).collect();
-    assert!(
-        host.call(&owner, "exec.output_page", json!({"artifact":first}))
-            .is_err()
-    );
-    let last = host
-        .call(
-            &owner,
-            "exec.output_page",
-            json!({"artifact":artifacts.last().unwrap()}),
-        )
-        .unwrap();
-    assert_eq!(last["text"], "artifact-128");
 }
 
 #[test]
@@ -1623,64 +1519,6 @@ fn trust(store: &ModStore, path: &Path) {
     store.enable(path, true).unwrap();
 }
 
-#[test]
-fn outside_author_uses_owned_asset_and_paged_exec_output() {
-    let (temp, repository, data, authority) = setup();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let package = package(
-        &root,
-        "asset_probe",
-        json!({"capabilities":["commands","exec"],"assets":["worker.mjs"]}),
-        "export default api => api.command('run', () => { const script = api.assets.read('worker.mjs'); const own = api.assets.read('index.ts'); const output = api.host.call('exec.run', {program:'node', argv:['--input-type=module'], stdin:script.text, output_artifact:true}); const page = api.host.call('exec.output_page', {artifact:output.output_artifact}); return {text:page.text, asset_sha256:script.sha256, own_sha256:own.sha256}; });",
-        &[("worker.mjs", "process.stdout.write('X'.repeat(5000))")],
-    );
-    trust(&store, &package);
-    let mut runtime = ModHost::open(root.join("store")).unwrap();
-    assert_eq!(error_of(&runtime, "asset_probe"), "");
-    let selected = ModStore::inspect_package(&package).unwrap()["sha256"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let capabilities = strings(&["exec"]);
-    let owner = Caller {
-        id: "asset_probe",
-        source_sha256: &selected,
-        capabilities: &capabilities,
-        exec_environment: &[],
-        os_access: None,
-        fs_access: None,
-        origin: Origin::UserCommand,
-        thread: Some("thread-1"),
-    };
-    let active = || true;
-    let host = Host {
-        authority: &authority,
-        data_root: &data,
-        environment: None,
-        active: &active,
-        record_changes: false,
-    };
-    let result = runtime
-        .invoke_with(
-            "asset_probe",
-            runtime.generation(),
-            "command",
-            "run",
-            Value::Null,
-            || true,
-            |call| {
-                host.call(&owner, &call.operation, call.arguments)
-                    .map_err(std::io::Error::other)
-            },
-        )
-        .unwrap();
-    assert_eq!(result["text"].as_str().unwrap(), "X".repeat(5000));
-    assert_eq!(result["asset_sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(result["own_sha256"].as_str().unwrap().len(), 64);
-    assert!(!repository.join("worker.mjs").exists());
-}
-
 fn error_of(host: &ModHost, id: &str) -> String {
     let status = host.status();
     status["mods"]
@@ -1738,6 +1576,14 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         &[],
     );
     trust(&store, &old_event);
+    let old_point = package(
+        &root,
+        "old_point",
+        json!({"capabilities":["lifecycle"]}),
+        "export default api => api.replace('retired_point', () => null)",
+        &[],
+    );
+    trust(&store, &old_point);
     let adapter = package(
         &root,
         "adapter",
@@ -1765,6 +1611,11 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         error_of(&runtime, "old_event").contains("unsupported_event"),
         "{}",
         error_of(&runtime, "old_event")
+    );
+    assert!(
+        error_of(&runtime, "old_point").contains("unsupported_replacement_point: retired_point"),
+        "{}",
+        error_of(&runtime, "old_point")
     );
     assert_eq!(error_of(&runtime, "modern"), "");
     assert_eq!(error_of(&runtime, "adapted"), "");

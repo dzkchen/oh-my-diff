@@ -23,6 +23,10 @@ Changes apply at your next message. No restart needed.
 | `omd_model_picker` | A compact `/model` and reasoning-effort picker |
 | `omd_tool_lines` | One short line per tool call; open it for the full output |
 | `omd_plan_removal` | Removes `/plan` and plan mode |
+| `omd_plan_panel` | Pins Codex's current plan above the prompt |
+| `omd_statusline` | A configurable status line; `/statusline` edits it |
+| `omd_idle_compact` | Compacts a large idle conversation just before the prompt cache expires |
+| `omd_auto_continue` | Safely declines or answers a prompt nobody answers within two minutes, so the turn continues |
 
 OMD Core includes only the first three.
 
@@ -34,9 +38,10 @@ OMD Core includes only the first three.
 | `omd_frecency` | Ranks `@` file mentions by fuzzy match and how often you use them | |
 | `omd_privacy` | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | `omd_usage` | A usage display: context, cache, cost and quota (Alt+a) | |
+| `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Shows the errors each edit introduces; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
-| `omd_claude_cli` | Claude models in `codex`, using your Claude subscription | Claude CLI `2.1.285`, signed in to Pro or Max. Set up below. |
+| `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. Set up below. |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. Set up below. |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
@@ -73,8 +78,8 @@ Codex until you add them; see [plugins/README.md](../plugins/README.md).
 
 These come back in later updates:
 
-- First update after `1.0.0`: source knowledge, mini, plan panel, cursor, programmable context, continue, and an
-  account switcher and usage meter for `omd_profiles`.
+- First update after `1.0.0`: source knowledge, mini, cursor, programmable context, and an account switcher and
+  usage meter for `omd_profiles`.
 - Later: the other first-party mods and plugins, the browser and the bridge.
 
 OMD has no desktop app, VS Code extension, Linux build or hosted service.

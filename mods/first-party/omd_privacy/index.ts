@@ -164,25 +164,21 @@ function configure(settings: Readonly<Record<string, Json>>) {
     else if (kind === 'path' && value) exempt.paths.push(pathPattern(value));
     else exempt.ignored++;
   }
+  const known = { secrets: secrets.filter(name => name in SECRETS), pii: pii.filter(name => name in PII) };
   return {
-    rules: [...secrets.filter(name => name in SECRETS).map(name => [name, SECRETS[name]] as const),
-      ...pii.filter(name => name in PII).map(name => [name, PII[name]] as const)],
-    secrets: secrets.filter(name => name in SECRETS), pii: pii.filter(name => name in PII),
+    rules: [...known.secrets.map(name => [name, SECRETS[name]] as const), ...known.pii.map(name => [name, PII[name]] as const)],
+    ...known,
     unknown: [...secrets.filter(name => !(name in SECRETS)), ...pii.filter(name => !(name in PII))],
     scopes: strings(settings.scopes), paths: String(settings.paths), sensitive: strings(settings.sensitive_paths).map(pathPattern),
     unscanned: String(settings.unscanned), exempt,
   };
 }
 
-function bytes(value: string): Uint8Array {
-  const encoded = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-  return Uint8Array.from(encoded, character => character.charCodeAt(0));
-}
-
+const utf8 = new TextEncoder();
 const hex = (data: Uint8Array) => Array.from(data, item => item.toString(16).padStart(2, '0')).join('');
 
 async function sha256(value: string) {
-  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes(value) as BufferSource)));
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8.encode(value))));
 }
 
 function base32(data: Uint8Array) {
@@ -196,16 +192,6 @@ function base32(data: Uint8Array) {
   }
   return bits ? out + BASE32[buffer << (5 - bits) & 31] : out;
 }
-
-function utf8Length(text: string) {
-  let length = 0;
-  for (const character of text) {
-    const code = character.codePointAt(0)!;
-    length += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return length;
-}
-
 const scopeOf = (segment: FinalRequestSegment) => segment.kind.startsWith('tool_call.') || segment.kind === 'tool_output' ? 'tools'
   : segment.kind === 'user.text' || segment.kind === 'message.user' ? 'prompt' : segment.role === 'assistant' ? 'replies' : 'context';
 
@@ -227,7 +213,7 @@ function coalesce({ segment, own, taken }: Pending) {
   for (const edit of own) {
     const last = out[out.length - 1];
     const text = last ? last.text + segment.text.slice(last.end, edit.start) + edit.text : '';
-    if (last && utf8Length(text) <= 4096 && !taken.some(other => other.start <= edit.start && other.end >= last.end)) Object.assign(last, { end: edit.end, text });
+    if (last && utf8.encode(text).length <= 4096 && !taken.some(other => other.start <= edit.start && other.end >= last.end)) Object.assign(last, { end: edit.end, text });
     else out.push({ ...edit });
   }
   return out;
@@ -257,15 +243,15 @@ function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]
 export default function activate(api: ModAPI) {
   const load = (): Saved => {
     const value = api.state.get();
-    return value && typeof value === 'object' && !Array.isArray(value) ? JSON.parse(JSON.stringify(value)) as Saved : {};
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Saved : {};
   };
 
   api.intercept('model_send', { required: true }, async (page, next) => {
     if (!wellFormed(page)) return { deny: 'omd_privacy: malformed request page' };
     const inner = await next(page);
     const config = configure(api.settings);
-    const before = load();
     const saved = load();
+    const before = JSON.stringify(saved);
     const where = page.scope.kind;
     const refuse = (reason: string) => {
       saved.denied = (saved.denied ?? 0) + 1;
@@ -281,7 +267,7 @@ export default function activate(api: ModAPI) {
     const thread = page.scope.thread_id ?? 'internal';
     const ids = saved.ids ??= {};
     const mint = async (rule: string, value: string, fingerprint: string) => {
-      const full = base32(new Uint8Array(await crypto.subtle.sign('HMAC', key, bytes(`${thread}\0${rule}\0${value}`) as BufferSource)));
+      const full = base32(new Uint8Array(await crypto.subtle.sign('HMAC', key, utf8.encode(`${thread}\0${rule}\0${value}`))));
       let length = 12;
       while (ids[full.slice(0, length)] && ids[full.slice(0, length)] !== fingerprint && length < full.length) length += 4;
       const id = full.slice(0, length);
@@ -295,7 +281,7 @@ export default function activate(api: ModAPI) {
       const head = segment.before ?? '';
       const framed = head + segment.text + (segment.after ?? '');
       const context: Context = { exempt: config.exempt, before: head.length,
-        leftOpen: (segment.offset ?? 0) > head.length, rightOpen: utf8Length(segment.after ?? '') > 1020 };
+        leftOpen: (segment.offset ?? 0) > head.length, rightOpen: utf8.encode(segment.after ?? '').length > 1020 };
       const found = config.rules.flatMap(([rule, find]) => find(framed, context).map(([start, end]) => ({ rule, start, end })))
         .filter(({ start, end }) => end > start)
         .sort((a, b) => a.start - b.start || b.end - a.end);
@@ -350,15 +336,15 @@ export default function activate(api: ModAPI) {
     }
     const names = Object.keys(ids);
     for (const name of names.slice(0, Math.max(0, names.length - MAX_IDS))) delete ids[name];
-    if (JSON.stringify(saved) !== JSON.stringify(before)) api.state.set(saved as Json);
+    if (JSON.stringify(saved) !== before) api.state.set(saved as Json);
     return { edits: [...inner.edits, ...edits], ...(inner.cache === false ? { cache: false as const } : {}) };
   });
 
   api.middleware('approval', event => {
     const config = configure(api.settings);
-    if (config.paths === 'off' || !['exec', 'stdin', 'execve'].includes(event.kind)) return null;
+    if (config.paths === 'off' || !['exec', 'stdin'].includes(event.kind)) return null;
     const details = (event.details ?? {}) as Record<string, Json>;
-    const text = [details.command, details.argv, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
+    const text = [details.command, details.input].map(value => Array.isArray(value) ? value.map(String).join(' ') : typeof value === 'string' ? value : '').join(' ');
     const unchecked = event.kind === 'stdin' && typeof details.input !== 'string';
     const hit = pathHit(text, config.sensitive, config.exempt.paths);
     if (!hit && !unchecked) return null;

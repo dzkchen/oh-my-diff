@@ -3,13 +3,10 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    from scripts import install_support as support
-except ModuleNotFoundError:
-    import install_support as support
+from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = ROOT / "runtime/plugin-v1.lock.json"
+LOCK = ROOT / "runtime/plugins.lock.json"
 
 
 def build():
@@ -23,9 +20,14 @@ def build():
     plugins = {}
     for identifier in listed:
         manifest = json.loads((source / f"plugins/{identifier}/.codex-plugin/plugin.json").read_text())
+        descriptor = source / f"plugins/{identifier}/.codex-plugin/omd.json"
+        if descriptor.is_file():
+            component = json.loads(descriptor.read_text())
+            actual = support.package_digest(descriptor.parent.parent / component["component"])
+            if component["sha256"] != actual:
+                raise SystemExit(f"{descriptor.relative_to(ROOT)} pins {component['sha256']}; its component digest is {actual}")
         plugins[identifier] = {**lock["plugins"][identifier], "version": manifest["version"]}
-    files = sorted(path.relative_to(source).as_posix() for path in source.rglob("*")
-                   if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
+    files = support.plugin_inventory(source)
     return {
         **lock,
         "marketplace": marketplace["name"],
@@ -36,14 +38,8 @@ def build():
 
 
 def main():
-    text = json.dumps(build(), indent=2) + "\n"
-    if "--write" in sys.argv[1:]:
-        LOCK.write_text(text)
-        print(f"wrote {LOCK.relative_to(ROOT)}")
-    elif LOCK.read_text() != text:
-        raise SystemExit("bundled plugin lock is stale; rerun with --write after reviewing the sources")
-    else:
-        print("bundled plugin lock matches the pinned sources")
+    support.check_or_write(LOCK, json.dumps(build(), indent=2) + "\n", "--write" in sys.argv[1:],
+                           "bundled plugin lock is stale; rerun with --write after reviewing the sources")
 
 
 if __name__ == "__main__":

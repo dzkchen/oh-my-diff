@@ -59,3 +59,5 @@ Removing a plugin does not disable a mod component you trusted. Disable it too.
 
 - [Launch collection](../docs/collection.md)
 - Language server mods are not plugins. See [`mods/first-party`](../mods/first-party).
+- Changing a plugin: `release-files.json` lists every file that ships. Update it when you add or remove one, then
+  run `python3 -m scripts.plugin_lock --write`.

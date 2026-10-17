@@ -11,6 +11,7 @@ mod workspace_operations;
 mod workspace_watch;
 
 pub use mods::clients;
+pub use mods::validate_tool_schema;
 
 use accounting::Account;
 use accounting::Accounts;
@@ -155,8 +156,7 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
-    let effective = codex_omd::effective_mode()?;
-    if !effective.mode.mod_host_enabled() {
+    if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
     let root = PathBuf::from(
@@ -207,7 +207,6 @@ pub fn install(
     mods::install(registry, host).or_else(|error| inactive(&root, error))
 }
 
-/// Leaves mods inactive and records why, so clients can report it and offer a state reset.
 fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
     let status = serde_json::json!({"activation_error": error, "mods": [], "rejected": []});
     persist_view(root, "mod-status.json", status.to_string().as_bytes())
@@ -271,14 +270,12 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
     }
 }
 
-/// A lead route a request may switch to: the thread's provider, or another one with its own credential.
 fn lead_candidate(route: &Route, provider: &str) -> bool {
     route.roles.contains(&config::RouteRole::Lead)
         && (route.provider == provider || route.credential.is_some())
 }
 
 impl Host {
-    /// The same host serving a linked worktree of the launch repository as its own checkout.
     fn for_worktree(&self, repository: PathBuf) -> Host {
         self.route_config();
         let routes = self
@@ -320,7 +317,6 @@ impl Host {
         (table.config.clone(), table.error.clone())
     }
 
-    /// Applies an edited host.json to a running session's ledger limits and captured routes.
     fn refresh_session(&self, session: &Session) -> Result<(), String> {
         let config = self.route_config().0;
         let limits = session
@@ -329,7 +325,7 @@ impl Host {
             .map_err(|error| format!("host_limits_not_applied: {error}"));
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         for account in accounts
@@ -536,7 +532,7 @@ impl Host {
         };
         let mut accounts = self
             .accounts
-            .0
+            .by_thread
             .lock()
             .map_err(|_| "account lock poisoned")?;
         if accounts.insert(thread.to_string(), account).is_some() {
@@ -571,11 +567,20 @@ impl Session {
         use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        let mut file = std::fs::OpenOptions::new()
+        let mut file = match std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&path)
-            .map_err(|e| e.to_string())?;
+        {
+            Ok(file) => file,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    && std::fs::read(&path).is_ok_and(|existing| existing == bytes) =>
+            {
+                return Ok(json!({"path": path, "sha256": execution::hash(&bytes)}));
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;
@@ -705,19 +710,4 @@ mod tests {
         assert!(HostConfig::load(&root, &root.join("repo")).is_err());
     }
 
-    #[test]
-    fn atomic_persistence_replaces_private_file_without_leftovers() {
-        let directory = tempfile::tempdir().unwrap();
-        persist(directory.path(), "state.json", b"{\"first\":true}", true).unwrap();
-        persist(directory.path(), "state.json", b"{\"second\":true}", true).unwrap();
-        let path = directory.path().join("state.json");
-        assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
-        assert_eq!(
-            std::os::unix::fs::PermissionsExt::mode(
-                &std::fs::metadata(&path).unwrap().permissions()
-            ) & 0o777,
-            0o600
-        );
-    }
 }

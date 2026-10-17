@@ -6,8 +6,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter } from './router.mjs';
+import { callback } from '../../../tests/mod_runner.mjs';
+import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
 
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const route = (name, billing) => ({ name, model: `${name}/up`, provider: 'omd_profiles', reasoning: 'high', roles: ['lead'], billing, tools: [], available: true, credential: null });
 const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -39,25 +43,6 @@ test('provider tool aliases preserve colliding names and round-trip their origin
   const calls = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
   assert.deepEqual(calls.map(call => [call.namespace ?? '', call.name, call.type]),
     specs.map(spec => [spec.namespace ?? '', spec.name, spec.type === 'custom' ? 'custom_tool_call' : 'function_call']));
-});
-
-test('host cache breakpoints become cache_control on the marked system or context block', () => {
-  const body = { instructions: 'base', input: [
-    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'mod system' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'context one' }, { type: 'input_text', text: 'context two' }, { type: 'input_text', text: 'prompt' }] },
-  ] };
-  const ephemeral = { type: 'ephemeral' };
-  assert.deepEqual(breakpoint('1:1'), [1, 1]);
-  assert.equal(breakpoint('x'), null);
-  const anthropic = anthropicRequest(body, {}, breakpoint('1:1'));
-  assert.equal(anthropic.system, 'base\n\nmod system');
-  assert.deepEqual(anthropic.messages[0].content.map(part => part.cache_control ?? null), [null, ephemeral, null]);
-  assert.deepEqual(anthropicRequest(body, {}, [0, 0]).system, [{ type: 'text', text: 'base\n\nmod system', cache_control: ephemeral }]);
-  const chat = chatRequest(body, { cache_control: true }, [1, 0]);
-  assert.deepEqual(chat.messages[1].content[0], { type: 'text', text: 'context one', cache_control: ephemeral });
-  assert.deepEqual(chatRequest(body, {}, [1, 0]).messages.map(message => typeof message.content), ['string', 'string']);
-  const forked = { instructions: 'base', input: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'earlier answer' }] }, body.input[1]] };
-  assert.deepEqual(chatRequest(forked, { cache_control: true }, [0, 0]).messages[1].content, [{ type: 'text', text: 'earlier answer', cache_control: ephemeral }]);
 });
 
 test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
@@ -158,7 +143,7 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.equal(seen['/anthropic'].headers.authorization, undefined);
     assert.equal(seen['/anthropic'].body.system, 'sys\n\nrules');
     assert.deepEqual(seen['/anthropic'].body.messages.map(message => message.content.map(block => block.type)), [['text'], ['tool_use'], ['tool_result']]);
-    assert.deepEqual(seen['/anthropic'].body.thinking, { type: 'enabled', budget_tokens: 3072 });
+    assert.equal(seen['/anthropic'].body.thinking, undefined);
     const calls = anthropic.events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
     assert.deepEqual(calls.at(-1), { type: 'custom_tool_call', id: 't1', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' });
     assert.equal(anthropic.events.at(-1).response.usage.input_tokens, 15);
@@ -167,9 +152,99 @@ test('router adapts Responses requests to each protocol through the credential g
     assert.equal(anthropic.events.at(-1).response.model, 'claude-served-1');
     assert.equal(anthropic.events.at(-1).response.usage.output_tokens, 5);
     const thought = calls.find(item => item.type === 'reasoning');
-    assert.match(thought.encrypted_content, /^omd-thinking:d:/);
+    assert.match(thought.encrypted_content, /^omd-thinking:[0-9a-f]{16}:/);
     await ask('d/up', `Bearer ${token}`, [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
     assert.deepEqual(seen['/anthropic'].body.messages[1].content.slice(0, 2), [{ type: 'thinking', thinking: 'plan', signature: 'sig' }, { type: 'tool_use', id: 't1', name: 'apply_patch', input: { input: '*** Begin Patch' } }]);
+    assert.deepEqual(seen['/anthropic'].body.thinking, { type: 'enabled', budget_tokens: 3072 });
+  } finally {
+    child.kill();
+    gateway.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const replay = (make, events, tools = [{ type: 'function', name: 'exec_command' }, { type: 'custom', name: 'apply_patch' }]) => {
+  const sent = [];
+  const emitter = new Emitter(event => sent.push(event), toolTable({ tools }).reverse, 'response');
+  const feed = make(emitter);
+  events.forEach(feed);
+  return { emitter, sent, types: () => sent.map(event => event.type) };
+};
+const chatCall = (index, id, name, args) => ({ choices: [{ delta: { tool_calls: [{ index, id, function: { name, arguments: args } }] } }] });
+const anthropicCall = (index, id, name, json) => [{ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name } },
+  { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: json } }];
+
+test('output cut off at the limit ends incomplete and never emits a tool call', () => {
+  const chat = replay(chatEvents, [{ choices: [{ delta: { content: 'part' } }] }, chatCall(0, 'c1', 'apply_patch', '{"input":"rm .'), { choices: [{ finish_reason: 'length' }] }]);
+  const anthropic = replay(anthropicEvents, [...anthropicCall(0, 't1', 'exec_command', '{"cmd":"rm'), { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }, { type: 'message_stop' }]);
+  for (const run of [chat, anthropic]) {
+    run.emitter.finish({});
+    assert.ok(!run.types().includes('response.completed'));
+    assert.ok(!run.sent.some(event => event.item?.name));
+    assert.deepEqual(run.sent.at(-1).response.incomplete_details, { reason: 'max_output_tokens' });
+    assert.equal(run.sent.at(-1).type, 'response.incomplete');
+  }
+  assert.equal(chat.sent.find(event => event.item?.type === 'message' && event.type === 'response.output_item.done').item.content[0].text, 'part');
+});
+
+test('a batch with any unparseable tool arguments fails before any call is emitted', () => {
+  const chat = replay(chatEvents, [chatCall(0, 'c1', 'exec_command', '{"cmd":"ls"}'), chatCall(1, 'c2', 'apply_patch', '{"input":"rm .'), { choices: [{ finish_reason: 'tool_calls' }] }]);
+  const anthropic = replay(anthropicEvents, [...anthropicCall(0, 't1', 'exec_command', '{"cmd":"ls"}'), ...anthropicCall(1, 't2', 'exec_command', '{"cmd":'),
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' } }, { type: 'message_stop' }]);
+  for (const run of [chat, anthropic]) {
+    assert.throws(() => run.emitter.finish({}), { code: 'invalid_tool_arguments' });
+    assert.deepEqual(run.types(), ['response.created']);
+  }
+});
+
+test('reasoning from a credential replaced under the same profile name is not sent to the new account', async () => {
+  const seen = [];
+  const gateway = createServer(async (request, response) => {
+    let text = '';
+    for await (const chunk of request) text += chunk;
+    const [, , credential, ...rest] = request.url.split('/');
+    seen.push({ body: JSON.parse(text), credential });
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(sse(rest[0] === 'anthropic' ? [
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_stop', index: 0 }, { type: 'message_stop' }]
+      : [{ type: 'response.output_item.done', item: { type: 'reasoning', id: `rs-${credential}`, summary: [], encrypted_content: `enc-${credential}` } },
+        { type: 'response.completed', response: { id: 'r', usage: {} } }]));
+  });
+  const gatewayPort = await listen(gateway);
+  const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
+  const probe = createServer();
+  const port = await listen(probe);
+  await new Promise(resolve => probe.close(resolve));
+  const routePath = join(directory, 'route.json');
+  const table = credential => ({ port, profiles: {
+    'a/up': { name: 'a', protocol: 'responses', url: 'https://up.example/responses', model: 'up-model', credential, max_output: 4096 },
+    'd/up': { name: 'd', protocol: 'anthropic', url: 'https://up.example/anthropic', model: 'up-model', credential, max_output: 4096, reasoning: true } } });
+  writeFileSync(routePath, JSON.stringify(table('cred-1')));
+  const token = 'local-token-'.repeat(4);
+  const child = spawn(process.execPath, [router, 'serve', routePath], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${gatewayPort}/key` }, stdio: 'ignore' });
+  try {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.ok, () => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const ask = async (model, input, headers = {}) => {
+      const reply = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ model, input, stream: true, prompt_cache_key: model }) });
+      return { events: (await reply.text()).split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))), body: seen.at(-1).body };
+    };
+    const user = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] };
+    const thinking = body => body.messages.flatMap(message => message.content).filter(block => block.type === 'thinking');
+    const reasoning = (await ask('a/up', [user])).events.find(event => event.type === 'response.output_item.done').item;
+    const thought = (await ask('d/up', [user])).events.find(event => event.type === 'response.output_item.done' && event.item.type === 'reasoning').item;
+    assert.equal(thinking((await ask('d/up', [user, thought])).body).length, 1);
+    assert.ok((await ask('a/up', [user, reasoning], { 'x-omd-cache-breakpoint': '0:0' })).body.input.some(item => item.type === 'reasoning'));
+    writeFileSync(routePath, JSON.stringify(table('cred-2')));
+    assert.ok(!(await ask('a/up', [user, reasoning], { 'x-omd-cache-breakpoint': '0:0' })).body.input.some(item => item.type === 'reasoning'));
+    assert.ok(!(await ask('a/up', [user, reasoning])).body.input.some(item => item.type === 'reasoning'));
+    assert.equal(thinking((await ask('d/up', [user, thought])).body).length, 0);
   } finally {
     child.kill();
     gateway.close();
@@ -201,4 +276,49 @@ test('setup removing the last profile drops its route and service grant', () => 
   } finally {
     rmSync(store, { recursive: true, force: true });
   }
+});
+
+test('profile switches stay on the thread, ask before paid routes and report refusals', () => {
+  const calls = [];
+  let answer = 'accepted';
+  let updateError = null;
+  let selected = { route: route('paid', 'explicit_paid_api_grant'), effective_at: 'next_request' };
+  const invoke = (state, event, payload, name) => callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload, hook_budget_ms: 10000 }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    if (operation === 'routes.select') {
+      if (typeof selected === 'string') throw new Error(selected);
+      return selected;
+    }
+    if (operation === 'app.request' && updateError) throw new Error(updateError);
+    return { 'routes.list': [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant'), { ...route('other', 'included_subscription'), provider: 'openai' }],
+      'credentials.list': [{ id: 'cred-work', label: 'work', kind: 'chatgpt' }], 'terminal.prompt': { status: answer }, 'events.publish': { delivered: 1, dropped: 0 }, 'sidecars.status': { running: true },
+      'session.info': { thread_id: 'thread-1' }, 'app.request': {} }[operation];
+  });
+  let state = invoke(null, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'paid/up', provider: 'omd_profiles', reasoning: 'high' }).state;
+  assert.equal(state.current, 'paid');
+  assert.deepEqual(invoke(state, 'routing', { routes: [], model: 'gpt', provider: 'openai', reasoning: null }).value, null);
+  state = invoke(state, 'start', {}).state;
+  assert.deepEqual(state.profiles.map(profile => profile.name), ['work', 'paid']);
+  assert.match(invoke(state, 'command', '', 'profile').value.display, /^○ work · work\/up · subscription\n● paid · paid\/up · paid API$/);
+  answer = 'declined';
+  assert.equal(invoke(state, 'command', 'use paid', 'profile').value.display, 'Kept the current profile.');
+  answer = 'accepted';
+  state = invoke(state, 'command', 'use paid', 'profile').state;
+  assert.equal(state.pending, 'paid');
+  state = invoke(state, 'command', 'use work', 'profile').state;
+  assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args,
+    { method: 'thread/settings/update', params: { threadId: 'thread-1', model: 'work/up', effort: 'high' } });
+  assert.match(invoke({ ...state, ours: false }, 'command', 'use work', 'profile').value.display, /Start this thread/);
+  updateError = 'app_route_denied';
+  assert.equal(invoke({ ...state, pending: null }, 'command', 'use work', 'profile').value.display, 'Profile switch failed: app_route_denied');
+  updateError = null;
+  assert.equal(calls.filter(call => call.operation === 'terminal.prompt').length, 2);
+  state = invoke({ ...state, pending: 'paid' }, 'turn_start', { turn_id: 't1' }).state;
+  assert.ok(calls.some(call => call.operation === 'routes.select' && call.args.route === 'paid' && call.args.scope === 'thread'));
+  assert.deepEqual(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value, { status: ['profile paid'] });
+  selected = 'route_unavailable_for_thread: work';
+  state = invoke({ ...state, pending: 'work' }, 'turn_start', { turn_id: 't2' }).state;
+  assert.deepEqual(invoke(state, 'terminal', { event: 'redraw', ledger: null }).value, { status: ['profile switch failed'] });
+  assert.match(invoke(state, 'command', '', 'profile').value.display, /^Last switch failed: work: route_unavailable_for_thread: work\n/);
+  assert.deepEqual(invoke(state, 'intercept', { surface: 'model_request', input: {}, original: {}, origin: { caller: 'model' } }, '0').value.result, { deny: 'work: route_unavailable_for_thread: work' });
 });
