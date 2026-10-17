@@ -556,11 +556,7 @@ pub(in crate::mods) fn schedule(
         .timers
         .lock()
         .map_err(|_| "timer_state_poisoned")?;
-    let slot = (
-        lead.thread.to_string(),
-        caller.id.to_owned(),
-        key.clone(),
-    );
+    let slot = (lead.thread.to_string(), caller.id.to_owned(), key.clone());
     if !timers.contains_key(&slot)
         && timers
             .keys()

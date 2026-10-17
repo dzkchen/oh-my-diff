@@ -1,6 +1,6 @@
 # TypeScript mods
 
-The current pinned Codex `0.162.1` OMD host exposes API
+The current pinned Codex `0.163.0` OMD host exposes API
 `0.2.0-experimental.5` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages; Node 24.18 or a later 24.x also works. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or
@@ -11,8 +11,7 @@ on `PATH` and ships the `@oh-my-diff/mod-api@0.2.0-experimental.5` SDK with it;
 the SDK is not published to npm. See
 [REFERENCE.md](REFERENCE.md#api-02-host-primitives) for current generic API
 operations and command documentation. The current host accepts `OMD_MODE=omd`
-or `OMD_MODE=upstream_direct`; it rejects `OMD_MODE=enabled`,
-`OMD_MODE=platform`, and `OMD_CONTROLLED_MANIFEST`. Point the mod host at an
+or `OMD_MODE=upstream_direct` and rejects any other value. Point the mod host at an
 external store with `OMD_MOD_STORE=/absolute/external/mod-store`. Trusting and
 enabling a package does not grant a provider, select a workflow contract, or
 authorize spending.
@@ -111,8 +110,8 @@ and returns its `{tree, post, next_ms}`. Steps also cover
 interceptor chains, key, pointer and component interaction, clients, reloads
 and virtual time; see [Offline scenarios](REFERENCE.md#offline-scenarios).
 
-For a local host, initialize the external store with `omd-mod init STORE NODE`,
-then inspect, trust, enable, and reload a package through `omd-mod`. Run the
+For a local host, initialize the external store with `omd-mod init STORE NODE`
+(`omd-mod set-node STORE NODE` later points it at another Node binary), then inspect, trust, enable, and reload a package through `omd-mod`. Run the
 patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
 installer (`INSTALL.md` in the repository) stages first-party packages
 inactive except eleven default packages (`omd_auto_continue`, `omd_idle_compact`,

@@ -502,7 +502,7 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
   app_notification: { input: { method: string; params: Json; thread_id: string | null; coalesced: number; dropped: number }; output: void };
   app_server_request: { input: { method: string; request_id: Json; phase: 'requested' | 'resolved'; params: Json; resolution: Json }; output: void };
-  approval: { input: { id: string; kind: 'exec' | 'stdin' | 'execve' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip' | 'forbidden'; policy: string; details: Json; assessment: boolean }; output: null | { deny: string } | { ask: string } | { approve: string } };
+  approval: { input: { id: string; kind: 'exec' | 'stdin' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip' | 'forbidden'; policy: string; details: Json; assessment: boolean }; output: null | { deny: string } | { ask: string } | { approve: string } };
   approval_result: { input: { id: string; kind: string; decision: 'approved' | 'approved_for_session' | 'amended' | 'denied' | 'aborted' | 'timed_out'; source: 'user' | 'guardian' | 'hook' | 'mod' | 'policy'; mod?: string }; output: void };
   tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
@@ -512,7 +512,7 @@ export interface Events {
   timer: { input: { key: string }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
+  component_event: { input: { component: string; thread_id: string | null; kind: 'select' | 'activate' | 'find' | 'input' | 'resize' | 'change' | 'focus' | 'blur' | 'scroll' | 'pointer' | 'key' | 'open' | 'close';
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };

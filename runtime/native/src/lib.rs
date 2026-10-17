@@ -11,6 +11,7 @@ mod workspace_operations;
 mod workspace_watch;
 
 pub use mods::clients;
+pub use mods::validate_tool_schema;
 
 use accounting::Account;
 use accounting::Accounts;
@@ -155,8 +156,7 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
-    let effective = codex_omd::effective_mode()?;
-    if !effective.mode.mod_host_enabled() {
+    if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
     let root = PathBuf::from(

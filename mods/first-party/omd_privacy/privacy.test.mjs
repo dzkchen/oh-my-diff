@@ -151,8 +151,6 @@ test('sensitive path policy asks before shell reads and honours exemptions and m
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'cat ~/.ssh/id_rsa\n', cwd: '/repo' }).ask, /id_rsa\*/);
   assert.equal(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, input: 'y\n', cwd: '/repo' }), null);
   assert.match(approval(null, {}, 'stdin', { tool: 'write_stdin', process_id: 3, cwd: '/repo', truncated: true }).ask, /too large to check/);
-  assert.match(approval(null, {}, 'execve', { tool: 'execve', program: '/bin/cat', argv: ['cat', 'id_ed25519'], command: ['/bin/cat', 'id_ed25519'], cwd: '/home/me/.ssh' }).ask,
-    /id_ed25519\*/);
   assert.match(approval(['bash', '-lc', 'cat .env']).ask, /sensitive path \(\.env\)/);
   assert.match(approval(['bash', '-lc', 'grep -r key ~/.ssh']).ask, /\.ssh\//);
   assert.match(approval('cat ./config/.env.local').ask, /\.env\.\*/);

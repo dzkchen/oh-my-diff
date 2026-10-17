@@ -5,6 +5,7 @@ use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use codex_omd::load_managed;
+use codex_omd_extension::validate_tool_schema;
 use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
@@ -284,13 +285,13 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, path, backup] if command == "rollback" => {
             open(root)?.rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
         }
-        [command, root, node] if command == "set-node" => {
-            open(root)?.set_node(PathBuf::from(node))?;
-            Ok(Value::String("node updated".into()))
-        }
         [command, root, node] if command == "init" => {
             ModStore::create(PathBuf::from(root), PathBuf::from(node))?;
             Ok(Value::String("created".into()))
+        }
+        [command, root, node] if command == "set-node" => {
+            open(root)?.set_node(&PathBuf::from(node))?;
+            Ok(Value::String("updated".into()))
         }
         [command, path] if command == "inspect" => {
             ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
@@ -442,7 +443,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root] if command == "status" => {
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let terminal = host.terminal_view(
@@ -468,7 +469,9 @@ fn run(args: &[String]) -> io::Result<Value> {
             }
         }
         [command, root] if command == "report" => {
-            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            let status =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .status();
             Ok(
                 serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
                 .into_iter().flatten().map(|item| serde_json::json!({
@@ -479,11 +482,15 @@ fn run(args: &[String]) -> io::Result<Value> {
                 })).collect::<Vec<_>>() }),
             )
         }
-        [command, root] if command == "events" => {
-            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.author_inspection())
-        }
+        [command, root] if command == "events" => Ok(ModHost::open_validated(
+            PathBuf::from(root).canonicalize()?,
+            validate_tool_schema,
+        )?
+        .author_inspection()),
         [command, root] if command == "declarations" => {
-            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            let status =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .status();
             Ok(
                 serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
                 "installed_contracts":status["installed_contract_types"],
@@ -494,14 +501,16 @@ fn run(args: &[String]) -> io::Result<Value> {
             let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());
             host.offline_test(scenario)
         }
         [command, root, output] if command == "diagnostics" => {
-            let bundle = ModHost::open(PathBuf::from(root).canonicalize()?)?.diagnostic_bundle();
+            let bundle =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .diagnostic_bundle();
             let output = PathBuf::from(output);
             std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -512,7 +521,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         {
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());

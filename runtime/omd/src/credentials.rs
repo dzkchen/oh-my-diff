@@ -397,7 +397,13 @@ impl CredentialProfiles {
         if value.is_empty() || value.len() > SECRET_BYTES {
             return Err(failure("credential_secret_invalid"));
         }
-        self.replace(id, "secret", value, |kind| kind == "secret", "credential_secret_invalid")
+        self.replace(
+            id,
+            "secret",
+            value,
+            |kind| kind == "secret",
+            "credential_secret_invalid",
+        )
     }
 
     /// Publishes a profile's credential file whole, with private permissions, under the profile lock.
@@ -437,7 +443,13 @@ impl CredentialProfiles {
         if auth.len() > 65_536 || serde_json::from_str::<serde_json::Value>(auth).is_err() {
             return Err(failure("credential_auth_invalid"));
         }
-        self.replace(id, "auth.json", auth, |kind| kind != "secret", "credential_auth_invalid")
+        self.replace(
+            id,
+            "auth.json",
+            auth,
+            |kind| kind != "secret",
+            "credential_auth_invalid",
+        )
     }
 
     pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {

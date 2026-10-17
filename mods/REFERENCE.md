@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.1`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
 loads. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
@@ -61,8 +61,7 @@ The host is feature-agnostic: every operation, event and capability below is
 available to any trusted mod on equal terms, and none of them names a product
 feature. `OMD_MODE=omd` runs the mod host in the default session;
 `OMD_MODE=upstream_direct` (or no `OMD_MODE`) runs pinned upstream behavior
-without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
-`OMD_CONTROLLED_MANIFEST` are rejected with a message naming `OMD_MODE=omd`.
+without mods. Any other `OMD_MODE` value is rejected.
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
@@ -139,7 +138,7 @@ wider scope needs a new trust:
   external network (`network: false` runs them under a profile that denies IP
   networking only). It needs `exec`.
 - `approves: {kinds, tools?, roots?, hosts?}` lists the request kinds a mod may
-  approve (`exec`, `stdin`, `execve`, `patch`, `mcp_tool`, `network`) and
+  approve (`exec`, `stdin`, `patch`, `mcp_tool`, `network`) and
   optional scopes: `tools` matches the command's program (the first word inside
   an `sh`, `bash` or `zsh` `-c`/`-lc` wrapper) as written, where a bare name or
   `prefix*` also matches an absolute path that `PATH` resolves that name to
@@ -1808,8 +1807,10 @@ interaction; `component_event` also reports, to the component's owner only and
 with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
-and dialogs (`ui_composition_v1`). These events wait in order behind a slow
-callback; beyond 256 waiting events new ones are dropped and the next delivered
+and dialogs (`ui_composition_v1`). Every `component_event` carries the
+`thread_id` of the session thread it came from (null before the session has one),
+and a `state_scope: "thread"` owner's callback runs with that thread's state.
+These events wait in order behind a slow callback; beyond 256 waiting events new ones are dropped and the next delivered
 event reports the count as `dropped`.
 
 Component modules (experimental, required feature `component_modules_v1`,
@@ -2720,8 +2721,7 @@ reject cancellation, changed source, originating generation or client context.
 An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
-failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`
-when a mod provides it.
+failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path.
 
 ### Dynamic tools (`dynamic_tools_v1`)
 
@@ -3252,7 +3252,10 @@ replies), tool outcomes and agent
 lifecycle, reload at a safe boundary, mount a terminal view, and interact with
 a mounted key or component ID. Component interaction activates buttons, inputs,
 and selectors with an optional `value`; copy actions return without touching the
-system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`.
+system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`,
+and `thread_id` to run in that thread when its payload names none (thread-scoped
+state, timers and component events follow it; the `THREAD` argument of
+`omd-mod test` binds every step and takes precedence).
 Additional trusted packages are listed in `packages`, enabling provider/consumer
 and conflict fixtures without shared globals or ambient authority. `tiers` maps
 loaded mod IDs to `prepend` or `append` and runs them as

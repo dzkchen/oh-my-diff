@@ -313,16 +313,15 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
     ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
-fn inspect_package(
-    path: &Path,
-    collect_assets: bool,
-) -> Result<(
+type InspectedPackage = (
     ModPackage,
     String,
     String,
     BTreeMap<String, String>,
     Vec<(PathBuf, FileStamp)>,
-)> {
+);
+
+fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
@@ -541,14 +540,18 @@ impl ModStore {
     }
 
     /// Points the store at another `node` binary, authorizing it as the runner when the broker is deployed.
-    pub fn set_node(&self, node: PathBuf) -> Result<()> {
+    pub fn set_node(&self, node: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         let node = node.canonicalize()?;
         if !node.is_file() {
             return Err(failure("node_unavailable"));
         }
-        let _lock = self.lock()?;
-        self.recover_package_transaction()?;
         let mut config = self.configuration()?;
+        // The same path still needs a fresh grant after an in-place Node upgrade.
+        if config.node == node && self.verified_node(&node).is_ok() {
+            return Ok(());
+        }
         config.node = node;
         config.revision = config
             .revision

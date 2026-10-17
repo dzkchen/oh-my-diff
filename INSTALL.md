@@ -12,14 +12,14 @@ extensions; OMD+ also contains the selected first-party collection.
 The selectors are internal names; the public labels and status metadata use
 OMD Core and OMD+.
 
-These are local Apple Silicon profiles for the active Codex `0.162.1`
+These are local Apple Silicon profiles for the active Codex `0.163.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `codex-code-mode-host`, `omd-mod`, `omd`, `omd-contract` and `omd-broker`
 executables from `upstream.lock.json` and `runtime/patches/manifest.json`: check
 out the pinned Codex tag, run `scripts/normalize_upstream_lock.py` and
 `scripts/apply_runtime_patch.py` on it, `cargo build --release` the six binaries,
 and sign and pack them with `scripts/release_lock.py`. Use Node 24.18 or a
-later 24.x (`mise which node`); any upstream Codex `0.162.x` serves as the
+later 24.x (`mise which node`); any upstream Codex `0.163.x` serves as the
 fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod, the `omd_mods`
 control screen and the `omd_update` update notices. It does not change
@@ -92,7 +92,7 @@ the privacy policy, the usage HUD and `/continue` (`omd_claude_cli`, `omd_lsp_sy
 disabled. Advisor every-turn selection requires its own explicit host policy and allowance;
 installation does not activate it. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and settings, replaces changed first-party package sources with the new release's (re-trusted, and
+selections and settings, points it at the new installation's Node, replaces changed first-party package sources with the new release's (re-trusted, and
 re-enabled when they were on, also when an earlier attempt stopped between replacing and re-trusting), and adds
 newly bundled first-party packages disabled. Each installation keeps a copy of
 its first-party sources, so a rollback or an interrupted update restores the store to the active installation's.
@@ -159,8 +159,7 @@ secrets and the PII rules you select become stable opaque placeholders in every
 provider-bound request, and shell reads of sensitive paths ask first; `/privacy`
 shows the rules and counts ([details](mods/first-party/omd_privacy/README.md)).
 
-`OMD_CONTROLLED_MANIFEST` fails closed on the current host. Configure routes and grants in
-the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
+Configure routes and grants in the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
 with `omd-contract`. Enabling the mod does not select a contract or grant a
 provider. The workflow has local synthetic coverage; installed-profile and
 live-provider qualification remain separate gates.
@@ -284,6 +283,15 @@ still run with that authority. Scanning, integrity checks, signatures and
 inclusion in the directory do not make a mod safe, and a trusted service
 provider acts with its own authority for any caller.
 
+## Installing with install.sh
+
+`sh install.sh --profile platform|full` (with `--asset-url` and `--asset-sha256` until a release is published)
+installs into `--root` (default `~/.local/share/oh-my-diff`) and links `codex`, `omd`, `omd-mod`, `omd-package`,
+`omd-mod-author` and `omd-contract` into `--bin-dir` (default `~/.local/bin`, which a default macOS `PATH` does not
+include). Keep the upstream `codex` (for example Homebrew's in `/opt/homebrew/bin`) outside `--bin-dir` and put
+`--bin-dir` before it on `PATH`, or `codex` keeps starting upstream. When it doesn't come first, the install result's
+`path_warning` gives the `export PATH=…` line to add to your shell profile.
+
 ## Updates
 
 Installations made with `install.sh` update themselves through the same verified transaction. Each release on
@@ -291,7 +299,9 @@ GitHub (`dzkchen/oh-my-diff`, tag `vVERSION`) carries the archive and the `omd-r
 `scripts.package pack` writes beside it: version, target, upstream Codex tag, mod API, Node and archive SHA-256. A
 release is compatible when its target matches, its Codex minor matches your upstream `codex` and your Node satisfies
 it; the newest compatible release on your channel is offered, and a newer incompatible one is reported with its
-requirement. Until a release is published, checks report that none is available.
+requirement. A channel with no published release reports that none is available.
+GitHub checks discover version tags and fetch at most five candidate releases and five manifests;
+an exact pin looks up its tag directly, so nightly history does not hide older stable or beta versions.
 
 ```sh
 omd update                      # install the newest compatible release (or the pinned one)
@@ -299,11 +309,21 @@ omd update status               # installed and available versions, policy, open
 omd update check                # check now, ignoring the cadence
 omd update enable | disable     # automatic updates (off by default)
 omd update checks on|off        # background checks (on by default)
-omd update channel stable|beta  # beta also offers GitHub pre-releases
+omd update channel stable|beta|nightly
 omd update cadence daily|weekly
 omd update pin VERSION|none     # hold an exact version
 omd update rollback             # return to the previous installation
 ```
+
+Stable offers tagged stable releases; beta includes tagged prereleases and excludes nightly builds.
+Nightly is a separate opt-in channel for builds that passed hosted validation. Install it with
+`sh install.sh --channel nightly --profile platform` (OMD Core) or `--profile full` (OMD+), or switch an
+existing installation with `omd update channel nightly`. The archive and release manifest carry matching
+versions and SHA-256 checksums. Automatic updates remain off until you enable them. Switch back with
+`omd update channel stable`; `omd update rollback` restores the previous installation.
+Re-running `install.sh` keeps the saved channel unless `--channel` is supplied; `--channel stable`
+also saves stable policy. Channel changes can select another build of the same base version, but
+do not offer older base versions; an exact pin can deliberately select an older release.
 
 The launcher starts a detached check at most once per cadence and never waits for it; the result is cached in
 `ROOT/update/state.json` and shown by the `omd_update` mod (`/update`, and once a day in a fresh session's welcome

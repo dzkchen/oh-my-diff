@@ -430,8 +430,16 @@ impl Broker {
         }
         // Store and anchor state is keyed by path, so only the path's owner may name it; a stream not
         // written yet belongs to its directory's owner.
-        for (field, refused) in [("store", "authority_store_unowned"), ("stream", "authority_stream_unowned")] {
-            let Some(path) = request.arguments.get(field).and_then(Value::as_str).map(Path::new) else {
+        for (field, refused) in [
+            ("store", "authority_store_unowned"),
+            ("stream", "authority_stream_unowned"),
+        ] {
+            let Some(path) = request
+                .arguments
+                .get(field)
+                .and_then(Value::as_str)
+                .map(Path::new)
+            else {
                 continue;
             };
             let metadata = fs::metadata(path).or_else(|error| match path.parent() {
@@ -441,12 +449,21 @@ impl Broker {
                 _ => Err(error),
             });
             let uid = platform::peer_uid(peer);
-            if !metadata.is_ok_and(|metadata| Some(std::os::unix::fs::MetadataExt::uid(&metadata)) == uid) {
+            if !metadata
+                .is_ok_and(|metadata| Some(std::os::unix::fs::MetadataExt::uid(&metadata)) == uid)
+            {
                 return Err(failure(refused));
             }
             // The first owner to name a path keeps its state, so a path deleted and recreated by another user is refused.
-            let directory = crate::workspace::private_path(&self.root, &["owners"], "authority_directory_invalid")?;
-            let record = directory.join(format!("{field}-{}.json", sha256(path.as_os_str().as_encoded_bytes())));
+            let directory = crate::workspace::private_path(
+                &self.root,
+                &["owners"],
+                "authority_directory_invalid",
+            )?;
+            let record = directory.join(format!(
+                "{field}-{}.json",
+                sha256(path.as_os_str().as_encoded_bytes())
+            ));
             match read_json(&record, Value::Null)? {
                 Value::Null => write_private(&record, &json!(uid))?,
                 owner if owner != json!(uid) => return Err(failure(refused)),
@@ -674,8 +691,12 @@ impl Broker {
             }
             "anchor.get" | "anchor.append" | "anchor.seed" => {
                 let stream = text(&arguments, "stream")?;
-                let path = crate::workspace::private_path(&self.root, &["anchors"], "authority_directory_invalid")?
-                    .join(format!("{}.json", sha256(stream.as_bytes())));
+                let path = crate::workspace::private_path(
+                    &self.root,
+                    &["anchors"],
+                    "authority_directory_invalid",
+                )?
+                .join(format!("{}.json", sha256(stream.as_bytes())));
                 let mut anchor = read_json(
                     &path,
                     json!({"stream": stream, "count": 0, "head": "", "last": null}),

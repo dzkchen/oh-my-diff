@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import types
+import urllib.error
 import unittest
 from unittest.mock import patch
 
@@ -85,6 +86,69 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(sorted(reversed(ordered), key=self.module.version_key), ordered)
         self.assertIsNone(self.module.version_key("v1.0"))
 
+    def test_nightly_is_explicit_and_cached_nightlies_follow_channel_changes(self):
+        self.published = [release("0.1.0-nightly.20261009070000.100.1", prerelease=True),
+                          release("0.1.0-nightly.20261008070000.99.1", prerelease=True),
+                          release("0.2.0-beta.1", prerelease=True), release("0.1.1")]
+        self.assertEqual(self.check()["available"]["version"], "0.1.1")
+        self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
+        self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
+
+    def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
+        self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
+        self.settings = {"channel": "nightly"}
+        self.write_settings()
+        for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
+            with self.subTest(channel=channel):
+                args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
+                                             channel=channel, session=None)
+                with patch.object(self.module.platform, "system", return_value="Darwin"), \
+                        patch.object(self.module.platform, "machine", return_value="arm64"), \
+                        patch.object(self.module, "profile_choice", return_value="platform"), \
+                        patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
+                        patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
+                        patch("builtins.print"):
+                    self.module.install(args, self.root, self.current)
+                expected = self.published[0 if selected == "nightly" else 1]
+                self.assertEqual(download.call_args.args[0], expected["assets"][1]["browser_download_url"])
+                self.assertEqual([call.args[-2:] for call in policy.call_args_list], saved)
+
+    def test_channel_changes_reject_older_bases_and_allow_same_base_transitions(self):
+        for channel, candidate, installed, expected in (
+                ("nightly", "0.1.0-nightly.20261008.99.1", "0.2.0", False),
+                ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0", True),
+                ("beta", "0.2.0-beta.1", "0.2.0-nightly.20261008.99.1", True),
+                ("beta", "0.1.0-beta.1", "0.2.0-nightly.20261008.99.1", False),
+                ("stable", "0.2.0", "0.2.0-nightly.20261008.99.1", True),
+                ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0-nightly.20261009.100.1", False)):
+            with self.subTest(channel=channel, candidate=candidate, installed=installed):
+                self.assertEqual(self.module.eligible({"channel": channel},
+                                                     {"version": candidate, "prerelease": "-" in candidate}, installed), expected)
+
+    def test_old_pins_and_beta_releases_are_not_hidden_by_stable_or_nightly_history(self):
+        url = "https://api.github.com/repos/example/omd/releases?per_page=20"
+        versions = ["0.3.0-beta.1", "0.2.0", "0.1.0"]
+        refs = [{"ref": f"refs/tags/v0.4.0-nightly.20261008.{number}.1"} for number in range(300)]
+        refs += [{"ref": f"refs/tags/v{version}"} for version in versions]
+        def fetch(address, limit):
+            if "/git/matching-refs/" in address:
+                return refs
+            if "/releases/tags/" in address:
+                version = address.rsplit("/v", 1)[1]
+                if version == "0.9.9":
+                    raise urllib.error.HTTPError(address, 404, "not found", {}, None)
+                return release(version, prerelease="-" in version)
+            self.fail(f"unexpected history scan: {address}")
+        with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
+            self.assertEqual([item["version"] for item in self.module.releases(url, channel="beta")], versions)
+            self.assertEqual(fetched.call_count, 4)
+            fetched.reset_mock()
+            self.assertEqual(self.module.releases(url, pin="0.1.0")[0]["version"], "0.1.0")
+            self.assertEqual(fetched.call_count, 1)
+            self.assertEqual(self.module.releases(url, pin="0.9.9"), [])
+            with self.assertRaisesRegex(ValueError, "pinned version is malformed"):
+                self.module.releases(url, pin="bad pin")
+
     def test_installer_accepts_the_pinned_upstream_minor(self):
         module = installer()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
@@ -102,6 +166,19 @@ class UpdateSelection(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, "upstream Codex"):
                         module.upstream_binary(args, None, module.UPSTREAM_MINOR)
+
+    def test_install_warns_when_upstream_codex_precedes_the_launcher(self):
+        upstream, bin_dir = self.root / "upstream", self.root / "bin"
+        for directory in (upstream, bin_dir):
+            directory.mkdir()
+            (directory / "codex").write_text("#!/bin/sh\n")
+            (directory / "codex").chmod(0o755)
+        with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
+            warning = self.module.path_warning(bin_dir)
+        self.assertIn(str(upstream / "codex"), warning)
+        self.assertIn(f'export PATH="{bin_dir}:$PATH"', warning)
+        with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
+            self.assertIsNone(self.module.path_warning(bin_dir))
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):

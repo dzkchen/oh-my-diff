@@ -16,7 +16,7 @@ const GIT = '/repo/.git/worktrees/line\n/repo/.git\n/work/line\n@@\ngit@github.c
 
 const host = (overrides = {}) => ({ operation, arguments: args }) => {
   if (operation in overrides) return overrides[operation](args);
-  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.162.1', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
+  if (operation === 'session.info') return { thread_id: 'lead', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: 'gpt-6.1-sol', provider: 'openai', route: null, turns_started: 0 };
   if (operation === 'app.request' && args.method === 'config/read') return { config: { model_reasoning_effort: 'high', model_context_window: 272_000 } };
   if (operation === 'app.request' && args.method === 'account/rateLimits/read') {
     return { rateLimits: { primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: (NOW + 7_200_000) / 1000 }, secondary: { usedPercent: 93, windowDurationMins: 10_080, resetsAt: (NOW + 86_400_000) / 1000 } } };
