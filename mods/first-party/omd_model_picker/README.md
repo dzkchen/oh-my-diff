@@ -1,10 +1,22 @@
 # omd_model_picker
 
-Default-active in OMD+. It redraws the `/model` and reasoning-effort pickers as
-compact lists with the current choice marked, keeping the native selection and
-keyboard behavior. When `omd_profiles` is enabled it lists the profiles below the
-models; switch with `/profile use NAME`.
+Shows the `/model` and reasoning-effort pickers as compact lists with your current choice marked.
 
-Settings: `layout` (`compact` or `native`, which leaves the pickers untouched)
-and `brand` (title prefix). Capabilities: `terminal` (`list` replacement),
-`events`, `store`.
+## Turn it off
+
+It is on by default in OMD+. Turn it off in `/mods`, or run:
+
+```sh
+omd-package mod disable omd_model_picker
+```
+
+## Use it
+
+Open `/model` as usual. Selection and keys work as before. With `omd_profiles` on, your profiles are listed under the models. `/profile use NAME` switches.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `layout` | `compact` | `native` leaves the pickers as Codex draws them. |
+| `brand` | `oh my diff` | Text before the picker title. Empty hides it. |

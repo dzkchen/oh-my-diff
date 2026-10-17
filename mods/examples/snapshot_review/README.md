@@ -1,7 +1,23 @@
-# Frozen snapshot review example
+# Snapshot review example
 
-This independent-author API `0.2.0-experimental.5` fixture demonstrates reusable snapshot capture, sandboxed commands, full visible parent history, selected tool-history evidence, structured agent failures, argument-scoped restrictions and durable contract receipts and allowance. It loads no first-party mod and defines its own schema-2 contract.
+Captures a frozen copy of the workspace, checks it in a sandbox, has a separate read-only agent inspect it, and keeps the contract receipts across a restart. It's an independent-author API `0.2.0-experimental.5` mod that loads no first-party mod and defines its own schema-2 contract, `snapshot_review@1`.
 
-Install it with `omd-mod`, grant its declared capabilities and a schema-2 contract selection, then invoke its command in an `OMD_MODE=omd` session with no first-party mods enabled. `failure` surfaces an HTTP 503 through both `agents.wait` and `agent_end`; `resume` restarts the session and completes from saved receipts, restrictions and consumed requests; `snapshot` runs the same inspection without a restart.
+## Try it
 
-The captured command reads frozen source, rejects reading the parent source by absolute path, and writes generated output only inside its disposable workspace. Its host-recorded result attests a receipt. A read-only agent receives preserved tool history and the selected snapshot. A scoped restriction blocks writable agents while allowing inspection. These are local protocol and isolation checks, not model-quality, real-provider or release qualification.
+1. Install it with `omd-mod` and grant its declared capabilities.
+2. Select the `snapshot_review@1` contract.
+3. Set `denied_source` to an absolute path outside the workspace. The check must fail to read it.
+4. Add a model route named `inspector` to `host.json`.
+5. In an `OMD_MODE=omd` session with no first-party mods enabled, have the agent call its tools:
+   - `capture`: snapshot the workspace, run the check, submit a command receipt and restrict writable agents.
+   - `start` and `finish`: run the read-only inspection, then submit its receipt.
+   - `fail`, `failed` and `failure_event`: start an agent on a fixture route that returns a transport error, then verify the structured failure through `agents.wait` and `agent_end`.
+   - `complete`: after a restart, verify the saved receipts, restriction and allowance, then request completion.
+
+## What it shows
+
+- The check reads frozen source, can't read the parent source by absolute path, and writes only inside its disposable workspace. The host-recorded result backs a receipt.
+- A read-only agent gets preserved tool history and the selected snapshot.
+- A scoped restriction blocks writable agents but allows inspection.
+
+It's a local demonstration, not a check of model quality or a real provider.

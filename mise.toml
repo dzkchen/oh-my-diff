@@ -1,4 +1,5 @@
 [tools]
+git-cliff = "2.14.2"
 node = "24.18.0"
 
 [tasks."mods:check"]
@@ -13,18 +14,8 @@ run = "pnpm --dir mods test"
 [tasks."mods:host-check"]
 run = "python3 scripts/mod_host_check.py"
 
-[tasks."mods:package"]
-run = "pnpm --dir mods package"
+[tasks."release"]
+run = "python3 scripts/release.py prepare"
 
-[tasks."mods:extension-types"]
-run = "python3 -m scripts.mod_extension_types"
-
-[tasks."mods:author-acceptance"]
-run = "python3 scripts/mod_author_acceptance.py"
-
-[tasks."integration:matrix"]
-run = "python3 -m scripts.integration_matrix"
-
-[tasks."release:evidence"]
-description = "Require current-revision execution receipts for all release-critical evidence"
-run = "python3 -m scripts.execution_evidence --release"
+[tasks."release:check"]
+run = "python3 scripts/release.py check"

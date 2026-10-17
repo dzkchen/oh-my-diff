@@ -32,7 +32,7 @@ UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/mods_lock.py", "runtime/mods.lock.json",
-                    "upstream.lock.json", "INSTALL.md", "install.sh")
+                    "upstream.lock.json", "docs/install.md", "install.sh")
 
 
 def invoke(*arguments):
@@ -195,6 +195,7 @@ def check(record, bin_dir):
     manager = Path(record["manager"]["installed_path"])
     for path, expected in ((binary, record["binary"]["sha256"]),
                            (Path(record["code_mode_host"]["installed_path"]), record["code_mode_host"]["sha256"]),
+                           (Path(record["broker"]["installed_path"]), record["broker"]["sha256"]),
                            (manager, record["manager"]["sha256"])):
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed artifact changed: {path}")
@@ -474,7 +475,7 @@ def install(args):
             management_files[name] = support.digest(target)
         installed_manager = artifacts / "omd-mod"
         if authority_broker.deployed():
-            authority_broker.main(["pin", "--add", *(f"--pin={path}" for path in (
+            authority_broker.main(["pin", "--add", f"--manifest={signed_manifest(prefix)}", *(f"--pin={path}" for path in (
                 artifacts / "codex", installed_manager,
                 *(support.resolved(getattr(args, name.replace("-", "_"))) for name in HOST_TOOLS)))])
         if not args.attach_store:
@@ -666,13 +667,23 @@ def pinned_binaries(record):
             *(tool["installed_path"] for tool in record["tools"].values())}
 
 
+def signed_manifest(prefix):
+    manifest = Path(prefix).parent / "omd-release.json"
+    if not manifest.is_file():
+        raise ValueError(f"{Path(prefix).parent} was not installed from a signed release; "
+                         "the authority broker pins only signed release binaries")
+    return manifest
+
+
 def broker(prefix, bin_dir, action, also=()):
     record = load(prefix)
     _, manager = check(record, bin_dir)
     arguments = [action]
     if action in ("install", "pin"):
-        pins = pinned_binaries(record).union(*(pinned_binaries(load(support.resolved(other))) for other in also))
+        prefixes = [prefix, *(support.resolved(other) for other in also)]
+        pins = set().union(*(pinned_binaries(load(item)) for item in prefixes))
         arguments += [f"--pin={path}" for path in sorted(pins)]
+        arguments += [f"--manifest={signed_manifest(item)}" for item in prefixes]
     if action == "install":
         arguments += ["--helper", record["broker"]["installed_path"]]
     snapshot = invoke(manager, "broker-grants-import", record["store"]) if action == "install" else None
@@ -725,20 +736,36 @@ def uninstall(prefix, bin_dir, keep_broker=False):
         raise ValueError("installation prefix contains unmanaged files; move them before uninstall")
     if resuming:
         return removed(prefix, bin_dir, record)
-    config = Path(record["shared_state"]["codex_home"]) / "config.toml"
-    if config.is_file():
-        marketplaces = tomllib.loads(config.read_text()).get("marketplaces", {})
-        for name, details in marketplaces.items():
-            source = details.get("source") if isinstance(details, dict) else None
-            if isinstance(source, str) and support.within(support.resolved(source), prefix):
-                raise ValueError(f"Codex marketplace {name} still references the installation; remove or relocate it before uninstall")
     found = shutil.which("codex", path=support.path_without(bin_dir))
     if not found:
         raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
     support.binary_identity(found)
+    plugins = remove_plugins(record, prefix)
     record = {**record, "upstream": str(support.resolved(found))}
     support.atomic_text(journal, json.dumps(record))
-    return removed(prefix, bin_dir, record)
+    return removed(prefix, bin_dir, record) | ({"removed_plugins": plugins} if plugins else {})
+
+
+def remove_plugins(record, prefix):
+    home = Path(record["shared_state"]["codex_home"])
+    config = home / "config.toml"
+    env = {**os.environ, "CODEX_HOME": str(home)}
+
+    def ours():
+        settings = tomllib.loads(config.read_text()) if config.is_file() else {}
+        names = [name for name, details in settings.get("marketplaces", {}).items()
+                 if isinstance(details, dict) and isinstance(details.get("source"), str)
+                 and support.within(support.resolved(details["source"]), prefix)]
+        return names, [plugin for plugin in settings.get("plugins", {}) if plugin.rsplit("@", 1)[-1] in names]
+
+    names, plugins = ours()
+    for plugin in plugins:
+        support.run([record["binary"]["installed_path"], "plugin", "remove", plugin], env=env)
+    for name in names:
+        support.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], env=env)
+    if any(ours()):
+        raise ValueError("Codex still lists OMD plugins from this installation; remove them with codex plugin remove")
+    return plugins
 
 
 def removed(prefix, bin_dir, record):

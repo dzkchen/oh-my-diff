@@ -1,33 +1,51 @@
 # Mod API reference
 
-This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
-loads. A store also generates `active-host.d.ts` and
-`installed-contracts.d.ts`; those files identify the running host and the exact
-service contracts available to consumers. Once a session has listed its tools,
-the store also generates `tool-types.d.ts` for the tools the host actually has
+This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` on OMD `0.1.0` and Codex
+`0.163.0`. [`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version loads.
+
+A store also generates `active-host.d.ts` and `installed-contracts.d.ts`, which describe the running host and the
+service contracts available to consumers. Once a session has listed its tools, it generates `tool-types.d.ts` too
 ([Typed tool declarations](#typed-tool-declarations)).
 
-The launch surface is frozen at this API version, with support through
-`2027-03-20`. [COVERAGE.md](COVERAGE.md) classifies every public operation,
-event, capability, replacement, interceptor, component, render site, view field,
-classic hook and author command. Frozen entries name a retained consumer and
-executable evidence. Explicitly experimental entries remain outside the freeze;
-the package itself retains its pre-release compatibility label. The freeze is
-a contract boundary, not a public-release or provider qualification.
-Before the release freeze names the API `1.0.0`, only safety fixes and the
-recorded launch gap list may change it. After launch, additions use minor
-versions; breaking changes require a major version and a migration note.
+The API is pre-release. [The conformance registry](conformance/contract.json) marks each public operation, event,
+capability, interceptor, component, render site, view field, classic hook and author command as frozen or
+experimental. Frozen entries keep their shape through `2027-03-20`; experimental ones may change. Version and
+support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
-The raster frame-stream (`terminal.blit`, `process_raster_v1`, `raster_pixels_v1`) remains experimental.
-Launch does not promise closure-based client modules, vendor kill switches,
-raw secret access, hosted mobile/desktop clients or rich children inside buttons.
-Buttons use their typed `text` field. [COMPATIBILITY.md](COMPATIBILITY.md) defines
-version and support-window rules.
-First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
-raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
-launch; outside authors can use the public client APIs.
+Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
+
+- Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
+- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
+- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
+- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- `api.uiState` and command views.
+
+Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop
+clients, rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+## Mods, plugins and hooks
+
+Use a skill for a procedure the model follows, a hook for a reaction to a lifecycle event, a plugin for tools or
+services, and a mod only to change how `codex` itself behaves or looks.
+
+Codex 0.163.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks (`pre_tool_use`,
+`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
+`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`) are external commands or MCP tools
+that return a decision: block a call, add context, or rewrite a tool's input. A hook can't hold state, stream,
+draw on screen, route a model or run an agent, and when two `pre_tool_use` hooks rewrite the same call the last
+one to finish wins. A mod runs inside the host, asks for only the permissions it needs, and composes with other
+mods by the [rules below](#composition-and-safety).
+
+Mods can't replace or bypass:
+
+- Workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace
+  integrity, evidence and final acceptance.
+- History beyond the documented rewrite points, reasoning or call/output pairs, the compaction engine, or prompts
+  for provider-side compaction.
+- Raw terminal escapes, arbitrary widgets or DOM/canvas access, approval key bindings, the transcript, or
+  clipboard authorization.
+- Arbitrary providers, runtime imports other than adapter-declared aliases, or a second scheduler.
+- Other mods: `requires` declares presence and order only; mods never call each other or share state.
 
 ## Host lifetime and callback authority
 
@@ -1199,10 +1217,7 @@ capabilities.
 
 API `0.2.0-experimental.5` provides these generic primitives. Each advertises a
 host feature a package can require. With no mod registered for a primitive the host allocates nothing for it and
-changes no decision. Mapping from pinned upstream surfaces to these routes, and
-the recorded exclusions, live in `scripts/upstream_routes.json`;
-`python3 scripts/upstream_surfaces.py check /path/to/codex` flags upstream
-surfaces without a route.
+changes no decision.
 
 ### App-server bridge (`app_v1`)
 
@@ -1574,7 +1589,7 @@ code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's
-recorded sessions that allow memory, and `sessions.read {session_id, revision,
+recorded sessions that allow memory, and the experimental `sessions.read {session_id, revision,
 handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
 `message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
 `arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
@@ -1995,7 +2010,7 @@ Operations:
   native picker of up to 32 options: one value, several with `multiple`, or a
   typed answer through an `Other…` row with `other`; it returns
   `{status: 'accepted', values, other?}` or `declined` when cancelled.
-- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
+- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`, experimental) queues a raster
   update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
   focuses, scrolls (`offset`; a pane shows 8 rows and stops scrolling once
@@ -2540,7 +2555,7 @@ are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`)
+### Store-time history rewriting (`history_persist_v1`, experimental)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`)
 rewrites history text before it is stored, for redaction: every text written to
@@ -2882,7 +2897,7 @@ has no host maximum, so a provider's context window is configuration.
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
-| `pnpm watch -- STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
+| `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
 | `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
@@ -2995,7 +3010,7 @@ conformance harness (`scripts/client_acceptance.py`) or a real terminal check.
 ### Watch and reload
 
 Interactive: while a mod is written, `omd-mod-author watch DIR STORE` (or
-`pnpm watch -- STORE`) inspects the directory, approves its current digest in
+`pnpm watch STORE`) inspects the directory, approves its current digest in
 `STORE` as the user would with `omd-mod trust`, then queues a reload of that
 store's host and refreshes `.omd/`; saving an entry point, asset or lifecycle
 file reloads again after 100 ms and reports a half-written file instead of
@@ -3394,11 +3409,12 @@ wait, output, and session count. Sessions belong to one mod and generation;
 disable, reload, cancellation, and thread stop clean them up. A process cannot
 write the repository through this API. The first-party `omd_lsp_sync` mod owns
 Python, TypeScript/JavaScript, Rust and Java server choices and language
-protocol; it is installed inactive with OMD+ and can also be installed
-explicitly in a OMD Core store. It never installs a language server.
-Definition, references and code-action discovery return bounded read-only
-results for observed sources; applying an action and symbol rename remain
-unsupported. Absent or unsupported servers report fallback.
+protocol; it is off by default in OMD+ and can be installed in an OMD Core
+store. It never installs a language server. Definition, references and
+code-action discovery return bounded read-only results for observed sources.
+Symbol rename and text-only code actions apply with a backup and roll back on
+failure; actions that run server commands are refused. Absent or unsupported
+servers report fallback.
 `api.host.tryCall` returns `{ok:true,value}` or `{ok:false,error}` for an
 expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
@@ -3424,7 +3440,7 @@ sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
 omits the sidebar, header and named sites; dialogs, status segments, mod
 progress and diagnostics, the composer, approvals and scrollback remain, and
 the owned fullscreen viewport is unchanged. The `above_composer` and
-`below_composer` sites draw in both modes, host-sized to their wrapped
+`below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints
 and status row), with styles, links and focusable controls; `above_composer`
 is clipped to 8 rows and `below_composer` to 6, each scrolling to the focused
@@ -3581,9 +3597,11 @@ change carries a single-use broker challenge bound to its digest and a
 generation check, so a stale writer is refused. Broker policy values need an
 administrator (`dev.ohmydiff.broker.policy`).
 
-The trust boundary is the OS plus the pinned binaries. The broker doesn't
-protect against an administrator or root, or a user who re-pins a replaced
-binary with sudo. Same-user processes can still read every user-readable file
+The trust boundary is the OS plus the pinned binaries. Broker install and pin
+accept only the helper and binaries listed in a release manifest signed by the
+Oh My Diff release key, and later privileged steps run from a root-owned copy
+of the broker tooling, so a locally built or replaced binary can't be pinned.
+The broker doesn't protect against an administrator or root. Same-user processes can still read every user-readable file
 (for example `~/.codex/auth.json` or other secret files), edit the mod store
 (the host then rejects what the broker doesn't confirm) and drive OMD
 interactively, in which case the authentication dialog still appears, and use
@@ -3591,8 +3609,8 @@ enrolled credentials against their enrolled origins through OMD or a sidecar's
 gateway path. Credential tokens leave OMD only toward their enrolled origin, but
 a mod's own secrets (`OMD_SECRETS`) are placed in its sidecar's environment, and
 service grants in `host.json` are user-writable, so a same-user process that
-edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
-(one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
+edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks of signed releases pin
+their binaries (one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
 but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
 rights and all broker state, returning to same-user mode.
 
@@ -3729,7 +3747,7 @@ A plugin can contain `.codex-plugin/omd.json` with `{"schema":1,"component":"com
 
 `omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
 
-Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). Their fixture tests demonstrate shared interfaces; they are not production advisor, GitHub, memory, edit-anchor or report implementations, and they do not establish live model usefulness or release qualification.
+Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production implementations.
 
 Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each segment's records with its history revision. Compaction summaries do not replace those records. An unobserved history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and summarize a truncated packet.
 

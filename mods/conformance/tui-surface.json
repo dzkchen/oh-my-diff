@@ -11,6 +11,7 @@
     "clean",
     "clear",
     "compact",
+    "config",
     "copy",
     "cwd",
     "daemon",

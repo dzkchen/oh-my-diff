@@ -7,8 +7,6 @@ import shutil
 import sys
 import tarfile
 import tempfile
-import tomllib
-import urllib.request
 
 from scripts import release_lock as release
 from scripts import install_support as support
@@ -33,14 +31,10 @@ def copy_sources(destination):
         shutil.copy2(source, target)
 
 
-def archive_payload(artifact_dir, destination, source_rebuild=False):
+def archive_payload(artifact_dir, destination):
     frozen = json.loads(release.OUTPUT.read_text())
     record = release.build(artifact_dir, version=frozen["version"])
-    if source_rebuild:
-        for name in set(record) | set(frozen):
-            if name not in ("artifacts", "build_provenance") and record.get(name) != frozen.get(name):
-                raise ValueError("source package differs from the prebuilt source and profile manifest")
-    elif record != frozen:
+    if record != frozen:
         raise ValueError("release lock differs from exact artifacts and sources")
     expected = json.dumps(record, indent=2, sort_keys=True) + "\n"
     destination = destination.resolve()
@@ -50,8 +44,6 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
         payload = Path(temporary) / "payload"
         payload.mkdir()
         copy_sources(payload)
-        if source_rebuild:
-            support.atomic_text(payload / "runtime/release.lock.json", expected)
         binaries = payload / "artifacts"
         binaries.mkdir()
         for name in release.BINARIES + (release.AUTHOR_ARCHIVE, release.build_provenance.RECORD):
@@ -75,7 +67,9 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
     support.atomic_text(destination.with_name(RELEASE_MANIFEST), json.dumps(
         {"schema": 1, "version": record["version"], "target": record["target"], "upstream_tag": record["upstream_tag"],
          "mod_api": record["mod_api"], "node": record["node"], "archive": destination.name,
-         "sha256": packed["sha256"], "bytes": packed["bytes"]}, indent=2, sort_keys=True) + "\n")
+         "sha256": packed["sha256"], "bytes": packed["bytes"],
+         "artifacts": {name: details["sha256"] for name, details in record["artifacts"].items()}
+         | {"authority_broker.py": support.digest(ROOT / "scripts/authority_broker.py")}}, indent=2, sort_keys=True) + "\n")
     return {**packed, "manifest": str(destination.with_name(RELEASE_MANIFEST))}
 
 
@@ -139,79 +133,8 @@ def install_payload(payload, args):
     support.run(command, cwd=payload, env=environment, capture=False)
 
 
-def v8_prebuilt(checkout, directory, environment):
-    if environment.get("V8_FROM_SOURCE") or environment.get("RUSTY_V8_ARCHIVE"):
-        return
-    lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
-    (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
-    target = support.output(["rustc", "-vV"], cwd=checkout / "codex-rs", env=environment).split("host: ", 1)[1].split()[0]
-    url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
-    manifest = f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256"
-    names = {"archive": f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz",
-             "binding": f"src_binding_ptrcomp_sandbox_release_{target}.rs"}
-    directory.mkdir(parents=True, exist_ok=True)
-
-    def checksums(path):
-        return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
-
-    expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
-    for name in (manifest, *names.values()):
-        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response, (directory / name).open("wb") as file:
-            shutil.copyfileobj(response, file)
-        if expected.get(name) != support.digest(directory / name):
-            raise ValueError(f"V8 prebuilt checksum mismatch: {name}")
-        if name == manifest:
-            expected = checksums(directory / manifest)
-    environment["RUSTY_V8_ARCHIVE"] = str(directory / names["archive"])
-    environment["RUSTY_V8_SRC_BINDING_PATH"] = str(directory / names["binding"])
-
-
-def source_build(args):
-    upstream = json.loads((ROOT / "upstream.lock.json").read_text())
-    if args.output_archive and args.output_archive.resolve().exists():
-        raise ValueError("source package archive already exists")
-    with tempfile.TemporaryDirectory(prefix="omd-package-source-", dir="/private/tmp") as temporary:
-        checkout = Path(temporary) / "upstream"
-        support.run(["git", "clone", "--no-checkout", args.repository, checkout], capture=False)
-        support.run(["git", "checkout", upstream["commit"]], cwd=checkout, capture=False)
-        support.run([sys.executable, ROOT / "scripts/normalize_upstream_lock.py", checkout], capture=False)
-        support.run([sys.executable, ROOT / "scripts/apply_runtime_patch.py", checkout], capture=False)
-        target = Path(args.target_dir).resolve() if args.target_dir else Path(temporary) / "target"
-        environment = os.environ.copy()
-        environment["CARGO_TARGET_DIR"] = str(target)
-        v8_prebuilt(checkout, Path(temporary) / "v8", environment)
-        arguments = ["build", "--locked", "--release",
-            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "--bin", "codex-code-mode-host", "-p", "codex-omd",
-            "-p", "codex-omd-extension", "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker"]
-        before = release.build_provenance.inputs(checkout, arguments, environment)
-        (target / "release" / release.build_provenance.RECORD).unlink(missing_ok=True)
-        support.run(["cargo", f"+{upstream['rust_toolchain']}", *arguments], cwd=checkout / "codex-rs", env=environment,
-                    capture=False)
-        release.build_provenance.record_build(target / "release", before,
-            release.build_provenance.inputs(checkout, arguments, environment))
-        unsigned = release.build_provenance.verify(target / "release", signed=False, expected_inputs=before)
-        artifacts = Path(temporary) / "artifacts"
-        artifacts.mkdir()
-        for name in release.BINARIES:
-            shutil.copy2(target / "release" / name, artifacts / name)
-        if release.build_provenance.hashes(artifacts) != unsigned["unsigned"]:
-            raise ValueError("release artifacts changed during copying")
-        for name in release.BINARIES:
-            if name in release.HARDENED:
-                release.sign(artifacts / name)
-        release.build_provenance.record_signing(artifacts, unsigned)
-        shutil.copy2(args.author_archive, artifacts / release.AUTHOR_ARCHIVE)
-        archive = args.output_archive.resolve() if args.output_archive else Path(temporary) / "package.tar.xz"
-        packed = archive_payload(artifacts, archive, source_rebuild=True)
-        install_args = argparse.Namespace(**{**vars(args), "archive": archive, "sha256": packed["sha256"]})
-        install_archive(install_args)
-        print(json.dumps({"source_package": packed,
-                          "artifact_sha256": {name: support.digest(artifacts / name)
-                                              for name in release.BINARIES}}, indent=2))
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Build, package and install OMD Core and OMD+")
+    parser = argparse.ArgumentParser(description="Package and install OMD Core and OMD+")
     commands = parser.add_subparsers(dest="command", required=True)
     pack = commands.add_parser("pack")
     pack.add_argument("--artifact-dir", type=Path, required=True)
@@ -222,29 +145,20 @@ def main():
     source_group.add_argument("--payload", type=Path, help=argparse.SUPPRESS)
     install.add_argument("--sha256")
     install.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")
-    source = commands.add_parser("source-install")
-    source.add_argument("--repository", required=True)
-    source.add_argument("--target-dir", type=Path)
-    source.add_argument("--output-archive", type=Path)
-    source.add_argument("--author-archive", type=Path, required=True)
-    for command in (install, source):
-        command.add_argument("--upstream", type=Path, required=True)
-        command.add_argument("--profile", choices=("platform", "full"), required=True,
-                             help="platform: OMD Core; full: OMD+")
-        command.add_argument("--prefix", type=Path, required=True)
-        command.add_argument("--bin-dir", type=Path, required=True)
-        command.add_argument("--store", type=Path, required=True)
-        command.add_argument("--node", type=Path, required=True)
-        command.add_argument("--attach-store", action="store_true")
+    install.add_argument("--upstream", type=Path, required=True)
+    install.add_argument("--profile", choices=("platform", "full"), required=True, help="platform: OMD Core; full: OMD+")
+    install.add_argument("--prefix", type=Path, required=True)
+    install.add_argument("--bin-dir", type=Path, required=True)
+    install.add_argument("--store", type=Path, required=True)
+    install.add_argument("--node", type=Path, required=True)
+    install.add_argument("--attach-store", action="store_true")
     args = parser.parse_args()
     if args.command == "install" and args.archive and not args.sha256:
         parser.error("--archive needs --sha256")
     if args.command == "pack":
         print(json.dumps(archive_payload(args.artifact_dir.resolve(), args.output), indent=2))
-    elif args.command == "install":
-        install_archive(args)
     else:
-        source_build(args)
+        install_archive(args)
 
 
 if __name__ == "__main__":

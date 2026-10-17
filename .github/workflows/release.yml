@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to dry-run; must match the release lock and the newest changelog entry
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "version=${INPUT_VERSION:-${GITHUB_REF_NAME#v}}" >> "$GITHUB_OUTPUT"
+      - name: Tag is on main
+        if: github.event_name == 'push'
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Versions, changelog and links agree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py check "$VERSION"
+
+  validate:
+    needs: check
+    uses: ./.github/workflows/validate.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+
+  publish:
+    needs: [check, validate]
+    if: github.repository == 'dzkchen/oh-my-diff'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: python@3.14.6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: package
+          path: release
+      - name: Publish the verified release (dry run prints the commands)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
+          VERSION: ${{ needs.check.outputs.version }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
+        run: |
+          python3 scripts/release.py notes "$VERSION" > notes.md
+          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md ${DRY_RUN:+--dry-run}

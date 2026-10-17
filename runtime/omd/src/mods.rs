@@ -2680,7 +2680,10 @@ mod reload_tests {
             "turn-activity",
             "turn-activity/thread.jsonl",
         ] {
-            let mode = std::fs::metadata(root.join(path)).unwrap().permissions().mode();
+            let mode = std::fs::metadata(root.join(path))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o077, 0, "{path}: {mode:o}");
         }
     }

@@ -1,0 +1,907 @@
+[
+  {
+    "date": "2026-10-08",
+    "title": "Launch scope and upstream pin",
+    "summary": "A smaller launch collection, a planned API freeze and refreshed Codex.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Pinned to Codex 0.161.0",
+          "Warm release targets across batch closeouts"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Untracked candidate files and tree parity"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "Core tooling and a smaller OMD+ launch",
+          "API freeze before release qualification",
+          "Remaining collection returns in two waves"
+        ]
+      }
+    ],
+    "commits": [
+      "ecc44bc",
+      "04deaed",
+      "fa49a84"
+    ]
+  },
+  {
+    "date": "2026-10-07",
+    "title": "Privacy and response previews",
+    "summary": "Opt-in redaction, richer previews and repairs across the mod ecosystem.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Opt-in secret and personal-data redaction",
+          "Image thumbnails and inline Mermaid diagrams",
+          "Output observer for advisor notes"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Secret-scan ordering and privacy policy",
+          "Mermaid rendering and stale advisor notes",
+          "Transcript pairing, notices and client isolation",
+          "Nightly validation and archived dependencies"
+        ]
+      }
+    ],
+    "commits": [
+      "bced8ea",
+      "28b1791",
+      "8f27fb8",
+      "904b674",
+      "59c0962",
+      "4a4b6a4",
+      "1a839e0",
+      "101fbe3",
+      "d4e08e0",
+      "0a4d6af",
+      "76dcc0f",
+      "160e6b0"
+    ]
+  },
+  {
+    "date": "2026-10-06",
+    "title": "Client views and package controls",
+    "summary": "Richer terminal controls, external clients and reviewed package installation.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Rich controls, notices and JSX",
+          "Rasters, pointer capture and image placement",
+          "External-client protocol and approval desk",
+          "Read-only GitHub PR and CI views",
+          "Reviewed npm, Git and folder installs"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Transcript rewrite ordering and idle-turn races",
+          "Client isolation and notice delivery",
+          "Terminal layout, focus and image rendering",
+          "Package protection, rollback and thread queues"
+        ]
+      }
+    ],
+    "commits": [
+      "3934bc9",
+      "2ac13dd",
+      "b73123c",
+      "4a79876",
+      "23b63db",
+      "c5e7cf6",
+      "2675634",
+      "163f729",
+      "8287342",
+      "7f88517",
+      "fd601e5",
+      "1b30fa5",
+      "f751108",
+      "51994a0",
+      "73bafe0",
+      "b995347",
+      "2ef3bde",
+      "d4169c2",
+      "28823ac",
+      "e05e00c",
+      "e8426cb",
+      "24c82f3",
+      "4472fb4",
+      "449593e",
+      "685221b",
+      "29cd4b0",
+      "1ab60d9",
+      "186fc7a",
+      "0fe7ee9",
+      "3abe5e5",
+      "b97b41c",
+      "8ff119f",
+      "5117fbc",
+      "3fa7c1b",
+      "07322d3",
+      "09fded0",
+      "c22f5e6",
+      "f2763df",
+      "cdec843",
+      "79e9575",
+      "c91f357",
+      "0f10544",
+      "0c529cd",
+      "a5b7248",
+      "5cc503c",
+      "b01af2f",
+      "a983a5b",
+      "23242d4",
+      "80021e8"
+    ]
+  },
+  {
+    "date": "2026-10-05",
+    "title": "History rewriting and updates",
+    "summary": "Mods gain composer controls, transcript rewriting and OMD update settings.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Composer drafts and prompt queues",
+          "Compaction and lifecycle interception",
+          "Durable transcript rewriting",
+          "Update notices and opt-in automatic updates"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Pinned to Codex 0.160.1",
+          "Bounded request, ledger and rendering work"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Authority, accounting and request admission",
+          "Persistence, packaging and recovery"
+        ]
+      }
+    ],
+    "commits": [
+      "7d3ae75",
+      "455606f",
+      "c05f1d7",
+      "9586b0b",
+      "7657285",
+      "d059857",
+      "4893666",
+      "cc2af55",
+      "4b33487",
+      "8a68f97",
+      "c1b1eba",
+      "96cb427",
+      "8360a88",
+      "32375d1",
+      "21b2b32"
+    ]
+  },
+  {
+    "date": "2026-10-04",
+    "title": "Interception, agents and provider routes",
+    "summary": "Mods gain request controls, agent lifecycles and provider usage views.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "HTTP, command and config interception",
+          "Model controls and final-request policy",
+          "Agent lifecycles and autonomous turn queues",
+          "Agent-written session briefs",
+          "Usage HUD and Cursor subscription route"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Peer sessions and provider accounting"
+        ]
+      }
+    ],
+    "commits": [
+      "212a0b2",
+      "4c60b03",
+      "cb1ca4a",
+      "8d5f948",
+      "d69a4b8",
+      "68dd6d4",
+      "4506b8d"
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "title": "Mini mode and authority",
+    "summary": "Scrollback, composed panels and protected host authority for mods.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Scrollback-first omd mini interface",
+          "OMD Night palette",
+          "Foldable session, Git, LSP and MCP panels",
+          "Protected authority broker and credential gateway",
+          "Managed processes and delegated approvals"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Composed workspace sidebar and session status",
+          "Mods can hide inline terminal sites",
+          "Continuation interceptors replace exclusive hooks"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Launcher keeps the current working directory",
+          "Mini interface switching and thread state",
+          "Worker startup and delegated approval scopes",
+          "Tool gates and rename guards"
+        ]
+      }
+    ],
+    "commits": [
+      "fc1e8e1",
+      "0440959",
+      "bb42343",
+      "0570df0",
+      "c2ca41e",
+      "8e2e9ac",
+      "bffafe7",
+      "792fcff",
+      "a99bc28"
+    ]
+  },
+  {
+    "date": "2026-10-02",
+    "title": "Host and mod repairs",
+    "summary": "Review fixes across the host, mods, installer and author tooling.",
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Installer accepts compatible upstream and Node versions",
+          "Host callback rules documented"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Host lifecycle, state and package controls",
+          "Mod permissions and terminal views",
+          "Installer launchers and code-mode host packaging",
+          "Author SDK imports"
+        ]
+      }
+    ],
+    "commits": [
+      "ce2a9bc",
+      "fce730b"
+    ]
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Workspace tools and provider profiles",
+    "summary": "More workspace tools, provider controls and interactive mod surfaces.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Interactive host calls and focused mod input",
+          "Approval framing and streamed message templates",
+          "Unix socket grants for mod commands",
+          "Provider profiles and live route reload",
+          "Workspace layouts and command palettes",
+          "Task worktrees and session port discovery",
+          "Herdr integration and MCP controls",
+          "Editor and shared checkout mods"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Spare mod runner for callbacks",
+          "LSP context when reading files",
+          "Mod state scoped by repository and thread"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Secret redaction in config reads"
+        ]
+      }
+    ],
+    "commits": [
+      "6bee6cf",
+      "f319c8d",
+      "4baa567",
+      "de9a000",
+      "da953ea",
+      "5c594b2",
+      "9996f4f"
+    ]
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Tools, panes and mod controls",
+    "summary": "New workflow tools, workspace panels and controls for managing mods.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "/continue for interrupted work",
+          "/simplify review-policy plugin",
+          "Optional workflow procedures plugin",
+          "Opt-in /plan removal mod",
+          "Hashline edits and advisor triggers",
+          "Browser plugin and /preview Markdown mod",
+          "Experimental Muse agent route",
+          "Workspace panes, file tree and LSP view",
+          "Notes vault and pinned plan panel",
+          "/mods controls and native /omd recovery",
+          "First-run profile card",
+          "Frecency file ranking and powerline status"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Debugger packaged as an optional plugin",
+          "Claude CLI provider rebuilt",
+          "LSP diagnostics after edits",
+          "Inspector command moved to /inspect"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Context, reactive rules and theme review findings",
+          "Host activity and workspace tracking",
+          "Debugger lifecycle and cleanup",
+          "Mod transports, sidecars and host review findings"
+        ]
+      }
+    ],
+    "commits": [
+      "34f3d77",
+      "83aabe1",
+      "0a107ec",
+      "64ab92d",
+      "249c532",
+      "6fc2b8b",
+      "6aa7845",
+      "283839e",
+      "a8f835d",
+      "4054bcf"
+    ]
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Feature-agnostic host cleanup",
+    "summary": "Features move into mods as the host goes generic.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Generic host primitives for mods",
+          "Platform host task operations",
+          "Experimental API 0.2.0 builds .3 through .5",
+          "Theme palettes and backdrops",
+          "Reactive rules and programmable context mods"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Features now owned by mods",
+          "Pinned to Codex 0.159.1",
+          "Only the current mod API kept",
+          "Welcome logo and OMD Core / OMD+ branding"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Review findings across four commits",
+          "Per-handle agent locks",
+          "Route and gate checks",
+          "Capacity versus slow-down API errors"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "Codex themes added to the roadmap"
+        ]
+      }
+    ],
+    "commits": [
+      "63a1987",
+      "8bece9e",
+      "c0d8a68",
+      "597b272",
+      "1d7b2ae",
+      "de897d6",
+      "cafbf71",
+      "16b7798",
+      "e42be36",
+      "71b5dc4"
+    ]
+  },
+  {
+    "date": "2026-09-27",
+    "title": "Shared APIs and host rework",
+    "summary": "Experimental API 0.2 adds generic host operations alongside review fixes.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Shared extension APIs between mods",
+          "Local feature packages for optional plugins",
+          "Experimental API 0.2 host primitives"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "One OMD mode replaces platform and enabled"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Git, LSP, Claude and installer review findings",
+          "Advisor lane, sessions and graph outputs"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "A feature-agnostic host: mods are the features"
+        ]
+      }
+    ],
+    "commits": [
+      "cdb3310",
+      "60ad185",
+      "3372131",
+      "ca88af3",
+      "7b0ba85"
+    ]
+  },
+  {
+    "date": "2026-09-26",
+    "title": "Git sidebar and terminal mods",
+    "summary": "OMD now builds on upstream Codex’s fullscreen terminal.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Git sidebar mod",
+          "Terminal visual treatment as mods"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Dropped OMD’s own fullscreen TUI"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "A mod that removes /plan",
+          "A lean pass on tests",
+          "A guard against oversized shell output"
+        ]
+      }
+    ],
+    "commits": [
+      "0d932cc"
+    ]
+  },
+  {
+    "date": "2026-09-25",
+    "title": "Code cells, LSP sync, debugger",
+    "summary": "Three developer tools, all opt-in.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Persistent Python and Bun code cells",
+          "LSP sync after every edit",
+          "Python debugger (debugpy over DAP)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "LSP sync rebuilt as a pure mod",
+          "Roadmap grouped into batches"
+        ]
+      }
+    ],
+    "commits": [
+      "c4f9cf4",
+      "e945a88",
+      "a6def46",
+      "fe39564"
+    ]
+  },
+  {
+    "date": "2026-09-24",
+    "title": "Claude models and subagents",
+    "summary": "Both ship as mods, not runtime changes.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Claude models via the official Claude CLI",
+          "Typed subagent tasks"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "New features ship as mods, not Rust patches"
+        ]
+      }
+    ],
+    "commits": [
+      "e3e7260",
+      "6b5296a"
+    ]
+  },
+  {
+    "date": "2026-09-23",
+    "title": "Launch identity and installer",
+    "summary": "Packaging work, then a full review of the codebase.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "OMD launch banner in the terminal",
+          "Terminal extension surface for mods",
+          "Apple Silicon prebuilt",
+          "One-line installer (private for now)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Rebased on the latest Codex CLI"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Findings from a three-branch code review"
+        ]
+      }
+    ],
+    "commits": [
+      "939b956",
+      "e871c7d",
+      "c46147d",
+      "5ebf5db",
+      "eb5eeed",
+      "0a93def",
+      "cf693ce",
+      "06a8228",
+      "645a900",
+      "21f0042",
+      "4428bb6"
+    ]
+  },
+  {
+    "date": "2026-09-22",
+    "title": "Everything becomes an extension",
+    "summary": "Built-in features rebuilt as skills, hooks, plugins and mods.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Recovery and terminal mods",
+          "Guidance, code graph and code health",
+          "LSP adapters for five languages",
+          "Review cadence and app bridges",
+          "Reading URLs, GitHub, PDFs and notebooks",
+          "Persistent JavaScript, optional Python",
+          "Theme and focus-flow mods",
+          "Curated extension index",
+          "First live first-party mods"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "What goes in the lean first release",
+          "Launch plan: proof first"
+        ]
+      }
+    ],
+    "commits": [
+      "b92d2d8",
+      "83ebd7a",
+      "ad4b26b",
+      "57ee935",
+      "49cc0d2",
+      "516dd0e",
+      "a80bf2c",
+      "3623347",
+      "54cd6b4",
+      "c05c06a",
+      "0cf7667",
+      "f9bec07",
+      "5c8502f",
+      "7e9742b",
+      "102d370",
+      "ff558e8"
+    ]
+  },
+  {
+    "date": "2026-09-21",
+    "title": "Reproducible mod packages",
+    "summary": "Mods ship as versioned, reproducible packages.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Reproducible packages and updates",
+          "Integration coverage matrix",
+          "Full API conformance test",
+          "Extension types: skill, hook, plugin, mod"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Coordination policy moved from Rust to TypeScript",
+          "Pinned to a newer Codex"
+        ]
+      }
+    ],
+    "commits": [
+      "60bf099",
+      "693b9f9",
+      "e75ae82",
+      "fe0506f",
+      "89ffd77",
+      "922d6c3"
+    ]
+  },
+  {
+    "date": "2026-09-20",
+    "title": "Author tooling and rollback",
+    "summary": "Tools for people who write mods.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Versioned workflow contracts",
+          "Installable first-party mod preview",
+          "Public API coverage",
+          "Compatibility versions and rollback",
+          "TypeScript author tools"
+        ]
+      }
+    ],
+    "commits": [
+      "d859714",
+      "79b3803",
+      "fb31da1",
+      "48ba06c",
+      "6ec2fff",
+      "aa377de"
+    ]
+  },
+  {
+    "date": "2026-09-19",
+    "title": "Rust meets TypeScript",
+    "summary": "Codex’s native extension points are now open to TypeScript mods.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Versioned mod API and loader",
+          "Example mods"
+        ]
+      }
+    ],
+    "commits": [
+      "1a072d4"
+    ]
+  },
+  {
+    "date": "2026-09-17",
+    "title": "First mod loader",
+    "summary": "TypeScript mods can load, add tools and keep state.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Mod loader with context, tools and state"
+        ]
+      }
+    ],
+    "commits": [
+      "b10b22b"
+    ]
+  },
+  {
+    "date": "2026-09-16",
+    "title": "The pivot",
+    "summary": "OMD becomes a moddable Codex, not a fixed feature set.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Bundled browser tooling",
+          "App bridge adapters"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "Product centers on TypeScript mods",
+          "Benchmarks move to the end"
+        ]
+      }
+    ],
+    "commits": [
+      "93acbde",
+      "3055150",
+      "af3a03e"
+    ]
+  },
+  {
+    "date": "2026-09-15",
+    "title": "Guidance, code intel, review",
+    "summary": "The agent learns your repo and double-checks its work.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Communication modes and reactive rules",
+          "Repo knowledge and code graph",
+          "Code-health guard and LSP checks",
+          "Unified review system",
+          "Adversarial completion gate",
+          "Direct mode: plain upstream Codex",
+          "First local install"
+        ]
+      }
+    ],
+    "commits": [
+      "884cfb4",
+      "d04f3d9",
+      "8d80a92",
+      "14ed3c2",
+      "eb23eda",
+      "58040d2",
+      "f6a1f09",
+      "18a9962",
+      "afc61ed",
+      "495919c",
+      "4fa6cc8",
+      "9e92067",
+      "7fd6d9f"
+    ]
+  },
+  {
+    "date": "2026-09-14",
+    "title": "Delegation and recovery",
+    "summary": "The first patched Codex runtime.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Isolated worker delegation",
+          "Selectable worker contexts",
+          "Recovery controls",
+          "Durable task checkpoints",
+          "Fullscreen TUI",
+          "Versioned guidelines"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "First look at modding the harness"
+        ]
+      }
+    ],
+    "commits": [
+      "17fdf2f",
+      "3ee9439",
+      "f9ab807",
+      "a68655d",
+      "6d20543",
+      "7f42df6",
+      "a33b318"
+    ]
+  },
+  {
+    "date": "2026-09-13",
+    "title": "Hello, Oh My Diff",
+    "summary": "Measurement before claims. CAI is renamed Oh My Diff.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Benchmark infrastructure",
+          "Frozen evaluation protocol"
+        ]
+      },
+      {
+        "label": "Decided",
+        "items": [
+          "Rename: CAI → Oh My Diff",
+          "No numbers until they’re measured"
+        ]
+      }
+    ],
+    "commits": [
+      "e884aa0",
+      "26d88b7",
+      "4e30c68",
+      "62a2b66"
+    ]
+  },
+  {
+    "date": "2026-09-12",
+    "title": "Pinned to upstream Codex",
+    "summary": "A custom build that still shares your Codex setup.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Upstream lock file",
+          "Compatibility checks",
+          "A skill for each roadmap task"
+        ]
+      }
+    ],
+    "commits": [
+      "3e3ae1a",
+      "d2beac3",
+      "5ce59d0"
+    ]
+  },
+  {
+    "date": "2026-09-11",
+    "title": "Day zero",
+    "summary": "Started as CAI (“Cheaper AI”), a patch set for Codex.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Repo, PRD and roadmap"
+        ]
+      }
+    ],
+    "commits": [
+      "f0cef57"
+    ]
+  }
+]

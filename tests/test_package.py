@@ -18,7 +18,8 @@ def extracted(root):
         (artifacts / name).write_text(name)
     (artifacts / package.release.build_provenance.RECORD).write_text(json.dumps(PROVENANCE))
     record = {'version': 'fixture', 'target': 'fixture', 'upstream_tag': 'fixture',
-              'mod_api': 'fixture', 'node': 'fixture', 'build_provenance': PROVENANCE}
+              'mod_api': 'fixture', 'node': 'fixture', 'build_provenance': PROVENANCE,
+              'artifacts': {'codex': {'sha256': 'c' * 64, 'bytes': 5}}}
     lock = root / 'lock.json'
     lock.write_text(json.dumps(record))
     with patch.object(package.release, 'build', return_value=record), \
@@ -31,7 +32,7 @@ def extracted(root):
     return package.checked_extract(root / 'package.tar.xz', packed['sha256'], destination)
 
 
-class SourceBuildTests(unittest.TestCase):
+class PayloadInstallTests(unittest.TestCase):
     def test_an_extracted_payload_installs_only_after_verification_and_without_extracting_again(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = extracted(Path(directory))

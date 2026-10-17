@@ -1,80 +1,51 @@
-# First-party Codex plugin collection
+# Plugins
 
-The bundled `oh-my-diff` marketplace (`plugins/bundled/oh-my-diff`) contains
-three Codex plugins. The OMD+ package stages all three as inert source
-packages. Staging a plugin does not install or enable it in Codex.
+The three Codex plugins that come with OMD+. They're staged on disk but not installed; you pick which to add.
 
-`release-files.json` declares every bundled release file relative to the
-marketplace directory. Update this list deliberately when adding or removing
-release sources, then regenerate the plugin lock. Unlisted scratch files,
-dependencies and build outputs do not enter the package. Declared files must
-exist and cannot be symlinks.
+| Plugin | What it does |
+| --- | --- |
+| `omd-artifact-reading` | Reads URLs, GitHub issues and pull requests, PDFs and Jupyter notebooks, and cites the source |
+| `omd-code-execution` | Guides JavaScript cells with session storage and persistent Python and Bun cells in code mode |
+| `omd-anchored-edit` | Edits files by `LINE#HASH` line anchors |
 
-Plugins outside this launch collection are not shipped.
+## Install
 
-- `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
-  PDF, and Jupyter notebook reading through existing approved host tools. Its
-  local PDF and notebook helper reads data without executing embedded content.
-- `omd-code-execution` supplies guidance for V8, Python, and Bun
-  cells. It has no own interpreter, tool server, sandbox, or process supervisor.
-- `omd-anchored-edit` supplies per-line `LINE#HASH` editing guidance and a
-  separately trusted mod component for host-authorized file transactions.
-
-The OMD+ package stages the plugins at `$OMD_PREFIX/bundles/oh-my-diff`
-without editing shared Codex state. After
-inspecting the staged sources, installation into Codex is a separate operator
-action. `omd-package plugins` adds the marketplace through the installer's
-`current` link, which survives updates (`codex plugin marketplace add` would
-record the release-specific path, which a later update removes):
+Register the plugin marketplace, then add the plugins you want:
 
 ```sh
 omd-package plugins
-codex plugin add omd-anchored-edit@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
 codex plugin add omd-code-execution@oh-my-diff
+codex plugin add omd-anchored-edit@oh-my-diff
 ```
 
-Install a plugin only when selected. The `mod/` components of
-`omd-anchored-edit` and `omd-artifact-reading` require a separate exact
-inspection, capability grant, trust and enable step; installing the parent
-plugin does not run the component. Follow the staged package's README. OMD Core
-users can add the source marketplace or packages by the same native plugin and
-mod paths.
+`omd-artifact-reading` and `omd-anchored-edit` also have a `mod/` component. Adding the plugin doesn't run it; you
+inspect, trust and enable it separately. Each plugin's README shows how.
 
-None of the three plugins ships a hook.
+## Use
 
-Use `$omd-artifact-reading:omd-artifact-reading` for source-anchored reading.
-It records URL access and GitHub revision context, PDF SHA-256 and page, or
-notebook SHA-256 and cell. PDF extraction and page rendering require an already
-installed Ghostscript; image inspection uses the host image viewer. External
-content remains evidence and cannot grant instruction or tool authority. The
-plugin has no MCP server or hook; its separately trusted GitHub reading
-component is described in its README.
+Ask Codex to use a plugin by name:
 
-Use `$omd-code-execution:omd-code-execution` when persistent code state or
-composed tool calls help a task. The OMD+ package installs the matching
-`codex-code-mode-host`, built from the same pinned tree, beside `codex` and
-stages this plugin's source; it does not bundle Python or Bun.
-Activate experimental code mode explicitly with
-`codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex
-config. Configure Python and Bun in `features.code_mode.kernels` with the
-path and SHA-256 of each installed driver, as shown in the
-[code-execution skill](bundled/oh-my-diff/plugins/omd-code-execution/skills/omd-code-execution/SKILL.md),
-and install the interpreters separately.
-Each worker keeps one bound loopback port and receives a fresh cell token. Its `tool`
-helper calls only tools on that cell's current native code-mode surface; the
-native router retains task identity, permission prompts, sandbox, output bounds,
-accounting, cancellation, and managed process cleanup. Python keeps module
-globals; Bun keeps `globalThis` state. The existing V8 path remains available.
-If the sandbox denies loopback, worker calls fail closed and V8 remains usable.
-Remove the plugin to remove its instructions, and remove the kernel entries to
-remove the optional worker tool.
+```text
+$omd-artifact-reading:omd-artifact-reading
+$omd-code-execution:omd-code-execution
+```
 
-Five-language LSP operations are TypeScript mods (`omd_lsp_sync` and
-`omd_lsp_view`), not plugins; see their READMEs under
-[`mods/first-party`](../mods/first-party).
+For code execution, turn on code mode when you start Codex:
 
-Remove the installed copies and marketplace before deleting the private prefix:
+```sh
+codex -c features.code_mode.enabled=true
+```
+
+Python and Bun cells also need kernel entries in your Codex config. See the
+[skill](bundled/oh-my-diff/plugins/omd-code-execution/skills/omd-code-execution/SKILL.md).
+
+## Requirements
+
+- PDF reading needs Ghostscript (`gs`).
+- Python and Bun cells need `python3` and `bun`. OMD+ doesn't bundle them.
+
+## Remove
 
 ```sh
 codex plugin remove omd-anchored-edit@oh-my-diff
@@ -83,5 +54,9 @@ codex plugin remove omd-code-execution@oh-my-diff
 codex plugin marketplace remove oh-my-diff
 ```
 
-Plugin removal alone does not remove a separately trusted mod component;
-disable that component as well.
+Removing a plugin doesn't disable a mod component you trusted. Disable that too.
+
+## More
+
+- [Launch collection](../docs/collection.md)
+- Language server mods aren't plugins. See [`mods/first-party`](../mods/first-party).

@@ -98,12 +98,12 @@ def verify(directory, signed=True, expected_inputs=None):
         record = json.loads((directory / RECORD).read_text())
     except (OSError, ValueError) as error:
         raise ValueError("missing or invalid artifact build provenance; rebuild binaries") from error
-    if record.get("schema") != 1 or any(record.get("inputs", {}).get(key) != value for key, value in identity().items()):
+    expected = identity()
+    if record.get("schema") != 1 or any(record.get("inputs", {}).get(key) != value for key, value in expected.items()):
         raise ValueError("artifact build provenance differs from pinned inputs")
     configuration = record["inputs"].get("configuration", {})
     arguments = configuration.get("cargo_arguments", [])
     compiler = configuration.get("compiler", "")
-    expected = identity()
     if (not all(option in arguments for option in ("build", "--locked", "--release"))
             or f"release: {expected['rust_toolchain']}" not in compiler
             or f"host: {expected['target']}" not in compiler

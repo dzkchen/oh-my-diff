@@ -1,0 +1,12 @@
+[git]
+conventional_commits = true
+filter_unconventional = false
+filter_commits = true
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+(-rc\\.[0-9]+)?$"
+commit_parsers = [
+  { message = "^[Mm]erge", skip = true },
+  { message = "^feat", group = "New" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^(test|build|ci|chore)(\\(|!?:)", skip = true },
+  { message = ".", group = "Changed" },
+]

@@ -1,21 +1,38 @@
-# Security Policy
+# Security
 
-## Supported Versions
+How to report a security problem in OMD.
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+## Report a vulnerability
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+Use [GitHub's private reporting form](https://github.com/dzkchen/oh-my-diff/security/advisories/new). Please don't
+open a public issue.
 
-## Reporting a Vulnerability
+Include:
 
-Use this section to tell people how to report a vulnerability.
+- your OMD version (`omd update status`)
+- steps to reproduce
+- what an attacker could do
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+OMD is a one-person project, so replies are best effort. Fixes ship as a patch release, with a public advisory once you
+can update.
+
+## Supported versions
+
+Only the latest release gets security fixes. Run `omd update` to get it.
+
+## What's in scope
+
+- The installer and updates.
+- Sandbox, approval and permission checks in the patched Codex.
+- How mods are loaded, trusted and limited, and the authority broker.
+- The mods and plugins that ship with OMD.
+
+Where else to report:
+
+- Upstream Codex problems go to [OpenAI](https://github.com/openai/codex/security).
+- Someone else's mod goes to its author. Do tell us about a malicious mod so it can be blocked.
+
+## What isn't a vulnerability
+
+A mod you allow to run outside the sandbox can do anything your user account can. That's by design, so only turn
+on mods you trust.

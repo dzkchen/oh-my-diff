@@ -11,6 +11,8 @@ import urllib.error
 import unittest
 from unittest.mock import patch
 
+from tests.test_authority_broker import signed, signing_key
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,13 +29,25 @@ def release(version, prerelease=False, **manifest):
     return {"tag_name": f"v{version}", "draft": False, "prerelease": prerelease, "body": f"notes {version}",
             "html_url": f"https://example.test/{version}", "assets": [
                 {"name": "omd-release.json", "browser_download_url": f"https://example.test/{version}/omd-release.json"},
+                {"name": "omd-release.json.sig", "browser_download_url": f"https://example.test/{version}/omd-release.json.sig"},
                 {"name": name, "browser_download_url": f"https://example.test/{version}/{name}",
                  "digest": f"sha256:{manifest.get('sha256', 'a' * 64)}"}],
             "manifest": {"schema": 1, "version": version, "target": "aarch64-apple-darwin", "upstream_tag": "rust-v0.162.0",
-                         "mod_api": "0.2.0-experimental.5", "node": "24.18.0", "archive": name, "sha256": "a" * 64, **manifest}}
+                         "mod_api": "0.2.0-experimental.5", "node": "24.18.0", "archive": name, "sha256": "a" * 64,
+                         "artifacts": {"codex": "c" * 64}, **manifest}}
 
 
 class UpdateSelection(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.keys = tempfile.TemporaryDirectory(prefix="omd-release-keys-")
+        cls.key, cls.public = signing_key(Path(cls.keys.name) / "release")
+        cls.forger = signing_key(Path(cls.keys.name) / "forger")[0]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.keys.cleanup()
+
     def setUp(self):
         self.module = installer()
         self.temporary = tempfile.TemporaryDirectory(prefix="omd-update-test-", dir="/private/tmp")
@@ -48,11 +62,14 @@ class UpdateSelection(unittest.TestCase):
         (self.current / "prefix").mkdir(parents=True)
         (self.root / "current").symlink_to(self.current)
         (self.current / "receipt.json").write_text(json.dumps({"schema": 1, "generation": self.current.name, "profile": "platform",
-                                                               "releases_url": "https://example.test/releases"}))
+                                                               "releases_url": "https://localhost/releases"}))
         (self.current / "prefix/install.json").write_text(json.dumps({"version": "0.1.0", "store": str(store), "packages": {},
                                                                       "author": {"node": "/usr/bin/true"}}))
         self.published = []
+        self.module.RELEASE_KEY = self.public
+        self.signing = self.key
         self.module.fetch_json = self.fetch
+        self.module.fetch_bytes = self.fetch_bytes
         self.module.user_mods = lambda record, store, mod_api: []
         self.module.node_binary = lambda *arguments: Path("/usr/bin/true")
         self.module.upstream_binary = self.upstream
@@ -70,11 +87,19 @@ class UpdateSelection(unittest.TestCase):
         return {"path": "/usr/bin/true", "version": "codex-cli 0.162.0"}
 
     def fetch(self, url, limit):
-        if url == "https://example.test/releases":
+        if url == "https://localhost/releases":
             if isinstance(self.published, Exception):
                 raise self.published
             return [{key: value for key, value in item.items() if key != "manifest"} for item in self.published]
-        return next(item["manifest"] for item in self.published if url == item["assets"][0]["browser_download_url"])
+        self.fail(f"unexpected metadata fetch: {url}")
+
+    def fetch_bytes(self, url, limit):
+        manifest = url.removesuffix(".sig")
+        body = json.dumps(next(item["manifest"] for item in self.published
+                               if manifest == item["assets"][0]["browser_download_url"])).encode()
+        if url == manifest:
+            return body
+        return signed(self.signing, Path(self.keys.name) / "omd-release.json", body).with_suffix(".json.sig").read_bytes()
 
     def check(self, **settings):
         self.settings = settings
@@ -100,7 +125,7 @@ class UpdateSelection(unittest.TestCase):
         self.write_settings()
         for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
-                args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
+                args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://localhost/releases",
                                              channel=channel, session=None)
                 with patch.object(self.module.platform, "system", return_value="Darwin"), \
                         patch.object(self.module.platform, "machine", return_value="arm64"), \
@@ -110,7 +135,7 @@ class UpdateSelection(unittest.TestCase):
                         patch("builtins.print"):
                     self.module.install(args, self.root, self.current)
                 expected = self.published[0 if selected == "nightly" else 1]
-                self.assertEqual(download.call_args.args[0], expected["assets"][1]["browser_download_url"])
+                self.assertEqual(download.call_args.args[0], expected["assets"][-1]["browser_download_url"])
                 self.assertEqual([call.args[-2:] for call in policy.call_args_list], saved)
 
     def test_channel_changes_reject_older_bases_and_allow_same_base_transitions(self):
@@ -281,6 +306,39 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual((offline["available"]["version"], offline["error"]), ("0.2.0", "network is unreachable"))
         self.assertEqual(json.loads((self.root / "update/state.json").read_text())["installed"], "0.1.0")
 
+    def test_unsigned_or_forged_manifests_are_refused_before_any_download(self):
+        self.module.download = lambda *arguments: self.fail("downloaded an unverified release")
+        self.settings = {"auto": "on"}
+        self.write_settings()
+        unsigned = release("0.2.0")
+        unsigned["assets"] = [asset for asset in unsigned["assets"] if not asset["name"].endswith(".sig")]
+        for published, error in (([unsigned], "release 0.2.0 is unsigned"),
+                                 ([release("0.2.0")], "signature does not verify")):
+            with self.subTest(error=error):
+                self.published = published
+                self.signing = self.forger if "verify" in error else self.key
+                result = self.check()
+                self.assertIsNone(result["available"])
+                self.assertIn(error, result["error"])
+                self.module.tick(types.SimpleNamespace(session=os.getpid()), self.root, self.current)
+                self.assertFalse((self.root / "update/ready.json").exists())
+                self.assertFalse((self.root / "update/staged").exists())
+        self.signing = self.key
+        self.assertEqual(self.check()["available"]["version"], "0.2.0")
+        manifest = self.check()["available"]["manifest"]
+        tampered = manifest | {"body": manifest["body"].replace('"a' , '"b', 1)}
+        for bad in (tampered, {key: value for key, value in manifest.items() if key != "signature"}):
+            with self.assertRaisesRegex(ValueError, "no longer verifies"):
+                self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
+                                        "platform", None, None, bad)
+
+    def test_release_lists_come_only_from_github_or_a_loopback_server(self):
+        for url in ("https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20", "https://127.0.0.1:8443/releases"):
+            self.assertEqual(self.module.release_source(url), url)
+        for url in ("https://evil.test/releases", "http://127.0.0.1/releases", "https://api.github.com/gists"):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "--releases-url must be"):
+                self.module.release_source(url)
+
     def test_launch_rechecks_staged_release_policy_and_compatibility(self):
         applied = []
         self.module.stage = lambda *arguments: None
@@ -350,6 +408,8 @@ class UpdateSelection(unittest.TestCase):
             (generation / "prefix").mkdir(exist_ok=True)
             (generation / "prefix/install.json").touch()
             (generation / "receipt.json").write_text("{}")
+            (generation / self.module.RELEASE_MANIFEST).write_text("{}")
+            (generation / self.module.RELEASE_SIGNATURE).write_text("sig")
         (older / "prefix/personal.txt").write_text("keep")
         (self.root / "previous").symlink_to(older)
         (self.root / "releases/failed-stranded/prefix").mkdir(parents=True)

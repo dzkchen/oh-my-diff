@@ -9,7 +9,7 @@ import tempfile
 import time
 import tomllib
 
-from scripts import install_support as support
+from scripts import install_support as support, profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,7 @@ PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_"
 
 
 def expected_defaults(profile="full"):
-    return json.loads((ROOT / "integration/matrix.json").read_text())["profiles"][profile]["first_party_default_active"]
+    return sorted(set(profiles.profile_packages(profile)) & set(profiles.DEFAULT_ACTIVE))
 
 
 def call(arguments, env, parse=True):

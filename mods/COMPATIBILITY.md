@@ -1,89 +1,83 @@
 # Mod compatibility
 
-This is the experimental compatibility contract as of October 10, 2026. The
-machine-readable source is [compatibility.json](compatibility.json), checked
-against the Rust host by `python3 scripts/mod_compatibility.py`.
+Which hosts a mod runs on. The source is [compatibility.json](compatibility.json); `python3 scripts/mod_compatibility.py`
+checks it against the host.
 
-The launch API is frozen at `0.2.0-experimental.5` through `2027-03-20` for the
-entries marked frozen in [COVERAGE.md](COVERAGE.md). Explicitly experimental
-entries are excluded. This does not promote the pre-release host or SDK to
-stable status, nor replace the later public-release qualification.
+API `0.2.0-experimental.5` is supported through `2027-03-20`. Entries marked frozen in
+[the conformance registry](conformance/contract.json) keep their shape until then. Experimental entries
+(including the raster surfaces `terminal.blit` and `process_raster_v1`) may change, and the host and SDK are
+pre-release.
 
-## Supported matrix
+## Supported versions
 
-| Codex | OMD host | Package schema | Mod API | API label | Service imports | Generated installed-contract types | Support through |
+| Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.163.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.163.0 | 0.1.0 | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or `^x.y.z` | 1 | 2027-03-20 |
 
-Only API `0.2.0-experimental.5` loads. It provides generic host
-operations for execution, workspace access, snapshots, agents, contracts, evidence,
-store, processes, terminal rendering and services. Until the first public
-release the host supports only the current API: every API bump drops earlier
-versions, and in-repository packages move to the new version with it. The matrix is not a promise
-that every intervening or future version works. Before activation the host checks the
-package schema, API row, optional exact host-release list, required host features,
-declared authority, dependencies, and service imports. `omd-mod status` reports
-the host matrix and each mod's negotiated required, available optional, and
-unavailable optional features.
+Only the current API loads. Until `1.0.0`, every API change drops the previous version.
 
-The exact host feature list is published in [compatibility.json](compatibility.json)
-and checked against the runtime source. A package may omit
-compatibility metadata and rely on its supported API row, or declare `compatibility.releases`,
-`required_features`, and `optional_features`. A missing required feature or an
-excluded host release rejects the package before activation and tells the user
-which host/package side must change. Missing optional features are reported but
-do not disable the mod.
+## What the host checks
 
-Require `turn_abort_v1` for `turns.abort`, `terminal_selection_v1` for
-`terminal.selection`, `terminal_copy_v1` for `terminal.copy`,
-`environment_overrides_v1` for `environment.set`, and `timers_16ms_v1` for
-16–999 ms timers. These labels reject older hosts before activation even when
-their API version matches.
+Before a mod turns on, the host checks its package schema, API version, required host features, permissions,
+dependencies and service imports.
 
-A package with declared assets requires `package_text_assets_v1`; one that
-imports its assets by relative path also requires `package_imports_v1`, and one
-that calls `api.component` also requires `component_modules_v1`
-(`scripts/mod_host_check.py --static` checks all three).
+A mod can also list `compatibility.releases`, `required_features` and `optional_features` in `mod.json`:
 
-## Stability and change rules
+- A missing required feature stops the mod and says which side must change.
+- A missing optional feature is only reported.
+- `omd-mod status STORE` shows what each mod negotiated.
 
-- `stable` means additions preserve the published contract. A breaking stable
-  API or service-contract change requires a new major version, migration
-  guidance, and deprecation notice in at least one stable OMD release before
-  removal.
-- `deprecated` remains supported through its published finite window. Stable
-  deprecations name the notice release and replacement when one exists.
-- `experimental` is pre-1.0 and may change, but only the rows and dates above are
-  supported. It must never be described as stable compatibility.
-- An urgent security fix may shorten the notice period only with a documented
-  advisory naming the affected versions, reason, mitigation, and replacement.
+### Features to require
 
-Service providers publish semantic `x.y.z` contracts and a stability label.
-Stable contracts start at major 1. Consumers may require an exact version or a
-caret-compatible range; `^1.2.0` accepts later 1.x providers but rejects 2.x.
-For 0.x contracts, caret compatibility stays within the minor version. A
-deprecated export must declare `deprecated_since`; a breaking stable contract
-shape needs a new major. The generated `installed-contracts.d.ts` independently
-declares its format version, host release, current API, and exact activated
-service versions.
+These reject older hosts before activation, even when the API version matches.
 
-## Upgrade, migration, and rollback
+| If you use | Require |
+| --- | --- |
+| `turns.abort` | `turn_abort_v1` |
+| `terminal.selection` | `terminal_selection_v1` |
+| `terminal.copy` | `terminal_copy_v1` |
+| `environment.set` | `environment_overrides_v1` |
+| Timers of 16-999 ms | `timers_16ms_v1` |
+| Declared assets | `package_text_assets_v1` |
+| Relative asset imports | `package_imports_v1` |
+| `api.component` | `component_modules_v1` |
 
-Package code and settings are never rewritten by host compatibility checks.
-State is package-owned and separately versioned. A changed `state_version`
-keeps a `"store"`-scoped mod inactive until its disabled, trusted package runs an
-explicit `migrate` handler. Thread and checkout state migrates through the same
-handler before the mod's next callback there, and an update that changes their
-`state_version` needs one. Migration writes a content-addressed backup before
-the atomic state replacement. `omd-mod rollback STORE PACKAGE BACKUP` is also disabled-only,
-checks package scope and trust, saves the current state as a forward-recovery
-copy, and atomically restores the selected backup. The package source must then
-be rolled back or upgraded to a release that understands the restored state.
+`mise run mods:check` checks the last three.
 
-No public stable OMD mod release exists yet, so there is no real supported
-release transition to execute. The first supported successor release must
-execute one; synthetic fixtures do not replace it.
+## Terminals
 
-Only the exact accumulated host/session fixtures and explicit package migration
-pairs are supported. OMD does not claim arbitrary-version session interchange,
-automatic state downgrade, or arbitrary-version state interchange.
+Supported terminals: Kitty, Ghostty, WezTerm and Orca's terminal. Images use Kitty graphics in
+Kitty and Ghostty, and inline images in Orca and WezTerm. Other terminals aren't tested; the host falls back to half-block cells or text.
+
+## Services
+
+Service contracts use `x.y.z` versions. A consumer asks for an exact version or a caret range.
+
+- `^1.2.0` accepts later 1.x providers, not 2.x.
+- For 0.x contracts, the range stays within the minor version.
+
+## State changes
+
+The host never rewrites a mod's code or settings.
+
+- When `state_version` changes, a mod with `"store"` state stays off until its `migrate` handler runs.
+- Thread and checkout state migrates through the same handler before the mod's next callback there. An update
+  that changes their `state_version` needs one.
+- Migration backs up the old state first. To restore it while the mod is off:
+
+  ```sh
+  omd-mod rollback STORE PACKAGE BACKUP
+  ```
+
+## Tested and not tested
+
+Tested: Apple Silicon macOS with Codex 0.163.0, the OMD+ and OMD Core collections, and the bundled plugins.
+
+Not tested:
+
+- Linux or Intel macOS.
+- Terminals other than those above.
+- Third-party mods combined with the OMD+ collection.
+- Upgrading from an earlier OMD release (there is none yet).
+- Artifact reading and code execution together in one live task.
+- Every combination of mods, plugins and options.

@@ -1,6 +1,6 @@
 # Third-party notices
 
-OMD first-party packages and the ports in `mods/ports` that port behavior from other projects credit them here and in the package README.
+OMD first-party packages and the ports in `mods/ports` that adapt or reimplement behavior from other projects credit them here and in the package README. Sections below reproduce the license text for some of the projects; rows without one record the license the upstream project declares.
 
 | OMD package | Source | Author | Reviewed version | License | Use |
 | --- | --- | --- | --- | --- | --- |
