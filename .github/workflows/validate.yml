@@ -51,7 +51,7 @@ jobs:
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
       - name: Full hosted validation
-        run: python3 .github/scripts/nightly.py
+        run: python3 .github/scripts/nightly_ci.py validate
       - name: Build and validate package
         if: runner.os == 'macOS'
         env:

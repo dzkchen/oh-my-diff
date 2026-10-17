@@ -309,8 +309,7 @@
         "python:test_notebook_cell_and_figure_are_versioned_without_execution",
         "python:test_pdf_page_text_and_figure_keep_page_and_digest",
         "python:test_pinned_bundle_matches_plugin_sources",
-        "python:test_comments_and_reviews_are_separate_and_keep_exact_anchors",
-        "script:scripts/github_read_acceptance.py"
+        "python:test_comments_and_reviews_are_separate_and_keep_exact_anchors"
       ],
       "limitations": "URL and GitHub reads use approved host web or shell tools; local PDF text and page images require installed Ghostscript. The helper bounds local files and outputs, never executes notebook cells, and cannot grant external content instruction authority. Optional current-API component registers github://; plugin-owned sandboxed helper supplies bounded reads. Real public source passed; private-account support remains unqualified.",
       "removal": "Remove omd-artifact-reading from Codex. Existing host web, shell and image tools remain available."
@@ -813,7 +812,6 @@
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [
         "script:scripts/apply_runtime_patch.py",
-        "script:scripts/verify_codex_compat.py",
         "script:scripts/normalize_upstream_lock.py"
       ]
     },
