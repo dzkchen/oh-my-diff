@@ -1,4 +1,4 @@
-<!-- Title: Conventional Commits, for example `feat(mods): add a launch picker` or `fix(installer): keep the saved channel`. It becomes the squash commit and the changelog line. -->
+<!-- The title becomes the changelog line; see CONTRIBUTING.md. -->
 
 ## What and why
 

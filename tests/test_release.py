@@ -38,12 +38,6 @@ class ReleaseTests(unittest.TestCase):
                 self.assertNotIn("#100", str(failure.exception))
                 self.assertIn("broken link README.md: docs/html.md", str(failure.exception))
 
-    def test_pull_request_titles_follow_conventional_commits(self):
-        self.assertTrue(release.TITLE.fullmatch("feat(mods): add a launch picker"))
-        self.assertTrue(release.TITLE.fullmatch("fix!: refuse unsigned archives"))
-        self.assertFalse(release.TITLE.fullmatch("code review fixes"))
-        self.assertFalse(release.TITLE.fullmatch("feature: add x"))
-
 
 if __name__ == "__main__":
     unittest.main()

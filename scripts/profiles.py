@@ -195,6 +195,7 @@ def check(record, bin_dir):
     manager = Path(record["manager"]["installed_path"])
     for path, expected in ((binary, record["binary"]["sha256"]),
                            (Path(record["code_mode_host"]["installed_path"]), record["code_mode_host"]["sha256"]),
+                           (Path(record["broker"]["installed_path"]), record["broker"]["sha256"]),
                            (manager, record["manager"]["sha256"])):
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed artifact changed: {path}")
@@ -474,7 +475,7 @@ def install(args):
             management_files[name] = support.digest(target)
         installed_manager = artifacts / "omd-mod"
         if authority_broker.deployed():
-            authority_broker.main(["pin", "--add", *(f"--pin={path}" for path in (
+            authority_broker.main(["pin", "--add", f"--manifest={signed_manifest(prefix)}", *(f"--pin={path}" for path in (
                 artifacts / "codex", installed_manager,
                 *(support.resolved(getattr(args, name.replace("-", "_"))) for name in HOST_TOOLS)))])
         if not args.attach_store:
@@ -666,13 +667,19 @@ def pinned_binaries(record):
             *(tool["installed_path"] for tool in record["tools"].values())}
 
 
+def signed_manifest(prefix):
+    return Path(prefix).parent / "omd-release.json"
+
+
 def broker(prefix, bin_dir, action, also=()):
     record = load(prefix)
     _, manager = check(record, bin_dir)
     arguments = [action]
     if action in ("install", "pin"):
-        pins = pinned_binaries(record).union(*(pinned_binaries(load(support.resolved(other))) for other in also))
+        prefixes = [prefix, *(support.resolved(other) for other in also)]
+        pins = set().union(*(pinned_binaries(load(item)) for item in prefixes))
         arguments += [f"--pin={path}" for path in sorted(pins)]
+        arguments += [f"--manifest={signed_manifest(item)}" for item in prefixes]
     if action == "install":
         arguments += ["--helper", record["broker"]["installed_path"]]
     snapshot = invoke(manager, "broker-grants-import", record["store"]) if action == "install" else None

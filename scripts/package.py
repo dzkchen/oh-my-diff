@@ -75,7 +75,8 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
     support.atomic_text(destination.with_name(RELEASE_MANIFEST), json.dumps(
         {"schema": 1, "version": record["version"], "target": record["target"], "upstream_tag": record["upstream_tag"],
          "mod_api": record["mod_api"], "node": record["node"], "archive": destination.name,
-         "sha256": packed["sha256"], "bytes": packed["bytes"]}, indent=2, sort_keys=True) + "\n")
+         "sha256": packed["sha256"], "bytes": packed["bytes"],
+         "artifacts": {name: details["sha256"] for name, details in record["artifacts"].items()}}, indent=2, sort_keys=True) + "\n")
     return {**packed, "manifest": str(destination.with_name(RELEASE_MANIFEST))}
 
 

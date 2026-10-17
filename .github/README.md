@@ -2,7 +2,7 @@
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `pull-request.yml` | pull requests | Conventional Commits title; changelog and Markdown link check |
+| `pull-request.yml` | pull requests | Changelog and Markdown link check |
 | `validate.yml` | called by nightly and release | Full hosted validation and the verified Apple Silicon package |
 | `nightly.yml` | **Run workflow** (daily once the repository is public) | Validates; on `main` publishes a nightly prerelease and reports failures |
 | `release.yml` | `vX.Y.Z` / `vX.Y.Z-rc.N` tags, **Run workflow** (dry run) | Checks versions, validates, publishes the GitHub Release |
@@ -12,7 +12,7 @@
 `validate.yml` runs on standard `macos-15` (Apple Silicon) and `ubuntu-24.04`. It replays the exact upstream pin,
 verifies V8 artifacts against the upstream-tracked checksum manifest, checks fresh/second apply and tree parity,
 and runs native unit/integration/doc tests, Clippy on patched paths, Rustfmt, ownership, mods types/tests, Python,
-generated lock/document drift, offline host scenarios and scripted client acceptance. Core tests use an empty test
+generated lock drift, offline host scenarios and scripted client acceptance. Core tests use an empty test
 home and exclude the recorded upstream `filtered_host_additional_permissions` baseline. Provider credentials and
 administrator broker deployment are not used.
 
@@ -49,6 +49,11 @@ and the release notes are generated from it. One command runs the whole flow:
 4. The tag runs `release.yml`: the tag must be on `main`, the lock, changelog and links must agree, then validation
    and packaging run. Publication uploads every asset to a draft and only then publishes it, which moves the
    installer and `omd update` to it. Release candidates (`-rc.N`) are prereleases on the beta channel.
+
+Publication (nightly, release and dry run) signs `omd-release.json` as `omd-release.json.sig` with `ssh-keygen -Y
+sign` (namespace `oh-my-diff-release`) using the `OMD_RELEASE_SIGNING_KEY` repository secret, and checks the result
+against the public key pinned in `install.sh` and `scripts/authority_broker.py`. Installs, updates and broker
+deployment accept only manifests that verify. To rotate the key, change both pinned copies and the secret together.
 
 Withdraw a bad release with `python3 scripts/release.py rollback 1.2.0`: it returns the release to draft, so the
 installer and `omd update` stop offering it, and marks the previous stable release as latest. Users who already

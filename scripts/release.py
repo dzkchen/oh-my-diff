@@ -13,7 +13,6 @@ MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
-TITLE = re.compile(r"(?:feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(?:\([a-z0-9-]+\))?!?: \S.*")
 LABELS = ("New", "Changed", "Fixed", "Decided")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
 
@@ -194,7 +193,6 @@ def main():
     commands.add_parser("render", help="regenerate CHANGELOG.md from changelog.json")
     commands.add_parser("notes").add_argument("version")
     commands.add_parser("rollback", help="withdraw a published release").add_argument("version")
-    commands.add_parser("title", help="check a Conventional Commits pull request title").add_argument("title")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.version, args.summary)
@@ -204,10 +202,8 @@ def main():
         MARKDOWN.write_text(render(json.loads(CHANGELOG.read_text())))
     elif args.command == "notes":
         sys.stdout.write(notes(json.loads(CHANGELOG.read_text()), args.version))
-    elif args.command == "rollback":
+    else:
         rollback(args.version)
-    elif not TITLE.fullmatch(args.title):
-        raise SystemExit(f"pull request title must follow Conventional Commits, for example `feat(mods): add X`: {args.title!r}")
 
 
 if __name__ == "__main__":

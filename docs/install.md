@@ -25,7 +25,8 @@ rest are installed but off until you turn them on.
 For the minimal install, use `--profile platform` instead. That installs **OMD Core**: OMD, the mod manager and
 update notices, ready for mods you choose yourself.
 
-The installer checks the download's checksum before installing. It adds `codex`, `omd`, `omd-package`, `omd-mod`,
+The installer checks the release's signature and the download's checksum before installing, and updates do the
+same. It adds `codex`, `omd`, `omd-package`, `omd-mod`,
 `omd-mod-author` and `omd-contract` to `~/.local/bin`. Your Codex settings, sign-in and sessions aren't changed.
 
 ## Check that it works

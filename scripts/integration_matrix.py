@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Check the integration source inventory; optionally require release execution receipts."""
-import argparse
 import json
 import re
 import sys
@@ -8,6 +7,7 @@ from pathlib import Path
 
 from scripts import profiles, install_support, execution_evidence
 from scripts.execution_evidence import resolve
+from scripts.mod_compatibility import array_constant, host_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
@@ -27,12 +27,12 @@ def sources():
     lsp = (ROOT / "mods/first-party/omd_lsp_sync/protocol.ts").read_text()
 
     def constant(name):
-        return re.search(rf"{name}: &\[[^]]*\] =\s*&\[(.*?)\];", host, re.S).group(1)
+        return array_constant(host, name)
 
     servers = {language: re.findall(r"name: '([\w-]+)'", block)
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
-    api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
+    contract = host_contract()
     plugin = install_support.plugin_lock()
     plugins = sorted(plugin["plugins"])
     mods = install_support.mods_lock()
@@ -44,16 +44,14 @@ def sources():
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
         "mods": mods,
         "plugin": plugin,
-        "api": api,
+        "api": contract["current_api"],
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
-        "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
+        "features": contract["features"],
         "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[([^\]]*)\]\s*\.contains\(&name\)', site_validation).group(1)),
-        "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
-                    for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
-                                      ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),
-                                      ("installed_contract_types", "INSTALLED_CONTRACT_TYPES_VERSION"))},
+        "schemas": {"package": contract["package_schemas"][0], "state_storage": contract["state_storage_schema"],
+                    "installed_contract_types": contract["installed_contract_types"]},
         "terminal_operations": [name for name in re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))
                                 if name.startswith(("terminal.", "composer.", "builtins."))],
         "first_party_packages": {name: {key: packages[name][key] for key in ("version", "source")}
@@ -63,10 +61,7 @@ def sources():
                                                                  & set(profiles.DEFAULT_ACTIVE)),
                             "plugin_sources": plugins if name == "full" else []}
                      for name, label in profiles.PROFILE_LABELS.items()},
-        "apis": [
-            api if row == "MOD_API_VERSION" else row.strip('"')
-            for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
-        ],
+        "apis": [entry["version"] for entry in contract["apis"]],
         "languages": servers,
     }
 
@@ -241,23 +236,13 @@ def launch_problems(entries, source):
 
 
 def main(argv=()):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release", action="store_true")
-    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
-    args = parser.parse_args(argv)
     matrix = json.loads(MATRIX.read_text())
-    problems = check(matrix)
-    if args.release or args.executed_evidence:
-        problems += execution_evidence.verify(release_evidence(matrix), args.executed_evidence)
-    if problems:
-        raise SystemExit("\n".join(problems))
-    print(
+    execution_evidence.report(
+        argv, __doc__, check(matrix), release_evidence(matrix),
         f"integration matrix {matrix['as_of']}: {len(matrix['components'])} maintained components, "
         f"{len(matrix['combinations'])} inventoried combinations over {len(matrix['boundaries'])} shared "
         f"boundaries, {len(matrix['regression'])} retained regression cases, "
-        f"{len(matrix['untested'])} recorded untested combinations; "
-        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
-    )
+        f"{len(matrix['untested'])} recorded untested combinations")
 
 
 if __name__ == "__main__":

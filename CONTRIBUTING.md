@@ -48,12 +48,9 @@ python3 .github/scripts/build.py locks              # updates the generated lock
 ## Open a pull request
 
 1. Branch from `main`.
-2. Title it in [Conventional Commits](https://www.conventionalcommits.org) form, such as `fix(installer): keep the
-   saved channel`. Pull requests are squash-merged, so the title becomes the commit and its changelog line:
-   - `feat` is listed under New.
-   - `fix` is listed under Fixed.
-   - `perf`, `refactor`, `docs` and `revert` are listed under Changed.
-   - `test`, `build`, `ci` and `chore` aren't listed.
+2. Pull requests are squash-merged, so the title becomes the commit and its changelog line. A
+   [Conventional Commits](https://www.conventionalcommits.org) prefix sorts it: `feat` under New, `fix` under Fixed,
+   `test`, `build`, `ci` and `chore` aren't listed, and anything else goes under Changed.
 3. Describe what changed and how you checked it.
 
 Don't commit secrets, credentials or personal paths.

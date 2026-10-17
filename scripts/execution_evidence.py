@@ -164,6 +164,17 @@ def verify(required, receipts, root=ROOT):
         return [str(error)]
 
 
+def report(argv, description, problems, required, summary):
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
+    receipts = parser.parse_args(argv).executed_evidence
+    if receipts:
+        problems = problems + verify(required, receipts)
+    if problems:
+        raise SystemExit("\n".join(problems))
+    print(f"{summary}; " + ("release execution evidence verified" if receipts else "execution coverage not verified"))
+
+
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bindings", type=Path, required=True)
@@ -189,7 +200,7 @@ def main():
         parser = argparse.ArgumentParser(description="Verify all release-critical execution evidence")
         parser.add_argument("receipts", nargs="+", type=Path)
         args = parser.parse_args(sys.argv[2:])
-        flags = ["--release"]
+        flags = []
         for receipt in args.receipts:
             flags += ["--executed-evidence", str(receipt)]
         mod_conformance.main(flags)

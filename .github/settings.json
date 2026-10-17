@@ -15,7 +15,7 @@
   ],
   "branch_protection": {
     "branch": "main",
-    "required_status_checks": {"strict": false, "contexts": ["title", "release-metadata"]},
+    "required_status_checks": {"strict": false, "contexts": ["release-metadata"]},
     "enforce_admins": false,
     "required_pull_request_reviews": {"required_approving_review_count": 0},
     "restrictions": null,

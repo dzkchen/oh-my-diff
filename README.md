@@ -26,7 +26,7 @@ context and screen. OMD ships with a small set of mods, and you can write your o
 
 ## Quickstart
 
-You need an Apple Silicon Mac with Codex `0.163.x`, Node 24.18+ and Python 3.12+ installed.
+You need an Apple Silicon Mac with Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 1. Install OMD with its mod collection:
 
@@ -54,12 +54,18 @@ For the minimal install, other options, updates and removal, see [Install Oh My 
 
 ## Project status
 
-OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
-If something breaks, please [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+**OMD is in beta.** Beta means it doesn't have every planned feature yet, not that it's unstable. More OMD+ mods
+and a fuller OMD Core are coming in the next updates ([what's planned](docs/collection.md#not-in-this-release)).
 
-OMD exists because small, everyday workflow improvements get less attention than bigger AI-lab priorities. After
-release, the maintainer plans to focus mainly on critical fixes. If you'd like to take over maintenance, get in
-touch.
+OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
+
+- **Something broke?** [Open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+- **A mod needs something the API can't do?** Open a
+  [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or send a
+  [pull request](CONTRIBUTING.md).
+
+OMD exists because small, everyday workflow improvements get less attention than bigger AI-lab priorities. If
+you'd like to help maintain it, get in touch.
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 

@@ -34,16 +34,9 @@ The test runs your mod offline, without calling a model, and prints each step. Y
 
 To check types as well, add TypeScript once with `pnpm add -D typescript@5.9.3`, then run `pnpm check`.
 
-`pnpm test` also runs any `*.test.ts` or `*.test.mjs` file next to `mod.test.json`. Use the helpers in
-`@oh-my-diff/mod-api/testing` there; see [TypeScript tests](../mods/REFERENCE.md#typed-tool-declarations).
-Tests never call a real model: a host call you didn't mock fails the test. Mock one with a typed reply, such as
-`hostOperations({ 'store.get': [{ arguments: { key: 'theme' }, result: null }] })`; unexpected calls, mismatched
-arguments and unused replies fail too.
-
-The real host loads the package, runs its callbacks, validates views and advances virtual time. The test helpers
-can seed and read state, invoke commands and tools, mount views, inspect host calls and step component modules
-with key and pointer events. See [Offline scenarios](../mods/REFERENCE.md#offline-scenarios) for the helpers and
-examples.
+`pnpm test` also runs any `*.test.ts` or `*.test.mjs` file next to `mod.test.json`. Tests never call a real
+model: a host call you didn't mock fails the test. See [Offline scenarios](../mods/REFERENCE.md#offline-scenarios)
+and [TypeScript tests](../mods/REFERENCE.md#typescript-tests) for mocks and helpers.
 
 ## 3. Try it in `codex`
 
@@ -112,18 +105,7 @@ You can also share it from Git: `omd install 'git+https://github.com/you/repo#v0
 
 - Copy bigger working examples to read and adapt: `omd-mod-author examples ./examples`.
 - [Mod API reference](../mods/REFERENCE.md): every operation, event and screen surface.
-- [Agent mod guide](AGENT_MOD_GUIDE.md): hand this to a coding agent to build a bigger mod.
+- [Agent mod guide](AGENT_MOD_GUIDE.md): hand this to a coding agent to build a bigger mod. It also helps you
+  [choose between a mod, plugin, skill or hook](AGENT_MOD_GUIDE.md#1-pick-the-right-kind-of-extension).
 - [Permissions](../mods/REFERENCE.md#capabilities) and [how mods combine](../mods/REFERENCE.md#composition-and-safety).
 - [Publishing rules](../mods/REFERENCE.md#publish-a-mod-to-npm) and [compatibility](../mods/COMPATIBILITY.md).
-
-### Mod, plugin, skill or hook?
-
-| You want to | Use |
-| --- | --- |
-| Give the model a procedure to follow | A skill |
-| React to an event, such as a finished turn | A hook |
-| Add tools or services Codex can call | A plugin |
-| Change how `codex` itself behaves or looks | A mod |
-
-A plugin can also include a mod. For an example, see
-[`omd-artifact-reading`](../plugins/bundled/oh-my-diff/plugins/omd-artifact-reading).

@@ -46,32 +46,9 @@ jobs:
     with:
       version: ${{ needs.check.outputs.version }}
 
-  dry-run:
-    needs: [check, validate]
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
-        with:
-          install_args: python@3.14.6
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: package
-          path: release
-      - name: Verify assets and show the publication commands
-        env:
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          python3 scripts/release.py notes "$VERSION" > notes.md
-          cat notes.md
-          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md --dry-run
-
   publish:
     needs: [check, validate]
-    if: github.event_name == 'push' && github.repository == 'dzkchen/oh-my-diff'
+    if: github.repository == 'dzkchen/oh-my-diff'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -86,10 +63,12 @@ jobs:
         with:
           name: package
           path: release
-      - name: Publish the verified release
+      - name: Publish the verified release (dry run prints the commands)
         env:
           GH_TOKEN: ${{ github.token }}
+          OMD_RELEASE_SIGNING_KEY: ${{ secrets.OMD_RELEASE_SIGNING_KEY }}
           VERSION: ${{ needs.check.outputs.version }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
         run: |
           python3 scripts/release.py notes "$VERSION" > notes.md
-          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md
+          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md ${DRY_RUN:+--dry-run}

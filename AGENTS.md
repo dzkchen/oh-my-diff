@@ -18,5 +18,5 @@ this one.
 - Use `pnpm`, never `npm` or `npx`. Tool versions come from `mise.toml`.
 - No compatibility shims: OMD is pre-1.0, so change or delete code and update every caller.
 - Write no code comments except one line on genuinely abstract code.
-- Pull request titles use Conventional Commits; see CONTRIBUTING.
+- Pull request titles become changelog lines; prefer Conventional Commits (see CONTRIBUTING).
 - Don't commit secrets, credentials or personal paths.

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Check the public mod API source inventory; optionally require release execution receipts."""
-import argparse
 import json
 import re
 import sys
@@ -8,6 +7,7 @@ from pathlib import Path
 
 from scripts import execution_evidence
 from scripts.execution_evidence import resolve
+from scripts.mod_compatibility import array_constant, host_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
@@ -27,10 +27,7 @@ def host_sets():
     source = HOST.read_text()
 
     def constant(name):
-        body = re.search(rf"{name}: &\[[^]]*\] = &\[(.*?)\];", source, re.S)
-        if not body:
-            raise ValueError(f"{name} not found in {HOST}")
-        return body.group(1)
+        return array_constant(source, name)
 
     capabilities = re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))
     events = re.findall(r'\("([a-z_]+)", "[a-z_.]+"\)', constant("MOD_EVENTS"))
@@ -40,8 +37,7 @@ def host_sets():
     operations = re.findall(r'"([a-z_]+\.[a-z_]+)"', constant("MOD_HOST_OPERATIONS"))
     arms = re.findall(r'"([a-z_]+\.[a-z_]+)"\s*(?=\||=>)', capability_match.group(1))
     operations += [name for name in arms if name not in operations]
-    version = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', source).group(1)
-    return version, {
+    return host_contract()["current_api"], {
         "capabilities": set(capabilities),
         "events": set(events),
         "replacements": set(replacements),
@@ -184,23 +180,13 @@ def check(contract, version, sets):
 
 
 def main(argv=()):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release", action="store_true")
-    parser.add_argument("--executed-evidence", type=Path, action="append", default=[])
-    args = parser.parse_args(argv)
     contract = json.loads(CONTRACT.read_text())
     version, sets = host_sets()
-    problems = check(contract, version, sets)
-    if args.release or args.executed_evidence:
-        problems += execution_evidence.verify(release_evidence(contract), args.executed_evidence)
-    if problems:
-        raise SystemExit("\n".join(problems))
-    print(
+    execution_evidence.report(
+        argv, __doc__, check(contract, version, sets), release_evidence(contract),
         f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
         f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points, intercept surfaces and host operations documented with resolved source inventory; "
-        + ("release execution evidence verified" if args.release or args.executed_evidence else "execution coverage not verified")
-    )
+        f"replacement points, intercept surfaces and host operations documented with resolved source inventory")
 
 
 if __name__ == "__main__":

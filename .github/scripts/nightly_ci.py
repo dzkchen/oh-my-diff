@@ -14,7 +14,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
 import nightly
-from scripts import package as release_package, profile_acceptance, release_lock
+from scripts import authority_broker, package as release_package, profile_acceptance, release_lock
 
 
 def command(*args):
@@ -142,6 +142,19 @@ def archive_acceptance(archive, upstream):
                 raise ValueError("archive installation changed shared Codex configuration")
 
 
+def sign(manifest):
+    key = os.environ.get("OMD_RELEASE_SIGNING_KEY")
+    if not key:
+        raise ValueError("OMD_RELEASE_SIGNING_KEY is required to sign omd-release.json")
+    with tempfile.TemporaryDirectory() as temporary:
+        private = Path(temporary) / "key"
+        private.write_text(key.strip() + "\n")
+        private.chmod(0o600)
+        command("ssh-keygen", "-Y", "sign", "-q", "-f", private, "-n", authority_broker.SIGNING_NAMESPACE, manifest)
+    authority_broker.signed_hashes([manifest])
+    return manifest.with_name(manifest.name + ".sig")
+
+
 def publish(directory, notes=None, dry_run=False):
     provenance = json.loads((directory / "provenance.json").read_text())
     manifest = json.loads((directory / "omd-release.json").read_text())
@@ -162,7 +175,7 @@ def publish(directory, notes=None, dry_run=False):
             raise ValueError(f"release asset checksum mismatch: {name}")
     if hashlib.sha256((directory / manifest["archive"]).read_bytes()).hexdigest() != manifest["sha256"]:
         raise ValueError("release archive disagrees with the installer manifest")
-    assets = [directory / line.split("  ", 1)[1] for line in sums] + [directory / "SHA256SUMS"]
+    assets = [directory / line.split("  ", 1)[1] for line in sums] + [directory / "SHA256SUMS", sign(directory / "omd-release.json")]
     if not notes:
         notes = directory.parent / "notes.md"
         notes.write_text(f"Nightly from `{provenance['commit']}`; pinned {provenance['upstream_tag']}.\n\n"

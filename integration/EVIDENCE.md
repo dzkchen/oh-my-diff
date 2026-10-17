@@ -5,8 +5,8 @@ A source reference can resolve even when its test is disabled, undiscovered, or 
 weak assertions. Inventory success is never verified coverage. The recorded results
 in the integration matrix are earlier claims, not freshly executed results.
 
-Release qualification uses the same commands with `--release` and one or more
-`--executed-evidence RECEIPT` arguments. Conformance requires every evidence ID
+Release qualification adds one or more `--executed-evidence RECEIPT` arguments to the
+same commands; `mise run release:evidence RECEIPT...` runs both. Conformance requires every evidence ID
 associated with a frozen launch surface. Integration requires every evidence ID in
 its combinations and retained regressions. Missing, skipped, failed, uncollected,
 or stale evidence fails this gate. It runs only against a clean Git revision.
@@ -23,8 +23,6 @@ Run the actual test runner through the recorder:
 ```sh
 python3 -m scripts.execution_evidence --bindings /path/to/bindings.json \
   --output /path/outside/checkout/execution.json -- /path/to/junit-test-command
-python3 -m scripts.mod_conformance --release --executed-evidence /path/outside/checkout/execution.json
-python3 -m scripts.integration_matrix --release --executed-evidence /path/outside/checkout/execution.json
 mise run release:evidence /path/outside/checkout/execution.json
 ```
 

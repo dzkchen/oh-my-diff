@@ -294,14 +294,8 @@ See [Plugin components](../mods/REFERENCE.md#plugin-components-and-shell-command
 
 ## 10. Share it
 
-1. In `package.json`, remove `"private": true`, use a scoped name such as `@you/notes`, and match the version in
-   `mod.json`.
-2. Set `license` and `provenance` in `mod.json`.
-3. `pnpm check && pnpm test && pnpm publish --access public`.
-
-Others install it with `omd install npm:@you/notes@0.1.0`, or from Git with
-`omd install 'git+https://github.com/you/repo#v0.1.0:notes'`. See
-[Publish a mod to npm](../mods/REFERENCE.md#publish-a-mod-to-npm).
+Follow [Share it](write-a-mod.md#5-share-it) and [Publish a mod to npm](../mods/REFERENCE.md#publish-a-mod-to-npm),
+with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 
 ## What is supported
 
