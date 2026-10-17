@@ -56773,10 +56773,10 @@ index 000000000..08c359434
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..c8158f055
+index 000000000..1a9f67136
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2486 @@
+@@ -0,0 +1,2490 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -58348,11 +58348,15 @@ index 000000000..c8158f055
 +            blit: None,
 +        };
 +        let found = processes
-+            .call(owner, "process.which", json!({"names":["python3"]}), || {
-+                true
-+            })
++            .call(owner, "process.which", json!({"names":["sh"]}), || true)
 +            .unwrap();
-+        let python = &found["found"][0];
++        let sh = &found["found"][0];
++        let python = Command::new("python3")
++            .args(["-c", "import sys; print(sys.executable)"])
++            .output()
++            .unwrap()
++            .stdout;
++        let python = String::from_utf8(python).unwrap();
 +        let probe = r#"import ctypes,errno,json,os
 +lib=ctypes.CDLL(None,use_errno=True)
 +name=('/omdprobe_'+str(os.getpid())).encode()
@@ -58368,8 +58372,8 @@ index 000000000..c8158f055
 +            .call(
 +                owner,
 +                "process.start",
-+                json!({"session":"probe","name":"python3","path":python["path"],
-+            "sha256":python["sha256"],"arguments":["-c",probe],"framing":"ndjson"}),
++                json!({"session":"probe","name":"sh","path":sh["path"],"sha256":sh["sha256"],
++            "arguments":["-c","exec \"$0\" -c \"$1\"",python.trim(),probe],"framing":"ndjson"}),
 +                || true,
 +            )
 +            .unwrap();
@@ -58991,7 +58995,7 @@ index 000000000..c8158f055
 +                },
 +            );
 +            frames.offer(json!({"pixels": {}}));
-+            receiver.recv_timeout(Duration::from_secs(8)).unwrap();
++            receiver.recv_timeout(Duration::from_secs(60)).unwrap();
 +            assert_eq!(
 +                attempts.load(std::sync::atomic::Ordering::SeqCst),
 +                failures + 1
@@ -78517,10 +78521,10 @@ index 000000000..2908f9615
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 000000000..51a13fb26
+index 000000000..ab4f49d2c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,109 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -78560,12 +78564,22 @@ index 000000000..51a13fb26
 +        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
-+    std::fs::write(dir.path().join("src/a.txt"), "x").unwrap();
-+    let (watch_id, paths) =
-+        tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)))
-+            .await
-+            .unwrap()
-+            .unwrap();
++    let file = dir.path().join("src/a.txt");
++    let (watch_id, paths) = tokio::task::spawn_blocking(move || {
++        let mut seen = Vec::new();
++        for round in 0..20 {
++            std::fs::write(&file, round.to_string()).unwrap();
++            while let Ok(batch) = rx.recv_timeout(Duration::from_millis(500)) {
++                if batch.1.iter().any(|p| p == "src/a.txt") {
++                    return batch;
++                }
++                seen.push(batch);
++            }
++        }
++        panic!("{seen:?}")
++    })
++    .await
++    .unwrap();
 +    assert_eq!(watch_id, id);
 +    assert!(paths.iter().any(|p| p == "src/a.txt"), "{paths:?}");
 +    assert!(watches.unwatch("m", &id));

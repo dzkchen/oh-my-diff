@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "b652f7b2e274855dfca684aaffdd24a679069e929c5f11891d730ab1bf3202c7"
+    "sha256": "3c61a0aacc51224d7cea409067908c6a514c60373b50ae7b409c143b891b3fb4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -903,7 +903,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "a7dcd6481770bbaf3b08d96367ec5ab4f12d1c3fcebbc81ea8fb29f10d23b592"
+      "after": "52a035b75f7740ba42ec1f0cb69571b121bbcad0f44a92fbcf09ac78c1bdc57f"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
@@ -1023,7 +1023,7 @@
     },
     "codex-rs/ext/omd/src/workspace_watch_tests.rs": {
       "before": null,
-      "after": "ae834b6e9ade373c352469aaed2cf61dd31f974426821e3170f76ce501bf46a3"
+      "after": "925e4189acd778c937832bb7bfb4d5b81b4b00a40da05d57611e386e60dc37a0"
     },
     "codex-rs/ext/omd/tests/omd_mod_cli.rs": {
       "before": null,
