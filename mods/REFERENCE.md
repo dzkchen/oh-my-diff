@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.1`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
 loads. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
@@ -61,8 +61,7 @@ The host is feature-agnostic: every operation, event and capability below is
 available to any trusted mod on equal terms, and none of them names a product
 feature. `OMD_MODE=omd` runs the mod host in the default session;
 `OMD_MODE=upstream_direct` (or no `OMD_MODE`) runs pinned upstream behavior
-without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
-`OMD_CONTROLLED_MANIFEST` are rejected with a message naming `OMD_MODE=omd`.
+without mods. Any other `OMD_MODE` value is rejected.
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
@@ -134,11 +133,12 @@ declares their scope, which the trust digest binds, so changed content or a
 wider scope needs a new trust:
 
 - `os_access: {programs, network?}` lists up to 32 programs (`*`, a bare name
-  resolved on `PATH`, or an absolute path) and whether unsandboxed runs keep
+  resolved on `PATH` outside the repository, or an absolute path; a program
+  inside the repository runs only when its absolute path is listed) and whether unsandboxed runs keep
   external network (`network: false` runs them under a profile that denies IP
   networking only). It needs `exec`.
 - `approves: {kinds, tools?, roots?, hosts?}` lists the request kinds a mod may
-  approve (`exec`, `stdin`, `execve`, `patch`, `mcp_tool`, `network`) and
+  approve (`exec`, `stdin`, `patch`, `mcp_tool`, `network`) and
   optional scopes: `tools` matches the command's program (the first word inside
   an `sh`, `bash` or `zsh` `-c`/`-lc` wrapper) as written, where a bare name or
   `prefix*` also matches an absolute path that `PATH` resolves that name to
@@ -1807,8 +1807,10 @@ control naming another mod's command is dropped. `component_event`, `view` and `
 interaction; `component_event` goes only to the component's owner and also reports, with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
-and dialogs (`ui_composition_v1`). These events wait in order behind a slow
-callback; beyond 256 waiting events new ones are dropped and the next delivered
+and dialogs (`ui_composition_v1`). Every `component_event` carries the
+`thread_id` of the session thread it came from (null before the session has one),
+and a `state_scope: "thread"` owner's callback runs with that thread's state.
+These events wait in order behind a slow callback; beyond 256 waiting events new ones are dropped and the next delivered
 event reports the count as `dropped`.
 
 Component modules (experimental, required feature `component_modules_v1`,
@@ -2720,8 +2722,7 @@ reject cancellation, changed source, originating generation or client context.
 An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
-failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`
-when a mod provides it.
+failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path.
 
 ### Dynamic tools (`dynamic_tools_v1`)
 
@@ -3052,8 +3053,9 @@ supported.
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
+| `omd-mod set-node STORE NODE` | Point the store at another `node` binary; with the authority broker deployed this grants it as the runner and asks for authorization |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Imports no package-source provenance. |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the configured `node` as the runner; imports no package-source provenance. |
 | `omd-mod selection-status STORE` | Show managed, project and user selections, precedence, administrator refusals, source errors, and each setting's origin without running mod code |
 | `omd-mod package-sync STORE [--offline\|--rollback]` | Deploy the [administrator policy](#administrator-policy-and-managed-deployment)'s packages unattended, or reactivate the previous generation |
 | `omd-mod policy show\|clear\|rollback`, `policy check\|set FILE`, `policy explain STORE [PROJECT_DIR]` | Print, validate, store (administrator) or explain the administrator policy |
@@ -3251,7 +3253,10 @@ replies), tool outcomes and agent
 lifecycle, reload at a safe boundary, mount a terminal view, and interact with
 a mounted key or component ID. Component interaction activates buttons, inputs,
 and selectors with an optional `value`; copy actions return without touching the
-system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`.
+system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`,
+and `thread_id` to run in that thread when its payload names none (thread-scoped
+state, timers and component events follow it; the `THREAD` argument of
+`omd-mod test` binds every step and takes precedence).
 Additional trusted packages are listed in `packages`, enabling provider/consumer
 and conflict fixtures without shared globals or ambient authority. `tiers` maps
 loaded mod IDs to `prepend` or `append` and runs them as
@@ -3526,6 +3531,13 @@ root-owned daemon plist exists,
 
 - keeps credential profiles, secrets and sign-in tokens in the broker
   (enrollment never writes them to the user's disk);
+- runs mod callbacks only under the `node` binary in `mods.json` whose path
+  and digest the broker holds as a runner grant (`node_unverified` otherwise,
+  `node_changed` when the binary changes after verification). Only
+  `omd-mod init`, `omd-mod set-node STORE NODE` (for example after a Node
+  upgrade) and broker grant import grant a runner; trusting or installing
+  packages never does. A missing `node` fails with `node_unavailable`, without
+  a `PATH` fallback;
 - accepts a mod selection only when the broker holds the same grant (path,
   digest, capabilities, scope and secret environment), otherwise
   `grant_not_brokered`; enabling, disabling and settings changes don't touch

@@ -1,15 +1,15 @@
 import type { ComponentKey, ComponentPointer, HostOperations, InterceptTraceEntry, Json, KeyName, TerminalComponent, TerminalView } from './api.d.ts';
 
 export type StepOptions = { expect?: Json; expectError?: string; cancelled?: boolean };
-export type Step = { expect?: Json; expect_error?: string; cancelled?: boolean } & (
+export type Step = { expect?: Json; expect_error?: string; cancelled?: boolean; thread_id?: string } & (
   | { type: 'invoke'; mod: string; event: string; name: string; payload?: Json }
   | { type: 'event'; event: string; payload?: Json }
   | { type: 'tool_outcome' | 'agent'; payload?: Json }
   | { type: 'advance_time'; ms: number }
   | { type: 'wait_until'; check: Step; until: Json; every_ms?: number; max_ms: number }
   | { type: 'reload' | 'status' }
-  | { type: 'state'; mod: string; value?: Json; thread_id?: string }
-  | { type: 'tool_exposure'; thread_id?: string; payload?: Json }
+  | { type: 'state'; mod: string; value?: Json }
+  | { type: 'tool_exposure'; payload?: Json }
   | { type: 'terminal_mount'; mod: string; payload?: Json }
   | ({ type: 'terminal_interact'; mod: string; payload?: Json; client?: string } & ({ key: string } | { component: string; value?: string; pointer?: PointerEvent }))
   | { type: 'component'; mod: string; module: string; instance?: string; props?: Json; columns?: number; rows?: number; events?: (ComponentKey | ComponentPointer)[] }

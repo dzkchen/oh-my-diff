@@ -22,7 +22,9 @@ def extracted(root):
     lock = root / 'lock.json'
     lock.write_text(json.dumps(record))
     with patch.object(package.release, 'build', return_value=record), \
-            patch.object(package.release, 'OUTPUT', lock), patch.object(package, 'copy_sources'):
+            patch.object(package.release, 'OUTPUT', lock), \
+            patch.object(package, 'copy_sources', side_effect=lambda payload: (payload / 'runtime').mkdir() or
+                         (payload / 'runtime/release.lock.json').write_text(json.dumps(record))):
         packed = package.archive_payload(artifacts, root / 'package.tar.xz')
     destination = root / 'unpacked'
     destination.mkdir()
@@ -42,6 +44,7 @@ class SourceBuildTests(unittest.TestCase):
                     patch.object(package.tarfile, 'open', side_effect=AssertionError('extracted again')):
                 package.install_archive(args)
                 self.assertEqual([call[2] for call in calls], ['scripts.release_lock', 'scripts.profiles'])
+                self.assertEqual(calls[0][calls[0].index('--version') + 1], 'fixture')
                 self.assertIn(payload.resolve() / 'artifacts/codex', calls[1])
                 (payload / 'artifacts/codex').write_text('changed')
                 with self.assertRaisesRegex(ValueError, 'prebuilt package file changed: artifacts/codex'):

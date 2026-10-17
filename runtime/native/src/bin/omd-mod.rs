@@ -5,6 +5,7 @@ use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use codex_omd::load_managed;
+use codex_omd_extension::validate_tool_schema;
 use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
@@ -217,7 +218,7 @@ fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(concat!(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE NODE | set-node STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
             " | broker-grants-import STORE [SNAPSHOT_JSON]"
         ))
     };
@@ -287,6 +288,10 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, node] if command == "init" => {
             ModStore::create(PathBuf::from(root), PathBuf::from(node))?;
             Ok(Value::String("created".into()))
+        }
+        [command, root, node] if command == "set-node" => {
+            open(root)?.set_node(&PathBuf::from(node))?;
+            Ok(Value::String("updated".into()))
         }
         [command, path] if command == "inspect" => {
             ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
@@ -438,7 +443,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root] if command == "status" => {
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let terminal = host.terminal_view(
@@ -464,7 +469,9 @@ fn run(args: &[String]) -> io::Result<Value> {
             }
         }
         [command, root] if command == "report" => {
-            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            let status =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .status();
             Ok(
                 serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
                 .into_iter().flatten().map(|item| serde_json::json!({
@@ -475,11 +482,15 @@ fn run(args: &[String]) -> io::Result<Value> {
                 })).collect::<Vec<_>>() }),
             )
         }
-        [command, root] if command == "events" => {
-            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.author_inspection())
-        }
+        [command, root] if command == "events" => Ok(ModHost::open_validated(
+            PathBuf::from(root).canonicalize()?,
+            validate_tool_schema,
+        )?
+        .author_inspection()),
         [command, root] if command == "declarations" => {
-            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            let status =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .status();
             Ok(
                 serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
                 "installed_contracts":status["installed_contract_types"],
@@ -490,14 +501,16 @@ fn run(args: &[String]) -> io::Result<Value> {
             let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());
             host.offline_test(scenario)
         }
         [command, root, output] if command == "diagnostics" => {
-            let bundle = ModHost::open(PathBuf::from(root).canonicalize()?)?.diagnostic_bundle();
+            let bundle =
+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
+                    .diagnostic_bundle();
             let output = PathBuf::from(output);
             std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -508,7 +521,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         {
             let mut host = ModHost::open_in(
                 PathBuf::from(root).canonicalize()?,
-                |_| Ok(()),
+                validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
             let _thread = codex_omd::StateThread::enter(thread.first().cloned());

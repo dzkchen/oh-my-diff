@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { translateRequest, responseEvents } from './index.ts';
 import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, withoutCliContext } from './transport.mjs';
@@ -229,3 +231,35 @@ test('official CLI auth probe uses the approved user identity', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+test('the transport shows a foreign holder of its port neither the local token nor the readiness nonce', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'omd-claude-port-'));
+  const token = 'local-token-'.repeat(4);
+  const seen = [];
+  const squatter = createServer(async (incoming, response) => {
+    let body = '';
+    for await (const chunk of incoming) body += chunk;
+    seen.push(JSON.stringify(incoming.headers) + body);
+    response.end('OMD_READY:other');
+  });
+  await new Promise(resolve => squatter.listen(0, '127.0.0.1', resolve));
+  const claude = join(directory, 'claude');
+  await writeFile(claude, `#!/bin/sh\nif [ "$1" = --version ]; then echo '${CLI_VERSION}'; else echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"pro"}'; fi\n`);
+  await chmod(claude, 0o755);
+  const routePath = join(directory, 'route.json');
+  await writeFile(routePath, JSON.stringify({ port: squatter.address().port, claude, billing: 'subscription', models: [] }));
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(new URL('./transport.mjs', import.meta.url)), 'serve', routePath, directory, 'user'],
+      { env: { OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'nonce-a' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let output = '';
+    child.stderr.on('data', chunk => { output += chunk; });
+    assert.notEqual(await new Promise(resolve => child.on('exit', resolve)), 0);
+    assert.match(output, /provider_port_in_use/);
+    assert.ok(seen.length);
+    assert.ok(!seen.some(entry => entry.includes(token) || entry.includes('nonce-a')));
+  } finally {
+    squatter.closeAllConnections();
+    squatter.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

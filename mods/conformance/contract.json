@@ -2081,7 +2081,7 @@
       "evidence": [
         "patch:provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once",
         "patch:provider_billed_service_routes_are_found_only_for_their_provider_and_mod",
-        "rust:credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin"
+        "rust:native/tests/omd_mod_cli.rs::credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin"
       ],
       "replace_note": null
     },

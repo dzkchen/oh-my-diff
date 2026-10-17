@@ -57,7 +57,9 @@ impl NpmConfig {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_default();
         let expand = |value: &str| {
-            interpolate(value.trim().trim_matches('"'), |name| std::env::var(name).ok())
+            interpolate(value.trim().trim_matches('"'), |name| {
+                std::env::var(name).ok()
+            })
         };
         let mut config = Self::default();
         for line in text.lines().map(str::trim) {
@@ -656,6 +658,7 @@ impl ModStore {
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
+        self.verified_node(&config.node)?;
         require_migration_handlers(&plan, &scope, &config.node)?;
         let mut selection_ids = config
             .mods
@@ -2118,6 +2121,7 @@ impl ModStore {
         )?)
         .map_err(failure)?;
         let node = self.configuration()?.node;
+        self.verified_node(&node)?;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
@@ -2743,7 +2747,9 @@ fn selected_settings(
 }
 
 fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
-    let changes = plan.changes["packages"].as_array().map_or(&[][..], Vec::as_slice);
+    let changes = plan.changes["packages"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
     for (locked, change) in plan.packages.iter().zip(changes) {
         if change["state_version"]["handler_required"] != true {
             continue;

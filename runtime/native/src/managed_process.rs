@@ -1,13 +1,23 @@
+#[cfg(target_os = "macos")]
 use codex_network_proxy::ManagedNetworkSandboxContext;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemAccessMode;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemPath;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemSandboxEntry;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
+#[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+#[cfg(target_os = "macos")]
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::process_group::kill_process_group;
 use serde::Deserialize;
@@ -26,6 +36,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -198,8 +209,14 @@ pub(super) struct ProcessNotice {
 
 pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
 
-pub(super) type BlitSink =
-    Arc<dyn Fn(Value, Arc<dyn Fn() -> bool + Send + Sync>) -> Result<Value, codex_omd::client_surface::BlitError> + Send + Sync>;
+pub(super) type BlitSink = Arc<
+    dyn Fn(
+            Value,
+            Arc<dyn Fn() -> bool + Send + Sync>,
+        ) -> Result<Value, codex_omd::client_surface::BlitError>
+        + Send
+        + Sync,
+>;
 
 const BLIT_RETRY: Duration = Duration::from_millis(100);
 const BLIT_ATTEMPTS: u32 = 50;
@@ -588,6 +605,7 @@ fn send_message(stdin: &mut impl Write, message: &Value) -> Result<(), String> {
     stdin.flush().map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn read_policy(
     policy: &FileSystemSandboxPolicy,
     scratch: &Path,
@@ -857,7 +875,7 @@ impl ManagedProcesses {
                     || !matches!(input.stdin.as_deref(), None | Some("null"))
                     || match unrestricted {
                         Some(access) => {
-                            codex_omd::host::unrestricted_program(access, &input.name)?
+                            codex_omd::host::unrestricted_program(access, &input.name, repository)?
                                 != input.path
                         }
                         None => program(&input.name, repository).as_ref() != Some(&input.path),
@@ -930,10 +948,16 @@ impl ManagedProcesses {
                     let mut command = match unrestricted {
                         Some(access) => {
                             let mut command =
-                                codex_omd::host::unrestricted_command(access, &input.path, &[]);
+                                codex_omd::host::unrestricted_command(access, &input.path, &[])?;
                             command.args(arguments);
                             command
                         }
+                        #[cfg(not(target_os = "macos"))]
+                        None => {
+                            let _ = (policy, protected);
+                            return Err("managed_process_requires_native_sandbox".into());
+                        }
+                        #[cfg(target_os = "macos")]
                         None => {
                             let scope = read_policy(policy, &scratch)?;
                             let loopback_network = input.network.as_deref() == Some("loopback");
@@ -1355,6 +1379,7 @@ impl ManagedProcesses {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn raster_input_queue_bounds_bytes_messages_and_coalesces_in_order() {
@@ -1683,7 +1708,10 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         drop(held);
         remover.join().unwrap();
         assert_eq!(reader.join().unwrap(), Some(true));
-        assert!(removed.is_ok(), "removal blocked behind liveness while the process was locked");
+        assert!(
+            removed.is_ok(),
+            "removal blocked behind liveness while the process was locked"
+        );
     }
 
     #[test]
@@ -1767,13 +1795,10 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         }
         std::thread::sleep(Duration::from_millis(200));
         let (mut exchanges, mut total) = (0, 0);
-        loop {
-            let Ok(answer) = fixture.call(
-                "process.exchange",
-                json!({"session":"flood","wait_ms":2000}),
-            ) else {
-                break;
-            };
+        while let Ok(answer) = fixture.call(
+            "process.exchange",
+            json!({"session":"flood","wait_ms":2000}),
+        ) {
             let messages = answer["messages"].as_array().unwrap();
             assert!(
                 serde_json::to_vec(messages).unwrap().len() <= EXCHANGE_BYTES,
@@ -1940,7 +1965,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             os_access: Some(&access),
             blit: Some(&sink),
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let sha256 = program_sha256(&sh).unwrap();
         let script = r#"printf '{"blit":{"media_type":"image/png","base64":"AA=="}}\n{"note":1}\n'; exec cat"#;
         let start = |owner: ProcessOwner<'_>, session: &str, framing: &str| {
@@ -2061,7 +2086,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             os_access: Some(&access),
             blit: None,
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
         let pidfile = repository.join("child.pid");
         let start = |owner: ProcessOwner<'_>, session: &str| {
@@ -2219,7 +2244,12 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             let (sender, receiver) = mpsc::channel();
             let frames = blit_worker(
                 "revoked".into(),
-                Arc::new(|_, _| Err(codex_omd::client_surface::BlitError::new(codex_omd::client_surface::BlitErrorKind::Revoked, "authority removed"))),
+                Arc::new(|_, _| {
+                    Err(codex_omd::client_surface::BlitError::new(
+                        codex_omd::client_surface::BlitErrorKind::Revoked,
+                        "authority removed",
+                    ))
+                }),
                 Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 move || {
                     sender.send(()).unwrap();
@@ -2281,7 +2311,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             programs: vec!["sh".into()],
             network: false,
         };
-        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let owner = ProcessOwner {
             thread: None,
             id: "fixture",

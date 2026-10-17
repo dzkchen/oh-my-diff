@@ -466,7 +466,7 @@ Frozen means held for the launch candidate; the API version remains experimental
 
 ## What this adds over the native plugins and hooks
 
-Pinned Codex 0.162.1 ships plugins (`plugin.json`: skills, prompts, MCP servers,
+Pinned Codex 0.163.0 ships plugins (`plugin.json`: skills, prompts, MCP servers,
 hook files) and hooks for `pre_tool_use`, `permission_request`, `post_tool_use`,
 `pre_compact`, `post_compact`, `session_start`, `session_end`,
 `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
@@ -697,7 +697,7 @@ frozen surface's evidence at the clean validated revision. See `integration/EVID
 | terminal.pty | `patch:pty_output_renders_and_sessions_stay_owner_scoped` · `rust:writable_pty_panes_also_need_workspace_write_authority` |
 | coordination.model_complete | `patch:model_completions_use_only_configured_worker_routes` · `patch:model_fork_checks_history_authority_before_access` · `patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses` · `patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports` |
 | coordination.sdk_helpers | `rust:sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views` · `rust:offline_scenarios_mock_environment_pointer_clients_and_pending_waits` · `rust:time_sleep_releases_the_runtime_and_wakes_on_cancellation` |
-| coordination.provider_billing | `patch:provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once` · `patch:provider_billed_service_routes_are_found_only_for_their_provider_and_mod` · `rust:credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin` |
+| coordination.provider_billing | `patch:provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once` · `patch:provider_billed_service_routes_are_found_only_for_their_provider_and_mod` · `rust:native/tests/omd_mod_cli.rs::credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin` |
 | context.history | `patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items` · `patch:unsafe_edits_are_refused` · `patch:call_arguments_and_image_messages_can_be_rewritten` |
 | context.history_persist | `rust:history_persist_interceptors_rewrite_only_entry_text` · `patch:persisted_text_is_rewritten_at_rest_while_live_history_keeps_the_original` |
 | context.durable_history_rewrite | `patch:rewrite_replaces_deletes_inserts_and_moves_rows_durably` · `patch:rewrite_refuses_stale_unpaired_reused_and_role_changing_edits` · `patch:revision_log_recovers_interrupted_writes_and_detects_tampering` · `patch:thread_rewrite_is_durable_across_restart_search_export_and_undo` |

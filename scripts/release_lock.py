@@ -59,7 +59,10 @@ def sdk_sources():
 SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
-def build(artifact_dir, package_mode=False):
+def build(artifact_dir, package_mode=False, version=None):
+    product_version = VERSION if version is None else version
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", product_version):
+        raise ValueError("invalid release version")
     provenance = build_provenance.verify(artifact_dir)
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
@@ -106,7 +109,7 @@ def build(artifact_dir, package_mode=False):
     return {
         "schema": 1,
         "product": profiles.PRODUCT,
-        "version": VERSION,
+        "version": product_version,
         "upstream_tag": upstream["tag"],
         "upstream_commit": upstream["commit"],
         "target": TARGET,
@@ -136,8 +139,9 @@ def main():
     parser.add_argument("--artifact-dir", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--package-mode", action="store_true")
+    parser.add_argument("--version", help="version recorded in the release manifest")
     args = parser.parse_args()
-    support.check_or_write(OUTPUT, json.dumps(build(args.artifact_dir.resolve(), args.package_mode), indent=2, sort_keys=True) + "\n",
+    support.check_or_write(OUTPUT, json.dumps(build(args.artifact_dir.resolve(), args.package_mode, args.version), indent=2, sort_keys=True) + "\n",
                            args.write, "release lock differs from exact artifacts and sources")
 
 

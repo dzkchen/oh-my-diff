@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.162.1",
-  "commit": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d"
+  "tag": "rust-v0.163.0",
+  "commit": "83086188ae0614bd882818ff1aa23f3194962012"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -831,6 +831,7 @@
     "developerInstructions",
     "ephemeral",
     "excludeTurns",
+    "experimentalPredictionMode",
     "lastTurnId",
     "model",
     "modelProvider",
@@ -897,6 +898,19 @@
     "turnId"
    ]
   },
+  "thread/items/read": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible",
+   "fields": [
+    "itemIds",
+    "threadId",
+    "turnId"
+   ]
+  },
   "thread/list": {
    "class": "sessions",
    "contexts": [
@@ -908,6 +922,7 @@
     "archived",
     "cursor",
     "cwd",
+    "excludedThreadIds",
     "limit",
     "modelProviders",
     "originators",
@@ -1052,6 +1067,18 @@
    "scope": "visible",
    "fields": [
     "includeTurns",
+    "threadId"
+   ]
+  },
+  "thread/readState/update": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible",
+   "fields": [
+    "expectedRevision",
+    "operation",
     "threadId"
    ]
   },
@@ -1428,6 +1455,7 @@
   "thread/prediction/updated",
   "thread/project/updated",
   "thread/queue/changed",
+  "thread/readState/changed",
   "thread/realtime/closed",
   "thread/realtime/error",
   "thread/realtime/item/completed",
@@ -1492,6 +1520,7 @@
   "experimental_thread_store",
   "features.auth_elicitation",
   "features.browser_use_full_cdp_access",
+  "features.credential_masking",
   "features.elevated_windows_sandbox",
   "features.enable_experimental_windows_sandbox",
   "features.exec_permission_approvals",
@@ -1503,6 +1532,7 @@
   "features.guardian_node_repl_transcript_images",
   "features.guardian_reuse_parent_compaction",
   "features.guardian_root_handoff_context",
+  "features.guardian_trust_orchestrator_connectors",
   "features.guardianv2",
   "features.guardianv2_decisions_comparison",
   "features.login_shell_package_path",
@@ -1565,6 +1595,7 @@
   "otel.trace_exporter",
   "otel.tracestate",
   "permissions",
+  "plugins._default",
   "profiles",
   "projects",
   "sandbox_mode",
@@ -1625,6 +1656,7 @@
   "features.apply_patch_streaming_events",
   "features.apps",
   "features.apps_mcp_path_override",
+  "features.async_compaction",
   "features.background_paginated_rollout_migration",
   "features.bedrock_setup_wizard",
   "features.browser_annotation_api",
@@ -1635,10 +1667,12 @@
   "features.code_mode",
   "features.code_mode_buffered_exec",
   "features.code_mode_host",
+  "features.code_mode_host_grpc",
   "features.code_mode_interrupt",
   "features.code_mode_only",
   "features.code_mode_only_strict_3p_tools",
   "features.code_mode_prewarm",
+  "features.code_mode_tool_description_first",
   "features.code_mode_tool_search",
   "features.codex_apps_mcp_2026_07_28",
   "features.codex_git_commit",
@@ -1698,6 +1732,7 @@
   "features.non_prefixed_mcp_tool_names",
   "features.nonfatal_clock_read_errors",
   "features.omit_app_server_notification_media",
+  "features.output_token_replay",
   "features.personality",
   "features.plugin_hooks",
   "features.plugins",
@@ -1714,6 +1749,7 @@
   "features.responses_websockets",
   "features.responses_websockets_v2",
   "features.retain_client_developer_messages",
+  "features.retain_client_tool_outputs",
   "features.rollout_budget",
   "features.runtime_metrics",
   "features.search_tool",
@@ -1731,6 +1767,7 @@
   "features.standalone_web_search",
   "features.steer",
   "features.step_model_switching",
+  "features.subagent_default_context_limits",
   "features.telepathy",
   "features.terminal_resize_reflow",
   "features.terminal_visualization_instructions",
@@ -1772,6 +1809,7 @@
   "include_apps_instructions",
   "include_collaboration_mode_instructions",
   "include_environment_context",
+  "include_environment_context_time",
   "include_permissions_instructions",
   "instructions",
   "mcp_optional_startup_grace_ms",
@@ -1805,6 +1843,7 @@
   "notice.external_config_migration_prompts",
   "notice.fast_default_opt_out",
   "notice.hide_full_access_warning",
+  "notice.hide_gov_cloud_guidance",
   "notice.hide_gpt-5.1-codex-max_migration_prompt",
   "notice.hide_gpt5_1_migration_prompt",
   "notice.hide_rate_limit_model_nudge",
@@ -1851,6 +1890,7 @@
   "tui.animations",
   "tui.auto_recap",
   "tui.copy_on_select",
+  "tui.copy_on_select_clear_selection",
   "tui.disable_paste_burst",
   "tui.effects",
   "tui.fullscreen_transcript",
@@ -1877,7 +1917,8 @@
   "tui.terminal_title",
   "tui.theme",
   "tui.vim_mode_default",
-  "web_search"
+  "web_search",
+  "windows.allow_mxc"
  ],
  "config_subkeys": {
   "mcp_servers": [

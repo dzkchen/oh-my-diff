@@ -753,6 +753,12 @@ impl Services {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+async fn request_output(_config: &Config, _command: Vec<String>) -> Result<Value, String> {
+    Err("service_sandbox_unavailable".into())
+}
+
+#[cfg(target_os = "macos")]
 async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, String> {
     use codex_sandboxing::seatbelt::{
         CreateSeatbeltCommandArgsParams, MACOS_PATH_TO_SEATBELT_EXECUTABLE,

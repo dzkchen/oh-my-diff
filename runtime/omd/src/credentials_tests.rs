@@ -165,7 +165,12 @@ fn credential_files_are_replaced_privately_and_atomically() {
         .create_secret("site", "https://example.com", "vault")
         .unwrap();
     let key = profiles
-        .create("key", "provider", Some("p"), Some("https://api.example.com"))
+        .create(
+            "key",
+            "provider",
+            Some("p"),
+            Some("https://api.example.com"),
+        )
         .unwrap();
     let tokens = ["a".repeat(64), "b".repeat(4000)];
     for (id, origin, owner, file) in [
@@ -176,7 +181,10 @@ fn credential_files_are_replaced_privately_and_atomically() {
             if file == "secret" {
                 profiles.store_secret(id, token)
             } else {
-                profiles.store_auth(id, &serde_json::json!({"OPENAI_API_KEY": token}).to_string())
+                profiles.store_auth(
+                    id,
+                    &serde_json::json!({"OPENAI_API_KEY": token}).to_string(),
+                )
             }
         };
         let read = || profiles.secret(id, origin, owner).unwrap().token;

@@ -77,7 +77,11 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
             Some(generation)
         )
     );
-    for invalid in [json!({}), json!({"fields": "id"}), json!({"fields": [], "page": 1})] {
+    for invalid in [
+        json!({}),
+        json!({"fields": "id"}),
+        json!({"fields": [], "page": 1}),
+    ] {
         assert!(list_fields(&store, None, invalid).is_err());
     }
 

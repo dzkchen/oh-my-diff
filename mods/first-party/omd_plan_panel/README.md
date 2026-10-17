@@ -2,7 +2,7 @@
 
 First-party mod, active by default in OMD+, that pins
 the current plan above the composer. The plan is Codex's own `update_plan`
-tool; the mod adds no second todo tool. Codex 0.162 registers that tool only with
+tool; the mod adds no second todo tool. Codex 0.163 registers that tool only with
 `[tools.update_plan] enabled = true`, so the manifest's `codex_config` turns it on
 for sessions where the panel is active (nothing is written to `config.toml`).
 
