@@ -32,7 +32,7 @@ def extracted(root):
     return package.checked_extract(root / 'package.tar.xz', packed['sha256'], destination)
 
 
-class SourceBuildTests(unittest.TestCase):
+class PayloadInstallTests(unittest.TestCase):
     def test_an_extracted_payload_installs_only_after_verification_and_without_extracting_again(self):
         with tempfile.TemporaryDirectory() as directory:
             payload = extracted(Path(directory))

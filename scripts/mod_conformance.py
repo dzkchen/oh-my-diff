@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check the conformance registry and classic-hook ledger against the host and public types."""
 import json
 import re
@@ -152,16 +151,3 @@ def check(contract, version, sets):
         if entry["native"] not in sets["events"] | sets["intercepts"]:
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
     return problems + check_launch(contract, sets)
-
-
-def main():
-    contract = json.loads(CONTRACT.read_text())
-    version, sets = host_sets()
-    if problems := check(contract, version, sets):
-        raise SystemExit("\n".join(problems))
-    print(f"contract {contract['api']}: {len(contract['decisions'])} decisions, {len(contract['composition'])} composition "
-          "rules; every capability, event, replacement point, intercept surface and host operation is classified")
-
-
-if __name__ == "__main__":
-    main()

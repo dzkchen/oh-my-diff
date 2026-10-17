@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import json
 from pathlib import Path
 
@@ -76,15 +75,3 @@ def check(registry):
     if not {"reader", "tool"} <= synthetic:
         problems.append("reader and tool synthetic fixtures are not classified")
     return problems
-
-
-def main():
-    registry = json.loads(REGISTRY.read_text())
-    problems = check(registry)
-    if problems:
-        raise SystemExit("\n".join(problems))
-    print(f"extension types: {len(registry['packages'])} packages and {len(registry['synthetic_fixtures'])} synthetic fixtures")
-
-
-if __name__ == "__main__":
-    main()
