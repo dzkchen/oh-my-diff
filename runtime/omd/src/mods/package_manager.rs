@@ -656,6 +656,7 @@ impl ModStore {
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
+        self.verified_node(&config.node)?;
         require_migration_handlers(&plan, &scope, &config.node)?;
         let mut selection_ids = config
             .mods
@@ -2118,6 +2119,7 @@ impl ModStore {
         )?)
         .map_err(failure)?;
         let node = self.configuration()?.node;
+        self.verified_node(&node)?;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],

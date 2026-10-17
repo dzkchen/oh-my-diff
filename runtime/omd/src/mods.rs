@@ -2271,17 +2271,8 @@ pub struct ModConfiguration {
 
 impl ModConfiguration {
     pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
-        let mut config: Self = serde_json::from_slice(bytes)
-            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
-        if !config.node.is_file() {
-            config.node = node_on_path().ok_or_else(|| {
-                failure(format!(
-                    "node_unavailable: {} is missing and no node is on PATH",
-                    config.node.display()
-                ))
-            })?;
-        }
-        Ok(config)
+        serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))
     }
 }
 
@@ -3336,6 +3327,10 @@ impl ModHost {
             .and_then(
                 |config| match config.schema != 1 || !config.node.is_absolute() {
                     true => Err(failure("invalid_mod_configuration")),
+                    false if !config.node.is_file() => Err(failure(format!(
+                        "node_unavailable: {} is missing; run omd-mod set-node STORE NODE",
+                        config.node.display()
+                    ))),
                     false => Ok(config),
                 },
             );
@@ -3353,15 +3348,18 @@ impl ModHost {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
-                    node: Some(self.node.clone())
-                        .filter(|node| node.is_file())
-                        .or_else(node_on_path)
-                        .unwrap_or_default(),
+                    node: self.node.clone(),
                     mods: Vec::new(),
                 }
             }
             Err(error) => return Err(error),
         };
+        if let Err(error) =
+            store::verify_runner(&config.node, brokered.as_ref().map(|(_, grants)| grants))
+        {
+            self.fail_closed(error.to_string());
+            return Err(error);
+        }
         let ui_signature = digest(serde_json::to_vec(&(&config.node, &config.mods))?.as_slice());
         if self
             .ui_configuration

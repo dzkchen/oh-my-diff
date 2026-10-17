@@ -1796,6 +1796,49 @@ fn contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_
 }
 
 #[test]
+fn unrestricted_programs_never_resolve_inside_the_repository() {
+    use std::os::unix::fs::PermissionsExt;
+    let _exec = exec_slot();
+    let (temp, repository, _data, _authority) = setup();
+    let outside = temp.path().canonicalize().unwrap().join("outside");
+    let planted = repository.join("bin/omd-fixture-tool");
+    let system = outside.join("omd-fixture-tool");
+    for program in [&planted, &system] {
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(program, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = std::env::var_os("PATH").unwrap();
+    let directories = [repository.join("bin"), outside.clone()];
+    // SAFETY: the fixture name is unique to this test, so other tests resolve the same programs.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(directories.into_iter().chain(std::env::split_paths(&path)))
+                .unwrap(),
+        );
+    }
+    let access = |programs: &[&str]| codex_omd::ModOsAccess {
+        programs: strings(programs),
+        network: false,
+    };
+    let resolve = |programs: &[&str], name: &str| {
+        codex_omd::host::unrestricted_program(&access(programs), name, &repository)
+    };
+    let bare = resolve(&["omd-fixture-tool"], "omd-fixture-tool");
+    let wildcard = resolve(&["*"], planted.to_str().unwrap());
+    let listed = resolve(&[planted.to_str().unwrap()], planted.to_str().unwrap());
+    // SAFETY: as above.
+    unsafe { std::env::set_var("PATH", path) };
+    assert_eq!(bare.unwrap(), system);
+    assert_eq!(
+        wildcard.unwrap_err(),
+        format!("os_access_denied: {}", planted.display())
+    );
+    assert_eq!(listed.unwrap(), planted);
+}
+
+#[test]
 fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();

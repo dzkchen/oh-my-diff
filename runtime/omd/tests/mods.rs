@@ -428,6 +428,20 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
 }
 
 #[test]
+fn a_missing_runner_fails_closed_without_a_path_fallback() {
+    let (temp, store, _) = fixture(COUNTER, &["store"]);
+    let root = temp.path().canonicalize().unwrap();
+    let path = root.join("store/mods.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    config["node"] = json!(root.join("upgraded/node"));
+    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+    let error = ModHost::open(root.join("store")).err().unwrap().to_string();
+    assert!(error.starts_with("node_unavailable"), "{error}");
+    store.set_node(node()).unwrap();
+    host(&temp);
+}
+
+#[test]
 fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
