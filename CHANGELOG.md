@@ -20,9 +20,9 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 
 ### Changed
 
-- Pinned to Codex 0.163.0 (from 0.161.0).
+- Pinned to Codex 0.163.0.
 - The repository holds only the launch collection: OMD Core installs 3 mods; OMD+ adds 8 more on by default, 11 opt-in mods and 3 inert plugins.
-- Mod API frozen for 1.0.0; the newer surfaces, `terminal.blit` and `process_raster_v1` ship marked experimental.
+- Mod API `0.2.0-experimental.5`: entries marked frozen in the conformance registry keep their shape; experimental ones, such as `terminal.blit` and `process_raster_v1`, may change.
 - Mod callbacks reuse a warm runner per package with smaller requests; package listings and terminal views are cached.
 - Mod UI drops backdrops and glass effects; the package listing is narrower.
 - `/continue` is opt-in.
