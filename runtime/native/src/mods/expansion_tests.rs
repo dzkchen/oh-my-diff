@@ -636,6 +636,10 @@ async fn client_module_instances_follow_the_published_view() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "The guard serializes the process-wide session dispatcher"
+)]
 async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
     let _guard = DISPATCHER_TEST.lock().await;
     let Some(mut fixture) = fixture(&[Package {
@@ -3213,6 +3217,37 @@ async fn component_post_hooks_make_the_host_calls_component_events_make() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn component_events_carry_the_bound_thread() {
+    let Some(fixture) = fixture(&[Package {
+        id: "clicker",
+        capabilities: &["terminal", "store", "commands"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('component_event', e => { api.state.set(e.thread_id); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    for payload in [
+        json!({"component": "c", "kind": "click"}),
+        json!({"component": "c", "kind": "click", "thread_id": "forged"}),
+    ] {
+        invoke_one(
+            &fixture.core,
+            &fixture.lead,
+            "clicker".into(),
+            "component_event",
+            payload,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            command(&fixture.core, "clicker", "seen"),
+            json!(fixture.lead.thread.to_string())
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn event_context_refuses_user_only_app_methods_before_the_client() {
     let Some(fixture) = fixture(&[Package {
         id: "steerer",
@@ -3753,7 +3788,7 @@ async fn http_read_drop_releases_the_handle_and_stream_slot() {
                 .set_read_timeout(Some(std::time::Duration::from_secs(10)))
                 .unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).unwrap();
+            assert!(socket.read(&mut request).unwrap() > 0);
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
                 .unwrap();
@@ -3831,7 +3866,7 @@ async fn concurrent_http_opens_share_the_last_stream_slot() {
                 .set_read_timeout(Some(std::time::Duration::from_secs(10)))
                 .unwrap();
             let mut request = [0; 4096];
-            socket.read(&mut request).unwrap();
+            assert!(socket.read(&mut request).unwrap() > 0);
             if index < 3 {
                 socket
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")

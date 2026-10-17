@@ -15,8 +15,8 @@ TMP = Path(os.environ.get("OMD_BATCH_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
-BUILD = ["build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd", "-p", "codex-omd-extension",
-         "--bins"]
+BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
+         "-p", "codex-omd-extension", "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
@@ -33,8 +33,7 @@ def base_tag():
 
 
 def batch_dir(batch):
-    name = batch.lower().removeprefix("batch").strip().removeprefix("omd-").removeprefix("b")
-    return TMP / f"omd-b{name}"
+    return TMP / f"omd-b{batch}"
 
 
 def run(*args, cwd=None, allowed=(0,)):
@@ -105,7 +104,7 @@ def cargo_env(batch):
 
 
 def cargo_run(batch, log, cargo_args):
-    log = Path(log) if Path(log).is_absolute() else batch / "logs" / f"{log}.log"
+    log = Path(log)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as output:
         status = subprocess.run(["cargo", *cargo_args], cwd=batch / "codex/codex-rs", env=cargo_env(batch),
@@ -143,7 +142,6 @@ def sync(args):
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
     manifest_path = ROOT / "runtime/patches/manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["baseline"] = "Run scripts/normalize_upstream_lock.py before applying the runtime patch."
     manifest["files"] = {}
     for name in sorted(changed):
         prior = subprocess.run(["git", "show", f"{base}:{name}"], cwd=source, capture_output=True)
@@ -153,10 +151,6 @@ def sync(args):
     (ROOT / manifest["patch"]["path"]).write_bytes(patch)
     manifest["patch"]["sha256"] = sha(patch)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
-    lock_path = ROOT / "upstream.lock.json"
-    lock = json.loads(lock_path.read_text())
-    lock["runtime_patches"] = [{"path": manifest["patch"]["path"], "sha256": sha(patch)}]
-    lock_path.write_text(json.dumps(lock, indent=2) + "\n")
     mirrors = 0
     for src, dst in MIRRORS:
         names = git(source, "ls-files", "--cached", "--others", "--exclude-standard", "--", src).decode().splitlines()
@@ -186,7 +180,7 @@ def sync(args):
     with tempfile.TemporaryDirectory(dir=batch, prefix="replay-") as temporary:
         replay = Path(temporary) / "codex"
         run("git", "clone", "--quiet", "--shared", "--no-checkout", source, replay)
-        git(replay, "checkout", "--quiet", "--detach", manifest["upstream_commit"])
+        git(replay, "checkout", "--quiet", "--detach", pin()["commit"])
         for label, script in (("normalize", "normalize_upstream_lock.py"), ("first_apply", "apply_runtime_patch.py"),
                               ("second_apply", "apply_runtime_patch.py")):
             checks[label] = run(sys.executable, ROOT / "scripts" / script, replay, cwd=ROOT).decode().strip()
@@ -198,9 +192,6 @@ def sync(args):
                 raise SystemExit(f"replayed file differs: {name}")
     report = {"patch_sha256": sha(patch), "patch_bytes": len(patch), "patch_files": len(changed),
               "mirrors_updated": mirrors, **checks, "tree_parity": True, "files_compared": len(names)}
-    if args.evidence:
-        args.evidence.mkdir(parents=True, exist_ok=True)
-        (args.evidence / "replay.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report))
 
 
@@ -216,21 +207,18 @@ def artifacts(args):
     from scripts import build_provenance, release_lock
     built = batch / "target/release"
     output = batch / "artifacts"
-    provenance = args.release and sys.platform == "darwin"
+    log = batch / "logs/build-artifacts.log"
+    provenance = sys.platform == "darwin"
     if provenance:
-        arguments = [*BUILD, "--release"]
         tree, environment = batch / "codex", cargo_env(batch)
-        before = build_provenance.inputs(tree, arguments, environment)
+        before = build_provenance.inputs(tree, BUILD, environment)
         (built / build_provenance.RECORD).unlink(missing_ok=True)
-        if cargo_run(batch, "build-artifacts", arguments):
+        if cargo_run(batch, log, BUILD):
             raise SystemExit(1)
-        build_provenance.record_build(built, before, build_provenance.inputs(tree, arguments, environment))
+        build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
         unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
-    elif args.release and cargo_run(batch, "build-artifacts", [*BUILD, "--release"]):
+    elif cargo_run(batch, log, BUILD):
         raise SystemExit(1)
-    missing = [name for name in BINARIES if not (built / name).is_file()]
-    if missing:
-        raise SystemExit(f"missing {', '.join(missing)} in {built}; rerun with --release")
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir()
     for name in BINARIES:
@@ -249,18 +237,9 @@ def artifacts(args):
 def locks(args):
     outputs = [*ROOT.glob("runtime/*.lock.json"), *(ROOT / name for name in GENERATED)]
     before = {path: sha(path.read_bytes()) for path in outputs if path.is_file()}
-    steps = [[script, "--write"] for script in GENERATORS]
-    output = batch_dir(args.batch) / "artifacts" if args.batch else None
-    if output and output.is_dir():
-        steps.append(["release_lock", "--artifact-dir", output, "--write"])
-    else:
-        print("release_lock: skipped; pass a batch with artifacts (.github/scripts/build.py artifacts)")
     failed = False
-    for script, *options in steps:
-        if script == "release_lock":
-            pack_sdk(output)
-        result = subprocess.run([sys.executable, "-m", f"scripts.{script}", *map(str, options)], cwd=ROOT,
-                                capture_output=True, text=True)
+    for script in GENERATORS:
+        result = subprocess.run([sys.executable, "-m", f"scripts.{script}", "--write"], cwd=ROOT, capture_output=True, text=True)
         failed |= result.returncode != 0
         print(f"{script}: {((result.stdout + result.stderr).strip().splitlines() or ['ok'])[-1]}")
     changed = [str(path.relative_to(ROOT)) for path in outputs if path.is_file() and before.get(path) != sha(path.read_bytes())]
@@ -276,19 +255,16 @@ def main():
     command.set_defaults(handler=setup)
     command = commands.add_parser("cargo", help="cargo in the batch tree; full log to a file, summary to stdout")
     command.add_argument("batch")
-    command.add_argument("log", help="log name under <batch>/logs or an absolute path")
+    command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
     command = commands.add_parser("sync", help="regenerate patch, manifest, pin hash and runtime mirrors; verify replay")
     command.add_argument("batch")
-    command.add_argument("--evidence", type=Path, help="directory for replay.json")
     command.set_defaults(handler=sync)
-    command = commands.add_parser("artifacts", help="copy, sign and pack release lock inputs")
+    command = commands.add_parser("artifacts", help="build, copy, sign and pack release lock inputs")
     command.add_argument("batch")
-    command.add_argument("--release", action="store_true", help="build the release binaries first")
     command.set_defaults(handler=artifacts)
-    command = commands.add_parser("locks", help="rewrite every generated lock and document in dependency order")
-    command.add_argument("batch", nargs="?", help="batch whose artifacts feed the release lock")
+    command = commands.add_parser("locks", help="rewrite every generated source lock and document in dependency order")
     command.set_defaults(handler=locks)
     args = parser.parse_args()
     args.handler(args)

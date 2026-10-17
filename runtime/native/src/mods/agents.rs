@@ -1816,10 +1816,10 @@ impl Agents {
                 .is_some_and(|tokens| tokens == 0 || tokens > 128_000)
             || request.cache.as_ref().is_some_and(|cache| {
                 cache.through != "system"
-                    && !cache
+                    && cache
                         .through
                         .as_u64()
-                        .is_some_and(|block| block < request.context.len() as u64)
+                        .is_none_or(|block| block >= request.context.len() as u64)
             })
         {
             return Err("model_call_option_invalid".into());

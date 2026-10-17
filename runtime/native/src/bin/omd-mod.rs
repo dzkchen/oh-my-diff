@@ -5,6 +5,7 @@ use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use codex_omd::load_managed;
+use codex_omd_extension::validate_tool_schema;
 use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
@@ -14,12 +15,6 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
-
-fn validate_tool_schema(schema: &Value) -> io::Result<()> {
-    codex_extension_api::parse_tool_input_schema(schema)
-        .map(|_| ())
-        .map_err(io::Error::other)
-}
 
 fn open(root: &str) -> io::Result<ModStore> {
     ModStore::open(PathBuf::from(root).canonicalize()?)

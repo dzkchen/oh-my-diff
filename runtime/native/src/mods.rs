@@ -415,23 +415,25 @@ pub(super) fn install(
     initialize(registry, host).map(|_| ())
 }
 
+pub fn validate_tool_schema(schema: &Value) -> std::io::Result<()> {
+    codex_extension_api::parse_tool_input_schema(schema)
+        .map(|_| ())
+        .map_err(std::io::Error::other)
+}
+
 fn initialize(
     registry: &mut ExtensionRegistryBuilder<Config>,
     host: Arc<Host>,
 ) -> Result<Arc<Mods>, String> {
     let registration =
         codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-    let validator = |schema: &Value| {
-        codex_extension_api::parse_tool_input_schema(schema)
-            .map(|_| ())
-            .map_err(std::io::Error::other)
-    };
-    let runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
         .map_err(|e| e.to_string())?;
-    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
         .map_err(|e| e.to_string())?;
-    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
-        .map_err(|e| e.to_string())?;
+    let persist_runtime =
+        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
+            .map_err(|e| e.to_string())?;
     let persist_required = persist_runtime.required_surfaces();
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();

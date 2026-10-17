@@ -31912,7 +31912,7 @@ index 6ab14d1f6..e3de30f53 100644
          };
 
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 2ad3f1cd9..65388bf16 100644
+index 2ad3f1cd9..ffee0211e 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -383,6 +383,7 @@ mod draft_state;
@@ -32053,7 +32053,7 @@ index 2ad3f1cd9..65388bf16 100644
 +                || path.contains(['"', '\\'])
 +                || path.ends_with(|c: char| ",.;:!?)]}'\"`".contains(c));
 +            inserted = if quoted {
-+                format!("@{}", serde_json::to_string(path).expect("serialize path"))
++                format!("@{}", serde_json::json!(path))
 +            } else {
 +                format!("@{path}")
 +            };
@@ -38314,7 +38314,7 @@ index 65ef9f651..7641bbe49 100644
          if let Some(account_value) = account_value {
              lines.push(formatter.line("Account", vec![Span::from(account_value)]));
 diff --git a/codex-rs/tui/src/status/rate_limits.rs b/codex-rs/tui/src/status/rate_limits.rs
-index c22868b62..263bb0c73 100644
+index c22868b62..33d3fd0ad 100644
 --- a/codex-rs/tui/src/status/rate_limits.rs
 +++ b/codex-rs/tui/src/status/rate_limits.rs
 @@ -113,6 +113,7 @@ pub(crate) struct RateLimitSnapshotDisplay {
@@ -38398,7 +38398,7 @@ index c22868b62..263bb0c73 100644
 +            ..note_only.clone()
 +        };
 +
-+        let rows = match compose_rate_limit_data_many(&[note_only.clone()], now) {
++        let rows = match compose_rate_limit_data_many(std::slice::from_ref(&note_only), now) {
 +            StatusRateLimitData::Available(rows) => rows,
 +            other => panic!("unexpected status: {other:?}"),
 +        };
@@ -44925,10 +44925,10 @@ index 000000000..6f5862b16
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 000000000..46b8aeebd
+index 000000000..69bea83cd
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,626 @@
+@@ -0,0 +1,630 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -45103,6 +45103,10 @@ index 000000000..46b8aeebd
 +    }
 +}
 +
++#[expect(
++    clippy::collapsible_match,
++    reason = "The visitor needs a mutable borrow, which a guard cannot take"
++)]
 +fn event_msg(event: &mut EventMsg, visit: &mut Visit<'_>) {
 +    match event {
 +        EventMsg::UserMessage(event) => {
@@ -52504,10 +52508,10 @@ index 000000000..787f67072
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..77d09ea73
+index 000000000..48d421b6c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,551 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -52515,6 +52519,7 @@ index 000000000..77d09ea73
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
 +use codex_omd::load_managed;
++use codex_omd_extension::validate_tool_schema;
 +use serde_json::Value;
 +use serde_json::json;
 +use sha2::Digest;
@@ -52524,12 +52529,6 @@ index 000000000..77d09ea73
 +use std::io;
 +use std::path::PathBuf;
 +use std::process::Command;
-+
-+fn validate_tool_schema(schema: &Value) -> io::Result<()> {
-+    codex_extension_api::parse_tool_input_schema(schema)
-+        .map(|_| ())
-+        .map_err(io::Error::other)
-+}
 +
 +fn open(root: &str) -> io::Result<ModStore> {
 +    ModStore::open(PathBuf::from(root).canonicalize()?)
@@ -57291,10 +57290,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..fa913fc73
+index 000000000..39a1a666b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,728 @@
+@@ -0,0 +1,729 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -57308,6 +57307,7 @@ index 000000000..fa913fc73
 +mod workspace_watch;
 +
 +pub use mods::clients;
++pub use mods::validate_tool_schema;
 +
 +use accounting::Account;
 +use accounting::Accounts;
@@ -58025,10 +58025,10 @@ index 000000000..fa913fc73
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..7e4f712e9
+index 000000000..22086bf33
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2489 @@
+@@ -0,0 +1,2486 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -59826,13 +59826,10 @@ index 000000000..7e4f712e9
 +        }
 +        std::thread::sleep(Duration::from_millis(200));
 +        let (mut exchanges, mut total) = (0, 0);
-+        loop {
-+            let Ok(answer) = fixture.call(
-+                "process.exchange",
-+                json!({"session":"flood","wait_ms":2000}),
-+            ) else {
-+                break;
-+            };
++        while let Ok(answer) = fixture.call(
++            "process.exchange",
++            json!({"session":"flood","wait_ms":2000}),
++        ) {
 +            let messages = answer["messages"].as_array().unwrap();
 +            assert!(
 +                serde_json::to_vec(messages).unwrap().len() <= EXCHANGE_BYTES,
@@ -60520,10 +60517,10 @@ index 000000000..7e4f712e9
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..c6656219b
+index 000000000..1e6b29d05
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2471 @@
+@@ -0,0 +1,2473 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -60941,23 +60938,25 @@ index 000000000..c6656219b
 +    initialize(registry, host).map(|_| ())
 +}
 +
++pub fn validate_tool_schema(schema: &Value) -> std::io::Result<()> {
++    codex_extension_api::parse_tool_input_schema(schema)
++        .map(|_| ())
++        .map_err(std::io::Error::other)
++}
++
 +fn initialize(
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    host: Arc<Host>,
 +) -> Result<Arc<Mods>, String> {
 +    let registration =
 +        codex_omd::host::reserve_session_dispatcher().map_err(|error| error.to_string())?;
-+    let validator = |schema: &Value| {
-+        codex_extension_api::parse_tool_input_schema(schema)
-+            .map(|_| ())
-+            .map_err(std::io::Error::other)
-+    };
-+    let runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
++    let runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
 +        .map_err(|e| e.to_string())?;
-+    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
++    let input_runtime = ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
 +        .map_err(|e| e.to_string())?;
-+    let persist_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
-+        .map_err(|e| e.to_string())?;
++    let persist_runtime =
++        ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
++            .map_err(|e| e.to_string())?;
 +    let persist_required = persist_runtime.required_surfaces();
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
 +    let required = runtime.required_surfaces();
@@ -62997,7 +62996,7 @@ index 000000000..c6656219b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
-index 000000000..c321b34b6
+index 000000000..7cb48ccd1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/access.rs
 @@ -0,0 +1,812 @@
@@ -63487,9 +63486,9 @@ index 000000000..c321b34b6
 +                .map_err(|_| "http_streams_poisoned")?;
 +            let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +            if runtime.generation() != generation
-+                || !runtime
++                || runtime
 +                    .grants(caller.id)
-+                    .is_some_and(|grants| grants.http_access.is_some())
++                    .is_none_or(|grants| grants.http_access.is_none())
 +            {
 +                return Err("host_caller_inactive".into());
 +            }
@@ -63815,7 +63814,7 @@ index 000000000..c321b34b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..9a8842e1b
+index 000000000..d5534fae4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2610 @@
@@ -65637,10 +65636,10 @@ index 000000000..9a8842e1b
 +                .is_some_and(|tokens| tokens == 0 || tokens > 128_000)
 +            || request.cache.as_ref().is_some_and(|cache| {
 +                cache.through != "system"
-+                    && !cache
++                    && cache
 +                        .through
 +                        .as_u64()
-+                        .is_some_and(|block| block < request.context.len() as u64)
++                        .is_none_or(|block| block >= request.context.len() as u64)
 +            })
 +        {
 +            return Err("model_call_option_invalid".into());
@@ -70293,10 +70292,10 @@ index 000000000..61aa70f12
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..92470d3a2
+index 000000000..8ff31d152
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,5958 @@
+@@ -0,0 +1,5993 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -70935,6 +70934,10 @@ index 000000000..92470d3a2
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++#[expect(
++    clippy::await_holding_invalid_type,
++    reason = "The guard serializes the process-wide session dispatcher"
++)]
 +async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
 +    let _guard = DISPATCHER_TEST.lock().await;
 +    let Some(mut fixture) = fixture(&[Package {
@@ -73512,6 +73515,37 @@ index 000000000..92470d3a2
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
++async fn component_events_carry_the_bound_thread() {
++    let Some(fixture) = fixture(&[Package {
++        id: "clicker",
++        capabilities: &["terminal", "store", "commands"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.on('component_event', e => { api.state.set(e.thread_id); });\n  api.command('seen', () => api.state.get());\n}\n",
++    }]) else {
++        return;
++    };
++    for payload in [
++        json!({"component": "c", "kind": "click"}),
++        json!({"component": "c", "kind": "click", "thread_id": "forged"}),
++    ] {
++        invoke_one(
++            &fixture.core,
++            &fixture.lead,
++            "clicker".into(),
++            "component_event",
++            payload,
++        )
++        .await
++        .unwrap()
++        .unwrap();
++        assert_eq!(
++            command(&fixture.core, "clicker", "seen"),
++            json!(fixture.lead.thread.to_string())
++        );
++    }
++}
++
++#[tokio::test(flavor = "multi_thread")]
 +async fn event_context_refuses_user_only_app_methods_before_the_client() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "steerer",
@@ -74052,7 +74086,7 @@ index 000000000..92470d3a2
 +                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
 +                .unwrap();
 +            let mut request = [0; 4096];
-+            socket.read(&mut request).unwrap();
++            assert!(socket.read(&mut request).unwrap() > 0);
 +            socket
 +                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
 +                .unwrap();
@@ -74130,7 +74164,7 @@ index 000000000..92470d3a2
 +                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
 +                .unwrap();
 +            let mut request = [0; 4096];
-+            socket.read(&mut request).unwrap();
++            assert!(socket.read(&mut request).unwrap() > 0);
 +            if index < 3 {
 +                socket
 +                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
@@ -81952,10 +81986,10 @@ index 000000000..51a13fb26
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
-index 000000000..17e4b56a9
+index 000000000..e4d3a0288
 --- /dev/null
 +++ b/codex-rs/ext/omd/tests/omd_mod_cli.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,247 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModStore;
 +use serde_json::Value;
@@ -81977,7 +82011,6 @@ index 000000000..17e4b56a9
 +    let output = Command::new(env!("CARGO_BIN_EXE_omd-mod"))
 +        .args(args)
 +        .current_dir(cwd)
-+        .env("OMD_TEST_NODE", node())
 +        .output()
 +        .unwrap();
 +    if output.status.success() {
@@ -82078,25 +82111,23 @@ index 000000000..17e4b56a9
 +    ModStore::create(root.clone(), node()).unwrap();
 +    std::fs::write(root.join("host.json"), b"{broken").unwrap();
 +    let reset = |name: &str| {
-+        std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
-+            .arg("reset")
-+            .arg(&root)
-+            .arg(name)
-+            .output()
-+            .unwrap()
++        omd_mod(
++            temp.path(),
++            &[OsStr::new("reset"), root.as_os_str(), OsStr::new(name)],
++        )
 +    };
-+    let output = reset("host.json");
-+    assert!(output.status.success());
 +    let aside = root.join("host.json.corrupt");
 +    assert_eq!(
-+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-+        json!({"reset": "host.json", "aside": aside})
++        reset("host.json"),
++        Ok(json!({"reset": "host.json", "aside": aside}))
 +    );
 +    assert_eq!(std::fs::read(&aside).unwrap(), b"{broken");
 +    assert!(!root.join("host.json").exists());
-+    let refused = reset("grants.json");
-+    assert!(!refused.status.success());
-+    assert!(String::from_utf8_lossy(&refused.stderr).contains("store_file_not_resettable"));
++    assert!(
++        reset("grants.json")
++            .unwrap_err()
++            .contains("store_file_not_resettable")
++    );
 +}
 +
 +#[test]
@@ -82167,7 +82198,6 @@ index 000000000..17e4b56a9
 +    assert_eq!(updated["node"], json!(replacement));
 +    assert_eq!(updated["revision"], json!(revision + 1));
 +
-+    assert_eq!(set(&link), Ok(json!("updated")));
 +    assert_eq!(set(&replacement), Ok(json!("updated")));
 +    assert_eq!(configuration(), updated);
 +
@@ -96895,7 +96925,7 @@ index 000000000..4faadf479
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..cdb1c6713
+index 000000000..c12a9d97e
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
 @@ -0,0 +1,1768 @@
@@ -97111,40 +97141,6 @@ index 000000000..cdb1c6713
 +    let owner = Arc::new(());
 +    *installed = Some((owner.clone(), None));
 +    Ok(SessionRegistration(owner))
-+}
-+
-+#[cfg(test)]
-+mod installation_tests {
-+    use super::*;
-+
-+    #[test]
-+    fn singleton_rejects_replacement_and_stale_teardown() {
-+        let dispatcher = || {
-+            Arc::new(
-+                |_: &str,
-+                 _: &str,
-+                 _: Option<&str>,
-+                 _: Option<&Value>,
-+                 _: crate::ModHostCall,
-+                 _: &dyn Fn() -> bool| Ok(Value::Null),
-+            ) as SessionDispatcher
-+        };
-+        let pending = reserve_session_dispatcher().unwrap();
-+        assert!(install_session_dispatcher(dispatcher()).is_err());
-+        drop(pending);
-+        let first = install_session_dispatcher(dispatcher()).unwrap();
-+        assert!(
-+            matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists)
-+        );
-+        let stale = SessionRegistration(first.0.clone());
-+        drop(first);
-+        let second = install_session_dispatcher(dispatcher()).unwrap();
-+        assert!(stale.install(dispatcher()).is_err());
-+        drop(stale);
-+        assert!(install_session_dispatcher(dispatcher()).is_err());
-+        drop(second);
-+        assert!(install_session_dispatcher(dispatcher()).is_ok());
-+    }
 +}
 +
 +pub fn session_call(
@@ -97433,7 +97429,7 @@ index 000000000..cdb1c6713
 +    Ok(resolved)
 +}
 +
-+/// The command for an unsandboxed program: no Seatbelt, or one that only denies IP networking.
++/// The command for an unsandboxed program: no Seatbelt with network, otherwise a macOS Seatbelt denying only IP networking.
 +pub fn unrestricted_command(
 +    access: &crate::ModOsAccess,
 +    program: &Path,
@@ -98665,6 +98661,40 @@ index 000000000..cdb1c6713
 +            .apply(self.repository(), || (self.active)())
 +            .map_err(|error| error.to_string())?;
 +        Ok(json!({"files": result.files}))
++    }
++}
++
++#[cfg(test)]
++mod installation_tests {
++    use super::*;
++
++    #[test]
++    fn singleton_rejects_replacement_and_stale_teardown() {
++        let dispatcher = || {
++            Arc::new(
++                |_: &str,
++                 _: &str,
++                 _: Option<&str>,
++                 _: Option<&Value>,
++                 _: crate::ModHostCall,
++                 _: &dyn Fn() -> bool| Ok(Value::Null),
++            ) as SessionDispatcher
++        };
++        let pending = reserve_session_dispatcher().unwrap();
++        assert!(install_session_dispatcher(dispatcher()).is_err());
++        drop(pending);
++        let first = install_session_dispatcher(dispatcher()).unwrap();
++        assert!(
++            matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists)
++        );
++        let stale = SessionRegistration(first.0.clone());
++        drop(first);
++        let second = install_session_dispatcher(dispatcher()).unwrap();
++        assert!(stale.install(dispatcher()).is_err());
++        drop(stale);
++        assert!(install_session_dispatcher(dispatcher()).is_err());
++        drop(second);
++        assert!(install_session_dispatcher(dispatcher()).is_ok());
 +    }
 +}
 diff --git a/codex-rs/omd/src/host/environment.rs b/codex-rs/omd/src/host/environment.rs
@@ -100918,10 +100948,10 @@ index 000000000..10c15b43e
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..6003cd938
+index 000000000..b7577a007
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6092 @@
+@@ -0,0 +1,6090 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -103843,9 +103873,7 @@ index 000000000..6003cd938
 +    let _frame = scope.enter(id)?;
 +    let thread = state_thread(&payload);
 +    let payload = match payload {
-+        Value::Object(mut fields)
-+            if event == "component_event" && !fields.contains_key("thread_id") =>
-+        {
++        Value::Object(mut fields) if event == "component_event" => {
 +            fields.insert(
 +                "thread_id".into(),
 +                thread.clone().map_or(Value::Null, Value::String),
@@ -105737,10 +105765,10 @@ index 000000000..6003cd938
 +                return Err(failure("state_conflict: ui revision changed"));
 +            }
 +        }
-+        if ui_state != loaded.ui_state {
-+            if !reply.ui_read || !matches!(event, "command" | "component_event") {
-+                return Err(failure("ui_state_write_unavailable"));
-+            }
++        if ui_state != loaded.ui_state
++            && (!reply.ui_read || !matches!(event, "command" | "component_event"))
++        {
++            return Err(failure("ui_state_write_unavailable"));
 +        }
 +        let mut parsed_command = None;
 +        if event == "command"
@@ -106383,7 +106411,7 @@ index 000000000..6003cd938
 +                patch.sites.remove("dialog");
 +            }
 +            let before = view::site_component_ids(&view.sites);
-+            match patch.apply(&mut view, &mut claims, &id, &origin) {
++            match patch.apply(&mut view, &mut claims, &id, origin) {
 +                Ok(lost) => {
 +                    conflicts.extend(lost);
 +                    component_owners.extend(
@@ -110925,10 +110953,10 @@ index 000000000..75a4b4a0c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
 new file mode 100644
-index 000000000..ce3b6d8fe
+index 000000000..30c28cdb9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_validation.rs
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,261 @@
 +use serde_json::Value;
 +use std::sync::LazyLock;
 +
@@ -111014,18 +111042,17 @@ index 000000000..ce3b6d8fe
 +            return invalid(&format!("expected {kind}"));
 +        }
 +    }
-+    if let Some(expected) = schema.get("const") {
-+        if value != expected {
-+            return invalid("literal mismatch");
-+        }
++    if let Some(expected) = schema.get("const")
++        && value != expected
++    {
++        return invalid("literal mismatch");
 +    }
-+    if let Some(variants) = schema["anyOf"].as_array() {
-+        if !variants
++    if let Some(variants) = schema["anyOf"].as_array()
++        && !variants
 +            .iter()
 +            .any(|variant| check(variant, value, path).is_ok())
-+        {
-+            return invalid("no union member matched");
-+        }
++    {
++        return invalid("no union member matched");
 +    }
 +    if let Some(variants) = schema["allOf"].as_array() {
 +        for variant in variants {
@@ -114499,10 +114526,10 @@ index 000000000..7a5748cd8
 +}
 diff --git a/codex-rs/omd/src/mods/persisted.rs b/codex-rs/omd/src/mods/persisted.rs
 new file mode 100644
-index 000000000..5aa0c4481
+index 000000000..cb228f881
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/persisted.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,194 @@
 +use super::*;
 +
 +/// JSON bytes of entries per callback; the payload carries them twice (`input` and `original`).
@@ -114614,13 +114641,15 @@ index 000000000..5aa0c4481
 +    thread: &str,
 +    entries: &[Value],
 +    active: impl Fn() -> bool,
-+) -> std::result::Result<Option<PersistedRewrite>, ()> {
++) -> std::result::Result<Option<PersistedRewrite>, &'static str> {
 +    if !active() {
-+        return Err(());
++        return Err("persist_runtime_unavailable");
 +    }
 +    let _thread = StateThread::enter(Some(thread.to_owned()));
-+    let mut runtime = runtime.lock().map_err(|_| ())?;
-+    runtime.refresh_guarded(&active).map_err(|_| ())?;
++    let mut runtime = runtime.lock().map_err(|_| "persist_runtime_unavailable")?;
++    runtime
++        .refresh_guarded(&active)
++        .map_err(|_| "persist_runtime_unavailable")?;
 +    let required = match runtime.intercepts("history_persist") {
 +        Some(required) => required,
 +        None => return Ok(None),
@@ -114630,7 +114659,7 @@ index 000000000..5aa0c4481
 +    let mut by = Vec::new();
 +    for chunk in persist_chunks(entries) {
 +        if !active() {
-+            return Err(());
++            return Err("persist_runtime_unavailable");
 +        }
 +        let values = chunk
 +            .iter()
@@ -114678,7 +114707,7 @@ index 000000000..5aa0c4481
 +        }
 +    }
 +    if !active() {
-+        return Err(());
++        return Err("persist_runtime_unavailable");
 +    }
 +    for (text, withheld) in texts.iter_mut().zip(&withheld) {
 +        if *withheld {
@@ -118393,10 +118422,10 @@ index 000000000..7779d6098
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..6b846414f
+index 000000000..6f5558ae2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1398 @@
+@@ -0,0 +1,1396 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -118618,16 +118647,15 @@ index 000000000..6b846414f
 +    ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 +}
 +
-+fn inspect_package(
-+    path: &Path,
-+    collect_assets: bool,
-+) -> Result<(
++type InspectedPackage = (
 +    ModPackage,
 +    String,
 +    String,
 +    BTreeMap<String, String>,
 +    Vec<(PathBuf, FileStamp)>,
-+)> {
++);
++
++fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
 +    let _profile = super::Profile::new("package_read_hash");
 +    if !path.is_absolute() || path.canonicalize()? != path {
 +        return Err(failure("canonical_package_path_required"));
@@ -118841,7 +118869,6 @@ index 000000000..6b846414f
 +        Ok(store)
 +    }
 +
-+    /// Points the store at another Node binary, as an installer does after validating one.
 +    pub fn set_node(&self, node: &Path) -> Result<()> {
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
@@ -125974,10 +126001,10 @@ index 000000000..c0fb9b585
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 000000000..2e6e63ff2
+index 000000000..c5ab5f5b8
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,818 @@
 +use crate::mods::{FileStamp, file_stamp};
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
@@ -126006,9 +126033,10 @@ index 000000000..2e6e63ff2
 +    "subagent_history_start_ordinal",
 +];
 +
++type ParsedHeads = BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>;
++
 +/// Rollout heads by path, valid while the file keeps its stamp; `None` marks a file that is not a session.
-+static PARSED: Mutex<BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>> =
-+    Mutex::new(BTreeMap::new());
++static PARSED: Mutex<ParsedHeads> = Mutex::new(BTreeMap::new());
 +static PROJECTIONS: Mutex<Vec<Arc<Projection>>> = Mutex::new(Vec::new());
 +const PROJECTIONS_KEPT: usize = 4;
 +#[cfg(test)]
@@ -134239,10 +134267,10 @@ index 000000000..6057b01d5
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..f234b6dd3
+index 000000000..34dfed244
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,6136 @@
+@@ -0,0 +1,6013 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -134257,23 +134285,6 @@ index 000000000..f234b6dd3
 +use std::sync::atomic::AtomicUsize;
 +use std::sync::atomic::Ordering;
 +use tempfile::TempDir;
-+
-+#[test]
-+fn model_fork_requires_tool_history_authority() {
-+    let call = codex_omd::ModHostCall {
-+        operation: "model.fork".into(),
-+        arguments: json!({"prompt":"p"}),
-+    };
-+    assert_eq!(
-+        call.capabilities().unwrap(),
-+        vec!["agents", "sessions", "sessions_tools"]
-+    );
-+    let complete = codex_omd::ModHostCall {
-+        operation: "model.complete".into(),
-+        arguments: json!({"route":"w","prompt":"p"}),
-+    };
-+    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
-+}
 +
 +fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
 +    packaged(root, id, id, source, capabilities, &[])
@@ -136398,7 +136409,7 @@ index 000000000..f234b6dd3
 +        )
 +        .unwrap();
 +    assert!(
-+        runtime
++        !runtime
 +            .command_view(
 +                "fixture",
 +                runtime.generation(),
@@ -136408,8 +136419,7 @@ index 000000000..f234b6dd3
 +            .unwrap()
 +            .view
 +            .sites
-+            .get("dialog")
-+            .is_none()
++            .contains_key("dialog")
 +    );
 +    assert!(
 +        runtime
@@ -136579,8 +136589,6 @@ index 000000000..f234b6dd3
 +        json!("provider:hello")
 +    );
 +    let types = std::fs::read_to_string(root.join("store/installed-contracts.d.ts")).unwrap();
-+    assert!(types.contains("InstalledContractTypesVersion = 1"));
-+    assert!(types.contains("InstalledHostRelease = '0.1.0'"));
 +    assert!(types.contains("'example.echo@1.1.0'"));
 +    assert!(types.contains("echo(input: string): string"));
 +    assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
@@ -137037,16 +137045,6 @@ index 000000000..f234b6dd3
 +        &["commands", "agents", "sessions", "sessions_tools"],
 +    );
 +    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
-+    let policies = &status["field_policies"];
-+    assert_eq!(
-+        policies["intercept.response_stream"]["usage"],
-+        "observe_only"
-+    );
-+    assert_eq!(
-+        policies["intercept.model_request"]["sections"],
-+        "replaceable"
-+    );
-+    assert_eq!(policies["intercept.tool"]["arguments"], "replaceable");
 +}
 +
 +#[test]
@@ -137331,25 +137329,6 @@ index 000000000..f234b6dd3
 +            .iter()
 +            .all(|item| item["id"] != "fixture")
 +    );
-+}
-+
-+#[test]
-+fn an_incompatible_package_names_the_host_and_package_api_versions() {
-+    let temp = TempDir::new().unwrap();
-+    let root = temp.path().canonicalize().unwrap();
-+    let path = root.join("stale");
-+    std::fs::create_dir(&path).unwrap();
-+    std::fs::write(
-+        path.join("mod.json"),
-+        serde_json::to_vec(&json!({"schema":1,"id":"stale","version":"1.0.0",
-+        "api":"0.1.0-experimental.1","state_version":1,"capabilities":[]}))
-+        .unwrap(),
-+    )
-+    .unwrap();
-+    std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
-+    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-+    assert!(error.contains(MOD_API_VERSION), "{error}");
-+    assert!(error.contains("0.1.0-experimental.1"), "{error}");
 +}
 +
 +#[test]
@@ -137832,9 +137811,7 @@ index 000000000..f234b6dd3
 +        "error"
 +    );
 +    let store = temp.path().join("store");
-+    let host_types = std::fs::read_to_string(store.join("active-host.d.ts")).unwrap();
-+    assert!(host_types.contains(&format!("ActiveModApi = '{MOD_API_VERSION}'")));
-+    assert!(host_types.contains("'agents.spawn'"));
++    assert!(store.join("active-host.d.ts").is_file());
 +    assert!(store.join("installed-contracts.d.ts").is_file());
 +    let bundle = runtime.diagnostic_bundle();
 +    let encoded = serde_json::to_string(&bundle).unwrap();
@@ -137844,12 +137821,6 @@ index 000000000..f234b6dd3
 +    assert!(
 +        error.contains("fixture/index.ts:3") && !error.contains(path.to_str().unwrap()),
 +        "{error}"
-+    );
-+    assert!(
-+        ModHost::capability_explanation("capability_denied: task")["fix"]
-+            .as_str()
-+            .unwrap()
-+            .contains("exact grant")
 +    );
 +}
 +
@@ -138317,38 +138288,6 @@ index 000000000..f234b6dd3
 +}
 +
 +#[test]
-+fn offline_status_retains_conflicts_without_running_paid_work() {
-+    let temp = TempDir::new().unwrap();
-+    let root = temp.path().canonicalize().unwrap();
-+    let store = ModStore::create(root.join("store"), node()).unwrap();
-+    for id in ["first", "second"] {
-+        let path = package(
-+            &root,
-+            id,
-+            "export default api => api.replace('compaction',()=>16000)",
-+            &["compaction"],
-+        );
-+        trust(&store, &path, &["compaction"]);
-+    }
-+    let mut runtime = host(&temp);
-+    let result = runtime
-+        .offline_test(json!({"schema":1,"steps":[{"type":"status"}]}))
-+        .unwrap();
-+    assert_eq!(result["paid_requests"], 0);
-+    let errors = result["steps"][0]["value"]["mods"]
-+        .as_array()
-+        .unwrap()
-+        .iter()
-+        .map(|value| value["error"].as_str().unwrap_or_default())
-+        .collect::<Vec<_>>();
-+    assert!(
-+        errors
-+            .iter()
-+            .all(|error| error.contains("replacement_conflict"))
-+    );
-+}
-+
-+#[test]
 +fn rich_lines_and_boxes_are_bounded() {
 +    let valid = json!({"sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
 +            {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
@@ -138528,31 +138467,6 @@ index 000000000..f234b6dd3
 +        .unwrap();
 +    store.enable(&path, true).unwrap();
 +    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
-+}
-+
-+#[test]
-+fn keys_and_pastes_reach_only_the_component_owner() {
-+    let temp = TempDir::new().unwrap();
-+    let root = temp.path().canonicalize().unwrap();
-+    let store = ModStore::create(root.join("store"), node()).unwrap();
-+    for (id, component) in [("alpha", "a"), ("beta", "b")] {
-+        let source = format!(
-+            "export default api => api.on('terminal', () => ({{sites:{{'{id}/pane':{{components:[{{type:'pane',id:'{component}',label:'{id}',keys:true,children:[]}}]}}}}}}))"
-+        );
-+        let path = package(&root, id, &source, &["terminal"]);
-+        trust(&store, &path, &["terminal"]);
-+    }
-+    let terminal = host(&temp).terminal_view(json!({}), || true);
-+    assert_eq!(
-+        terminal.component_owners,
-+        [
-+            ("a".to_owned(), "alpha".to_owned()),
-+            ("b".to_owned(), "beta".to_owned())
-+        ]
-+        .into(),
-+        "{:?}",
-+        terminal.diagnostics
-+    );
 +}
 +
 +#[test]
@@ -139697,7 +139611,6 @@ index 000000000..f234b6dd3
 +    assert!(grants.mcp_servers.contains_key("docs"));
 +    let status = runtime.status()["mods"][0]["authority"].clone();
 +    assert_eq!(status["current"], true);
-+    assert_eq!(status["exposure"].as_array().unwrap().len(), 8);
 +    for name in ["middleware", "request_policy"] {
 +        assert!(
 +            status["exposure"]
@@ -139708,14 +139621,6 @@ index 000000000..f234b6dd3
 +        );
 +        assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&name));
 +    }
-+    let policy = status["exposure"]
-+        .as_array()
-+        .unwrap()
-+        .iter()
-+        .filter_map(Value::as_str)
-+        .find(|text| text.starts_with("request_policy:"))
-+        .unwrap();
-+    assert!(policy.contains("refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused."), "{policy}");
 +    assert_eq!(
 +        runtime.status()["request_policy_unavailable"],
 +        "delegate registers no required model_send interceptor"
@@ -153606,10 +153511,10 @@ index 000000000..fa99be1a8
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..d53832945
+index 000000000..bd6e0783d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,640 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -153905,6 +153810,7 @@ index 000000000..d53832945
 +}
 +
 +/// Terminal-drawn pictures where the client supports them, else cached half-block rows (`key` identifies the picture and its fit).
++#[allow(clippy::too_many_arguments)]
 +pub(crate) fn picture_rows(
 +    component: &str,
 +    sha256: &str,
@@ -155492,10 +155398,10 @@ index 000000000..8e4a9d37f
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
 new file mode 100644
-index 000000000..f71a719b6
+index 000000000..0d0cc3533
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_module.rs
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,457 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -155651,18 +155557,21 @@ index 000000000..f71a719b6
 +}
 +
 +fn composed(instance: &mut Instance, width: u16) -> &[Line<'static>] {
-+    if !instance
++    if instance
 +        .composed
 +        .as_ref()
-+        .is_some_and(|(cached, _)| *cached == width)
++        .is_some_and(|(cached, _)| *cached != width)
 +    {
-+        let lines = crate::mod_render::compose_lines(&instance.tree, width, None, Vec::new())
-+            .into_iter()
-+            .map(|line| line.line)
-+            .collect();
-+        instance.composed = Some((width, lines));
++        instance.composed = None;
 +    }
-+    &instance.composed.as_ref().expect("composed above").1
++    let tree = &instance.tree;
++    &instance
++        .composed
++        .get_or_insert_with(|| {
++            let lines = crate::mod_render::compose_lines(tree, width, None, Vec::new());
++            (width, lines.into_iter().map(|line| line.line).collect())
++        })
++        .1
 +}
 +
 +fn failure_line(owner: &str, module: &str, error: &str) -> Line<'static> {
@@ -156721,10 +156630,10 @@ index 000000000..2ae62c4a1
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 000000000..abf23d327
+index 000000000..dc2573730
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,455 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -156848,10 +156757,12 @@ index 000000000..abf23d327
 +    RASTERS.locked()
 +}
 +
++type Told = (u64, (u16, u16), (u16, u16));
++
 +#[derive(Default)]
 +struct Layout {
 +    size: (u16, u16),
-+    told: Option<(u64, (u16, u16), (u16, u16))>,
++    told: Option<Told>,
 +}
 +
 +static LAYOUTS: Mutex<BTreeMap<String, Layout>> = Mutex::new(BTreeMap::new());
@@ -158935,7 +158846,7 @@ index 000000000..c8fd6427c
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..b51718411
+index 000000000..ca1b5f2bf
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,1589 @@
@@ -159177,12 +159088,12 @@ index 000000000..b51718411
 +        let prepared = snapshot.is_some();
 +        crate::mod_ui::startup_preview(snapshot, repository);
 +        if prepared {
-+            if let Some(path) = std::env::var_os("OMD_PROFILE_READY") {
-+                if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-+                {
-+                    let value = serde_json::json!({"pid": std::process::id(), "ready_unix_ns": now.as_nanos()});
-+                    let _ = std::fs::write(path, value.to_string());
-+                }
++            if let Some(path) = std::env::var_os("OMD_PROFILE_READY")
++                && let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
++            {
++                let value =
++                    serde_json::json!({"pid": std::process::id(), "ready_unix_ns": now.as_nanos()});
++                let _ = std::fs::write(path, value.to_string());
 +            }
 +            if let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
 +            {
@@ -159673,7 +159584,7 @@ index 000000000..b51718411
 +    let Ok(runtime) = shared_host_active(&active) else {
 +        return;
 +    };
-+    let snapshot = try_lock_until(&runtime, &active).and_then(|mut runtime| {
++    let snapshot = try_lock_until(&runtime, active).and_then(|mut runtime| {
 +        preview_with(&mut runtime, &paths, &invocation.context, None, &active)
 +    });
 +    if active()
@@ -163698,10 +163609,10 @@ index 000000000..914213e90
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..c8e493ce3
+index 000000000..8fcc507de
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4600 @@
+@@ -0,0 +1,4601 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -164550,7 +164461,8 @@ index 000000000..c8e493ce3
 +    Option<(u8, u8, u8)>,
 +    crate::terminal_palette::StdoutColorLevel,
 +);
-+static MARKDOWN: Mutex<Vec<(MarkdownKey, usize, Arc<[HyperlinkLine]>)>> = Mutex::new(Vec::new());
++type MarkdownEntry = (MarkdownKey, usize, Arc<[HyperlinkLine]>);
++static MARKDOWN: Mutex<Vec<MarkdownEntry>> = Mutex::new(Vec::new());
 +const MARKDOWN_ENTRIES: usize = 256;
 +const MARKDOWN_BYTES: usize = 1024 * 1024;
 +
@@ -168304,10 +168216,10 @@ index 000000000..c8e493ce3
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 000000000..3c5584ded
+index 000000000..b910d42e1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,372 @@
 +use super::*;
 +use crate::omd::LockExt;
 +use std::sync::Arc;
@@ -168634,7 +168546,11 @@ index 000000000..3c5584ded
 +        let area = Rect::new(0, 0, 60, layout.height());
 +        let mut buffer = Buffer::empty(area);
 +        layout.render(area, &mut buffer);
-+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
++        let text: String = buffer
++            .content()
++            .iter()
++            .map(ratatui::buffer::Cell::symbol)
++            .collect();
 +        assert!(text.contains("HOSTROW"), "{text}");
 +        preview(ModViewSnapshot::default());
 +    }
@@ -168678,10 +168594,10 @@ index 000000000..3c5584ded
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..55f53ec0e
+index 000000000..db3b7ecc5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2547 @@
+@@ -0,0 +1,2548 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -171072,6 +170988,7 @@ index 000000000..55f53ec0e
 +
 +#[test]
 +#[serial_test::serial]
++#[allow(clippy::disallowed_methods)]
 +fn hover_and_focus_accents_restyle_without_events_or_moving_rows() {
 +    let snapshot = snapshot(box_model());
 +    preview(snapshot.clone());

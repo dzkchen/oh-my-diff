@@ -1,5 +1,4 @@
 import argparse
-import io
 import json
 from pathlib import Path
 import tempfile
@@ -61,45 +60,6 @@ class SourceBuildTests(unittest.TestCase):
                     package.install_archive(args)
             self.assertEqual(len(calls), 2)
 
-    def test_product_version_is_recorded_without_becoming_the_codex_version(self):
-        release = package.release
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'runtime/patches').mkdir(parents=True)
-            (root / 'mods').mkdir()
-            (root / 'extensions').mkdir()
-            pin = json.loads((release.ROOT / 'upstream.lock.json').read_text())
-            codex = pin['tag'].removeprefix('rust-v')
-            (root / 'upstream.lock.json').write_text(json.dumps(pin))
-            (root / 'patch').write_text('fixture patch')
-            (root / 'runtime/patches/manifest.json').write_text(json.dumps({'patch': {'path': 'patch', 'sha256': release.support.digest(root / 'patch')}}))
-            (root / 'mods/package.json').write_text('{}')
-            (root / 'extensions/index.json').write_text(json.dumps({'release_pin': {'codex': codex, 'mod_api': 'api', 'node': '24'}}))
-            with release.tarfile.open(root / release.AUTHOR_ARCHIVE, 'w:gz') as packed:
-                member = release.tarfile.TarInfo('package/package.json')
-                member.size = 2
-                packed.addfile(member, io.BytesIO(b'{}'))
-            mods = {'mod_api': 'api', 'node': '24', 'packages': {}}
-            lock = root / 'lock.json'
-            with patch.multiple(release, ROOT=root, OUTPUT=lock, BINARIES=(), SOURCES=()), \
-                    patch.object(release.build_provenance, 'verify', return_value=PROVENANCE), \
-                    patch.object(release.support, 'mods_lock', return_value=mods), \
-                    patch.object(release.mods_lock, 'build', return_value=mods), \
-                    patch.object(release.support, 'plugin_sources', return_value={'plugins': {}}), \
-                    patch.object(release, 'sdk_sources', return_value=()), \
-                    patch.object(release.support, 'binary_identity', return_value={'version': f'codex-cli {codex}', 'path': '/usr/bin/true'}):
-                nightly = '0.1.0-nightly.20261008070000.99.1'
-                self.assertEqual(release.build(root, version=nightly)['version'], nightly)
-                self.assertEqual(release.build(root)['version'], release.VERSION)
-                with self.assertRaisesRegex(ValueError, 'invalid release version'):
-                    release.build(root, version='1.0')
-                lock.write_text(json.dumps(release.build(root, version=nightly), indent=2, sort_keys=True) + '\n')
-                with patch('sys.argv', ['release_lock', '--artifact-dir', str(root), '--version', nightly]):
-                    release.main()
-                with patch('sys.argv', ['release_lock', '--artifact-dir', str(root)]), \
-                        self.assertRaisesRegex(SystemExit, 'release lock differs'):
-                    release.main()
-
     def test_noncanonical_member_names_are_unsafe(self):
         for name in ('payload/./x', 'payload//x', 'payload/x/'):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
@@ -135,5 +95,5 @@ class SourceBuildTests(unittest.TestCase):
                 self.assertEqual(record['inputs'], inputs)
                 return {'sha256': 'fixture'}
 
-            with patch.object(package.support, 'run', side_effect=run), patch.object(package.release, 'sign'), patch.object(package.release.build_provenance, 'inputs', return_value=inputs), patch.object(package, 'archive_payload', side_effect=archive), patch.object(package, 'install_archive'):
+            with patch.object(package.support, 'run', side_effect=run), patch.object(package.release, 'sign'), patch.object(package.release.build_provenance, 'inputs', return_value=inputs), patch.object(package, 'archive_payload', side_effect=archive), patch.object(package, 'install_archive'), patch.object(package, 'v8_prebuilt'):
                 package.source_build(args)

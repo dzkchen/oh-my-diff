@@ -109,13 +109,15 @@ pub fn persist_texts(
     thread: &str,
     entries: &[Value],
     active: impl Fn() -> bool,
-) -> std::result::Result<Option<PersistedRewrite>, ()> {
+) -> std::result::Result<Option<PersistedRewrite>, &'static str> {
     if !active() {
-        return Err(());
+        return Err("persist_runtime_unavailable");
     }
     let _thread = StateThread::enter(Some(thread.to_owned()));
-    let mut runtime = runtime.lock().map_err(|_| ())?;
-    runtime.refresh_guarded(&active).map_err(|_| ())?;
+    let mut runtime = runtime.lock().map_err(|_| "persist_runtime_unavailable")?;
+    runtime
+        .refresh_guarded(&active)
+        .map_err(|_| "persist_runtime_unavailable")?;
     let required = match runtime.intercepts("history_persist") {
         Some(required) => required,
         None => return Ok(None),
@@ -125,7 +127,7 @@ pub fn persist_texts(
     let mut by = Vec::new();
     for chunk in persist_chunks(entries) {
         if !active() {
-            return Err(());
+            return Err("persist_runtime_unavailable");
         }
         let values = chunk
             .iter()
@@ -173,7 +175,7 @@ pub fn persist_texts(
         }
     }
     if !active() {
-        return Err(());
+        return Err("persist_runtime_unavailable");
     }
     for (text, withheld) in texts.iter_mut().zip(&withheld) {
         if *withheld {

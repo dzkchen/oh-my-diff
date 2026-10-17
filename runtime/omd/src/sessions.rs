@@ -26,9 +26,10 @@ const META_FIELDS: [&str; 11] = [
     "subagent_history_start_ordinal",
 ];
 
+type ParsedHeads = BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>;
+
 /// Rollout heads by path, valid while the file keeps its stamp; `None` marks a file that is not a session.
-static PARSED: Mutex<BTreeMap<PathBuf, (FileStamp, Option<Arc<Parsed>>)>> =
-    Mutex::new(BTreeMap::new());
+static PARSED: Mutex<ParsedHeads> = Mutex::new(BTreeMap::new());
 static PROJECTIONS: Mutex<Vec<Arc<Projection>>> = Mutex::new(Vec::new());
 const PROJECTIONS_KEPT: usize = 4;
 #[cfg(test)]

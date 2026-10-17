@@ -83,18 +83,17 @@ fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
             return invalid(&format!("expected {kind}"));
         }
     }
-    if let Some(expected) = schema.get("const") {
-        if value != expected {
-            return invalid("literal mismatch");
-        }
+    if let Some(expected) = schema.get("const")
+        && value != expected
+    {
+        return invalid("literal mismatch");
     }
-    if let Some(variants) = schema["anyOf"].as_array() {
-        if !variants
+    if let Some(variants) = schema["anyOf"].as_array()
+        && !variants
             .iter()
             .any(|variant| check(variant, value, path).is_ok())
-        {
-            return invalid("no union member matched");
-        }
+    {
+        return invalid("no union member matched");
     }
     if let Some(variants) = schema["allOf"].as_array() {
         for variant in variants {

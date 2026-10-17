@@ -146,17 +146,22 @@ def v8_prebuilt(checkout, directory, environment):
     (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
     target = support.output(["rustc", "-vV"], cwd=checkout / "codex-rs", env=environment).split("host: ", 1)[1].split()[0]
     url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
+    manifest = f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256"
     names = {"archive": f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz",
              "binding": f"src_binding_ptrcomp_sandbox_release_{target}.rs"}
-    directory.mkdir()
-    for name in (f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256", *names.values()):
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def checksums(path):
+        return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
+
+    expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
+    for name in (manifest, *names.values()):
         with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response, (directory / name).open("wb") as file:
             shutil.copyfileobj(response, file)
-    expected = dict(reversed(line.split()) for line in
-                    (directory / f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256").read_text().splitlines() if line.strip())
-    for name in names.values():
         if expected.get(name) != support.digest(directory / name):
             raise ValueError(f"V8 prebuilt checksum mismatch: {name}")
+        if name == manifest:
+            expected = checksums(directory / manifest)
     environment["RUSTY_V8_ARCHIVE"] = str(directory / names["archive"])
     environment["RUSTY_V8_SRC_BINDING_PATH"] = str(directory / names["binding"])
 

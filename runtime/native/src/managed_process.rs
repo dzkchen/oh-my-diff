@@ -1795,13 +1795,10 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         }
         std::thread::sleep(Duration::from_millis(200));
         let (mut exchanges, mut total) = (0, 0);
-        loop {
-            let Ok(answer) = fixture.call(
-                "process.exchange",
-                json!({"session":"flood","wait_ms":2000}),
-            ) else {
-                break;
-            };
+        while let Ok(answer) = fixture.call(
+            "process.exchange",
+            json!({"session":"flood","wait_ms":2000}),
+        ) {
             let messages = answer["messages"].as_array().unwrap();
             assert!(
                 serde_json::to_vec(messages).unwrap().len() <= EXCHANGE_BYTES,

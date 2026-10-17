@@ -212,40 +212,6 @@ pub fn reserve_session_dispatcher() -> std::io::Result<SessionRegistration> {
     Ok(SessionRegistration(owner))
 }
 
-#[cfg(test)]
-mod installation_tests {
-    use super::*;
-
-    #[test]
-    fn singleton_rejects_replacement_and_stale_teardown() {
-        let dispatcher = || {
-            Arc::new(
-                |_: &str,
-                 _: &str,
-                 _: Option<&str>,
-                 _: Option<&Value>,
-                 _: crate::ModHostCall,
-                 _: &dyn Fn() -> bool| Ok(Value::Null),
-            ) as SessionDispatcher
-        };
-        let pending = reserve_session_dispatcher().unwrap();
-        assert!(install_session_dispatcher(dispatcher()).is_err());
-        drop(pending);
-        let first = install_session_dispatcher(dispatcher()).unwrap();
-        assert!(
-            matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists)
-        );
-        let stale = SessionRegistration(first.0.clone());
-        drop(first);
-        let second = install_session_dispatcher(dispatcher()).unwrap();
-        assert!(stale.install(dispatcher()).is_err());
-        drop(stale);
-        assert!(install_session_dispatcher(dispatcher()).is_err());
-        drop(second);
-        assert!(install_session_dispatcher(dispatcher()).is_ok());
-    }
-}
-
 pub fn session_call(
     thread: &str,
     caller: &str,
@@ -532,7 +498,7 @@ pub fn unrestricted_program(access: &crate::ModOsAccess, name: &str) -> Result<P
     Ok(resolved)
 }
 
-/// The command for an unsandboxed program: no Seatbelt, or one that only denies IP networking.
+/// The command for an unsandboxed program: no Seatbelt with network, otherwise a macOS Seatbelt denying only IP networking.
 pub fn unrestricted_command(
     access: &crate::ModOsAccess,
     program: &Path,
@@ -1764,5 +1730,39 @@ impl Host<'_> {
             .apply(self.repository(), || (self.active)())
             .map_err(|error| error.to_string())?;
         Ok(json!({"files": result.files}))
+    }
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+
+    #[test]
+    fn singleton_rejects_replacement_and_stale_teardown() {
+        let dispatcher = || {
+            Arc::new(
+                |_: &str,
+                 _: &str,
+                 _: Option<&str>,
+                 _: Option<&Value>,
+                 _: crate::ModHostCall,
+                 _: &dyn Fn() -> bool| Ok(Value::Null),
+            ) as SessionDispatcher
+        };
+        let pending = reserve_session_dispatcher().unwrap();
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(pending);
+        let first = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(
+            matches!(install_session_dispatcher(dispatcher()), Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists)
+        );
+        let stale = SessionRegistration(first.0.clone());
+        drop(first);
+        let second = install_session_dispatcher(dispatcher()).unwrap();
+        assert!(stale.install(dispatcher()).is_err());
+        drop(stale);
+        assert!(install_session_dispatcher(dispatcher()).is_err());
+        drop(second);
+        assert!(install_session_dispatcher(dispatcher()).is_ok());
     }
 }

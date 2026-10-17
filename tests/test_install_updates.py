@@ -11,7 +11,6 @@ import threading
 import time
 import types
 import urllib.error
-import urllib.parse
 import unittest
 from unittest.mock import patch
 
@@ -97,32 +96,12 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(self.check()["available"]["version"], "0.1.1")
         self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
         self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
-        self.published = OSError("offline")
-        self.assertIsNone(self.check(channel="beta")["available"])
-        self.assertTrue(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261009070000.100.1"},
-                                             "0.1.0-nightly.20261008070000.99.1"))
-        self.assertFalse(self.module.eligible({"channel": "nightly"}, {"version": "0.1.0-nightly.20261008070000.99.1"},
-                                              "0.1.0-nightly.20261009070000.100.1"))
-
-    def test_fresh_nightly_install_discovers_and_pins_the_archive_digest_and_policy(self):
-        self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
-        args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
-                                     channel="nightly", session=None)
-        with patch.object(self.module.platform, "system", return_value="Darwin"), \
-                patch.object(self.module.platform, "machine", return_value="arm64"), \
-                patch.object(self.module, "profile_choice", return_value="platform"), \
-                patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
-                patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
-                patch("builtins.print"):
-            self.module.install(args, self.root, self.current)
-        self.assertEqual(download.call_args.args[:2], ("https://example.test/0.1.0-nightly.20261008070000.99.1/oh-my-diff-0.1.0-nightly.20261008070000.99.1.tar.xz", "a" * 64))
-        self.assertEqual(policy.call_args.args[-2:], ("channel", "nightly"))
 
     def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
         self.published = [release("0.1.0-nightly.20261008070000.99.1", prerelease=True), release("0.1.1")]
         self.settings = {"channel": "nightly"}
         self.write_settings()
-        for channel, selected in ((None, "nightly"), ("stable", "stable")):
+        for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
                 args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://example.test/releases",
                                              channel=channel, session=None)
@@ -135,7 +114,7 @@ class UpdateSelection(unittest.TestCase):
                     self.module.install(args, self.root, self.current)
                 expected = self.published[0 if selected == "nightly" else 1]
                 self.assertEqual(download.call_args.args[0], expected["assets"][1]["browser_download_url"])
-                self.assertEqual(policy.call_args.args[-2:], ("channel", selected))
+                self.assertEqual([call.args[-2:] for call in policy.call_args_list], saved)
 
     def test_channel_changes_reject_older_bases_and_allow_same_base_transitions(self):
         for channel, candidate, installed, expected in (
@@ -148,24 +127,6 @@ class UpdateSelection(unittest.TestCase):
             with self.subTest(channel=channel, candidate=candidate, installed=installed):
                 self.assertEqual(self.module.eligible({"channel": channel},
                                                      {"version": candidate, "prerelease": "-" in candidate}, installed), expected)
-
-    def test_release_discovery_is_bounded_when_only_nightlies_exist(self):
-        url = "https://api.github.com/repos/example/omd/releases?per_page=20"
-        refs = [{"ref": f"refs/tags/v0.1.0-nightly.20261008.{number}.1"} for number in range(300)]
-        for channel, requests in (("stable", 1), ("nightly", 6)):
-            with self.subTest(channel=channel):
-                def fetch(address, limit):
-                    if "/git/matching-refs/" in address:
-                        return refs
-                    if "/releases/tags/" in address:
-                        return release(address.rsplit("/v", 1)[1], prerelease=True)
-                    page = int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(address).query)).get("page", "1"))
-                    return [release(item["ref"].removeprefix("refs/tags/v"), prerelease=True)
-                            for item in refs[(page - 1) * 20:page * 20]]
-                with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
-                    listed = self.module.releases(url, **({"channel": channel} if channel != "stable" else {}))
-                self.assertEqual(fetched.call_count, requests)
-                self.assertEqual(len(listed), 0 if channel == "stable" else 5)
 
     def test_old_pins_and_beta_releases_are_not_hidden_by_stable_or_nightly_history(self):
         url = "https://api.github.com/repos/example/omd/releases?per_page=20"

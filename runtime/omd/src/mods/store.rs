@@ -219,16 +219,15 @@ fn reused_package(path: &Path) -> Option<(ModPackage, String)> {
     ModStore::stamps_unchanged(&verified.0).then(|| (verified.1.clone(), verified.2.clone()))
 }
 
-fn inspect_package(
-    path: &Path,
-    collect_assets: bool,
-) -> Result<(
+type InspectedPackage = (
     ModPackage,
     String,
     String,
     BTreeMap<String, String>,
     Vec<(PathBuf, FileStamp)>,
-)> {
+);
+
+fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
     let _profile = super::Profile::new("package_read_hash");
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
@@ -442,7 +441,6 @@ impl ModStore {
         Ok(store)
     }
 
-    /// Points the store at another Node binary, as an installer does after validating one.
     pub fn set_node(&self, node: &Path) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;

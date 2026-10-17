@@ -2919,9 +2919,7 @@ fn invoke(
     let _frame = scope.enter(id)?;
     let thread = state_thread(&payload);
     let payload = match payload {
-        Value::Object(mut fields)
-            if event == "component_event" && !fields.contains_key("thread_id") =>
-        {
+        Value::Object(mut fields) if event == "component_event" => {
             fields.insert(
                 "thread_id".into(),
                 thread.clone().map_or(Value::Null, Value::String),
@@ -4813,10 +4811,10 @@ impl ModHost {
                 return Err(failure("state_conflict: ui revision changed"));
             }
         }
-        if ui_state != loaded.ui_state {
-            if !reply.ui_read || !matches!(event, "command" | "component_event") {
-                return Err(failure("ui_state_write_unavailable"));
-            }
+        if ui_state != loaded.ui_state
+            && (!reply.ui_read || !matches!(event, "command" | "component_event"))
+        {
+            return Err(failure("ui_state_write_unavailable"));
         }
         let mut parsed_command = None;
         if event == "command"
@@ -5459,7 +5457,7 @@ impl ModHost {
                 patch.sites.remove("dialog");
             }
             let before = view::site_component_ids(&view.sites);
-            match patch.apply(&mut view, &mut claims, &id, &origin) {
+            match patch.apply(&mut view, &mut claims, &id, origin) {
                 Ok(lost) => {
                     conflicts.extend(lost);
                     component_owners.extend(

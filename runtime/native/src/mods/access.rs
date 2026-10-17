@@ -484,9 +484,9 @@ async fn http(
                 .map_err(|_| "http_streams_poisoned")?;
             let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
             if runtime.generation() != generation
-                || !runtime
+                || runtime
                     .grants(caller.id)
-                    .is_some_and(|grants| grants.http_access.is_some())
+                    .is_none_or(|grants| grants.http_access.is_none())
             {
                 return Err("host_caller_inactive".into());
             }

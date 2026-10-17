@@ -314,9 +314,9 @@ def install(args, root, current):
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
+    manifest = None
     if not url:
-        listed = releases(args.releases_url or RELEASES_URL, channel=channel)
-        candidates = [item for item in listed if on_channel(channel, item)]
+        candidates = [item for item in releases(args.releases_url or RELEASES_URL, channel=channel) if on_channel(channel, item)]
         if not candidates:
             fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
         manifest = release_manifest(candidates[0])
@@ -324,15 +324,16 @@ def install(args, root, current):
             fail(f"release is built for {manifest['target']}")
         url, expected = manifest["url"], manifest["sha256"]
     profile = profile_choice(args)
-    upstream = upstream_binary(args, current, minor_of(manifest) if not args.asset_url and not RELEASE_URL else UPSTREAM_MINOR)
-    node = node_binary(args, manifest["node"]) if not args.asset_url and not RELEASE_URL else node_binary(args)
+    upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
+    node = node_binary(args, manifest["node"]) if manifest else node_binary(args)
     refuse_sessions(root, args.session)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
         download(url, expected, archive)
         result = transaction(args, root, current, archive, url, expected, profile, upstream, node)
-        _, record, _ = installation(root, pointer(root, "current"))
-        set_policy(root, record, "channel", channel)
+        _, record, store = installation(root, pointer(root, "current"))
+        if policy(store)["channel"] != channel:
+            set_policy(root, record, "channel", channel)
         print(json.dumps(result, indent=2))
 
 

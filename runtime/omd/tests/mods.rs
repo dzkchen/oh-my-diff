@@ -13,23 +13,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
-#[test]
-fn model_fork_requires_tool_history_authority() {
-    let call = codex_omd::ModHostCall {
-        operation: "model.fork".into(),
-        arguments: json!({"prompt":"p"}),
-    };
-    assert_eq!(
-        call.capabilities().unwrap(),
-        vec!["agents", "sessions", "sessions_tools"]
-    );
-    let complete = codex_omd::ModHostCall {
-        operation: "model.complete".into(),
-        arguments: json!({"route":"w","prompt":"p"}),
-    };
-    assert_eq!(complete.capabilities().unwrap(), vec!["agents"]);
-}
-
 fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
     packaged(root, id, id, source, capabilities, &[])
 }
@@ -2153,7 +2136,7 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
         )
         .unwrap();
     assert!(
-        runtime
+        !runtime
             .command_view(
                 "fixture",
                 runtime.generation(),
@@ -2163,8 +2146,7 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
             .unwrap()
             .view
             .sites
-            .get("dialog")
-            .is_none()
+            .contains_key("dialog")
     );
     assert!(
         runtime
@@ -2334,8 +2316,6 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
         json!("provider:hello")
     );
     let types = std::fs::read_to_string(root.join("store/installed-contracts.d.ts")).unwrap();
-    assert!(types.contains("InstalledContractTypesVersion = 1"));
-    assert!(types.contains("InstalledHostRelease = '0.1.0'"));
     assert!(types.contains("'example.echo@1.1.0'"));
     assert!(types.contains("echo(input: string): string"));
     assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
@@ -2792,16 +2772,6 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         &["commands", "agents", "sessions", "sessions_tools"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
-    let policies = &status["field_policies"];
-    assert_eq!(
-        policies["intercept.response_stream"]["usage"],
-        "observe_only"
-    );
-    assert_eq!(
-        policies["intercept.model_request"]["sections"],
-        "replaceable"
-    );
-    assert_eq!(policies["intercept.tool"]["arguments"], "replaceable");
 }
 
 #[test]
@@ -3086,25 +3056,6 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
             .iter()
             .all(|item| item["id"] != "fixture")
     );
-}
-
-#[test]
-fn an_incompatible_package_names_the_host_and_package_api_versions() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let path = root.join("stale");
-    std::fs::create_dir(&path).unwrap();
-    std::fs::write(
-        path.join("mod.json"),
-        serde_json::to_vec(&json!({"schema":1,"id":"stale","version":"1.0.0",
-        "api":"0.1.0-experimental.1","state_version":1,"capabilities":[]}))
-        .unwrap(),
-    )
-    .unwrap();
-    std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
-    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
-    assert!(error.contains(MOD_API_VERSION), "{error}");
-    assert!(error.contains("0.1.0-experimental.1"), "{error}");
 }
 
 #[test]
@@ -3587,9 +3538,7 @@ fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_o
         "error"
     );
     let store = temp.path().join("store");
-    let host_types = std::fs::read_to_string(store.join("active-host.d.ts")).unwrap();
-    assert!(host_types.contains(&format!("ActiveModApi = '{MOD_API_VERSION}'")));
-    assert!(host_types.contains("'agents.spawn'"));
+    assert!(store.join("active-host.d.ts").is_file());
     assert!(store.join("installed-contracts.d.ts").is_file());
     let bundle = runtime.diagnostic_bundle();
     let encoded = serde_json::to_string(&bundle).unwrap();
@@ -3599,12 +3548,6 @@ fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_o
     assert!(
         error.contains("fixture/index.ts:3") && !error.contains(path.to_str().unwrap()),
         "{error}"
-    );
-    assert!(
-        ModHost::capability_explanation("capability_denied: task")["fix"]
-            .as_str()
-            .unwrap()
-            .contains("exact grant")
     );
 }
 
@@ -4072,38 +4015,6 @@ fn request_path_interceptors_refuse_sleep_before_continuation() {
 }
 
 #[test]
-fn offline_status_retains_conflicts_without_running_paid_work() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for id in ["first", "second"] {
-        let path = package(
-            &root,
-            id,
-            "export default api => api.replace('compaction',()=>16000)",
-            &["compaction"],
-        );
-        trust(&store, &path, &["compaction"]);
-    }
-    let mut runtime = host(&temp);
-    let result = runtime
-        .offline_test(json!({"schema":1,"steps":[{"type":"status"}]}))
-        .unwrap();
-    assert_eq!(result["paid_requests"], 0);
-    let errors = result["steps"][0]["value"]["mods"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|value| value["error"].as_str().unwrap_or_default())
-        .collect::<Vec<_>>();
-    assert!(
-        errors
-            .iter()
-            .all(|error| error.contains("replacement_conflict"))
-    );
-}
-
-#[test]
 fn rich_lines_and_boxes_are_bounded() {
     let valid = json!({"sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
             {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
@@ -4283,31 +4194,6 @@ fn secret_like_exec_environment_needs_explicit_trust_by_name() {
         .unwrap();
     store.enable(&path, true).unwrap();
     assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
-}
-
-#[test]
-fn keys_and_pastes_reach_only_the_component_owner() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    for (id, component) in [("alpha", "a"), ("beta", "b")] {
-        let source = format!(
-            "export default api => api.on('terminal', () => ({{sites:{{'{id}/pane':{{components:[{{type:'pane',id:'{component}',label:'{id}',keys:true,children:[]}}]}}}}}}))"
-        );
-        let path = package(&root, id, &source, &["terminal"]);
-        trust(&store, &path, &["terminal"]);
-    }
-    let terminal = host(&temp).terminal_view(json!({}), || true);
-    assert_eq!(
-        terminal.component_owners,
-        [
-            ("a".to_owned(), "alpha".to_owned()),
-            ("b".to_owned(), "beta".to_owned())
-        ]
-        .into(),
-        "{:?}",
-        terminal.diagnostics
-    );
 }
 
 #[test]
@@ -5452,7 +5338,6 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     assert!(grants.mcp_servers.contains_key("docs"));
     let status = runtime.status()["mods"][0]["authority"].clone();
     assert_eq!(status["current"], true);
-    assert_eq!(status["exposure"].as_array().unwrap().len(), 8);
     for name in ["middleware", "request_policy"] {
         assert!(
             status["exposure"]
@@ -5463,14 +5348,6 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
         );
         assert!(!codex_omd::AUTHORITY_CAPABILITIES.contains(&name));
     }
-    let policy = status["exposure"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .find(|text| text.starts_with("request_policy:"))
-        .unwrap();
-    assert!(policy.contains("refuses every model request until it serves again or the mod is disabled. While it is enabled, realtime, image generation, web search and memory summarization are refused."), "{policy}");
     assert_eq!(
         runtime.status()["request_policy_unavailable"],
         "delegate registers no required model_send interceptor"

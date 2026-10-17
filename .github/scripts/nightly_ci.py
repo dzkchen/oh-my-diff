@@ -25,30 +25,7 @@ def command(*args):
 
 
 def v8():
-    tree = build.batch_dir(nightly.BATCH) / "codex"
-    version = command(sys.executable, tree / ".github/scripts/rusty_v8_bazel.py", "resolved-v8-crate-version")
-    target = command("rustc", "-vV").split("host: ", 1)[1].splitlines()[0]
-    profile = f"ptrcomp_sandbox_release_{target}"
-    manifest = f"rusty_v8_{profile}.sha256"
-    trusted = tree / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256"
-    expected = dict(line.split(maxsplit=1)[::-1] for line in trusted.read_text().splitlines())
-    build.V8.mkdir(parents=True, exist_ok=True)
-
-    def download(name, digest):
-        path = build.V8 / name
-        command("curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
-                f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}/{name}", "--output", path)
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise ValueError(f"V8 checksum mismatch: {name}")
-        return path
-
-    checksums = download(manifest, expected[manifest])
-    files = dict(line.split(maxsplit=1)[::-1] for line in checksums.read_text().splitlines())
-    names = {f"librusty_v8_{profile}.a.gz", f"src_binding_{profile}.rs"}
-    if set(files) != names:
-        raise ValueError("unexpected V8 artifact inventory")
-    for name, digest in files.items():
-        download(name, digest)
+    release_package.v8_prebuilt(build.batch_dir(nightly.BATCH) / "codex", build.V8, os.environ.copy())
 
 
 def cargo_tests(suite):
@@ -92,7 +69,6 @@ def package():
     batch = build.batch_dir(nightly.BATCH)
     shutil.rmtree(batch / "target")
     artifact_dir = batch / "artifacts"
-    command(sys.executable, ".github/scripts/build.py", "artifacts", nightly.BATCH, "--release")
     frozen = json.loads(release_lock.OUTPUT.read_text())
     base = frozen["version"].split("-", 1)[0]
     version = f"{base}-nightly.{datetime.datetime.now(datetime.UTC):%Y%m%d%H%M%S}.{os.environ['GITHUB_RUN_ID']}.{os.environ['GITHUB_RUN_ATTEMPT']}"
@@ -116,7 +92,7 @@ def package():
     archive_acceptance(archive, upstream)
     provenance = {"schema": 1, "version": version, "commit": command("git", "rev-parse", "HEAD"),
                   "upstream_commit": pin["commit"], "upstream_tag": pin["tag"],
-                  "patch_sha256": pin["runtime_patches"][0]["sha256"], "profile": "release",
+                  "patch_sha256": json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["patch"]["sha256"], "profile": "release",
                   "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"}
     (output / "nightly-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     checksums = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in sorted(output.iterdir()) if path.is_file()]
@@ -198,7 +174,7 @@ def report():
         steps = ", ".join(step["name"] for step in job.get("steps", []) if step["conclusion"] == "failure")
         lines.append(f"- [{job['name']}]({job['html_url']}): {steps or job['conclusion']}")
     for path in sorted(Path("reports").rglob("report.md")):
-        lines += ["", f"### {path.parent.name}", "", path.read_text()[-12_000:]]
+        lines += ["", f"### {path.relative_to('reports').parts[0]}", "", path.read_text()[-12_000:]]
     body.write_text("\n".join(lines) + "\n")
     if issue:
         command("gh", "issue", "edit", issue["number"], "--repo", repo, "--body-file", body)
