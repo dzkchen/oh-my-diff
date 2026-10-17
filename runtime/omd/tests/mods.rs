@@ -3032,18 +3032,18 @@ fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
 #[test]
 fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
     let (temp, _, _) = fixture(
-        "export default api => { api.command('nap', () => api.time.sleep(300)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
+        "export default api => { api.command('nap', () => api.time.sleep(300)); api.command('doze', () => api.time.sleep(5000)); api.intercept('command_list', async (e, next) => { await api.time.sleep(10); return next(e); }); api.intercept('composer_edit', async (e, next) => { await api.time.sleep(10); return next(e); }); }",
         &["commands", "events", "composer"],
     );
     let runtime = std::sync::Mutex::new(host(&temp));
     let generation = runtime.lock().unwrap().generation();
-    let nap = |active: &dyn Fn() -> bool| {
+    let nap = |name: &str, active: &dyn Fn() -> bool| {
         codex_omd::invoke_shared(
             &runtime,
             "fixture",
             generation,
             "command",
-            "nap",
+            name,
             Value::Null,
             active,
             |_, _| Err(std::io::Error::other("unexpected host call")),
@@ -3051,7 +3051,7 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
         )
     };
     std::thread::scope(|scope| {
-        let sleeper = scope.spawn(|| nap(&|| true));
+        let sleeper = scope.spawn(|| nap("nap", &|| true));
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert!(
             runtime.try_lock().is_ok(),
@@ -3064,11 +3064,14 @@ fn time_sleep_releases_the_runtime_and_wakes_on_cancellation() {
     });
     let checks = std::sync::atomic::AtomicUsize::new(0);
     let started = std::time::Instant::now();
-    let woken = nap(&|| checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6).unwrap_err();
+    let woken = nap("doze", &|| {
+        checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 6
+    })
+    .unwrap_err();
     assert!(woken.to_string().contains("callback_cancelled"), "{woken}");
     assert!(
-        started.elapsed() < std::time::Duration::from_millis(300),
-        "the sleep woke early"
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the sleep wakes on cancellation"
     );
     let held = runtime
         .lock()

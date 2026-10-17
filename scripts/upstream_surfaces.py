@@ -407,8 +407,6 @@ def host_table(table):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Map pinned upstream Codex surfaces to public OMD mod routes or recorded exclusions.")
     sub = parser.add_subparsers(dest="command", required=True)
-    listing = sub.add_parser("list", help="print every extracted upstream surface as JSON")
-    listing.add_argument("checkout")
     checking = sub.add_parser("check", help="fail when an upstream surface has no route or exclusion")
     checking.add_argument("checkout")
     checking.add_argument("--table", default=str(TABLE))
@@ -419,10 +417,6 @@ def main(argv=None):
     if args.command == "host-table":
         Path(args.output).write_text(json.dumps(host_table(load_table(args.table)), indent=1) + "\n")
         return 0
-    if args.command == "list":
-        surfaces, missing = extract(args.checkout)
-        print(json.dumps({"surfaces": surfaces, "missing_sources": missing}, indent=2))
-        return 1 if missing else 0
     report = check(args.checkout, load_table(args.table))
     print(json.dumps(report, indent=2))
     return 1 if report["gap"] else 0

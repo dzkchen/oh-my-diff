@@ -709,5 +709,4 @@ mod tests {
         std::fs::write(root.join(config::HOST_CONFIG), br#"{"schema":2}"#).unwrap();
         assert!(HostConfig::load(&root, &root.join("repo")).is_err());
     }
-
 }

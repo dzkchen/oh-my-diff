@@ -1248,5 +1248,4 @@ mod transaction_tests {
         assert!(missing_sink.apply(&root, || true).is_err());
         assert!(root.join("keep.txt").exists());
     }
-
 }

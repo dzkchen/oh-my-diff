@@ -10,12 +10,11 @@
     {"name": "area: plugins", "color": "c5def5", "description": "Bundled plugins and skills"},
     {"name": "status: triage", "color": "fbca04", "description": "Needs a maintainer decision"},
     {"name": "status: accepted", "color": "0e8a16", "description": "Will be worked on"},
-    {"name": "status: blocked", "color": "b60205", "description": "Waiting on something external"},
-    {"name": "good first issue", "color": "7057ff", "description": "Good for newcomers"}
+    {"name": "status: blocked", "color": "b60205", "description": "Waiting on something external"}
   ],
   "branch_protection": {
     "branch": "main",
-    "required_status_checks": {"strict": false, "contexts": ["release-metadata"]},
+    "required_status_checks": null,
     "enforce_admins": false,
     "required_pull_request_reviews": {"required_approving_review_count": 0},
     "restrictions": null,

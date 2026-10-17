@@ -222,5 +222,4 @@ mod tests {
         assert_eq!(views.current_presentation()["phase"], "resumed");
         assert_eq!(views.current_presentation()["thread_id"], "forked");
     }
-
 }

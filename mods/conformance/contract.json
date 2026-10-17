@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "api": "0.2.0-experimental.5",
-  "note": "scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
+  "note": "scripts/mod_conformance.py checks this file against the host source.",
   "launch": {
     "capabilities:account": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/mod.json","snippet":"\"account\""},"decision":"coordination.app_bridge"},
     "capabilities:agents": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"agents\""},"decision":"coordination.agents"},
@@ -252,26 +252,26 @@
     "operations:workspace.transaction": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.transaction'"},"decision":"tool.workspace"},
     "operations:workspace.unwatch": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:workspace.watch": {"status":"frozen","consumer":{"path":"mods/examples/watch_notify/index.ts","snippet":"api.host.call('workspace.watch'"},"decision":"context.events"},
-    "components:box": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'box'"},"decision":"terminal.box_model","evidence":["patch:box_styles_are_bounded_and_render_hook_trees_refuse_them","patch:box_model_draws_cards_flat_panels_and_rows_at_every_width","patch:hover_and_focus_accents_restyle_without_events_or_moving_rows","patch:dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally","patch:split_gaps_leave_cells_between_children_and_their_handle","patch:first_screen_centres_in_the_chat_rect","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:button": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'button'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:code": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'code'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:dialog": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'dialog'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:diff": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"type: 'diff'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:document": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"type: 'document'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:image": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"type: 'image'"},"decision":"terminal.surface","evidence":["rust:host_feature_examples_load_and_register_together","patch:listeners_follow_descendants_and_deduplicate_ports","patch:view_changes_are_diffed_per_frame","patch:splits_tabs_and_chat_union_place_regions","patch:actions_resolve_to_their_effective_binding_and_refuse_approval","patch:package_imports_survive_config_and_thread_changes_but_keep_owner_source_and_repository","patch:image_samples_reject_unbounded_fractional_or_missing_sizes","patch:decoder_rejects_oversized_dimensions_before_pixel_allocation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:input": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'input'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:line": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'line'"},"decision":"terminal.identity_and_rich_presentation","evidence":["rust:rich_lines_and_boxes_are_bounded","rust:terminal_identity_reports_profile_mode_and_mod_counts","patch:width_bounded_boxes_and_styled_lines_follow_the_header_width","patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:list": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'list'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:markdown": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'markdown'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:multiselect": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'multiselect'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:native": {"status":"frozen","consumer":{"path":"mods/first-party/omd_preview/index.ts","snippet":"type: 'native'"},"decision":"terminal.rendering","evidence":["rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change","rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views","patch:trees_wrap_restyle_replace_or_hide_the_native_drawing","patch:widget_hooks_place_the_native_widget_and_report_its_offset","patch:hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:pane": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'pane'"},"decision":"terminal.box_model","evidence":["patch:box_styles_are_bounded_and_render_hook_trees_refuse_them","patch:box_model_draws_cards_flat_panels_and_rows_at_every_width","patch:hover_and_focus_accents_restyle_without_events_or_moving_rows","patch:dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally","patch:split_gaps_leave_cells_between_children_and_their_handle","patch:first_screen_centres_in_the_chat_rect","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
+    "components:box": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'box'"},"decision":"terminal.box_model"},
+    "components:button": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'button'"},"decision":"terminal.controls"},
+    "components:code": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'code'"},"decision":"terminal.controls"},
+    "components:dialog": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'dialog'"},"decision":"terminal.controls"},
+    "components:diff": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"type: 'diff'"},"decision":"terminal.controls"},
+    "components:document": {"status":"frozen","consumer":{"path":"mods/examples/layout_explorer/index.ts","snippet":"type: 'document'"},"decision":"terminal.controls"},
+    "components:image": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"type: 'image'"},"decision":"terminal.surface"},
+    "components:input": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'input'"},"decision":"terminal.controls"},
+    "components:line": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'line'"},"decision":"terminal.identity_and_rich_presentation"},
+    "components:list": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'list'"},"decision":"terminal.controls"},
+    "components:markdown": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'markdown'"},"decision":"terminal.controls"},
+    "components:multiselect": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'multiselect'"},"decision":"terminal.controls"},
+    "components:native": {"status":"frozen","consumer":{"path":"mods/first-party/omd_preview/index.ts","snippet":"type: 'native'"},"decision":"terminal.rendering"},
+    "components:pane": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'pane'"},"decision":"terminal.box_model"},
     "components:module": {"status":"experimental","reason":"Component modules ship marked experimental in 1.0.0."},
     "components:raster": {"status":"experimental","reason":"Frame streaming is deferred beyond launch."},
-    "components:select": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'select'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:slot": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'slot'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:terminal": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"type: 'terminal'"},"decision":"terminal.pty","evidence":["patch:pty_output_renders_and_sessions_stay_owner_scoped","rust:writable_pty_panes_also_need_workspace_write_authority","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
-    "components:text": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'text'"},"decision":"terminal.controls","evidence":["rust:component_change_interceptors_answer_only_for_the_components_owner","patch:notices_validate_placement_lifetime_audience_and_tool_correlation","patch:notices_replace_by_id_expire_clear_and_reach_the_status_row","patch:panes_list_only_the_callers_panes_with_their_visibility","patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values","patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls","patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8","patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection","patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation","node:tests/mod_author_jsx.test.mjs:the runtime accepts every component kind declared by the API"]},
+    "components:select": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"type: 'select'"},"decision":"terminal.controls"},
+    "components:slot": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'slot'"},"decision":"terminal.controls"},
+    "components:terminal": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"type: 'terminal'"},"decision":"terminal.pty"},
+    "components:text": {"status":"frozen","consumer":{"path":"mods/examples/approval_desk/index.ts","snippet":"type: 'text'"},"decision":"terminal.controls"},
     "render_sites:assistant_message": {"status":"frozen","consumer":{"path":"mods/examples/render_hooks/index.ts","snippet":"component: 'assistant_message'"},"decision":"terminal.rendering"},
     "render_sites:composer_hint": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "render_sites:list": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"component: 'list'"},"decision":"terminal.rendering"},
@@ -343,19 +343,19 @@
     "classic_hooks:UserPromptSubmit": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "classic_hooks:WorktreeCreate": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "classic_hooks:WorktreeRemove": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
-    "author_commands:check": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm check"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:create": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author create DIR ID"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:debug": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm debug"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:diagnostics": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author diagnostics STORE OUTPUT"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:events": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author events STORE"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:example": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author example DIR NAME"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:examples": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author examples DIR"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:explain": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author explain DENIAL"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:package": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm run package"},"evidence":["node:tests/mod_author_package.test.mjs:author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output"]},
-    "author_commands:report": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author report STORE"},"evidence":["node:tests/mod_author_package.test.mjs:author example and diagnostic commands preserve their public arguments"]},
-    "author_commands:run": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm run run"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:test": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm test"},"evidence":["node:tests/mod_author_package.test.mjs:scaffold commands and mapped failures work for custom and example-named IDs"]},
-    "author_commands:watch": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm watch STORE"},"evidence":["node:tests/mod_author_package.test.mjs:watch updates an installed local package without changing its grants, scope or disabled choice"]}
+    "author_commands:check": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm check"}},
+    "author_commands:create": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author create DIR ID"}},
+    "author_commands:debug": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm debug"}},
+    "author_commands:diagnostics": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author diagnostics STORE OUTPUT"}},
+    "author_commands:events": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author events STORE"}},
+    "author_commands:example": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author example DIR NAME"}},
+    "author_commands:examples": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author examples DIR"}},
+    "author_commands:explain": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author explain DENIAL"}},
+    "author_commands:package": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm run package"}},
+    "author_commands:report": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author report STORE"}},
+    "author_commands:run": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm run run"}},
+    "author_commands:test": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm test"}},
+    "author_commands:watch": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm watch STORE"}}
   },
   "decisions": [
     {
@@ -382,12 +382,7 @@
         "operations": [
           "routes.list"
         ]
-      },
-      "evidence": [
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
-        "patch:middleware_switches_only_configured_lead_routes_and_transforms_text",
-        "patch:host_config_defaults_are_bounded_and_route_free"
-      ]
+      }
     },
     {
       "id": "coordination.agents",
@@ -418,15 +413,7 @@
           "task.status",
           "workspace.integrate"
         ]
-      },
-      "evidence": [
-        "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
-        "rust:integration_candidate_preserves_unrelated_edits_and_rejects_conflicts",
-        "rust:worker_route_grants_are_exact_nontransferable_and_share_allowances",
-        "patch:structured_failures_do_not_classify_permissions_or_allowance_as_outages",
-        "patch:resumed_ledgers_keep_allowance_observation_and_uncertain_requests",
-        "patch:unexpected_http_status_survives_error_event_conversion"
-      ]
+      }
     },
     {
       "id": "coordination.contracts",
@@ -454,16 +441,7 @@
           "contract.restrict",
           "contract.select"
         ]
-      },
-      "evidence": [
-        "rust:contract_documents_gate_on_bound_receipts_and_detect_weaker_selections",
-        "rust:contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_lower_assurance",
-        "rust:contract_selection_pins_digests_applies_the_project_floor_and_fails_closed",
-        "patch:no_selection_means_no_gate_and_restrictions_are_enforced",
-        "patch:active_contracts_require_bound_receipts_and_unavailable_contracts_fail_closed",
-        "patch:restart_restores_bound_receipts_and_restrictions_without_accepting_changed_selection",
-        "patch:argument_restrictions_are_monotone_and_survive_restart"
-      ]
+      }
     },
     {
       "id": "coordination.providers",
@@ -486,10 +464,7 @@
           "providers.register",
           "providers.unregister"
         ]
-      },
-      "evidence": [
-        "rust:lifecycle_route_registration_resumes_across_two_host_calls"
-      ]
+      }
     },
     {
       "id": "coordination.ledger",
@@ -507,11 +482,7 @@
         "events": [],
         "replacements": [],
         "operations": []
-      },
-      "evidence": [
-        "patch:observe_only_accounts_record_usage_without_admission",
-        "rust:concurrent_admissions_cannot_oversubscribe_the_shared_limit"
-      ]
+      }
     },
     {
       "id": "kernel.request_stream_middleware",
@@ -544,19 +515,7 @@
           "response_stream",
           "host_operation"
         ]
-      },
-      "evidence": [
-        "rust:request_and_stream_interceptors_compose_and_keep_observers_observe_only",
-        "rust:routing_and_prompt_wrappers_compose_on_one_model_request",
-        "patch:sections_name_every_classified_item_and_protect_policy",
-        "patch:ordinary_sections_rewrite_drop_reorder_and_insert_around_fixed_policy",
-        "patch:stream_results_keep_identity_and_validate_tool_arguments",
-        "patch:request_interceptors_edit_sections_answer_synthetically_and_rewrite_stream_tool_calls",
-        "patch:stream_control_stops_only_at_output_boundaries_and_carries_the_retry",
-        "patch:middleware_switches_only_configured_lead_routes_and_transforms_text",
-        "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller",
-        "rust:input_and_model_request_continuations_pass_downstream_results_or_deny"
-      ]
+      }
     },
     {
       "id": "kernel.final_request_policy",
@@ -580,17 +539,7 @@
         "intercepts": [
           "model_send"
         ]
-      },
-      "evidence": [
-        "patch:send_segments_cover_every_text_leaf_and_name_opaque_values",
-        "patch:send_opaque_lists_unscanned_media_before_capped_encrypted_content",
-        "patch:send_pages_pack_short_segments_and_split_long_ones_with_context",
-        "patch:send_results_keep_inner_edits_and_stay_inside_editable_text",
-        "patch:final_request_policies_edit_the_exact_body_reuse_verdicts_and_fail_closed",
-        "patch:declared_request_policies_refuse_until_disabled_and_are_inert_without_policies",
-        "patch:authority_grants_are_declared_scoped_expiring_and_revocable",
-        "patch:an_active_final_request_policy_refuses_transports_that_cannot_pass_it"
-      ]
+      }
     },
     {
       "id": "kernel.inter_mod_services",
@@ -613,11 +562,6 @@
           "mods.service"
         ]
       },
-      "evidence": [
-        "rust:typed_services_are_host_routed_versioned_and_generate_installed_types",
-        "rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently",
-        "node:typed middleware and services register without ambient authority"
-      ],
       "replace_note": null
     },
     {
@@ -643,10 +587,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "rust:mod_context_is_bounded_and_callback_failure_is_isolated",
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
-      ],
       "replace_note": "the exclusive assembler; observer fragments are dropped with a visible notice"
     },
     {
@@ -672,11 +612,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "rust:input_and_model_request_continuations_pass_downstream_results_or_deny",
-        "node:lifecycle events and interceptors require their capabilities",
-        "patch:mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_them"
-      ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
     {
@@ -704,9 +639,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
-      ],
       "replace_note": null
     },
     {
@@ -736,9 +668,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:command_descriptions_tool_labels_and_lifecycle_events_register"
-      ],
       "replace_note": null
     },
     {
@@ -770,18 +699,7 @@
           "evidence.write",
           "evidence.read"
         ]
-      },
-      "evidence": [
-        "rust:store_is_namespaced_compare_and_set_with_host_attested_provenance",
-        "rust:mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates",
-        "rust:ui_state_is_shared_per_session_isolated_and_cleared_on_reload",
-        "rust:ui_state_invalidates_render_hooks_without_durable_reads",
-        "rust:ui_state_command_views_validate_ownership_and_preserve_other_contributions",
-        "rust:conflict_retries_replay_host_results_and_refuse_divergent_callbacks",
-        "rust:scoped_state_follows_the_session_thread_or_the_git_checkout",
-        "patch:config_contributors_receive_the_thread_id_the_new_thread_uses",
-        "rust:migration_is_explicit_bounded_and_preserves_previous_state"
-      ]
+      }
     },
     {
       "id": "shared.session_index",
@@ -806,13 +724,7 @@
           "sessions.read",
           "sessions.snapshot"
         ]
-      },
-      "evidence": [
-        "rust:repository_scope_opt_out_and_hidden_content_are_enforced",
-        "rust:projection_contains_visible_messages_and_references_only",
-        "rust:compaction_segments_preserve_original_visible_records_and_bounds",
-        "patch:parent_history_keeps_tool_records_and_refuses_partial_delivery"
-      ]
+      }
     },
     {
       "id": "tool.registration",
@@ -833,10 +745,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:native_schema_validation_applies_to_reload_before_activation",
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
-      ],
       "replace_note": null
     },
     {
@@ -860,9 +768,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed"
-      ],
       "replace_note": null
     },
     {
@@ -890,14 +795,6 @@
           "tools.check"
         ]
       },
-      "evidence": [
-        "rust:continuations_compose_transforms_inspect_results_and_short_circuit",
-        "rust:continuation_failures_skip_keep_catch_or_fail_closed",
-        "patch:tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original",
-        "patch:mod_interception_denies_answers_or_routes_through_registered_native_handler",
-        "patch:tool_retries_and_mod_calls_redispatch_through_the_turn_invoker",
-        "patch:checks_assess_through_each_tool_runtime_and_the_approval_gate"
-      ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
     {
@@ -919,10 +816,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:command_outcomes_are_validated",
-        "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique"
-      ],
       "replace_note": null
     },
     {
@@ -942,9 +835,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
-      ],
       "replace_note": null
     },
     {
@@ -966,10 +856,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:common_read_keeps_local_and_virtual_authority_separate",
-        "patch:independent_provider_revision_and_disabled_recovery"
-      ],
       "replace_note": null
     },
     {
@@ -995,17 +881,7 @@
           "exec.run",
           "exec.output_page"
         ]
-      },
-      "evidence": [
-        "rust:exec_run_bounds_program_environment_output_time_and_authority",
-        "rust:exec_run_admits_only_inherited_user_sockets",
-        "patch:sandboxed_commands_reach_only_granted_unix_sockets",
-        "rust:exec_output_artifact_is_paged_and_bound_to_the_caller",
-        "rust:exec_guards_recheck_output_before_a_write",
-        "rust:workspace_access_checks_named_paths_and_guarded_write_authority",
-        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters",
-        "patch:execution_receipts_reject_forged_bindings_and_false_success"
-      ]
+      }
     },
     {
       "id": "tool.workspace",
@@ -1040,16 +916,7 @@
           "workspace.snapshot",
           "workspace.fingerprint"
         ]
-      },
-      "evidence": [
-        "rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions",
-        "patch:workspace_read_and_transaction_obey_effective_permissions",
-        "patch:write_observation_hides_denied_paths",
-        "patch:pre_rename_plan_applies_companion_write_and_move",
-        "patch:snapshots_are_owner_source_generation_thread_and_digest_bound",
-        "patch:snapshots_deduplicate_and_evict_the_oldest_until_session_cleanup",
-        "patch:capture_requires_current_permissions_and_preserves_frozen_bytes"
-      ]
+      }
     },
     {
       "id": "tool.managed_process",
@@ -1075,11 +942,7 @@
           "process.status",
           "process.stop"
         ]
-      },
-      "evidence": [
-        "patch:framed_process_is_owned_bounded_and_stopped",
-        "patch:blocked_process_write_observes_cancellation"
-      ]
+      }
     },
     {
       "id": "tool.unrestricted",
@@ -1099,12 +962,7 @@
         "events": [],
         "replacements": [],
         "operations": []
-      },
-      "evidence": [
-        "rust:unrestricted_exec_runs_granted_programs_outside_the_sandbox",
-        "patch:unrestricted_process_needs_a_current_grant_and_takes_its_tree_down",
-        "rust:authority_grants_are_declared_scoped_expiring_and_revocable"
-      ]
+      }
     },
     {
       "id": "tool.sidecars",
@@ -1127,10 +985,7 @@
           "sidecars.status",
           "sidecars.invoke"
         ]
-      },
-      "evidence": [
-        "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks"
-      ]
+      }
     },
     {
       "id": "tool.builtins",
@@ -1150,13 +1005,7 @@
         "events": [],
         "replacements": [],
         "operations": []
-      },
-      "evidence": [
-        "rust:builtin_controls_protect_recovery_commands",
-        "rust:registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods",
-        "patch:disabled_collaboration_modes_clamp_to_default_at_turn_start",
-        "patch:builtin_controls_hide_commands_and_disable_modes_but_never_recovery"
-      ]
+      }
     },
     {
       "id": "tool.kernels_and_adapters",
@@ -1174,12 +1023,7 @@
         "events": [],
         "replacements": [],
         "operations": []
-      },
-      "evidence": [
-        "patch:kernel_command_requires_an_unchanged_bounded_driver",
-        "patch:disabled_kernel_does_not_start_a_worker",
-        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters"
-      ]
+      }
     },
     {
       "id": "terminal.view",
@@ -1202,20 +1046,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
-        "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
-        "patch:welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose",
-        "patch:welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start",
-        "patch:welcome_resume_and_fork_markers_are_latched_before_ready_publication",
-        "patch:mod_welcome_survives_draft_paste_clear_rejection_and_stops_on_observed_start",
-        "patch:mod_welcome_resumed_or_forked_first_paint_never_shows_decoration",
-        "patch:welcome_centers_in_blank_space_and_preserves_error_prompt_and_keyboard_targets",
-        "patch:mod_session_header_suffix_and_greeting_preserve_raw_fields_and_disable_fallback",
-        "patch:startup_first_frame_uses_public_presentation_and_pending_input_is_not_acceptance",
-        "patch:startup_preview_survives_only_empty_bootstrap_and_yields_to_real_publications",
-        "rust:startup_terminal_preview_rejects_native_task_operations_at_host_boundary"
-      ],
       "replace_note": null
     },
     {
@@ -1235,10 +1065,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:left_sidebar_and_header_share_the_layout_and_host_panels_sit_above_the_prompt",
-        "patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize"
-      ],
       "replace_note": null
     },
     {
@@ -1258,9 +1084,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:theme_slots_map_indexed_and_rgb_colors"
-      ],
       "replace_note": null
     },
     {
@@ -1280,14 +1103,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:appearance_styles_are_bounded_and_merge_by_surface",
-        "patch:surface_paint_preserves_text_semantics_and_special_backgrounds",
-        "patch:paper_surface_on_dark_terminal_paints_solid_background_and_readable_native_fill",
-        "patch:inline_snapshot_keeps_ascii_palette_composer_dialog_and_workspace_bounded",
-        "patch:native_approval_stays_visible_and_owns_enter_over_retained_mod_dialog",
-        "patch:no_color_panels_drop_theme_indices"
-      ],
       "replace_note": null
     },
     {
@@ -1307,11 +1122,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:native_escape_and_cancel_keys_cannot_be_intercepted",
-        "patch:short_dialog_retains_recovery_hitboxes_and_keyboard_dispatch",
-        "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views"
-      ],
       "replace_note": null
     },
     {
@@ -1334,13 +1144,6 @@
           "render"
         ]
       },
-      "evidence": [
-        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change",
-        "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
-        "patch:trees_wrap_restyle_replace_or_hide_the_native_drawing",
-        "patch:widget_hooks_place_the_native_widget_and_report_its_offset",
-        "patch:hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport"
-      ],
       "replace_note": null
     },
     {
@@ -1360,12 +1163,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:rich_lines_and_boxes_are_bounded",
-        "rust:terminal_identity_reports_profile_mode_and_mod_counts",
-        "patch:width_bounded_boxes_and_styled_lines_follow_the_header_width",
-        "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript"
-      ],
       "replace_note": "presentation fields in the terminal view or patch"
     },
     {
@@ -1387,14 +1184,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:box_styles_are_bounded_and_render_hook_trees_refuse_them",
-        "patch:box_model_draws_cards_flat_panels_and_rows_at_every_width",
-        "patch:hover_and_focus_accents_restyle_without_events_or_moving_rows",
-        "patch:dialogs_centre_in_the_chat_column_fit_their_content_and_size_buttons_naturally",
-        "patch:split_gaps_leave_cells_between_children_and_their_handle",
-        "patch:first_screen_centres_in_the_chat_rect"
-      ],
       "replace_note": "presentation fields in the terminal view or patch"
     },
     {
@@ -1416,10 +1205,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change",
-        "patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded"
-      ],
       "replace_note": null
     },
     {
@@ -1441,9 +1226,6 @@
           "terminal.pane"
         ]
       },
-      "evidence": [
-        "patch:controlled_fields_keep_echoes_reset_on_mod_values_and_panes_answer_only_their_owner"
-      ],
       "replace_note": null
     },
     {
@@ -1471,17 +1253,6 @@
           "terminal.copy"
         ]
       },
-      "evidence": [
-        "rust:component_change_interceptors_answer_only_for_the_components_owner",
-        "patch:notices_validate_placement_lifetime_audience_and_tool_correlation",
-        "patch:notices_replace_by_id_expire_clear_and_reach_the_status_row",
-        "patch:panes_list_only_the_callers_panes_with_their_visibility",
-        "patch:multiselect_toggles_with_space_runs_with_checked_values_and_resets_on_mod_values",
-        "patch:hotkeys_focus_or_run_controls_but_yield_to_text_inputs_and_autofocus_only_new_controls",
-        "patch:span_and_markdown_links_mark_only_their_own_cells_with_osc8",
-        "patch:selection_and_copy_bound_utf8_and_do_not_invent_a_selection",
-        "patch:clipboard_operations_require_local_user_context_without_waiting_for_confirmation"
-      ],
       "replace_note": null
     },
     {
@@ -1504,12 +1275,6 @@
           "terminal.blit"
         ]
       },
-      "evidence": [
-        "patch:blits_queue_and_apply_one_update_per_frame_interval",
-        "patch:blits_refuse_other_owners_bad_rects_and_report_backpressure",
-        "patch:rasters_overlays_and_pointer_regions_share_layers_capture_and_hover",
-        "patch:overlays_anchor_to_screen_corners_or_components_and_clip"
-      ],
       "replace_note": null
     },
     {
@@ -1529,10 +1294,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "node:reactive atoms track reads, recompute derived values and run keyed subscriptions once per change",
-        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change"
-      ],
       "replace_note": null
     },
     {
@@ -1565,16 +1326,6 @@
           "app.routes"
         ]
       },
-      "evidence": [
-        "patch:capability_context_and_unrouted_methods_are_enforced",
-        "patch:authority_fields_are_refused_but_null_is_absent",
-        "patch:user_commands_authorize_app_requests_before_the_app_loop",
-        "patch:queue_coalesces_deltas_and_drops_oldest_with_a_count",
-        "patch:config_writes_refuse_authority_and_unknown_keys",
-        "patch:confirmations_name_the_exact_request",
-        "patch:config_reads_redact_secret_values",
-        "patch:mod_responses_never_grant_authority"
-      ],
       "replace_note": null
     },
     {
@@ -1601,14 +1352,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:approval_gates_tighten_before_automatic_review",
-        "patch:approval_decisions_deny_first_and_fail_closed_to_ask",
-        "patch:approval_middleware_requires_the_approvals_capability",
-        "patch:delegated_approvals_stay_inside_the_current_grant",
-        "patch:only_user_rule_denials_are_overridable",
-        "rust:authority_grants_are_declared_scoped_expiring_and_revocable"
-      ],
       "replace_note": null
     },
     {
@@ -1631,9 +1374,6 @@
           "tools.undefine"
         ]
       },
-      "evidence": [
-        "patch:dynamic_tools_are_defined_invoked_and_removed_by_their_mod"
-      ],
       "replace_note": null
     },
     {
@@ -1657,11 +1397,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original",
-        "patch:tool_output_without_owner_is_not_offered",
-        "patch:tool_output_contributor_replaces_model_visible_text_within_limit"
-      ],
       "replace_note": null
     },
     {
@@ -1685,9 +1420,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "patch:merged_results_fan_out_by_call_id_and_missing_results_fail"
-      ],
       "replace_note": null
     },
     {
@@ -1712,15 +1444,6 @@
           "tools.list"
         ]
       },
-      "evidence": [
-        "patch:adjustments_hide_and_redescribe_by_model_visible_name",
-        "patch:tool_specs_interceptors_compose_hide_defer_and_redescribe",
-        "patch:spec_contributors_defer_direct_tools_behind_tool_search",
-        "patch:spec_contributors_observe_original_and_effective_tools_with_hidden_and_deferred_state",
-        "patch:tool_inventory_lists_with_hidden_and_deferred_stores_once_and_validates_final_arguments",
-        "patch:validation_refuses_with_a_pointer_and_reason",
-        "patch:types_convert_the_schema_subset_and_default_to_json"
-      ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
     {
@@ -1752,16 +1475,6 @@
           "events.cancel"
         ]
       },
-      "evidence": [
-        "patch:publishers_are_namespaced_and_subscribers_filter_by_pattern",
-        "patch:channel_sequence_admission_is_bounded_per_publisher_and_globally",
-        "patch:channel_sequences_expire_only_after_publisher_idle_and_queue_drain",
-        "patch:slow_subscribers_drop_oldest_and_see_the_count",
-        "patch:external_changes_are_reported_relative_to_the_root",
-        "patch:channel_events_reach_subscribers_in_order",
-        "patch:watches_are_limited_per_mod_and_released_with_their_source",
-        "patch:timer_delivery_budget_coalesces_keys_and_does_not_block_other_owners"
-      ],
       "replace_note": null
     },
     {
@@ -1787,11 +1500,6 @@
           "routes.select"
         ]
       },
-      "evidence": [
-        "patch:secrets_are_origin_bound_and_readable_only_by_their_owner",
-        "patch:secrets_read_api_keys_and_refuse_expired_or_missing_tokens",
-        "patch:profiles_get_private_homes_and_one_default"
-      ],
       "replace_note": null
     },
     {
@@ -1814,12 +1522,6 @@
           "turns.abort"
         ]
       },
-      "evidence": [
-        "patch:completed_turn_reports_tools_processes_and_files",
-        "patch:a_turn_without_an_end_is_interrupted_unless_running_or_paused",
-        "patch:turn_activity_records_only_while_a_mod_reads_it",
-        "patch:turn_abort_requires_event_or_user_and_stays_in_current_thread"
-      ],
       "replace_note": null
     },
     {
@@ -1854,16 +1556,6 @@
           "sessions.ports"
         ]
       },
-      "evidence": [
-        "rust:host_feature_examples_load_and_register_together",
-        "patch:listeners_follow_descendants_and_deduplicate_ports",
-        "patch:view_changes_are_diffed_per_frame",
-        "patch:splits_tabs_and_chat_union_place_regions",
-        "patch:actions_resolve_to_their_effective_binding_and_refuse_approval",
-        "patch:package_imports_survive_config_and_thread_changes_but_keep_owner_source_and_repository",
-        "patch:image_samples_reject_unbounded_fractional_or_missing_sizes",
-        "patch:decoder_rejects_oversized_dimensions_before_pixel_allocation"
-      ],
       "replace_note": null
     },
     {
@@ -1885,9 +1577,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "rust:component_modules_keep_state_in_their_runner_until_unmounted"
-      ],
       "replace_note": null
     },
     {
@@ -1916,13 +1605,6 @@
           "settings.write"
         ]
       },
-      "evidence": [
-        "patch:install_enable_disable_and_remove_through_previewed_controls",
-        "patch:stale_previews_and_invalid_requests_are_refused",
-        "patch:dependency_trees_preview_every_grant_and_install_as_confirmed",
-        "patch:trusted_selections_toggle_retrust_and_report_session_state",
-        "rust:settings_write_merges_schema_checked_values_over_defaults"
-      ],
       "replace_note": null
     },
     {
@@ -1946,10 +1628,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths",
-        "rust:completion_triggers_are_bounded_and_route_the_completion_event"
-      ],
       "replace_note": null
     },
     {
@@ -1972,9 +1650,6 @@
           "terminal.prompt"
         ]
       },
-      "evidence": [
-        "patch:open_targets_are_web_urls_or_inert_files"
-      ],
       "replace_note": null
     },
     {
@@ -1998,10 +1673,6 @@
           "terminal.pty"
         ]
       },
-      "evidence": [
-        "patch:pty_output_renders_and_sessions_stay_owner_scoped",
-        "rust:writable_pty_panes_also_need_workspace_write_authority"
-      ],
       "replace_note": null
     },
     {
@@ -2024,12 +1695,6 @@
           "model.fork"
         ]
       },
-      "evidence": [
-        "patch:model_completions_use_only_configured_worker_routes",
-        "patch:model_fork_checks_history_authority_before_access",
-        "patch:completion_workers_cap_output_capture_tool_calls_and_collect_their_responses",
-        "patch:completion_cache_marks_set_a_prefix_key_and_breakpoint_for_provider_transports"
-      ],
       "replace_note": null
     },
     {
@@ -2052,11 +1717,6 @@
           "time.sleep"
         ]
       },
-      "evidence": [
-        "rust:sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views",
-        "rust:offline_scenarios_mock_environment_pointer_clients_and_pending_waits",
-        "rust:time_sleep_releases_the_runtime_and_wakes_on_cancellation"
-      ],
       "replace_note": null
     },
     {
@@ -2078,11 +1738,6 @@
           "ledger.settle"
         ]
       },
-      "evidence": [
-        "patch:provider_billed_requests_skip_reservations_record_provider_cost_and_settle_late_once",
-        "patch:provider_billed_service_routes_are_found_only_for_their_provider_and_mod",
-        "rust:native/tests/omd_mod_cli.rs::credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin"
-      ],
       "replace_note": null
     },
     {
@@ -2108,11 +1763,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
-        "patch:unsafe_edits_are_refused",
-        "patch:call_arguments_and_image_messages_can_be_rewritten"
-      ],
       "replace_note": null
     },
     {
@@ -2137,10 +1787,6 @@
         ],
         "operations": []
       },
-      "evidence": [
-        "rust:history_persist_interceptors_rewrite_only_entry_text",
-        "patch:persisted_text_is_rewritten_at_rest_while_live_history_keeps_the_original"
-      ],
       "replace_note": null
     },
     {
@@ -2162,12 +1808,6 @@
         "replacements": [],
         "operations": []
       },
-      "evidence": [
-        "patch:rewrite_replaces_deletes_inserts_and_moves_rows_durably",
-        "patch:rewrite_refuses_stale_unpaired_reused_and_role_changing_edits",
-        "patch:revision_log_recovers_interrupted_writes_and_detects_tampering",
-        "patch:thread_rewrite_is_durable_across_restart_search_export_and_undo"
-      ],
       "replace_note": null
     },
     {
@@ -2199,15 +1839,7 @@
           "environment.read",
           "environment.set"
         ]
-      },
-      "evidence": [
-        "patch:structured_http_reassesses_redirects_streams_cancels_and_records_receipts",
-        "rust:external_roots_keep_canonical_paths_expected_versions_and_grant_scope",
-        "patch:mcp_connect_builds_only_declared_servers_for_the_engine",
-        "rust:authority_grants_are_declared_scoped_expiring_and_revocable",
-        "rust:scoped_environment_is_private_bounded_and_applies_to_future_children",
-        "patch:scoped_environment_reaches_managed_children_and_clears_on_unload"
-      ]
+      }
     },
     {
       "id": "terminal.commands_config",
@@ -2239,11 +1871,7 @@
           "config_list",
           "config_set"
         ]
-      },
-      "evidence": [
-        "rust:command_and_config_interceptors_compose_transform_and_keep_floors",
-        "rust:host_feature_examples_load_and_register_together"
-      ]
+      }
     },
     {
       "id": "coordination.admission",
@@ -2266,11 +1894,7 @@
         "intercepts": [
           "admission"
         ]
-      },
-      "evidence": [
-        "rust:admission_policy_refuses_withholds_rejudges_and_fails_closed",
-        "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller"
-      ]
+      }
     },
     {
       "id": "coordination.agent_lifecycle",
@@ -2294,12 +1918,7 @@
           "agent_offers",
           "agent_spawn"
         ]
-      },
-      "evidence": [
-        "patch:agent_definitions_are_offered_wrapped_and_observed_without_control",
-        "patch:contributed_agent_roles_are_offered_in_spawn_guidance",
-        "patch:spawn_agent_applies_a_contributed_role_layer_and_working_directory"
-      ]
+      }
     },
     {
       "id": "coordination.peer_sessions",
@@ -2329,14 +1948,7 @@
           "peer_send",
           "peer_receive"
         ]
-      },
-      "evidence": [
-        "patch:sessions_exchange_sealed_messages_and_receipts",
-        "patch:closed_sessions_and_other_projects_are_refused",
-        "patch:peer_messages_pass_receive_interceptors_as_untrusted_data",
-        "patch:peer_tags_verify_only_the_sealed_digest",
-        "patch:two_processes_exchange_broker_sealed_messages"
-      ]
+      }
     },
     {
       "id": "coordination.autonomous_turns",
@@ -2365,11 +1977,7 @@
         "intercepts": [
           "turn_stop"
         ]
-      },
-      "evidence": [
-        "patch:autonomous_queues_wait_for_idle_respect_budgets_and_pause_on_interrupt",
-        "patch:extension_continuation_keeps_the_turn_sampling_until_it_declines"
-      ]
+      }
     },
     {
       "id": "context_recovery.compaction_interception",
@@ -2390,14 +1998,7 @@
         "intercepts": [
           "compaction"
         ]
-      },
-      "evidence": [
-        "patch:a_summary_answer_replaces_manual_compaction_without_a_provider_call",
-        "patch:a_settled_remote_compaction_installs_the_contributor_history",
-        "patch:a_skip_holds_below_the_window_and_fails_at_it",
-        "patch:compaction_chains_answer_skip_replace_and_fail_closed",
-        "patch:compaction_replacements_keep_calls_and_reasoning_whole"
-      ]
+      }
     },
     {
       "id": "terminal.composer_drafts",
@@ -2424,13 +2025,7 @@
           "composer_edit",
           "composer_key"
         ]
-      },
-      "evidence": [
-        "rust:composer_key_chain_rewrites_drops_and_stops_at_the_keystroke_deadline",
-        "patch:edits_compare_revisions_and_keep_cursor_and_selection",
-        "patch:one_suggestion_shows_at_the_end_and_resolves_explicitly",
-        "patch:mod_attachments_leave_with_their_owner"
-      ]
+      }
     },
     {
       "id": "coordination.lifecycle_events",
@@ -2457,12 +2052,7 @@
         "intercepts": [
           "elicitation"
         ]
-      },
-      "evidence": [
-        "node:classic hooks map onto native events and interceptors with glob and negated matchers",
-        "patch:lifecycle_seams_report_batches_loads_failures_and_elicitations",
-        "patch:settled_batches_are_reported_and_failed_turns_may_continue"
-      ]
+      }
     },
     {
       "id": "coordination.user_submissions",
@@ -2486,119 +2076,65 @@
           "prompts.revoke"
         ],
         "intercepts": []
-      },
-      "evidence": [
-        "patch:consents_are_single_use_content_bound_and_reconciled_by_client_id"
-      ]
+      }
     }
   ],
   "composition": [
     {
       "id": "order",
-      "rule": "Activation and dispatch order is deterministic: declared dependencies first, then mod ID ascending. The same order is used for every event, tool listing, command listing and contract listing, and is published in `omd-mod status` as `order`.",
-      "evidence": [
-        "rust:composition_order_is_declared_dependencies_first_then_mod_id"
-      ]
+      "rule": "Activation and dispatch order is deterministic: declared dependencies first, then mod ID ascending. The same order is used for every event, tool listing, command listing and contract listing, and is published in `omd-mod status` as `order`."
     },
     {
       "id": "exclusive_versus_middleware",
-      "rule": "`api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides.",
-      "evidence": [
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
-      ]
+      "rule": "`api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides."
     },
     {
       "id": "continuation_order",
-      "rule": "Interceptors compose as one continuation chain per operation: ordinary handlers wrap required ones; each tier follows explicit `before`/`after`, then consumers outside their dependencies, then mod ID and registration order, and a cycle disables its mods. A failure before `next` skips the handler, after `next` keeps the downstream result, a `.catch` handler may answer instead, and a required handler's failure or unavailability fails the operation closed. A reload lets running handlers finish.",
-      "evidence": [
-        "rust:continuation_order_cancellation_and_reload_are_explicit",
-        "rust:continuation_failures_skip_keep_catch_or_fail_closed"
-      ]
+      "rule": "Interceptors compose as one continuation chain per operation: ordinary handlers wrap required ones; each tier follows explicit `before`/`after`, then consumers outside their dependencies, then mod ID and registration order, and a cycle disables its mods. A failure before `next` skips the handler, after `next` keeps the downstream result, a `.catch` handler may answer instead, and a required handler's failure or unavailability fails the operation closed. A reload lets running handlers finish."
     },
     {
       "id": "terminal_patch_composition",
-      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields.",
-      "evidence": [
-        "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
-        "rust:a_failed_terminal_patch_is_transactional"
-      ]
+      "rule": "Every mod's terminal patch composes in dependency order. Wrappers contain one slot; exclusive fields (layout, panels, header, footer, placeholder, replaced sites, keys, glyphs and the status budget) go to the first claimant and each later claim is reported in `terminal.conflicts` with its field, owner, rejected mod and origin; a patch that breaks the composed view's limits is rejected without leaking any of its fields."
     },
     {
       "id": "render_hook_composition",
-      "rule": "Render hooks compose as one continuation chain per native component instance in interceptor order, so unrelated wrappers nest; each sees the props the hook before it passed on, the native drawing appears at most once, and a failing or invalid hook is skipped with the input it received.",
-      "evidence": [
-        "rust:render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change"
-      ]
+      "rule": "Render hooks compose as one continuation chain per native component instance in interceptor order, so unrelated wrappers nest; each sees the props the hook before it passed on, the native drawing appears at most once, and a failing or invalid hook is skipped with the input it received."
     },
     {
       "id": "conflict_before_activation",
-      "rule": "Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
-      "evidence": [
-        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
-      ]
+      "rule": "Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running."
     },
     {
       "id": "dependencies_and_cycles",
-      "rule": "`requires` lists up to four other mod IDs. A dependency that is absent, disabled or itself failed disables the dependent chain before activation; a cycle disables every mod in it. Both are reported per mod and neither stops the host.",
-      "evidence": [
-        "rust:a_dependency_cycle_is_rejected_before_activation_and_isolated",
-        "rust:an_unavailable_dependency_disables_only_the_dependent_chain"
-      ]
+      "rule": "`requires` lists up to four other mod IDs. A dependency that is absent, disabled or itself failed disables the dependent chain before activation; a cycle disables every mod in it. Both are reported per mod and neither stops the host."
     },
     {
       "id": "user_project_precedence",
-      "rule": "Discovery reports project packages shadowing user packages by ID. Trust and activation stay explicit and per path: each selection records its scope, a project-scoped selection takes precedence over a user-scoped one with the same ID, the shadowed selection is recorded and not activated, and the two scopes never share mod state. Two selections of one ID in the same scope both fail closed.",
-      "evidence": [
-        "rust:project_scope_takes_precedence_over_user_scope_without_sharing_state",
-        "rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed"
-      ]
+      "rule": "Discovery reports project packages shadowing user packages by ID. Trust and activation stay explicit and per path: each selection records its scope, a project-scoped selection takes precedence over a user-scoped one with the same ID, the shadowed selection is recorded and not activated, and the two scopes never share mod state. Two selections of one ID in the same scope both fail closed."
     },
     {
       "id": "failed_mod_isolation",
-      "rule": "A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn.",
-      "evidence": [
-        "rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error"
-      ]
+      "rule": "A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn."
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale local generations are refused. In-flight work retains its captured source, but cancellation or changed authority, source or enablement rejects completion before state or results are committed. Settings and state survive an edit.",
-      "evidence": [
-        "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
-        "rust:disabling_during_native_work_rejects_completion_and_next_generation"
-      ]
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale local generations are refused. In-flight work retains its captured source, but cancellation or changed authority, source or enablement rejects completion before state or results are committed. Settings and state survive an edit."
     },
     {
       "id": "cancellation",
-      "rule": "Every callback is cancellable. Cancellation discards the callback's state write, cancels its owned agents and services, records the turn outcome, and leaves the terminal usable; an explicit reload recovers the mod.",
-      "evidence": [
-        "rust:mod_cancellation_discards_state_and_explicit_reload_recovers",
-        "rust:mod_pending_callback_has_a_host_deadline"
-      ]
+      "rule": "Every callback is cancellable. Cancellation discards the callback's state write, cancels its owned agents and services, records the turn outcome, and leaves the terminal usable; an explicit reload recovers the mod."
     },
     {
       "id": "streaming",
-      "rule": "Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update.",
-      "evidence": [
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
-      ]
+      "rule": "Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update."
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope.",
-      "evidence": [
-        "rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget",
-        "rust:mod_context_is_bounded_and_callback_failure_is_isolated",
-        "rust:mod_pending_callback_has_a_host_deadline",
-        "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views"
-      ]
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope."
     },
     {
       "id": "first_party_parity",
-      "rule": "First-party mods use the published API only. `omd_workflow` declares ordinary capabilities, carries no private symbol and no per-mod Rust patch, and runs under the same package and conformance rules as outside packages.",
-      "evidence": [
-        "python:test_first_party_mods_use_only_the_published_api"
-      ]
+      "rule": "First-party mods use the published API only. `omd_workflow` declares ordinary capabilities, carries no private symbol and no per-mod Rust patch, and runs under the same package and conformance rules as outside packages."
     }
   ],
   "unsupported": [

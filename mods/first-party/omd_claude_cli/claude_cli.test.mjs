@@ -63,8 +63,8 @@ const run = (claude, signal = new AbortController().signal, translated = null) =
 
 test('cancelling at any point before the CLI starts never launches it and leaves nothing behind', async () => {
   const scratch = async () => (await readdir('/private/tmp')).filter(name => name.startsWith('omd-claude-'));
-  const before = new Set(await scratch());
   const root = await fakeCli('#!/bin/sh\ntouch "$(dirname "$0")/launched"\n');
+  const before = new Set(await scratch());
   try {
     for (const abortAt of [1, 2, 3, 4]) {
       let reads = 0;

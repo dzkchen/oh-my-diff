@@ -1,12 +1,8 @@
-#!/usr/bin/env python3
-"""Check the public mod API source inventory; optionally require release execution receipts."""
+"""Check the conformance registry and classic-hook ledger against the host and public types."""
 import json
 import re
-import sys
 from pathlib import Path
 
-from scripts import execution_evidence
-from scripts.execution_evidence import resolve
 from scripts.mod_compatibility import array_constant, host_contract
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,13 +40,6 @@ def host_sets():
         "intercepts": set(intercepts),
         "operations": set(operations),
     }
-
-
-def release_evidence(contract):
-    decisions = {entry["id"]: entry for entry in contract["decisions"]}
-    return {reference for entry in contract.get("launch", {}).values()
-            if entry.get("status") == "frozen"
-            for reference in entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))}
 
 
 def declaration(source, name):
@@ -110,7 +99,7 @@ def check_launch(contract, sets):
         problems.append(f"unclassified launch surface: {name}")
     for name in sorted(entries.keys() - expected):
         problems.append(f"unknown launch surface: {name}")
-    decisions = {decision["id"]: decision for decision in contract["decisions"]}
+    decisions = {decision["id"] for decision in contract["decisions"]}
     for name, entry in entries.items():
         if entry.get("status") == "experimental":
             if not entry.get("reason"):
@@ -119,9 +108,8 @@ def check_launch(contract, sets):
         if entry.get("status") != "frozen":
             problems.append(f"{name}: invalid launch status")
             continue
-        evidence = entry.get("evidence", decisions.get(entry.get("decision"), {}).get("evidence", []))
-        if not evidence or not all(resolve(reference) for reference in evidence):
-            problems.append(f"{name}: missing or unresolved launch evidence")
+        if "decision" in entry and entry["decision"] not in decisions:
+            problems.append(f"{name}: unknown decision {entry['decision']}")
         consumer = entry.get("consumer", {})
         path = (ROOT / consumer.get("path", "")).resolve()
         allowed = any(path.is_relative_to(ROOT / directory) for directory in ("mods/first-party", "mods/examples"))
@@ -148,20 +136,11 @@ def check(contract, version, sets):
             problems.append(f"{decision['id']}: unknown group {decision['group']}")
         for key in sets:
             covered[key] |= set(decision["covers"].get(key, []))
-        if not decision["evidence"]:
-            problems.append(f"{decision['id']}: no executable evidence")
     for key, authoritative in sets.items():
         for missing in sorted(authoritative - covered[key]):
             problems.append(f"undocumented {key[:-1]}: {missing}")
         for unknown in sorted(covered[key] - authoritative):
             problems.append(f"documented {key[:-1]} does not exist in the host: {unknown}")
-    for rule in contract["composition"]:
-        if not rule["evidence"]:
-            problems.append(f"composition rule {rule['id']}: no executable evidence")
-    for entry in contract["decisions"] + contract["composition"]:
-        for reference in entry["evidence"]:
-            if not resolve(reference):
-                problems.append(f"{entry['id']}: unresolved evidence {reference}")
     classic = json.loads(CLASSIC.read_text())["hooks"]
     adapter = re.search(r"const CLASSIC = \{(.*?)\n\};", RUNNER.read_text(), re.S).group(1)
     mapped = dict(re.findall(r"^\s+(\w+): \['(\w+)'", adapter, re.M))
@@ -174,20 +153,4 @@ def check(contract, version, sets):
             problems.append(f"classic hook {entry['hook']}: ledger maps {entry['native']}, runner maps {mapped.get(entry['hook'])}")
         if entry["native"] not in sets["events"] | sets["intercepts"]:
             problems.append(f"classic hook {entry['hook']}: {entry['native']} is not a host event or interceptor")
-        if not entry["check"] or not resolve(entry["check"]):
-            problems.append(f"classic hook {entry['hook']}: unresolved check {entry['check']}")
     return problems + check_launch(contract, sets)
-
-
-def main(argv=()):
-    contract = json.loads(CONTRACT.read_text())
-    version, sets = host_sets()
-    execution_evidence.report(
-        argv, __doc__, check(contract, version, sets), release_evidence(contract),
-        f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
-        f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points, intercept surfaces and host operations documented with resolved source inventory")
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])

@@ -146,5 +146,4 @@ mod tests {
         drop(exclusive);
         assert!(shared(root.path()).is_ok());
     }
-
 }

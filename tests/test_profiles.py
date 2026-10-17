@@ -94,7 +94,7 @@ enabled = true
                 config.write_text(text.replace(drop, ""))
 
             record = {"shared_state": {"codex_home": str(home)}, "binary": {"installed_path": "/omd/codex"}}
-            with patch.object(profiles.subprocess, "run", side_effect=run):
+            with patch.object(profiles.support, "run", side_effect=run):
                 self.assertEqual(profiles.remove_plugins(record, prefix), ["omd-anchored-edit@oh-my-diff"])
             self.assertEqual(calls, [["plugin", "remove", "omd-anchored-edit@oh-my-diff"],
                                      ["plugin", "marketplace", "remove", "oh-my-diff"]])
@@ -260,7 +260,7 @@ enabled = true
             with patch.object(profiles, "load", return_value=record), \
                     patch.object(profiles, "check", return_value=(None, manager)), \
                     patch.object(profiles, "status", side_effect=profile_status):
-                with self.assertRaisesRegex(ValueError, "service_provider_missing.*omd.lsp"):
+                with self.assertRaisesRegex(RuntimeError, "service_provider_missing.*omd.lsp"):
                     profiles.select_mod(base / "prefix", base / "bin", "omd_lsp_view", True)
                 after = profiles.invoke(manager, "selection-status", store)["selections"]
                 view_after = next(item for item in after if item["id"] == "omd_lsp_view")

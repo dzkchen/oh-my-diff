@@ -21,4 +21,3 @@ impl WatchFilter {
             .is_ignore()
     }
 }
-

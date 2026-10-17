@@ -382,4 +382,3 @@ fn send_results_keep_inner_edits_and_stay_inside_editable_text() {
             .contains("no longer JSON")
     );
 }
-

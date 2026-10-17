@@ -47,6 +47,10 @@ class SignedReleaseAnchorTest(unittest.TestCase):
                     authority_broker.write_pins([codex, stray], [manifest])
                 with self.assertRaisesRegex(ValueError, "stray is not listed"):
                     authority_broker.install(stray, helper, [codex], [manifest])
+                with self.assertRaisesRegex(ValueError, "codex is not listed as omd-broker"):
+                    authority_broker.install(codex, helper, [codex], [manifest])
+                with self.assertRaisesRegex(ValueError, "omd-broker is not listed as authority_broker.py"):
+                    authority_broker.install(helper, helper, [codex], [manifest])
                 for unsigned, error in ((forged, "not signed by the Oh My Diff release key"),
                                         (missing, "has no signed omd-release.json")):
                     with self.assertRaisesRegex(ValueError, error):
