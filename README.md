@@ -50,6 +50,7 @@ For the minimal install, other options, updates and removal, see [Install Oh My 
 - [Install and manage mods](docs/manage-mods.md)
 - [Write your first mod](docs/write-a-mod.md)
 - [Mod API reference](mods/REFERENCE.md)
+- [Agent mod guide](docs/AGENT_MOD_GUIDE.md): building a mod with a coding agent
 
 ## Project status
 
@@ -63,5 +64,5 @@ touch.
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
-[Code of conduct](CODE_OF_CONDUCT.md) · [MIT License](LICENSE) ([Codex patch notice](NOTICE)) ·
+[MIT License](LICENSE) ([Codex patch notice](NOTICE)) ·
 [Third-party notices](THIRD_PARTY_NOTICES.md)

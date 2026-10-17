@@ -874,7 +874,7 @@
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
   ],
-  "qualification": "Development pin: the 0.162.1 patch, fresh replay, second-apply no-op and scoped checks are recorded in .docs/audits/upstream-pin-01621-20261010.md; API 0.2.0-experimental.5 appearance and identity work is recorded in .docs/audits/batch3aa-appearance-identity-20260929.md. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
+  "qualification": "Development pin: Codex 0.162.1 with API 0.2.0-experimental.5. The current OMD Core/OMD+ source selection is checked below. Final current-package installation, header/recovery and terminal evidence are separate from this source check; public delivery, archive compatibility and release candidate qualification remain open.",
   "profiles": {
     "platform": {
       "label": "OMD Core",

@@ -1,13 +1,36 @@
-# OMD LSP synchronization preview
+# omd_lsp_sync
 
-This inactive API 0.2 mod starts managed language-server processes after observed workspace changes. Python uses `pyright-langserver`, `pylsp`, or `jedi-language-server`; TypeScript and JavaScript share `typescript-language-server` or `vtsls`; Rust uses `rust-analyzer`; Java uses `jdtls`. Missing servers produce an explicit fallback reason. Each adapter tracks up to 96 documents, hashes and versions; stale server diagnostics are ignored.
+Runs your language servers in the background so the agent sees the errors each edit introduces, and can go to definitions, find references and rename.
 
-After every tool call that can write files a `tool_output` feedback callback checks the tracked documents of the running adapters (and supported files named in an `apply_patch` call) by content hash in stat batches of at most 128 paths; plan, image, tool-search, MCP-resource and similar read-only tools skip it. Changed documents are synchronized, the mod waits up to eight 250 ms exchanges for fresh versioned diagnostics, then appends at most 4 KB to the tool result: errors introduced and resolved in each edited file and in open dependents whose diagnostics changed, compared by message so moved lines do not count, at most 8 of each per file, warnings excluded. Nothing is appended when nothing changed. Incomplete hash checks, synchronization or diagnostic waits mark the affected adapters stale and append an explicit incomplete-feedback reason, including callback-budget exhaustion. Files named in an `apply_patch` call are opened silently to set a baseline. **Read-time context** (`0.5.0-preview.1`): a successful shell view of a supported file (`cat`, `nl`, `head`, `tail`, `bat`, `less`, `sed -n`) starts only that file's language server if it is not running, opens the file as the versioned baseline for later edits, waits the same bounded time for its diagnostics and appends its existing errors (`path: N existing (vN)` with line:column anchors). Searches and other commands start nothing; a missing server is reported once. After each change the mod publishes server state and up to six errors per server on `omd_lsp_sync/status`, which `omd_lsp_view` shows in its `/lsp servers` pane. Ported from [`pi-lens`](https://pi.dev/packages/pi-lens) 4.3.0 (Apostolos Mantzaris, MIT; see `THIRD_PARTY_NOTICES.md`); auto-fixing, commit blocking, security scanners and dependency maps are not ported.
+## Turn it on
 
-**Code-intelligence service** (`0.4.0-preview.1`). The mod exports `omd.lsp` with one `query` method that answers hover, definition, references, document and workspace symbols, diagnostics, code actions and formatting from the same managed servers, so there is no second client. Formatting and code actions apply only text edits, after a confirmation, through the same backup, transaction, resynchronization and rollback as the tools; actions that run server commands are listed but refused. A missing server, an unsupported capability or a stale document returns the reason. [`omd_lsp_view`](../omd_lsp_view/README.md) is the user-facing view over this service.
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
-The `rename_file` tool routes through the host's exact-scope workspace rename request. The mod accepts server-proposed companion text edits only when the expected source hashes and tracked document versions still match. Server-initiated `workspace/applyEdit` is refused. Cross-adapter rename requests fall back. The `status` tool shows each adapter's state.
+```sh
+omd-package mod enable omd_lsp_sync
+```
 
-The `definition` and `references` tools query an advertised server capability after synchronizing a source document. They return at most 32 contained local locations with checked ranges and matching observed file hashes, or an explicit fallback. Untracked targets are unsupported. `code_actions` lists at most 32 bounded actions for a checked source range and stores an exact, thread-bound preview. `apply_code_action` requeries that action and accepts only the same text edit, source hash, document version, declared same-adapter scope and expected file hashes. `rename_symbol` applies the same edit checks to a server rename response. Both mutation tools use a host backup and atomic transaction, then restore conditionally if synchronization fails. Commands, resource operations, deferred action edits and cross-adapter edits fail closed. These tools require a repository observed through `workspace_change` and a matching marker in the host's current repository-scoped store; reused state from another workspace fails closed. Remote locations and full native semantic parity remain unsupported.
+It needs a language server on your `PATH`:
 
-Local runner fixtures cover Python synchronization, diagnostics, post-edit introduced/resolved feedback with dependents, file rename, semantic reads, bounded text-only mutations, stale previews and server locations, rollback after sync failure, mixed TypeScript/JavaScript/Rust/Java writes, missing servers, and old Python state retention. The offline API 0.2 package scenario covers activation and a missing-server fallback. Installed-server semantic behavior, five-language rename and action parity, real workspace sessions, cold/reuse cost, and native LSP retirement remain unverified.
+| Language | Servers tried, in order |
+| --- | --- |
+| Python | `pyright-langserver`, `pylsp`, `jedi-language-server` |
+| TypeScript and JavaScript | `typescript-language-server`, `vtsls` |
+| Rust | `rust-analyzer` |
+| Java | `jdtls` |
+
+## Use it
+
+It has no commands of its own. After a tool call that can write files, the agent's result gets the new errors in each edited file and the ones the edit fixed. Warnings are left out, and nothing is added when nothing changed. When the agent reads a supported file with a shell command such as `cat` or `sed -n`, it also gets that file's existing errors.
+
+To look at the results yourself, turn on [`omd_lsp_view`](../omd_lsp_view/README.md) as well.
+
+## Needs and limits
+
+- A language without an installed server is skipped, and the agent is told why.
+- It starts a server only when a file in that language is changed or read.
+- Feedback is capped at 4 KB per tool call, with at most 8 new and 8 fixed errors per file. If a check can't finish, the result says the feedback is incomplete.
+- The agent also gets tools for definition, references, code actions, symbol rename and file rename. Edits use a backup and roll back if they fail. They cover text edits in local files only; actions that run server commands are refused.
+- Remote files and full parity with your editor's language support are not covered.
+
+Credit: based on [pi-lens](https://pi.dev/packages/pi-lens) by Apostolos Mantzaris (MIT); reimplemented, no code copied. Auto-fix, commit blocking and security scanners are not included.

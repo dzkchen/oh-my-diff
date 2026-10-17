@@ -24,8 +24,7 @@
         "Node 24.18.0",
         "Claude CLI 2.1.285"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_privacy",
@@ -42,8 +41,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_usage",
@@ -60,8 +58,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_logo",
@@ -78,8 +75,7 @@
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_model_picker",
@@ -96,8 +92,7 @@
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_tool_lines",
@@ -114,8 +109,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_plan_removal",
@@ -132,8 +126,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_preview",
@@ -150,8 +143,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_lsp_view",
@@ -168,8 +160,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_frecency",
@@ -186,8 +177,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_mods",
@@ -204,8 +194,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_update",
@@ -222,8 +211,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd-artifact-reading",
@@ -242,7 +230,6 @@
         "plugin 0.1.0+codex.20260927032203 local fixture only"
       ],
       "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md",
       "components": [
         {
           "extension_type": "skill",
@@ -262,7 +249,6 @@
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md",
       "extension_type": "mod",
       "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn",
       "source": "mods/first-party/omd_profiles",
@@ -283,8 +269,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_advisor",
@@ -301,8 +286,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_inspector",
@@ -319,8 +303,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_workflow",
@@ -337,8 +320,7 @@
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
+      "support_status": "reviewed_candidate"
     }
   ]
 }

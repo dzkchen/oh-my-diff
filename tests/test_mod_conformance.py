@@ -40,14 +40,6 @@ class ContractTests(unittest.TestCase):
         version, sets = mod_conformance.host_sets()
         self.assertEqual(mod_conformance.check(contract, version, sets), [])
 
-    def test_published_coverage_table_matches_the_contract(self):
-        contract = json.loads(mod_conformance.CONTRACT.read_text())
-        self.assertEqual(
-            mod_conformance.COVERAGE.read_text(),
-            mod_conformance.render(contract),
-            "mods/COVERAGE.md is stale; rerun scripts/mod_conformance.py --write",
-        )
-
     def test_first_party_mods_use_only_the_published_api(self):
         version, sets = mod_conformance.host_sets()
         interface = re.search(r"export interface ModAPI \{(.*?)\n\}", (ROOT / "mods/api.d.ts").read_text(), re.S)

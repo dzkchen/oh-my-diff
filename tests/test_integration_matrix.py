@@ -24,14 +24,7 @@ class IntegrationMatrixTests(unittest.TestCase):
     def test_matrix_matches_the_shipped_sources_and_resolves_its_evidence(self):
         self.assertEqual(integration_matrix.check(self.matrix), [])
 
-    def test_published_document_matches_the_matrix(self):
-        self.assertEqual(
-            integration_matrix.DOCUMENT.read_text(),
-            integration_matrix.render(self.matrix),
-            "INTEGRATION.md is stale; rerun scripts/integration_matrix.py --write",
-        )
-
-    def test_missing_launch_cut_reports_validation_before_rendering(self):
+    def test_missing_launch_cut_is_reported(self):
         self.matrix.pop("launch_cut")
         with patch.object(integration_matrix, "MATRIX") as source:
             source.read_text.return_value = json.dumps(self.matrix)

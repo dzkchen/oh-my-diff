@@ -66,5 +66,4 @@ then runs the same command again to tag the release. [.github/README.md](.github
 ## License
 
 Your contributions are licensed under the [MIT License](LICENSE). Changes under `runtime/patches`, `runtime/omd`
-and `runtime/native` are Apache-2.0, like the Codex code they patch ([NOTICE](NOTICE)). Everyone follows the
-[code of conduct](CODE_OF_CONDUCT.md).
+and `runtime/native` are Apache-2.0, like the Codex code they patch ([NOTICE](NOTICE)).

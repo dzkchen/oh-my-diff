@@ -34,6 +34,15 @@ The test runs your mod offline, without calling a model, and prints each step. Y
 
 To check types as well, add TypeScript once with `pnpm add -D typescript@5.9.3`, then run `pnpm check`.
 
+`pnpm test` also runs any `*.test.ts` or `*.test.mjs` file next to `mod.test.json`. Use the helpers in
+`@oh-my-diff/mod-api/testing` there; see [TypeScript tests](../mods/REFERENCE.md#typed-tool-declarations).
+Tests never call a real model: a host call you didn't mock fails the test.
+
+The real host loads the package, runs its callbacks, validates views and advances virtual time. The test helpers
+can seed and read state, invoke commands and tools, mount views, inspect host calls and step component modules
+with key and pointer events. See [Offline scenarios](../mods/REFERENCE.md#offline-scenarios) for the helpers and
+examples.
+
 ## 3. Try it in `codex`
 
 Set up a practice mod store, so experiments don't touch your real one:
@@ -43,7 +52,8 @@ omd-mod init /tmp/my-store "$(mise which node)"
 pnpm watch /tmp/my-store
 ```
 
-`pnpm watch` loads your mod into that store and reloads it each time you save. Leave it running.
+`pnpm watch` loads your mod into that store and reloads it each time you save. Leave it running. It also copies
+type declarations into `.omd/`. Use `pnpm watch /tmp/my-store --once` to load once and exit.
 
 In a second terminal, start `codex` on the practice store:
 
@@ -100,6 +110,7 @@ You can also share it from Git: `omd install 'git+https://github.com/you/repo#v0
 
 - Copy bigger working examples to read and adapt: `omd-mod-author examples ./examples`.
 - [Mod API reference](../mods/REFERENCE.md): every operation, event and screen surface.
+- [Agent mod guide](AGENT_MOD_GUIDE.md): hand this to a coding agent to build a bigger mod.
 - [Permissions](../mods/REFERENCE.md#capabilities) and [how mods combine](../mods/REFERENCE.md#composition-and-safety).
 - [Publishing rules](../mods/REFERENCE.md#publish-a-mod-to-npm) and [compatibility](../mods/COMPATIBILITY.md).
 

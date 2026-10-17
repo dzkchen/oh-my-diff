@@ -41,7 +41,6 @@
     "examples/terminal",
     "examples/workspace",
     "examples/workflow",
-    "EXTENSION_TYPES.md",
     "extension-types.json",
     "REFERENCE.md",
     "README.md",

@@ -1,39 +1,32 @@
 # Runtime
 
-The patched `rust-v0.162.1` host accepts `OMD_MODE=omd` for the generic mod host
-and `OMD_MODE=upstream_direct` for the pinned upstream task flow; with no mode
-selected it runs upstream-style direct. `OMD_MODE=enabled`, `OMD_MODE=platform`
-and `OMD_CONTROLLED_MANIFEST` fail closed. The single artifact is
-`patches/omd-0.162.1.patch`; `runtime/omd` and `runtime/native` mirror its
-`codex-rs/omd` and `codex-rs/ext/omd` crates byte for byte, and
-`runtime/native/src/request_observer.rs` mirrors the patched
-`codex-rs/codex-api/src/request_observer.rs`.
+OMD is one patch on Codex `rust-v0.162.1`: [`patches/omd-0.162.1.patch`](patches). `runtime/omd` and
+`runtime/native` are byte-for-byte copies of the `codex-rs/omd` and `codex-rs/ext/omd` crates it adds, and
+`runtime/native/src/request_observer.rs` copies the patched `codex-rs/codex-api/src/request_observer.rs`.
 
-The host is feature-agnostic. Workflow, analysis, knowledge, guidance, Pi
-resources, Git and terminal presentation are TypeScript mods in
-[`mods/first-party`](../mods/first-party) over the public API in
-[`mods/REFERENCE.md`](../mods/REFERENCE.md). With zero first-party mods the host
-runs as modded Codex with no feature behavior. `mise run native:ownership`
-fails when a native operation, event, capability, host configuration field,
-production string literal or runner name names a feature, or when native code
-mentions a first-party package ID.
+## Modes
 
-`omd_workflow` owns the reviewed and solo-evidence workflows; the host enforces
-only an explicitly selected schema-2 contract, route grants, permissions and
-receipts. `omd-contract` selects a contract; enabling the package alone selects
-none and authorizes no provider. Installation is described in
-[`docs/install.md`](../docs/install.md).
+| `OMD_MODE` | What runs |
+| --- | --- |
+| `omd` | The mod host |
+| `upstream_direct`, or unset | Plain upstream Codex behavior |
 
-Apply the patch to an exact pinned checkout after lock normalization:
+Any other value fails to start.
+
+## The host has no features
+
+Every feature is a TypeScript mod in [`mods/first-party`](../mods/first-party) over the
+[public API](../mods/REFERENCE.md). With no mods on, `codex` behaves like upstream. `mise run native:ownership`
+fails if native code names a feature or a first-party mod.
+
+## Apply the patch
+
+On an exact pinned checkout:
 
 ```sh
 python3 scripts/normalize_upstream_lock.py /path/to/codex
 python3 scripts/apply_runtime_patch.py /path/to/codex
 ```
 
-For development, `scripts/batch_tree.py` creates a patched scratch tree and
-regenerates the patch, manifest and these mirrors; see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
-
-`patches/manifest.json` binds every before/after file hash. Application is
-idempotent, rejects modified destinations, and leaves unrelated files and the
-index alone. External dependency versions are unchanged.
+`patches/manifest.json` records every file's hash before and after. Applying twice is a no-op; a changed file is
+refused. To build and test OMD, see [CONTRIBUTING.md](../CONTRIBUTING.md).

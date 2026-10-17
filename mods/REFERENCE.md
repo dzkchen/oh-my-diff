@@ -2,16 +2,14 @@
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
 `0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.162.1`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
-historical and do not load in the current host; the later .9 reference sections
-remain only as migration evidence. A store also generates `active-host.d.ts` and
+[`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
 service contracts available to consumers. Once a session has listed its tools,
 the store also generates `tool-types.d.ts` for the tools the host actually has
 ([Typed tool declarations](#typed-tool-declarations)).
 
 The launch surface is frozen at this API version, with support through
-`2027-03-20`. [COVERAGE.md](COVERAGE.md) classifies every public operation,
+`2027-03-20`. [The conformance registry](conformance/contract.json) classifies every public operation,
 event, capability, replacement, interceptor, component, render site, view field,
 classic hook and author command. Frozen entries name a retained consumer and
 executable evidence. Explicitly experimental entries remain outside the freeze;
@@ -29,6 +27,29 @@ version and support-window rules.
 First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
 raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
 launch; outside authors can use the public client APIs.
+## Mods, plugins and hooks
+
+Use a skill for a procedure the model follows, a hook for a reaction to a lifecycle event, a plugin for tools or
+services, and a mod only to change how `codex` itself behaves or looks.
+
+Codex 0.162.1 plugins bundle skills, prompts, MCP servers and hook files. Its hooks (`pre_tool_use`,
+`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
+`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`) are external commands or MCP tools
+that return a decision: block a call, add context, or rewrite a tool's input. A hook can't hold state, stream,
+draw on screen, route a model or run an agent, and when two `pre_tool_use` hooks rewrite the same call the last
+one to finish wins. A mod runs inside the host, asks for only the permissions it needs, and composes with other
+mods by the [rules below](#composition-and-safety).
+
+Mods can't replace or bypass:
+
+- Workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace
+  integrity, evidence and final acceptance.
+- History beyond the documented rewrite points, reasoning or call/output pairs, the compaction engine, or prompts
+  for provider-side compaction.
+- Raw terminal escapes, arbitrary widgets or DOM/canvas access, approval key bindings, the transcript, or
+  clipboard authorization.
+- Arbitrary providers, runtime imports other than adapter-declared aliases, or a second scheduler.
+- Other mods: `requires` declares presence and order only; mods never call each other or share state.
 
 ## API 0.2 host primitives
 
@@ -1146,8 +1167,7 @@ capabilities.
 
 ## Host primitives
 
-API `0.2.0-experimental.5` adds these generic primitives; earlier API versions
-no longer load. Each advertises a host feature a package can require.
+API `0.2.0-experimental.5` has these generic primitives. Each advertises a host feature a package can require.
 With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
 the recorded exclusions, live in `scripts/upstream_routes.json`;
@@ -3526,7 +3546,7 @@ A plugin can contain `.codex-plugin/omd.json` with `{"schema":1,"component":"com
 
 `omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
 
-Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). Their fixture tests demonstrate shared interfaces; they are not production advisor, GitHub, memory, edit-anchor or report implementations, and they do not establish live model usefulness or release qualification.
+Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production implementations.
 
 Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each segment's records with its history revision. Compaction summaries do not replace those records. An unobserved history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and summarize a truncated packet.
 

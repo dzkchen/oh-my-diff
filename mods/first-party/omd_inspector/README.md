@@ -1,10 +1,18 @@
 # omd_inspector
 
-Default-active in OMD+. `/inspect` opens a dialog with the session mode, install
-profile, mod counts, the selected workflow contract, task and worker limits and
-the paid API cost. `/inspect` again refreshes it and `/inspect close` or Alt+i
-closes it. The slash command hops to the mod's own channel handler, which reads
-task and contract status with the session.
+Shows a summary of your session: mode, install profile, mod counts, workflow contract, limits and paid API cost.
 
-Capabilities: `agents` (`task.status`), `contracts` (`contract.status`),
-`commands`, `store`, `terminal`, `events`.
+## Turn it off
+
+It is on by default in OMD+. Turn it off in `/mods`, or run:
+
+```sh
+omd-package mod disable omd_inspector
+```
+
+## Use it
+
+| Command or key | What it does |
+| --- | --- |
+| `/inspect` | Open the inspector. Run it again to refresh. |
+| `/inspect close` or `Alt+i` | Close it. |

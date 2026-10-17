@@ -9,4 +9,4 @@ An independent-author API `0.2.0-experimental.5` mod that exercises the terminal
 
 `mod.test.json` runs offline: a cells client renders the raster without a tip, a pointer enter and move add the tip overlay, and a reduced-motion client schedules no further animation. Run it with `python3 scripts/mod_host_check.py --omd-mod <omd-mod> --no-commands --scenarios raster_canvas`.
 
-Install it with `omd-mod`, grant `terminal`, `lifecycle`, `events` and `store`, and run it in an `OMD_MODE=omd` session on a mouse-capable terminal. This is a local API demonstration, not a rendering benchmark.
+Install it with `omd-mod`, grant `terminal`, `lifecycle`, `events` and `store`, and run it in an `OMD_MODE=omd` session on a mouse-capable terminal. It is a local demonstration, not a rendering benchmark.

@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "eaee3c007b6f2969985fd94aec287f69942cce664178b1b9d459a47250f30f20"
+    "sha256": "5a350e32f1a8e060fd48ea859886b31112f588571a87617f7c582c0a681fa276"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -37,14 +37,14 @@
     ".agents/plugins/marketplace.json": "04b95b0e31386e9e08964a840210aced7a9b3191d56f3e1262944d6dd08a9d03",
     "plugins/omd-anchored-edit/.codex-plugin/omd.json": "a5b5f9841af014460a839d658314951a73fef8b1c0e2c6d0e8b9b6c5a6fa2bad",
     "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
-    "plugins/omd-anchored-edit/README.md": "a1a0f1a6ceb1a83ea461a6fea1d6c763e8916a135b33f164d78f47c139b995fc",
+    "plugins/omd-anchored-edit/README.md": "259a812af9cd8b3a475f32e803470283ab80e5abace34eb169f7612b71893c0b",
     "plugins/omd-anchored-edit/mod/index.ts": "1a7e9bfcc43c78bc9d61907285703f1a63eaadbe40a137847788e2160c54a59d",
     "plugins/omd-anchored-edit/mod/mod.json": "62069d26106713ee9d765453a550241016f0e14b86295c256f2bfa36dcaffa46",
     "plugins/omd-anchored-edit/skills/omd-anchored-edit/SKILL.md": "9a1fcb82de5db7bc9179e4b7383150c160f3757f3031cfa3d9d115cf7ffc9ae6",
     "plugins/omd-anchored-edit/tsconfig.json": "d406c45044e0ac875e6fe9ed6c8c7c70fdfac49bbe5e386fbd51c9e5bc38ebcf",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "71ca7ba932d75ca645714ae1a2a7bd5ab69f54a68471c87d78d1bf0cfd620554",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "e4859e9126b144cfc79ba0f8e828939e7f3479a3f78ee76a300f9c9b62f166fe",
-    "plugins/omd-artifact-reading/README.md": "b8cd094cc8039aa3686e559f68b53bb4ee6252d8b53b641eb482762fb3948ffd",
+    "plugins/omd-artifact-reading/README.md": "d6c9d94f33c76ada544cdbafe9a1b98865e0b28c08976a65d06b30a6ea72fefa",
     "plugins/omd-artifact-reading/mod.test.mjs": "e35222011f16fc00b6dbc633a0032dfbe5aff3538956642ec10072dd24f34a99",
     "plugins/omd-artifact-reading/mod/index.ts": "2764548cdde0f6a8d2c8961bb53e22ee18a86fa21f7adf0c7edc97cf24db436d",
     "plugins/omd-artifact-reading/mod/mod.json": "587e2b7c489f1006c9a08577367bdab74637d56276e7f8561eb992960fe645fd",

@@ -63,6 +63,27 @@ omd-package activate direct
 
 Return with `omd-package activate full` (or `platform` for OMD Core).
 
+For lower-level repairs, `omd-mod` works on the mod store directly. The store is
+`~/.local/share/oh-my-diff/stores/full` for OMD+ and `.../stores/platform` for OMD Core:
+
+```sh
+omd-mod selection-status STORE         # what's selected, without running any mod
+omd-mod package-disable STORE ID       # turn off an installed mod
+omd-mod disable STORE PACKAGE          # turn off a mod you trusted from a folder
+omd-mod package-enable STORE ID        # turn it back on, keeping its data
+```
+
+A mod whose source changed must be inspected and trusted again before it turns on.
+
+## Preview a plugin update
+
+```sh
+omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE_DIR
+```
+
+This compares the installed plugin, including its skills and hooks, with a new copy file by file. It changes
+nothing. Apply the update with `/plugins` or `codex plugin add` after you review it.
+
 ## What a mod can do to your machine
 
 A mod asks for the permissions it needs, and you approve them when you turn it on. A mod that asks to run

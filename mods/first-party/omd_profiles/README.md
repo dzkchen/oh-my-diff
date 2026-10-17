@@ -1,46 +1,47 @@
-# Account and provider profiles
+# omd_profiles
 
-`omd_profiles` switches one OMD+ session between ChatGPT subscription accounts, OpenAI API keys and OpenAI- or Anthropic-compatible providers (OpenRouter, local endpoints) without restarting. It is installed inactive in OMD+ and can be installed explicitly in OMD Core.
+Switches one session between ChatGPT accounts, API keys and compatible providers such as OpenRouter, without restarting.
 
-```text
-/profile add chatgpt work                 # native ChatGPT sign-in for another account
-/profile add api_key openai-key           # masked OpenAI API key entry
-/profile add provider openrouter openrouter https://openrouter.ai   # masked key for another provider
+## Turn it on
+
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
+
+```sh
+omd-package mod enable omd_profiles
 ```
+
+You also need a profile. In a session, add its credential (`/profile add chatgpt work`), then add the profile from a terminal. `/profile add` prints the command to run.
 
 ```sh
 omd-package profiles --setup --add work --credential work --protocol responses \
   --url https://chatgpt.com/backend-api/codex/responses --upstream-model gpt-6.1-sol
-omd-package profiles --setup --add router --credential openrouter --protocol chat \
-  --url https://openrouter.ai/api/v1/chat/completions --upstream-model anthropic/claude-sonnet-5 \
-  --window 200000 --paid 3:15 --allowance 5 [--max-output 32000] [--reasoning] [--cache-control]
-omd-package profiles --setup --remove router
-omd-package profiles [--model work] [codex args]   # launch with the profiles provider
+omd-package profiles --model work
 ```
 
-```text
-/profile                 # profiles, billing, availability and the current one
-/profile use router      # applies at this thread's next turn; paid profiles ask first
-/profile refresh work    # native token refresh
-/profile remove work     # native credential removal
-```
+For a paid API key or provider, setup also needs `--paid INPUT_USD:OUTPUT_USD` (per million tokens) and `--allowance USD`. Add `--window TOKENS` if the model isn't in the Codex catalog. `--max-output TOKENS` and `--reasoning` are optional. `--setup --remove NAME` drops a profile.
 
-How it works:
+For Chat Completions providers that accept cache marks, such as OpenRouter, add `--cache-control`. It is off by
+default because strict servers reject that extra field. Anthropic profiles always receive cache marks.
 
-Provider tool names use distinct aliases of at most 64 characters, including names
-that collide after namespace flattening or truncation. Tool history and returned
-calls map back to the original namespace and name.
+## Use it
 
-- Credentials are enrolled, refreshed and removed by the host's native flows (`credentials.request`); the mod never sees a token. Each profile is a `host.json` lead route on the `omd_profiles` provider that names its credential, so the host puts that account's token on each request.
-- Setup writes the route, a Codex catalog entry (the bundled entry when the upstream model is a Codex model, otherwise `--window` is required) and the router table. The host rereads `host.json` routes, so a profile added while a session runs can be selected there with `/profile use`; the `/model` list shows new profiles after the next launch.
-- `/profile use` (or the Profiles list in the compact `/model` picker) updates the current thread's native model and effort while idle, then records the route switch for its next turn: the thread, attachments and tool history stay, and its footer, `/status` and following turns use the chosen profile's model and context window. A refused or unsettled switch blocks model requests, shows `profile switch failed` in the status line and gives its reason in `/profile`. Each turn on a profiles thread restarts the router if it stopped (host workers live at most `worker_limits.seconds`, 30 minutes by default; setup no longer raises that limit).
-- The host rereads limits and allowances at each turn, so a paid profile added while a session runs is admitted from the next turn; an edited profile (price, credential, model) applies from the next turn to threads already on it.
-- Setup checks every value before writing anything: `--paid` needs two prices above zero, `--window` and `--max-output` whole token counts, and paid profiles an allowance. `--reasoning` sends Anthropic thinking or a Chat Completions effort (`none` sends none); Anthropic thinking blocks, with their signatures, go back to the profile that produced them on later requests, as Anthropic requires around tool calls. `--cache-control` lets a `chat` profile receive a `model.complete` cache mark as content `cache_control` (OpenRouter accepts it; strict Chat Completions servers reject unknown fields, so it is off by default); `anthropic` profiles always get it.
-- The router (a loopback Responses provider started with `providers.register`) forwards `responses` profiles unchanged and adapts `chat` (Chat Completions) and `anthropic` (Messages) profiles: tools become JSON-schema functions (freeform tools take an `input` string), images pass through, developer messages after the first turn become user text, and usage maps back for the ledger with cache writes, the served model, the raw provider usage (`omd_native_usage`), OpenRouter's billed `usage.cost` (`omd_reported_cost`) and Anthropic cache TTLs (`omd_cache_ttl_seconds`). It sees the injected token only to forward it.
-- Paid profiles need `--paid INPUT_USD:OUTPUT_USD` per million tokens and a host allowance (`--allowance USD`); the host admits and records each request against it. ChatGPT profiles are included subscription usage and report no charge.
+| Command | What it does |
+| --- | --- |
+| `/profile` | List profiles, their billing and the current one. |
+| `/profile use NAME` | Switch this thread at its next turn. Paid profiles ask first. |
+| `/profile add chatgpt\|api_key LABEL` | Sign in to, or enter a key for, a new credential. |
+| `/profile add provider LABEL PROVIDER HTTPS_ORIGIN` | Enter a key for another provider. |
+| `/profile refresh LABEL` | Refresh a credential's sign-in. |
+| `/profile remove LABEL` | Remove a credential. Profiles using it stop working. |
 
-Recovery: the session needs the enabled mod because its provider is the router. If the mod is disabled or broken, requests fail with the provider error; re-enable it (`/mods enable omd_profiles`) or start a plain `codex` session. Removing a credential stops the profiles that use it at their next request; rerun setup with `--remove` to drop them. A forked or new thread starts on the launch profile; the router rejects a thread larger than a profile's window with `context_length_exceeded` before calling the provider.
+## Needs and limits
 
-Limitations: reasoning produced before a switch is never sent again on that conversation, even after switching back (its encrypted content belongs to the account that produced it); a `model.fork` with `cache` onto another profile likewise drops the reasoning a different `responses` profile streamed (the router remembers 4,096 items, so reasoning from before a router restart is kept) and moves the cache breakpoint to match; reasoning never reaches `chat` profiles, and `anthropic` profiles get only their own thinking blocks; a stream the provider closes early fails instead of completing; inline images count as about 1,500 tokens in the window check; hosted tools (web search, tool search) are dropped for those protocols. Providers that omit usage are recorded from a 4-bytes-per-token estimate (`omd_usage_estimated`). The Claude CLI route is a separate provider and stays a separate launch (`omd-package claude`); a thread cannot switch between providers. Live subscription evidence covers an in-session Sol→Astra switch on one account with preserved history, native model/status and catalog-window updates, plus disable/re-enable recovery. Browser enrollment, distinct-account switching, OpenAI API, OpenRouter, other Chat Completions and Anthropic-compatible routes remain outside that live evidence.
+- Launch with `omd-package profiles [--model NAME]`. If the mod is disabled or broken, requests fail until you re-enable it.
+- Switching keeps the thread, attachments and tool history. Earlier reasoning is not sent to another account, even if you switch back.
+- The selected model appears in the footer and `/status`. A failed or unsettled switch blocks requests and shows its reason in `/profile`; each turn restarts a stopped router.
+- Paid profiles bill per request against the allowance you set. ChatGPT profiles report no charge.
+- Chat Completions and Anthropic profiles get no hosted tools (web search, tool search).
+- A thread larger than a profile's context window is refused before the provider is called.
+- A thread cannot switch between providers. The Claude CLI route is separate: `omd-package claude`.
 
-Inspired by [Crush](https://github.com/charmbracelet/crush) provider setup and session model switching; no code copied.
+Credit: inspired by [Crush](https://github.com/charmbracelet/crush) provider setup and model switching; no code copied.

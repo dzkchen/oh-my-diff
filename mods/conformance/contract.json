@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "api": "0.2.0-experimental.5",
-  "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
+  "note": "scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "launch": {
     "capabilities:account": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/mod.json","snippet":"\"account\""},"decision":"coordination.app_bridge"},
     "capabilities:agents": {"status":"frozen","consumer":{"path":"mods/examples/coordination/mod.json","snippet":"\"agents\""},"decision":"coordination.agents"},

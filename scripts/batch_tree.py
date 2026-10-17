@@ -22,9 +22,7 @@ BUILD = ["build", "--locked", "-p", "codex-cli", "--bin", "codex", "-p", "codex-
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
-GENERATED = ("mods/COVERAGE.md", "mods/EXTENSION_TYPES.md", "INTEGRATION.md")
-GENERATORS = ("plugin_lock.py", "preview_lock.py", "full_mods_lock.py", "mod_conformance.py", "mod_extension_types.py",
-              "integration_matrix.py")
+GENERATORS = ("plugin_lock.py", "preview_lock.py", "full_mods_lock.py")
 
 
 def pin():
@@ -258,7 +256,7 @@ def artifacts(args):
 
 
 def locks(args):
-    outputs = [*ROOT.glob("runtime/*.lock.json"), *(ROOT / name for name in GENERATED)]
+    outputs = list(ROOT.glob("runtime/*.lock.json"))
     before = {path: sha(path.read_bytes()) for path in outputs if path.is_file()}
     steps = [[script, "--write"] for script in GENERATORS]
     output = batch_dir(args.batch) / "artifacts" if args.batch else None

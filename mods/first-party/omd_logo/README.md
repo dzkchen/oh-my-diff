@@ -1,20 +1,27 @@
-# OMD welcome
+# omd_logo
 
-`omd_logo` is the default presentation package in OMD+ and OMD Core. It adds
-the installed profile to Codex's source-backed version heading and places the
-approved OMD mark in the fresh session's blank transcript area. It requires
-only `terminal`; it changes no task policy and stores no session state. The
-heading and greeting policy apply before the first editable frame.
+Shows the OMD mark and your install profile when a session starts.
 
-The mark stays while composing, pasting, editing, clearing, or correcting a
-rejected submission. The host's accepted turn start ends it. Running and
-resumed sessions do not restore it on reload or on later turns. The mark
-shrinks to its three original rows below 60 columns and to `OMD` below 15.
-If the transcript leaves no room, the renderer preserves the transcript.
-Inline and raw output retain the profile heading without a centered mark.
+## Turn it off
 
-Startup greetings are hidden by default. `icons: "ascii"` uses the approved
-ASCII mark. Disabling or breaking
-this package restores the upstream heading and welcome behavior. Other enabled
-presentation packages keep their overrides; direct and zero-first-party-mod
-sessions use the upstream fallback.
+It is on by default in OMD+ and OMD Core. Turn it off in `/mods`, or run:
+
+```sh
+omd-package mod disable omd_logo
+```
+
+## Use it
+
+Nothing to run. The mark appears on a fresh session and goes away when your first message is accepted. Resumed sessions don't show it.
+
+## Settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `icons` | `unicode` | Use `ascii` for a plain-text mark. |
+
+## Needs and limits
+
+- The mark gets smaller on narrow terminals and shows `OMD` below 15 columns.
+- It is skipped when there is no room, and in inline or raw output.
+- Turning the mod off brings back the standard Codex heading.
