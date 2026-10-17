@@ -6,8 +6,8 @@ export type Viewport = { width: number; height: number; unit: string };
 export type RosterEntry = { id: string; name: string; renderer: Renderer; viewport: Viewport | null; focused: boolean; attachedMs: number };
 /** `epoch` is an opaque string, empty until the host publishes its first view; a different one means the host restarted. */
 export type Attachment = { clientId: string; protocol: 'omd-client/1'; epoch: string; roster: RosterEntry[]; features: string[]; delegable: string[] };
-/** `snapshot` is the host's full `ModViewSnapshot` (`view`, `component_owners`, `progress`, `activity`, ...), null before the first publish. */
-export type ViewUpdate = { epoch: string; revision: number; snapshot: { view: Record<string, unknown>; component_owners?: Record<string, string>; [key: string]: unknown } | null; actionToken: string };
+/** `snapshot` is the host's full `ModViewSnapshot` (`view`, `component_owners`, `layout_owner`, `progress`, `activity`, ...), null before the first publish. */
+export type ViewUpdate = { epoch: string; revision: number; snapshot: { view: Record<string, unknown>; component_owners?: Record<string, string>; layout_owner?: string; [key: string]: unknown } | null; actionToken: string };
 export type SurfaceCall = { caller: string; operation: string; arguments: unknown; confirm?: string };
 export type Mirrored = { caller: string; operation: 'terminal.notify' | 'terminal.notice' | 'terminal.blit'; arguments: unknown };
 /** The host keeps only these fields; `origin`, `events`, `anchor` and the like are never forwarded. */

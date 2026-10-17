@@ -1796,15 +1796,15 @@ component, ratio}`, where `component` is the split's path (`r` for the root,
 then `.N` per child index) and `ratio` its new percentages, so a mod can keep
 the ratio in its layout. Clicking a tab title switches the tab and sends
 `component_event {kind: 'select', component, index}` with the `tabs` node's
-path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. View
+path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. Both
+go only to the mod whose view supplied the layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
 is ignored with a warning. Key bindings and component actions run only the
 contributing mod's commands: a bare name is its own `id:name`, and a binding or
 control naming another mod's command is dropped. `component_event`, `view` and `focus` report
-interaction; `component_event` also reports, to the component's owner only and
-with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
+interaction; `component_event` goes only to the component's owner and also reports, with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
 select's new `value` or a multiselect's checked `values` on every edit, `scroll` with a pane's `offset`, `pointer`
 with cell-relative `{column, row, action, button}`, and `open`/`close` of panes
 and dialogs (`ui_composition_v1`). These events wait in order behind a slow
@@ -2097,7 +2097,8 @@ runtime or published view in this host), `command_unavailable` and
 | `omd/recovery/read`, `omd/recovery/apply` | `{}`, `{action: 'enable'\|'disable'\|'reload'\|'reset', target}` | the host-owned `/omd` recovery state (`{mods: [{id, path, scope, enabled, packaged, failing, error}], resettable, store_error, activation_error, reload_error}`) and result; `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails with `recovery_unavailable_during_turn` while the lead thread's turn runs. `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with `client_surface_operation_unavailable`. `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them. A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload |
 
 The host sends `omd/view/updated {epoch, revision, snapshot, actionToken}` (the
-full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `progress`,
+full, coalesced `ModViewSnapshot`: `view`, `component_owners`, `layout_owner`
+(the mod whose view supplied `view.layout`), `progress`,
 `activity`, `diagnostics`), `omd/roster/updated {roster}` and
 `omd/surface/mirrored {caller, operation, arguments}`, and the server request
 `omd/surface/call {caller, operation, arguments, confirm?}`, answered with the

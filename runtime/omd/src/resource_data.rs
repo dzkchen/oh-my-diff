@@ -102,24 +102,47 @@ fn assigns_secret(line: &str) -> bool {
         let value = line[offset + 1..]
             .trim_start()
             .trim_start_matches(['"', '\'', '=']);
-        let segments = before[start..]
-            .split(['_', '-', '.'])
-            .map(str::to_ascii_lowercase)
-            .collect::<Vec<_>>();
-        !value.is_empty()
-            && segments.iter().enumerate().any(|(index, segment)| {
-                ["token", "secret", "password", "passwd", "apikey"]
-                    .iter()
-                    .any(|word| segment.ends_with(word))
-                    || segment == "pwd"
-                    || segment.starts_with("credential")
-                    || (segment == "key"
-                        && index > 0
-                        && [
-                            "api", "access", "private", "secret", "signing", "client", "master",
-                        ]
-                        .contains(&segments[index - 1].as_str()))
-            })
+        !value.is_empty() && secret_name(&before[start..])
+    })
+}
+
+/// Whether a `_`, `-`, `.` or camelCase segment of a field or variable name reads as a secret.
+pub fn secret_name(name: &str) -> bool {
+    let mut segments = vec![String::new()];
+    let mut previous_lower = false;
+    for character in name.chars() {
+        if matches!(character, '_' | '-' | '.')
+            || (previous_lower && character.is_ascii_uppercase())
+        {
+            segments.push(String::new());
+        }
+        previous_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
+        if !matches!(character, '_' | '-' | '.') {
+            segments
+                .last_mut()
+                .expect("segments start non-empty")
+                .push(character.to_ascii_lowercase());
+        }
+    }
+    segments.iter().enumerate().any(|(index, segment)| {
+        [
+            "token",
+            "secret",
+            "password",
+            "passwd",
+            "apikey",
+            "authorization",
+        ]
+        .iter()
+        .any(|word| segment.ends_with(word))
+            || segment == "pwd"
+            || segment.starts_with("credential")
+            || (segment == "key"
+                && index > 0
+                && [
+                    "api", "access", "private", "secret", "signing", "client", "master",
+                ]
+                .contains(&segments[index - 1].as_str()))
     })
 }
 

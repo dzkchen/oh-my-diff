@@ -428,7 +428,7 @@ fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<
 
 impl ModStore {
     pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
-        std::fs::create_dir(&root)?;
+        std::fs::DirBuilder::new().mode(0o700).create(&root)?;
         let store = Self::open(root.canonicalize()?)?;
         let config = ModConfiguration {
             schema: 1,

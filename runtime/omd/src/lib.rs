@@ -211,6 +211,7 @@ pub use mods::Trust;
 pub use mods::access_receipt;
 pub use mods::activation_failures;
 pub use mods::authority_exposure;
+pub use mods::capability_phrase;
 pub use mods::client_component_unmount;
 pub use mods::component_detach;
 pub use mods::component_events;

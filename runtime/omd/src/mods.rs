@@ -563,6 +563,63 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "history_persist",
 ];
 
+/// The install-consent wording for a capability; an unknown name reads as itself.
+pub fn capability_phrase(capability: &str) -> &str {
+    match capability {
+        "context" => "add text to the agent's context",
+        "tools" => "give the agent new tools",
+        "commands" => "add slash commands",
+        "lifecycle" => "react to session and turn events",
+        "input" => "rewrite what you type before it is sent",
+        "interception" => "allow or block tool calls",
+        "compaction" => "decide how the conversation is compacted",
+        "middleware" => "inspect and change model requests",
+        "services" => "offer or use services from other mods",
+        "virtual_reads" => "serve virtual files",
+        "terminal" => "draw in the terminal",
+        "exec" => "run programs in this repository",
+        "fs.read" => "read files in this repository",
+        "fs.write" => "change files in this repository",
+        "network" => "use the network",
+        "unix_sockets" => "connect to local sockets",
+        "model" => "choose model routes",
+        "agents" => "start helper agents",
+        "store" => "keep its own saved data",
+        "sessions" => "read session history",
+        "sessions_tools" => "read tool arguments and outputs in session history",
+        "contracts" => "set task completion rules",
+        "builtins" => "run and hide built-in commands",
+        "threads" => "start and manage threads",
+        "config" => "read Codex settings",
+        "config.write" => "change Codex settings",
+        "inventory" => "list skills, plugins and commands",
+        "account" => "read account details",
+        "packages" => "install and manage mods",
+        "approvals" => "answer approval prompts",
+        "events" => "send and receive mod events",
+        "credentials" => "use stored account credentials",
+        "composer" => "read and write the message you are typing",
+        "pty" => "run interactive terminal programs",
+        "history" => "edit the conversation history",
+        "outputs" => "change tool output",
+        "os" => "run listed programs unsandboxed with your account's full access",
+        "approve" => "approve tool calls for you",
+        "approve.override" => "approve commands your own rules forbid",
+        "http" => "send web requests to the sites it lists",
+        "fs.external" => "read and change the folders it lists outside this repository",
+        "mcp" => "connect to the MCP servers it lists",
+        "policy" => "refuse other mods or limit what they can do",
+        "peers" => "message other Codex sessions",
+        "autonomous" => "queue and stop turns on its own",
+        "history_write" => "rewrite this session's transcript",
+        "history_persist" => "see and replace saved history text",
+        "request_policy" => {
+            "check every model request, and block all of them whenever it is not working"
+        }
+        other => other,
+    }
+}
+
 pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     let granted = |name: &str| capabilities.iter().any(|c| c == name);
     let mut exposure = Vec::new();
@@ -2368,6 +2425,8 @@ pub struct ModTerminalView {
     pub contributors: Vec<String>,
     #[serde(default)]
     pub component_owners: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_owner: Option<String>,
     #[serde(default)]
     pub conflicts: Vec<ModViewConflict>,
     #[serde(default)]
@@ -2584,6 +2643,41 @@ mod reload_tests {
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
         assert!(host.refresh_authority().is_err());
+    }
+
+    #[test]
+    fn every_capability_has_a_consent_phrase() {
+        for capability in MOD_CAPABILITIES {
+            assert_ne!(capability_phrase(capability), *capability);
+        }
+    }
+
+    #[test]
+    fn store_root_and_session_records_are_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("store");
+        ModStore::create(root.clone(), std::env::current_exe().unwrap()).unwrap();
+        let peers = crate::peers::Peers::open(&root, "alpha", Path::new("/repo")).unwrap();
+        peers.publish(&[]).unwrap();
+        crate::consents::grant(&root, "thread", "owner", "digest", "id").unwrap();
+        crate::turn_activity::TurnActivityLog::open(&root.join("turn-activity"), "thread")
+            .unwrap()
+            .append(&crate::turn_activity::ActivityRecord::Paused { at: "now".into() })
+            .unwrap();
+        for path in [
+            "",
+            "peers",
+            "peers/sessions",
+            "peers/sessions/alpha.lock",
+            "peers/sessions/alpha.json",
+            "consents",
+            "turn-activity",
+            "turn-activity/thread.jsonl",
+        ] {
+            let mode = std::fs::metadata(root.join(path)).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "{path}: {mode:o}");
+        }
     }
 }
 type Authority = (
@@ -5374,6 +5468,7 @@ impl ModHost {
         view.close_wraps();
         conflicts.truncate(32);
         ModTerminalView {
+            layout_owner: view.layout.as_ref().and(claims.remove("layout")),
             view,
             contributors,
             component_owners,

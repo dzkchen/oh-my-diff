@@ -75859,10 +75859,10 @@ index 000000000..88b18991e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..0c58cc61e
+index 000000000..a13f2fad8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,226 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -75981,6 +75981,7 @@ index 000000000..0c58cc61e
 +                || snapshot.conflicts != terminal.conflicts
 +                || snapshot.contributors != terminal.contributors
 +                || snapshot.component_owners != terminal.component_owners
++                || snapshot.layout_owner != terminal.layout_owner
 +            {
 +                state.snapshot.revision = state.snapshot.revision.saturating_add(1);
 +            }
@@ -75989,6 +75990,7 @@ index 000000000..0c58cc61e
 +            state.snapshot.conflicts = terminal.conflicts;
 +            state.snapshot.contributors = terminal.contributors;
 +            state.snapshot.component_owners = terminal.component_owners;
++            state.snapshot.layout_owner = terminal.layout_owner;
 +            state.snapshot.input = input;
 +            state
 +                .diagnostics
@@ -88340,10 +88342,10 @@ index 000000000..a68f87f31
 +
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 000000000..6aa9d519d
+index 000000000..e2bb56cbe
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,173 @@
 +//! Single-use user consents for prompts a mod captured, kept per thread outside mod state.
 +
 +use crate::resource_data::ResourceRef;
@@ -88353,6 +88355,7 @@ index 000000000..6aa9d519d
 +use std::fs;
 +use std::io;
 +use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +
@@ -88388,7 +88391,10 @@ index 000000000..6aa9d519d
 +        return Err(io::Error::other("consent_thread_invalid"));
 +    }
 +    let directory = root.join("consents");
-+    fs::create_dir_all(&directory)?;
++    fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(&directory)?;
 +    let file = fs::OpenOptions::new()
 +        .read(true)
 +        .write(true)
@@ -93310,10 +93316,10 @@ index 000000000..49005e90b
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..762f10c93
+index 000000000..2b639f7db
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,252 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -93527,6 +93533,7 @@ index 000000000..762f10c93
 +pub use mods::access_receipt;
 +pub use mods::activation_failures;
 +pub use mods::authority_exposure;
++pub use mods::capability_phrase;
 +pub use mods::client_component_unmount;
 +pub use mods::component_detach;
 +pub use mods::component_events;
@@ -95254,10 +95261,10 @@ index 000000000..9d7328ac6
 +
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..32561f6f5
+index 000000000..4b628eabb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,5962 @@
+@@ -0,0 +1,6057 @@
 +mod author;
 +mod operation_validation;
 +mod bridge;
@@ -95822,6 +95829,63 @@ index 000000000..32561f6f5
 +    "history_write",
 +    "history_persist",
 +];
++
++/// The install-consent wording for a capability; an unknown name reads as itself.
++pub fn capability_phrase(capability: &str) -> &str {
++    match capability {
++        "context" => "add text to the agent's context",
++        "tools" => "give the agent new tools",
++        "commands" => "add slash commands",
++        "lifecycle" => "react to session and turn events",
++        "input" => "rewrite what you type before it is sent",
++        "interception" => "allow or block tool calls",
++        "compaction" => "decide how the conversation is compacted",
++        "middleware" => "inspect and change model requests",
++        "services" => "offer or use services from other mods",
++        "virtual_reads" => "serve virtual files",
++        "terminal" => "draw in the terminal",
++        "exec" => "run programs in this repository",
++        "fs.read" => "read files in this repository",
++        "fs.write" => "change files in this repository",
++        "network" => "use the network",
++        "unix_sockets" => "connect to local sockets",
++        "model" => "choose model routes",
++        "agents" => "start helper agents",
++        "store" => "keep its own saved data",
++        "sessions" => "read session history",
++        "sessions_tools" => "read tool arguments and outputs in session history",
++        "contracts" => "set task completion rules",
++        "builtins" => "run and hide built-in commands",
++        "threads" => "start and manage threads",
++        "config" => "read Codex settings",
++        "config.write" => "change Codex settings",
++        "inventory" => "list skills, plugins and commands",
++        "account" => "read account details",
++        "packages" => "install and manage mods",
++        "approvals" => "answer approval prompts",
++        "events" => "send and receive mod events",
++        "credentials" => "use stored account credentials",
++        "composer" => "read and write the message you are typing",
++        "pty" => "run interactive terminal programs",
++        "history" => "edit the conversation history",
++        "outputs" => "change tool output",
++        "os" => "run listed programs unsandboxed with your account's full access",
++        "approve" => "approve tool calls for you",
++        "approve.override" => "approve commands your own rules forbid",
++        "http" => "send web requests to the sites it lists",
++        "fs.external" => "read and change the folders it lists outside this repository",
++        "mcp" => "connect to the MCP servers it lists",
++        "policy" => "refuse other mods or limit what they can do",
++        "peers" => "message other Codex sessions",
++        "autonomous" => "queue and stop turns on its own",
++        "history_write" => "rewrite this session's transcript",
++        "history_persist" => "see and replace saved history text",
++        "request_policy" => {
++            "check every model request, and block all of them whenever it is not working"
++        }
++        other => other,
++    }
++}
 +
 +pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
 +    let granted = |name: &str| capabilities.iter().any(|c| c == name);
@@ -97628,6 +97692,8 @@ index 000000000..32561f6f5
 +    pub contributors: Vec<String>,
 +    #[serde(default)]
 +    pub component_owners: BTreeMap<String, String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub layout_owner: Option<String>,
 +    #[serde(default)]
 +    pub conflicts: Vec<ModViewConflict>,
 +    #[serde(default)]
@@ -97844,6 +97910,41 @@ index 000000000..32561f6f5
 +        std::fs::rename(&path, &moved).unwrap();
 +        std::os::unix::fs::symlink(&moved, &path).unwrap();
 +        assert!(host.refresh_authority().is_err());
++    }
++
++    #[test]
++    fn every_capability_has_a_consent_phrase() {
++        for capability in MOD_CAPABILITIES {
++            assert_ne!(capability_phrase(capability), *capability);
++        }
++    }
++
++    #[test]
++    fn store_root_and_session_records_are_private_to_the_user() {
++        use std::os::unix::fs::PermissionsExt;
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap().join("store");
++        ModStore::create(root.clone(), std::env::current_exe().unwrap()).unwrap();
++        let peers = crate::peers::Peers::open(&root, "alpha", Path::new("/repo")).unwrap();
++        peers.publish(&[]).unwrap();
++        crate::consents::grant(&root, "thread", "owner", "digest", "id").unwrap();
++        crate::turn_activity::TurnActivityLog::open(&root.join("turn-activity"), "thread")
++            .unwrap()
++            .append(&crate::turn_activity::ActivityRecord::Paused { at: "now".into() })
++            .unwrap();
++        for path in [
++            "",
++            "peers",
++            "peers/sessions",
++            "peers/sessions/alpha.lock",
++            "peers/sessions/alpha.json",
++            "consents",
++            "turn-activity",
++            "turn-activity/thread.jsonl",
++        ] {
++            let mode = std::fs::metadata(root.join(path)).unwrap().permissions().mode();
++            assert_eq!(mode & 0o077, 0, "{path}: {mode:o}");
++        }
 +    }
 +}
 +type Authority = (
@@ -100634,6 +100735,7 @@ index 000000000..32561f6f5
 +        view.close_wraps();
 +        conflicts.truncate(32);
 +        ModTerminalView {
++            layout_owner: view.layout.as_ref().and(claims.remove("layout")),
 +            view,
 +            contributors,
 +            component_owners,
@@ -101222,10 +101324,10 @@ index 000000000..32561f6f5
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..abac444ed
+index 000000000..d4253e601
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,995 @@
+@@ -0,0 +1,982 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -102143,13 +102245,7 @@ index 000000000..abac444ed
 +}
 +
 +fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]) {
-+    let sensitive = key.is_some_and(|key| {
-+        let key = key.to_ascii_lowercase();
-+        ["secret", "token", "password", "credential", "api_key"]
-+            .iter()
-+            .any(|needle| key.contains(needle))
-+    });
-+    if sensitive && !value.is_boolean() {
++    if key.is_some_and(crate::resource_data::secret_name) && !value.is_boolean() {
 +        *value = Value::String("[REDACTED]".to_owned());
 +        return;
 +    }
@@ -102158,7 +102254,7 @@ index 000000000..abac444ed
 +            for (path, replacement) in paths {
 +                *text = text.replace(path, replacement);
 +            }
-+            *text = redact_text(text);
++            *text = crate::resource_data::redact(text);
 +        }
 +        Value::Array(values) => {
 +            for value in values {
@@ -102172,30 +102268,6 @@ index 000000000..abac444ed
 +        }
 +        _ => {}
 +    }
-+}
-+
-+fn redact_text(text: &str) -> String {
-+    let mut output = text.to_owned();
-+    for prefix in ["sk-", "ghp_", "github_pat_", "Bearer "] {
-+        let mut from = 0;
-+        while let Some(offset) = output[from..].find(prefix) {
-+            let start = from + offset;
-+            let tail = &output[start + prefix.len()..];
-+            let length = tail
-+                .find(|character: char| {
-+                    character.is_whitespace()
-+                        || matches!(character, '\'' | '"' | ',' | ']' | '}' | ')')
-+                })
-+                .unwrap_or(tail.len());
-+            if length == 0 {
-+                from = start + prefix.len();
-+                continue;
-+            }
-+            output.replace_range(start..start + prefix.len() + length, "[REDACTED]");
-+            from = start + "[REDACTED]".len();
-+        }
-+    }
-+    output
 +}
 +
 +#[cfg(test)]
@@ -102218,6 +102290,23 @@ index 000000000..abac444ed
 +        assert!(host.call("test", call("store.put", json!({"key":"k","value":null,"expected_revision":null}))).is_err());
 +        assert!(host.call("test", call("store.get", json!({"key":"other"}))).is_err());
 +        assert!(host.finish().unwrap_err().to_string().contains("offline_mock_violation"));
++    }
++
++    #[test]
++    fn diagnostic_redaction_matches_the_shared_secret_rules() {
++        let mut bundle = json!({
++            "telemetry": {"last_error": "failed with gho_abc123\nkey AKIAABCDEFGHIJKLMNOP\n-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbody\n-----END RSA PRIVATE KEY-----\nat /store/x"},
++            "settings": {"apiKey": "k1", "privateKey": "k2", "authorization": "k3", "enabled": true},
++            "settings_keys": ["theme"],
++        });
++        redact_value(&mut bundle, None, &[("/store".into(), "$STORE".into())]);
++        let encoded = bundle.to_string();
++        for secret in ["gho_abc123", "AKIAABCDEFGHIJKLMNOP", "MIIEsecretbody", "k1", "k2", "k3"] {
++            assert!(!encoded.contains(secret), "{encoded}");
++        }
++        assert!(encoded.contains("at $STORE/x"), "{encoded}");
++        assert_eq!(bundle["settings"]["enabled"], true);
++        assert_eq!(bundle["settings_keys"], json!(["theme"]));
 +    }
 +
 +}
@@ -111949,7 +112038,7 @@ index 000000000..7779d6098
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..ec75433d8
+index 000000000..ecb06a1bd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1370 @@
@@ -112383,7 +112472,7 @@ index 000000000..ec75433d8
 +
 +impl ModStore {
 +    pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
-+        std::fs::create_dir(&root)?;
++        std::fs::DirBuilder::new().mode(0o700).create(&root)?;
 +        let store = Self::open(root.canonicalize()?)?;
 +        let config = ModConfiguration {
 +            schema: 1,
@@ -113325,10 +113414,10 @@ index 000000000..ec75433d8
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..60904ccf8
+index 000000000..bcdb1932b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2190 @@
+@@ -0,0 +1,2192 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -114425,6 +114514,8 @@ index 000000000..60904ccf8
 +    pub conflicts: Vec<ModViewConflict>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub component_owners: BTreeMap<String, String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub layout_owner: Option<String>,
 +    #[serde(default)]
 +    pub input: Value,
 +    #[serde(default)]
@@ -116651,10 +116742,10 @@ index 000000000..e4a1a962a
 +
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 000000000..42eb1ca3d
+index 000000000..ee873ae8a
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,471 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
@@ -116663,6 +116754,9 @@ index 000000000..42eb1ca3d
 +use std::collections::BTreeMap;
 +use std::fs;
 +use std::io;
++use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
++use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::sync::Mutex;
@@ -116758,7 +116852,7 @@ index 000000000..42eb1ca3d
 +
 +fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
 +    let parent = path.parent().ok_or_else(|| failure("peer_path_invalid"))?;
-+    fs::create_dir_all(parent)?;
++    private_directory(parent)?;
 +    let temporary = parent.join(format!(
 +        ".{}.{}.tmp",
 +        std::process::id(),
@@ -116766,8 +116860,21 @@ index 000000000..42eb1ca3d
 +            .and_then(|name| name.to_str())
 +            .unwrap_or("entry")
 +    ));
-+    fs::write(&temporary, serde_json::to_vec(value)?)?;
++    fs::OpenOptions::new()
++        .write(true)
++        .create(true)
++        .truncate(true)
++        .mode(0o600)
++        .open(&temporary)?
++        .write_all(&serde_json::to_vec(value)?)?;
 +    fs::rename(&temporary, path)
++}
++
++fn private_directory(path: &Path) -> io::Result<()> {
++    fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(path)
 +}
 +
 +/// Opens each complete `.json` entry before removing it; a failure keeps it queued and ends the pass with what was taken.
@@ -116834,11 +116941,12 @@ index 000000000..42eb1ca3d
 +            return Err(failure("peer_session_invalid"));
 +        }
 +        let root = store.join("peers");
-+        fs::create_dir_all(root.join("sessions"))?;
++        private_directory(&root.join("sessions"))?;
 +        let lock = fs::OpenOptions::new()
 +            .create(true)
 +            .truncate(false)
 +            .write(true)
++            .mode(0o600)
 +            .open(root.join("sessions").join(format!("{session}.lock")))?;
 +        lock.try_lock()
 +            .map_err(|_| failure("peer_session_already_registered"))?;
@@ -118143,10 +118251,10 @@ index 000000000..be39dfbf1
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 000000000..5a6423e9d
+index 000000000..22b27ab56
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,372 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use sha2::{Digest, Sha256};
@@ -118251,24 +118359,47 @@ index 000000000..5a6423e9d
 +        let value = line[offset + 1..]
 +            .trim_start()
 +            .trim_start_matches(['"', '\'', '=']);
-+        let segments = before[start..]
-+            .split(['_', '-', '.'])
-+            .map(str::to_ascii_lowercase)
-+            .collect::<Vec<_>>();
-+        !value.is_empty()
-+            && segments.iter().enumerate().any(|(index, segment)| {
-+                ["token", "secret", "password", "passwd", "apikey"]
-+                    .iter()
-+                    .any(|word| segment.ends_with(word))
-+                    || segment == "pwd"
-+                    || segment.starts_with("credential")
-+                    || (segment == "key"
-+                        && index > 0
-+                        && [
-+                            "api", "access", "private", "secret", "signing", "client", "master",
-+                        ]
-+                        .contains(&segments[index - 1].as_str()))
-+            })
++        !value.is_empty() && secret_name(&before[start..])
++    })
++}
++
++/// Whether a `_`, `-`, `.` or camelCase segment of a field or variable name reads as a secret.
++pub fn secret_name(name: &str) -> bool {
++    let mut segments = vec![String::new()];
++    let mut previous_lower = false;
++    for character in name.chars() {
++        if matches!(character, '_' | '-' | '.')
++            || (previous_lower && character.is_ascii_uppercase())
++        {
++            segments.push(String::new());
++        }
++        previous_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
++        if !matches!(character, '_' | '-' | '.') {
++            segments
++                .last_mut()
++                .expect("segments start non-empty")
++                .push(character.to_ascii_lowercase());
++        }
++    }
++    segments.iter().enumerate().any(|(index, segment)| {
++        [
++            "token",
++            "secret",
++            "password",
++            "passwd",
++            "apikey",
++            "authorization",
++        ]
++        .iter()
++        .any(|word| segment.ends_with(word))
++            || segment == "pwd"
++            || segment.starts_with("credential")
++            || (segment == "key"
++                && index > 0
++                && [
++                    "api", "access", "private", "secret", "signing", "client", "master",
++                ]
++                .contains(&segments[index - 1].as_str()))
 +    })
 +}
 +
@@ -119941,15 +120072,16 @@ index 000000000..98681031f
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
 new file mode 100644
-index 000000000..715b2c109
+index 000000000..83ea284fd
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity.rs
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,369 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
 +use std::fs::{self, OpenOptions};
 +use std::io::{self, Read, Seek, SeekFrom, Write};
++use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 +use std::path::{Path, PathBuf};
 +
 +pub const ACTIVITY_READ_BYTES: u64 = 8 << 20;
@@ -120045,13 +120177,17 @@ index 000000000..715b2c109
 +
 +    pub fn append(&self, record: &ActivityRecord) -> io::Result<()> {
 +        if let Some(parent) = self.path.parent() {
-+            fs::create_dir_all(parent)?;
++            fs::DirBuilder::new()
++                .recursive(true)
++                .mode(0o700)
++                .create(parent)?;
 +        }
 +        let mut line = serde_json::to_vec(record).map_err(io::Error::other)?;
 +        line.push(b'\n');
 +        OpenOptions::new()
 +            .create(true)
 +            .append(true)
++            .mode(0o600)
 +            .open(&self.path)?
 +            .write_all(&line)
 +    }
@@ -137360,10 +137496,10 @@ index 000000000..09b7a26fc
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..19bd66435
+index 000000000..b22c0d53e
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2118 @@
+@@ -0,0 +1,2063 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -137691,61 +137827,6 @@ index 000000000..19bd66435
 +
 +type Confirmation = (Option<String>, String, Option<Confirmed>);
 +
-+fn capability_phrase(capability: &str) -> &str {
-+    match capability {
-+        "context" => "add text to the agent's context",
-+        "tools" => "give the agent new tools",
-+        "commands" => "add slash commands",
-+        "lifecycle" => "react to session and turn events",
-+        "input" => "rewrite what you type before it is sent",
-+        "interception" => "allow or block tool calls",
-+        "compaction" => "decide how the conversation is compacted",
-+        "middleware" => "inspect and change model requests",
-+        "services" => "offer or use services from other mods",
-+        "virtual_reads" => "serve virtual files",
-+        "terminal" => "draw in the terminal",
-+        "exec" => "run programs in this repository",
-+        "fs.read" => "read files in this repository",
-+        "fs.write" => "change files in this repository",
-+        "network" => "use the network",
-+        "unix_sockets" => "connect to local sockets",
-+        "model" => "choose model routes",
-+        "agents" => "start helper agents",
-+        "store" => "keep its own saved data",
-+        "sessions" => "read session history",
-+        "contracts" => "set task completion rules",
-+        "builtins" => "run and hide built-in commands",
-+        "threads" => "start and manage threads",
-+        "config" => "read Codex settings",
-+        "config.write" => "change Codex settings",
-+        "inventory" => "list skills, plugins and commands",
-+        "account" => "read account details",
-+        "packages" => "install and manage mods",
-+        "approvals" => "answer approval prompts",
-+        "events" => "send and receive mod events",
-+        "credentials" => "use stored account credentials",
-+        "composer" => "read and write the message you are typing",
-+        "pty" => "run interactive terminal programs",
-+        "history" => "edit the conversation history",
-+        "outputs" => "change tool output",
-+        "os" => "run listed programs unsandboxed with your account's full access",
-+        "approve" => "approve tool calls for you",
-+        "approve.override" => "approve commands your own rules forbid",
-+        "http" => "send web requests to the sites it lists",
-+        "fs.external" => "read and change the folders it lists outside this repository",
-+        "mcp" => "connect to the MCP servers it lists",
-+        "policy" => "refuse other mods or limit what they can do",
-+        "peers" => "message other Codex sessions",
-+        "autonomous" => "queue and stop turns on its own",
-+        "history_write" => "rewrite this session's transcript",
-+        "history_persist" => "see and replace saved history text",
-+        "request_policy" => {
-+            "check every model request, and block all of them whenever it is not working"
-+        }
-+        other => other,
-+    }
-+}
-+
 +fn confirmation(call: &SurfaceCall) -> Result<Option<Confirmation>, String> {
 +    let invoked = call.arguments["command"]
 +        .as_str()
@@ -137781,7 +137862,7 @@ index 000000000..19bd66435
 +                .into_iter()
 +                .flatten()
 +                .filter_map(Value::as_str)
-+                .map(|capability| format!("• {}", capability_phrase(capability)))
++                .map(|capability| format!("• {}", codex_omd::capability_phrase(capability)))
 +                .collect::<Vec<_>>();
 +            let added = preview.public["grants_added"]
 +                .as_array()
@@ -142560,7 +142641,7 @@ index 000000000..01cc663fd
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..17f4036a1
+index 000000000..6abe8428d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
 @@ -0,0 +1,685 @@
@@ -143129,7 +143210,7 @@ index 000000000..17f4036a1
 +            Ok(matches) => json!({"component": id, "kind": "find", "matches": matches}),
 +            Err(error) => json!({"component": id, "kind": "find", "matches": 0, "error": error}),
 +        };
-+        crate::mod_surface::terminal_event("component_event", payload);
++        crate::mod_surface::component_event(payload);
 +    }
 +    let height = height.map_or(DEFAULT_HEIGHT, usize::from);
 +    document.height = height;
@@ -143229,7 +143310,7 @@ index 000000000..17f4036a1
 +        }
 +    };
 +    drop(documents);
-+    crate::mod_surface::terminal_event("component_event", payload);
++    crate::mod_surface::component_event(payload);
 +    Some((id.to_owned(), argument))
 +}
 +
@@ -143742,10 +143823,10 @@ index 000000000..d11794ca3
 +
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..d7c09ea69
+index 000000000..bcd52799f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,319 @@
 +use crate::omd::LockExt;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
@@ -143810,6 +143891,7 @@ index 000000000..d7c09ea69
 +#[derive(Default)]
 +struct State {
 +    layout: Option<ModLayout>,
++    owner: Option<String>,
 +    ratios: BTreeMap<String, Vec<u16>>,
 +    active: BTreeMap<String, usize>,
 +    drag: Option<(String, usize)>,
@@ -143924,7 +144006,7 @@ index 000000000..d7c09ea69
 +    }
 +}
 +
-+pub(crate) fn place(layout: &ModLayout, area: Rect) -> Placement {
++pub(crate) fn place(layout: &ModLayout, owner: Option<&str>, area: Rect) -> Placement {
 +    with(|state| {
 +        if state.layout.as_ref() != Some(layout) {
 +            *state = State {
@@ -143932,6 +144014,7 @@ index 000000000..d7c09ea69
 +                ..State::default()
 +            };
 +        }
++        state.owner = owner.map(str::to_owned);
 +        let mut placement = Placement::default();
 +        walk(layout, area, "r", state, &mut placement);
 +        state.last = placement.clone();
@@ -143984,10 +144067,12 @@ index 000000000..d7c09ea69
 +                .then(|| tab_at(bar, event.column).map(|index| (bar.path.clone(), index)))
 +                .flatten()
 +            }) {
-+                crate::mod_surface::terminal_event(
-+                    "component_event",
-+                    serde_json::json!({"component": path, "kind": "select", "index": index}),
-+                );
++                if let Some(owner) = &state.owner {
++                    crate::mod_surface::layout_event(
++                        owner,
++                        serde_json::json!({"component": path, "kind": "select", "index": index}),
++                    );
++                }
 +                state.active.insert(path, index);
 +                return true;
 +            }
@@ -144045,10 +144130,12 @@ index 000000000..d7c09ea69
 +                    .iter()
 +                    .map(|size| (u32::from(*size) * 100 / total).clamp(1, 100))
 +                    .collect::<Vec<_>>();
-+                crate::mod_surface::terminal_event(
-+                    "component_event",
-+                    serde_json::json!({"component": path, "kind": "resize", "ratio": ratio}),
-+                );
++                if let Some(owner) = &state.owner {
++                    crate::mod_surface::layout_event(
++                        owner,
++                        serde_json::json!({"component": path, "kind": "resize", "ratio": ratio}),
++                    );
++                }
 +            }
 +            true
 +        }
@@ -144061,7 +144148,7 @@ index 000000000..d7c09ea69
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 000000000..ed8c09bf3
+index 000000000..63e71803f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
 @@ -0,0 +1,116 @@
@@ -144084,7 +144171,7 @@ index 000000000..ed8c09bf3
 +             "children": [{"content": "transcript"}, {"content": "composer"}]}
 +        ]
 +    }));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(
 +        placement.area("site:files/tree"),
 +        Some(Rect::new(0, 1, 25, 39))
@@ -144108,7 +144195,7 @@ index 000000000..ed8c09bf3
 +        9,
 +        0
 +    )));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(
 +        placement.area("site:notes/pad"),
 +        Some(Rect::new(0, 1, 25, 39))
@@ -144129,7 +144216,7 @@ index 000000000..ed8c09bf3
 +        40,
 +        10
 +    )));
-+    let placement = place(&layout, Rect::new(0, 0, 100, 40));
++    let placement = place(&layout, None, Rect::new(0, 0, 100, 40));
 +    assert_eq!(placement.area("transcript").map(|area| area.x), Some(40));
 +    assert!(!pointer(click(
 +        MouseEventKind::Down(MouseButton::Left),
@@ -144145,7 +144232,7 @@ index 000000000..ed8c09bf3
 +        serde_json::json!({"split": "horizontal", "gap": 2, "children": [
 +        {"content": "site:files/tree", "style": {"border": "thick"}}, {"content": "transcript"}]}),
 +    );
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(
 +        placement.regions[0],
 +        Region {
@@ -144158,9 +144245,9 @@ index 000000000..ed8c09bf3
 +        }
 +    );
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(22, 0, 20, 10)));
-+    let narrow = place(&layout, Rect::new(0, 0, 7, 10));
++    let narrow = place(&layout, None, Rect::new(0, 0, 7, 10));
 +    assert_eq!(narrow.area("transcript"), Some(Rect::new(4, 0, 3, 10)));
-+    place(&layout, Rect::new(0, 0, 42, 10));
++    place(&layout, None, Rect::new(0, 0, 42, 10));
 +    let at = |kind, column| MouseEvent {
 +        kind,
 +        column,
@@ -144170,7 +144257,7 @@ index 000000000..ed8c09bf3
 +    assert!(pointer(at(MouseEventKind::Down(MouseButton::Left), 21)));
 +    assert!(pointer(at(MouseEventKind::Drag(MouseButton::Left), 30)));
 +    assert!(pointer(at(MouseEventKind::Up(MouseButton::Left), 30)));
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(
 +        placement.area("site:files/tree"),
 +        Some(Rect::new(0, 0, 30, 10))
@@ -144178,7 +144265,7 @@ index 000000000..ed8c09bf3
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +    hide();
 +    assert!(!pointer(at(MouseEventKind::Down(MouseButton::Left), 31)));
-+    let placement = place(&layout, Rect::new(0, 0, 42, 10));
++    let placement = place(&layout, None, Rect::new(0, 0, 42, 10));
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(32, 0, 10, 10)));
 +}
 diff --git a/codex-rs/tui/src/mod_module.rs b/codex-rs/tui/src/mod_module.rs
@@ -146999,10 +147086,10 @@ index 000000000..ef92b4ed0
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..57da48433
+index 000000000..e017b765f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1564 @@
+@@ -0,0 +1,1566 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -147234,6 +147321,7 @@ index 000000000..57da48433
 +            contributors: terminal.contributors,
 +            conflicts: terminal.conflicts,
 +            component_owners: terminal.component_owners,
++            layout_owner: terminal.layout_owner,
 +            diagnostics: terminal.diagnostics,
 +            input,
 +            ..ModViewSnapshot::default()
@@ -147692,6 +147780,7 @@ index 000000000..57da48433
 +    snapshot.conflicts = terminal.conflicts;
 +    snapshot.contributors = terminal.contributors;
 +    snapshot.component_owners = terminal.component_owners;
++    snapshot.layout_owner = terminal.layout_owner;
 +    for diagnostic in terminal.diagnostics {
 +        if !snapshot.diagnostics.contains(&diagnostic) {
 +            snapshot.diagnostics.push(diagnostic);
@@ -149198,10 +149287,10 @@ index 000000000..4a1ca43cd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..cdf77f1bd
+index 000000000..474adaed6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,1125 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -149861,11 +149950,22 @@ index 000000000..cdf77f1bd
 +    true
 +}
 +
++/// Delivers a `component_event` to the component's owner only.
 +pub(crate) fn component_event(payload: Value) {
-+    static QUEUE: std::sync::OnceLock<EventQueue<Value>> = std::sync::OnceLock::new();
++    owned_component_event(None, payload);
++}
++
++/// Layout tab and resize events go to the mod whose view claimed the layout.
++pub(crate) fn layout_event(owner: &str, payload: Value) {
++    owned_component_event(Some(owner.to_owned()), payload);
++}
++
++fn owned_component_event(owner: Option<String>, payload: Value) {
++    static QUEUE: std::sync::OnceLock<EventQueue<(Option<String>, Value)>> =
++        std::sync::OnceLock::new();
 +    if registered("component_event") || codex_omd::process_raster::any() {
 +        let queue = QUEUE.get_or_init(|| {
-+            EventQueue::spawn(|payload: Value, dropped| {
++            EventQueue::spawn(|(owner, payload): (Option<String>, Value), dropped| {
 +                let mut payload = if payload["kind"] == "motion" {
 +                    let Some(latest) = payload["component"]
 +                        .as_str()
@@ -149880,10 +149980,11 @@ index 000000000..cdf77f1bd
 +                if let Some(pointer) = payload["pointer"].as_object_mut() {
 +                    pointer.remove("fraction");
 +                }
-+                if let Some(owner) = payload["component"]
-+                    .as_str()
-+                    .and_then(crate::mod_ui::component_owner)
-+                {
++                if let Some(owner) = owner.or_else(|| {
++                    payload["component"]
++                        .as_str()
++                        .and_then(crate::mod_ui::component_owner)
++                }) {
 +                    crate::mod_runtime::invoke_event(
 +                        &owner,
 +                        "component_event",
@@ -149893,13 +149994,13 @@ index 000000000..cdf77f1bd
 +            })
 +        });
 +        if let Some(pending) = close_motion(&payload) {
-+            queue.push(pending);
++            queue.push((None, pending));
 +        }
 +        let marker = (payload["kind"] == "motion")
 +            .then(|| payload["component"].as_str().map(str::to_owned))
 +            .flatten();
 +        // A dropped marker releases its pending motion, so the next move queues a new one.
-+        if !queue.push(payload)
++        if !queue.push((owner, payload))
 +            && let Some(component) = marker
 +        {
 +            motion().remove(&component);
@@ -150317,10 +150418,10 @@ index 000000000..cdf77f1bd
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..98b5a8250
+index 000000000..9da1a5c19
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,959 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -151195,9 +151296,94 @@ index 000000000..98b5a8250
 +        .collect();
 +    assert_eq!(listed, served, "update mods/conformance/tui-surface.json");
 +}
++
++#[test]
++#[serial_test::serial]
++fn document_and_layout_events_reach_only_their_owner() {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let data = root.join("store");
++    let store = codex_omd::ModStore::create(
++        data.clone(),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap();
++    for id in ["owner", "other"] {
++        let package = root.join(id);
++        std::fs::create_dir(&package).unwrap();
++        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": id, "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["terminal", "store"]})).unwrap()).unwrap();
++        std::fs::write(
++            package.join("index.ts"),
++            "export default api => api.on('component_event', e => { api.state.set([...(api.state.get() ?? []), `${e.kind}:${e.component}`]); });",
++        )
++        .unwrap();
++        let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
++        store
++            .trust(
++                package.clone(),
++                inspected["sha256"].as_str().unwrap(),
++                vec!["terminal".into(), "store".into()],
++                "user",
++            )
++            .unwrap();
++        store.enable(&package, true).unwrap();
++    }
++    std::fs::write(
++        data.join("mod-status.json"),
++        serde_json::to_vec(&codex_omd::ModHost::open(data.clone()).unwrap().status()).unwrap(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&data);
++    let _host = crate::mod_runtime::test_fresh_host();
++    with(|state| state.checked = None);
++
++    let snapshot = codex_omd::ModViewSnapshot {
++        view: codex_omd::ModView::parse(json!({"sidebar_width": 30, "sites": {"sidebar": {"components": [
++            {"type": "document", "id": "doc", "label": "Doc", "lines": [[{"text": "line"}]]}
++        ]}}}))
++        .unwrap(),
++        component_owners: [("doc".to_owned(), "owner".to_owned())].into(),
++        ..Default::default()
++    };
++    let area = ratatui::layout::Rect::new(0, 0, 100, 24);
++    crate::mod_ui::render(area, area, &mut ratatui::buffer::Buffer::empty(area), &snapshot);
++    assert!(
++        crate::mod_components::handle("doc", crate::mod_document::DocumentKey::Activate).is_some()
++    );
++    let layout = serde_json::from_value(json!({"tabs": [
++        {"title": "A", "node": {"content": "transcript"}},
++        {"title": "B", "node": {"content": "composer"}}
++    ]}))
++    .unwrap();
++    crate::mod_layout::place(&layout, Some("owner"), area);
++    assert!(crate::mod_layout::pointer(crossterm::event::MouseEvent {
++        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
++        column: 4,
++        row: 0,
++        modifiers: crossterm::event::KeyModifiers::NONE,
++    }));
++
++    let state = |id: &str| {
++        crate::mod_runtime::shared_host()
++            .unwrap()
++            .lock()
++            .unwrap()
++            .state(id)
++            .cloned()
++            .unwrap_or_default()
++    };
++    let deadline = Instant::now() + Duration::from_secs(20);
++    while state("owner").as_array().map_or(0, Vec::len) < 2 && Instant::now() < deadline {
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert_eq!(state("owner"), json!(["activate:doc", "select:r"]));
++    assert_eq!(state("other"), Value::Null);
++    crate::mod_layout::hide();
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..f483b789b
+index 000000000..a2bf5fac6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
 @@ -0,0 +1,4643 @@
@@ -154314,7 +154500,7 @@ index 000000000..f483b789b
 +        crate::mod_layout::hide();
 +        return None;
 +    };
-+    let placement = crate::mod_layout::place(layout, screen);
++    let placement = crate::mod_layout::place(layout, snapshot.layout_owner.as_deref(), screen);
 +    placement
 +        .chat()
 +        .filter(|chat| chat.width >= 20 && chat.height >= 6)
