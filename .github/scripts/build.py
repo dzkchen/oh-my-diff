@@ -132,10 +132,10 @@ def sync(args):
     batch = batch_dir(args.batch)
     source = batch / "codex"
     base = base_tag()
-    patch = git(source, "diff", "--binary", "--no-renames", base, "--", "codex-rs")
+    patch = git(source, "diff", "--binary", "--abbrev=9", "--no-renames", base, "--", "codex-rs")
     changed = set(git(source, "diff", "--name-only", "--no-renames", base, "--", "codex-rs").decode().splitlines())
     for name in git(source, "ls-files", "--others", "--exclude-standard", "--", "codex-rs").decode().splitlines():
-        patch += git(source, "diff", "--no-index", "--binary", "--", "/dev/null", name, allowed=(0, 1))
+        patch += git(source, "diff", "--no-index", "--binary", "--abbrev=9", "--", "/dev/null", name, allowed=(0, 1))
         changed.add(name)
     # Git accepts an empty patch context line; omit its otherwise trailing marker space.
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
