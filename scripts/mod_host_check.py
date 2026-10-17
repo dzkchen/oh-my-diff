@@ -115,7 +115,7 @@ class Host:
         scenario.write_text(json.dumps({
             "schema": 1, "host_operations": {operation: [{"result": reply, "optional": True}] * 32 for operation, reply in MOCKS.items()},
             "steps": [{"type": "invoke", "mod": mod, "event": "command", "name": name, "payload": ""}]}))
-        output, error = self.run("test", location, scenario, check=False, timeout=60)
+        output, error = self.run("test", location, scenario, "host-check-thread", check=False, timeout=60)
         steps = output.get("steps") if isinstance(output, dict) else None
         if error:
             failures = [error]

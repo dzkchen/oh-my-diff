@@ -1801,7 +1801,11 @@ go only to the mod whose view supplied the layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
-is ignored with a warning. Key bindings and component actions run only the
+is ignored with a warning. On macOS, Kitty and Ghostty send Option+letter as a
+composed character (`π` for Option+p) unless Option-as-Alt is enabled
+(`macos_option_as_alt` in Kitty, `macos-option-as-alt` in Ghostty), so an
+`Alt+` binding should not be a control's only affordance: name its slash
+command next to it in the hint. Key bindings and component actions run only the
 contributing mod's commands: a bare name is its own `id:name`, and a binding or
 control naming another mod's command is dropped. `component_event`, `view` and `focus` report
 interaction; `component_event` goes only to the component's owner and also reports, with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
@@ -2804,6 +2808,15 @@ any it refuses.
   `name` is the Web Crypto error name. There is no `TextDecoder`, `Buffer` or
   `structuredClone`, and no code is compiled from strings (`eval`,
   `new Function`), in the mod's context or the runner process.
+- Manifest `environment`: `"environment": ["crypto"]` in `mod.json` admits the
+  `crypto` global above; it is the only environment a mod can declare (another
+  or repeated name fails with `unsupported_or_duplicate_environment_access`).
+  Source that uses `crypto.` or `crypto[` outside string literals without it is
+  refused at load with `undeclared_environment_use: crypto (crypto.)`, naming
+  the matched text. The same error names `network` (`fetch(`, `WebSocket(`),
+  `process` (`process.`, `Deno.`, `Bun.`), `dom` (`document.`, `window.`) and
+  `filesystem` (`node:fs` or `require('fs`, matched inside literals too), which
+  no manifest admits.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
   `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
   `JSON.stringify(value)` output, including quotes, keys and escapes. Strings

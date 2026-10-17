@@ -19,7 +19,9 @@ for sessions where the panel is active (nothing is written to `config.toml`).
 steps remain and dimmed once all are done; a fully completed plan disappears
 when the next turn starts.
 
-- **Alt+p** collapses the panel to its heading and expands it again.
+- **Alt+p** or `/todos toggle` collapses the panel to its heading and expands it
+  again. On macOS, Alt+p needs Option-as-Alt in Kitty (`macos_option_as_alt`)
+  and Ghostty (`macos-option-as-alt`); otherwise Option+p types `π`.
 - **Row limit.** At most `rows` steps (default 8). When a plan is longer, completed
   steps are dropped first, then unfinished steps are truncated, and the last
   row reads `+N more (X completed, Y pending)`. `/todos` toggles between the

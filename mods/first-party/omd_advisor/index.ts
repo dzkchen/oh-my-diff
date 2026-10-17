@@ -66,8 +66,13 @@ export default function activate(api: ModAPI) {
   const share = new Set(Array.isArray(api.settings.share) ? api.settings.share : ['conversation', 'diff', 'files']);
   const blocking = api.settings.mode === 'blocking';
   const review = everyTurn || triggers.has('completion');
-  const route = String(api.settings.route ?? 'astra');
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(route)) throw new Error('advisor_route_invalid');
+  const route = typeof api.settings.route === 'string' ? api.settings.route : '';
+  if (route && !/^[a-zA-Z0-9_-]{1,64}$/.test(route)) throw new Error('advisor_route_invalid');
+  const unrouted = () => {
+    const routes = api.host.tryCall('routes.list', null);
+    const workers = routes.ok ? routes.value.filter(item => item.roles.includes('worker') && item.available).map(item => item.name) : [];
+    return `set the omd_advisor route setting to a worker route${workers.length ? ` (${workers.join(', ')})` : '; host.json lists none this mod may use'}`;
+  };
   const read = (reference: ResourceRef) => {
     let text = '';
     let cursor: number | undefined;
@@ -89,7 +94,7 @@ export default function activate(api: ModAPI) {
   const watching = (): Observer => ({ status: 'idle', reason: '', handle: '', turn: '', candidate: '', sha256: '', excerpt: '', notes: [], seen: [], dropped: 0, cost: null, inspect: null, ...(object(current().observer) ? current().observer as Partial<Observer> : {}) });
   const keep = (observer: Partial<Observer>) => api.state.set({ ...current(), observer: { ...watching(), ...observer } } as unknown as Json);
   const sameModel = () => {
-    if (api.settings.skip_same_model === false) return null;
+    if (!route || api.settings.skip_same_model === false) return null;
     const routes = api.host.tryCall('routes.list', null);
     const task = api.host.tryCall('task.status', null);
     const thread = task.ok ? api.host.tryCall('app.request', { method: 'thread/read', params: { threadId: task.value.ledger.thread_id } }) : null;
@@ -120,6 +125,7 @@ export default function activate(api: ModAPI) {
     return paths.map(name => `--- ${name}\n${(read?.ok && read.value.files[name]?.text) || 'not sent: missing, unreadable or over 24 KB'}`).join('\n');
   };
   const consult = (trigger: string, context: [string, string | (() => string), number][]) => {
+    if (!route) return `Advisor unavailable: ${unrouted()}.`;
     const model = sameModel();
     if (model) return `Advisor skipped: its route uses the lead's model ${model}.`;
     const withheld = ['conversation', 'diff', 'files'].filter(name => !share.has(name));
@@ -143,6 +149,7 @@ export default function activate(api: ModAPI) {
     const watch = watching();
     const modes = { every_turn: everyTurn, observe, triggers: [...triggers] as Json, share: [...share] as Json, consulted: current().consulted ?? null,
       observer: observe ? { status: watch.status, reason: watch.reason, turn: watch.turn, notes: watch.notes.map(({ fingerprint: _, ...note }) => note) as Json, dropped: watch.dropped, cost: watch.cost } : null };
+    if (!route) return { status: 'unavailable', reason: unrouted(), ...modes };
     if (!receipt) return { status: 'no_review', ...modes };
     const scoped = api.host.tryCall('evidence.read', { reference: receipt.reference, max_bytes: 1 });
     const { brief: _, watch: __, consulted: ___, observer: ____, ...shown } = receipt as Receipt & { watch?: Json; consulted?: Json; observer?: Json };
@@ -189,6 +196,7 @@ export default function activate(api: ModAPI) {
     if (previous?.reference.sha256 === event.evidence.sha256) return;
     if (previous?.status === 'reviewing' && previous.handle) api.host.tryCall('agents.cancel', { handle: previous.handle });
     const receipt: Receipt = { reference: event.evidence, turn: event.turn_id, thread: '', candidate: '', handle: '', brief: '', findings: [], status: 'unreviewed', reason: '', ledger: null, present: true };
+    if (!route) { receipt.status = 'unavailable'; receipt.reason = unrouted(); return save(receipt); }
     const loaded = evidence();
     if (!loaded.ok) { receipt.reason = safe(loaded.error); return save(receipt); }
     let parsed: unknown;
@@ -250,6 +258,7 @@ export default function activate(api: ModAPI) {
     if (!event.evidence || watch.sha256 === event.evidence.sha256) return;
     if (watch.status === 'observing' && watch.handle) api.host.tryCall('agents.cancel', { handle: watch.handle });
     const settled = { handle: '', turn: event.turn_id, sha256: event.evidence.sha256, dropped: 0, cost: null };
+    if (!route) return keep({ ...settled, status: 'unavailable', reason: unrouted() });
     const loaded = evidence();
     let parsed: unknown = null;
     if (loaded.ok) try { parsed = JSON.parse(loaded.text); } catch { parsed = null; }
@@ -369,7 +378,7 @@ export default function activate(api: ModAPI) {
       above.push({ type: 'box', id: 'advisor_observations', label: 'You should know', title: 'You should know', children: [
         { type: 'list', id: 'advisor_observation_list', label: 'Observer notes; Enter inspects', height: watch.notes.length, hotkey: 'Alt+m', action: { command: 'omd_advisor:observations' },
           rows: watch.notes.map((note, index) => ({ value: String(index + 1), label: clip(`${KINDS[note.kind]}: ${note.implication}`, 256), spans: [{ text: `${KINDS[note.kind]}: `, tone: 'attention', bold: true }, { text: clip(note.implication, 256) }] })) },
-        { type: 'text', id: 'advisor_observation_hint', label: 'Observer hint', text: 'Alt+m then Enter inspects · /observations dismiss N|all', tone: 'muted' }] });
+        { type: 'text', id: 'advisor_observation_hint', label: 'Observer hint', text: 'Alt+m then Enter, or /observations N, inspects · /observations dismiss N|all', tone: 'muted' }] });
     } else if (watch && ['observing', 'unavailable', 'invalid_result', 'incomplete'].includes(watch.status)) status[0] += ` · watch ${watch.status.replace('_', ' ')}`;
     const note = watch && watch.inspect !== null ? watch.notes[watch.inspect] : undefined;
     if (note) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'advisor_observation', label: 'You should know', title: `You should know: ${KINDS[note.kind]}`, children: [
@@ -379,7 +388,7 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: 'advisor_observation_dismiss', label: 'Dismiss this note', text: 'Dismiss', action: { command: 'omd_advisor:observations', args: `dismiss ${watch!.inspect! + 1}` } },
       { type: 'button', id: 'advisor_observation_close', label: 'Close', text: 'Close', action: { command: 'omd_advisor:observations', args: 'close' } }] }] };
     if (above.length) sites.above_composer = { mode: 'wrap', components: [{ type: 'slot' }, ...above] };
-    status[0] = clip(status[0], 40);
+    status[0] = route ? clip(status[0], 40) : 'Advisor: no route set';
     return Object.keys(sites).length ? { status, sites } : { status };
   });
 }
