@@ -169,7 +169,8 @@ reports the composed view's diagnostics under `terminal`.
 - A dialog focuses its first item when it opens, or the control it `autofocus`es.
 - Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
   first or last row (or on any other control), focus the previous or next control; a list keeps its highlighted
-  row; key panes and terminals are reached only with Tab or a click. Left and Right change a `select`.
+  row; key panes and terminals are reached only with Tab or a click. Left and Right change a `select`. A focused
+  list, multiselect, select or pane keeps its arrows when there is no control to move to.
 - While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
   repeat; Enter, Space, Tab and Esc act once per press, a held arrow stops at a control's edge, and a held key never
   fires a hotkey or view binding.

@@ -1330,7 +1330,8 @@ impl ResponseObserver for Accounts {
         let Some(rates) = account.rates.clone() else {
             let model = requested.unwrap_or_else(|| account.model.clone());
             let mut unrated = self.attempt(account, thread, request_id, attempt, model, None, None);
-            unrated.subscription = request.headers.contains_key("chatgpt-account-id");
+            unrated.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
+                && request.headers.contains_key("chatgpt-account-id");
             return Ok(Some(Box::new(unrated)));
         };
         let model = account.model.clone();

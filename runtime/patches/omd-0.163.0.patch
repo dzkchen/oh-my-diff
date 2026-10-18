@@ -48014,10 +48014,10 @@ index 0000000000000000000000000000000000000000..58eda136a98fe2d713424c38b59aa7cf
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..63e1bcc552f22dbd5faaab96d7d68d1ee396f482
+index 0000000000000000000000000000000000000000..46179cf84c881882f2499699a495eb04423c75d3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2316 @@
+@@ -0,0 +1,2317 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -49350,7 +49350,8 @@ index 0000000000000000000000000000000000000000..63e1bcc552f22dbd5faaab96d7d68d1e
 +        let Some(rates) = account.rates.clone() else {
 +            let model = requested.unwrap_or_else(|| account.model.clone());
 +            let mut unrated = self.attempt(account, thread, request_id, attempt, model, None, None);
-+            unrated.subscription = request.headers.contains_key("chatgpt-account-id");
++            unrated.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
++                && request.headers.contains_key("chatgpt-account-id");
 +            return Ok(Some(Box::new(unrated)));
 +        };
 +        let model = account.model.clone();
@@ -50336,10 +50337,10 @@ index 0000000000000000000000000000000000000000..63e1bcc552f22dbd5faaab96d7d68d1e
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6759a568402f66e72f97407a8dd455fa2d4e2687
+index 0000000000000000000000000000000000000000..a4c8a05a80a08d0f9a28d1055c12fd94462b945d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1251 @@
+@@ -0,0 +1,1257 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -51127,17 +51128,23 @@ index 0000000000000000000000000000000000000000..6759a568402f66e72f97407a8dd455fa
 +        sink.lock().unwrap().push(payload["cost"].clone());
 +    }));
 +    request.headers.insert("thread-id", "main".parse().unwrap());
-+    for login in [false, true] {
++    for (login, url) in [
++        (false, SUBSCRIPTION_RESPONSES_URL),
++        (true, "http://localhost/responses"),
++        (true, SUBSCRIPTION_RESPONSES_URL),
++    ] {
 +        if login {
 +            request
 +                .headers
 +                .insert("chatgpt-account-id", "fixture".parse().unwrap());
 +        }
++        request.url = url.into();
 +        drop(accounts.before_send(&mut request, Some(&body)).unwrap());
 +    }
 +    assert_eq!(
 +        *notified.lock().unwrap(),
 +        [
++            json!({"microusd": null, "basis": "unpriced"}),
 +            json!({"microusd": null, "basis": "unpriced"}),
 +            json!({"microusd": 0, "basis": "included_subscription"}),
 +        ]
@@ -106108,10 +106115,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01c1d35f0308424094126e477ef8217d814fd3fc
+index 0000000000000000000000000000000000000000..23f0321d7d9ab1f58fd52c673af39129688e2450
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2915 @@
+@@ -0,0 +1,2914 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -106537,12 +106544,12 @@ index 0000000000000000000000000000000000000000..01c1d35f0308424094126e477ef8217d
 +                .sort_by_key(|release| std::cmp::Reverse(SemanticVersion::parse(&release.version)));
 +            let Some(newest) = releases
 +                .iter()
-+                .find(|release| release.blocked.is_none())
-+                .or(releases.first())
++                .position(|release| release.blocked.is_none())
++                .or((!releases.is_empty()).then_some(0))
 +            else {
 +                continue;
 +            };
-+            let description = newest.description.clone().unwrap_or_default();
++            let description = releases[newest].description.clone().unwrap_or_default();
 +            let lowered = id.to_lowercase();
 +            let mut name = lowered.chars();
 +            let rank = if query.is_empty() || lowered.starts_with(&query) {
@@ -106560,24 +106567,23 @@ index 0000000000000000000000000000000000000000..01c1d35f0308424094126e477ef8217d
 +            } else {
 +                continue;
 +            };
-+            packages.push((
-+                rank,
-+                json!({
-+                    "id": id,
-+                    "latest": newest.version,
-+                    "description": description,
-+                    "support": newest.support,
-+                    "versions": releases.iter().map(|release| json!({"version": release.version,
-+                        "blocked": release.blocked})).collect::<Vec<_>>(),
-+                    "installed": lock.packages.get(&id).map(|package| &package.version),
-+                }),
-+            ));
++            packages.push((rank, id, newest, description, releases));
 +        }
-+        packages.sort_by_key(|(rank, _)| *rank);
++        packages.sort_by_key(|(rank, ..)| *rank);
 +        packages.truncate(200);
 +        let packages = packages
 +            .into_iter()
-+            .map(|(_, package)| package)
++            .map(|(_, id, newest, description, releases)| {
++                json!({
++                    "id": id,
++                    "latest": releases[newest].version,
++                    "description": description,
++                    "support": releases[newest].support,
++                    "versions": releases.iter().map(|release| json!({"version": release.version,
++                        "blocked": release.blocked})).collect::<Vec<_>>(),
++                    "installed": lock.packages.get(&id).map(|package| &package.version),
++                })
++            })
 +            .collect::<Vec<_>>();
 +        Ok(json!({"index": index, "packages": packages}))
 +    }
@@ -140709,10 +140715,10 @@ index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b798ae8839045059f57c78855cd3b13b6bbdabeb
+index 0000000000000000000000000000000000000000..d7cb77cef6bee7fa80ccee781d283820bbd674e7
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,432 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -141045,7 +141051,6 @@ index 0000000000000000000000000000000000000000..b798ae8839045059f57c78855cd3b13b
 +        std::mem::take(&mut self.draft.mod_draft.events)
 +    }
 +
-+    /// The welcome site's composer state, where an open slash, file or mention popup is a draft.
 +    pub(crate) fn mod_welcome_composer(
 +        &self,
 +    ) -> Option<crate::empty_state_animation::ComposerState> {
@@ -143789,10 +143794,10 @@ index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1e
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609dc79ac89b
+index 0000000000000000000000000000000000000000..1f32d56d82aa38ead00e4be56a515a8382d0cb61
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,694 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -144438,7 +144443,6 @@ index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609d
 +    })
 +}
 +
-+/// Whether Up/Down would move past the document's first or last line.
 +pub(crate) fn at_edge(id: &str, key: DocumentKey) -> bool {
 +    documents().get(id).is_some_and(|document| match key {
 +        DocumentKey::Up => document.view.cursor == 0,
@@ -152578,10 +152582,10 @@ index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0aa7e63ca
+index 0000000000000000000000000000000000000000..8e6d4bc2bd1dc7071b56503b9db69e493aa663a0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4860 @@
+@@ -0,0 +1,4868 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -156498,19 +156502,20 @@ index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0
 +                    &target,
 +                    key.code == KeyCode::Down,
 +                ) || repeated
-+                    || move_focus(&mut interaction, &focused, key.code == KeyCode::Down) =>
++                    || move_focus(&mut interaction, &focused, key.code == KeyCode::Down)
++                    || stepped(&target) =>
 +            {
 +                return Some(ModInput::Consumed);
 +            }
-+            (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE)
-+                if matches!(target, ComponentTarget::Select { .. }) =>
-+            {
-+                step(
-+                    &mut interaction,
-+                    focused,
-+                    &target,
-+                    key.code == KeyCode::Right,
-+                );
++            (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE) if stepped(&target) => {
++                if matches!(target, ComponentTarget::Select { .. }) {
++                    step(
++                        &mut interaction,
++                        focused,
++                        &target,
++                        key.code == KeyCode::Right,
++                    );
++                }
 +                return Some(ModInput::Consumed);
 +            }
 +            _ => {}
@@ -156591,7 +156596,16 @@ index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0
 +    modal.then_some(ModInput::Consumed)
 +}
 +
-+/// Held navigation and editing keys repeat; Enter, Space, Tab and Esc act once per press.
++fn stepped(target: &ComponentTarget) -> bool {
++    matches!(
++        target,
++        ComponentTarget::Select { .. }
++            | ComponentTarget::ListRow { .. }
++            | ComponentTarget::Multiselect { .. }
++            | ComponentTarget::Pane
++    )
++}
++
 +fn repeats(key: KeyEvent) -> bool {
 +    key.kind == KeyEventKind::Repeat
 +        && match key.code {
@@ -156615,7 +156629,6 @@ index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0
 +        }
 +}
 +
-+/// Moves within a list or scrolled pane; false at its edge or for a control without rows.
 +fn within(
 +    interaction: &mut Interaction,
 +    id: String,
@@ -156645,7 +156658,6 @@ index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0
 +    true
 +}
 +
-+/// Focuses the nearest control past the edge, skipping key panes and terminals, which keep every key.
 +fn move_focus(interaction: &mut Interaction, focused: &str, forward: bool) -> bool {
 +    let Some(index) = interaction.order.iter().position(|id| id == focused) else {
 +        return false;
@@ -157694,10 +157706,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..09a633e0ce57913de5e82a5fed48612a636af3bd
+index 0000000000000000000000000000000000000000..35278ada69f7aa7e365d2dfd7893b4b058ef7932
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2085 @@
+@@ -0,0 +1,2115 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -158197,6 +158209,36 @@ index 0000000000000000000000000000000000000000..09a633e0ce57913de5e82a5fed48612a
 +    assert_eq!(interaction.focused.as_deref(), Some("filter"));
 +    assert_eq!(interaction.input_values["filter"], "q");
 +    drop(interaction);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn a_focused_list_outside_a_dialog_keeps_arrows_at_its_edges() {
++    let snapshot = snapshot(
++        serde_json::json!({"sidebar_width":30,"sites":{"sidebar":{"components":[
++            {"type":"list","id":"rows","label":"Rows","rows":[
++                {"value":"a","label":"A","spans":[{"text":"A"}]},
++                {"value":"b","label":"B","spans":[{"text":"B"}]}],"action":{"command":"m:c","args":"pick"}}
++        ]}}}),
++    );
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 100, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    assert!(focus("rows"));
++    for code in [
++        KeyCode::Up,
++        KeyCode::Left,
++        KeyCode::Right,
++        KeyCode::Down,
++        KeyCode::Down,
++    ] {
++        assert!(matches!(
++            input(KeyEvent::new(code, KeyModifiers::NONE)),
++            Some(ModInput::Consumed)
++        ));
++    }
++    assert_eq!(INTERACTION.locked().selected.get("rows").copied(), Some(1));
 +    preview(ModViewSnapshot::default());
 +}
 +

@@ -785,17 +785,23 @@ fn unrated_requests_are_included_only_on_a_chatgpt_login() {
         sink.lock().unwrap().push(payload["cost"].clone());
     }));
     request.headers.insert("thread-id", "main".parse().unwrap());
-    for login in [false, true] {
+    for (login, url) in [
+        (false, SUBSCRIPTION_RESPONSES_URL),
+        (true, "http://localhost/responses"),
+        (true, SUBSCRIPTION_RESPONSES_URL),
+    ] {
         if login {
             request
                 .headers
                 .insert("chatgpt-account-id", "fixture".parse().unwrap());
         }
+        request.url = url.into();
         drop(accounts.before_send(&mut request, Some(&body)).unwrap());
     }
     assert_eq!(
         *notified.lock().unwrap(),
         [
+            json!({"microusd": null, "basis": "unpriced"}),
             json!({"microusd": null, "basis": "unpriced"}),
             json!({"microusd": 0, "basis": "included_subscription"}),
         ]

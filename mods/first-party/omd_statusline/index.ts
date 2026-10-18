@@ -320,13 +320,13 @@ export default function activate(api: ModAPI) {
         .map((spans, index): TerminalComponent => ({ type: 'line', id: `omd_statusline_preview_${index}`, label: 'Preview', spans: spans.map(({ link: _link, ...span }) => span) })) },
       select('placement', 'Placement', state.draft.placement, ['below', 'above']),
       select('preset', 'Preset', state.draft.preset, ['compact', 'detailed', 'custom']),
-      { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'toggle' } },
-      { type: 'box', id: 'omd_statusline_order', label: 'Order', style: { direction: 'row', gap: 1 }, children: [button('move up', 'Earlier'), button('move down', 'Later'), button('line', 'Next line')] },
+      { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'pick' } },
+      { type: 'box', id: 'omd_statusline_order', label: 'Order', style: { direction: 'row', gap: 1 }, children: [button('toggle', 'Show/hide'), button('move up', 'Earlier'), button('move down', 'Later'), button('line', 'Next line')] },
       select('glyphs', 'Glyphs', state.draft.glyphs, ['unicode', 'ascii']),
       select('bars', 'Progress bars', String(state.draft.bars), ['true', 'false']),
       { type: 'input', id: 'omd_statusline_thresholds', label: 'Thresholds (warn,alert)', value: state.draft.thresholds, action: { command: COMMAND, args: 'set thresholds' } },
       { type: 'box', id: 'omd_statusline_actions', label: 'Actions', style: { direction: 'row', gap: 1 }, children: [button('apply', 'Apply'), button('cancel', 'Cancel'), button('reset', 'Reset')] },
-      { type: 'text', id: 'omd_statusline_keys', label: 'Keys', text: '↑↓ move · space shows/hides a segment · ←→ change · enter runs · esc closes', tone: 'muted' },
+      { type: 'text', id: 'omd_statusline_keys', label: 'Keys', text: '↑↓ move · ←→ change · enter runs · esc closes', tone: 'muted' },
     ] };
   };
 

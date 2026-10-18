@@ -423,12 +423,12 @@ impl ModStore {
                 .sort_by_key(|release| std::cmp::Reverse(SemanticVersion::parse(&release.version)));
             let Some(newest) = releases
                 .iter()
-                .find(|release| release.blocked.is_none())
-                .or(releases.first())
+                .position(|release| release.blocked.is_none())
+                .or((!releases.is_empty()).then_some(0))
             else {
                 continue;
             };
-            let description = newest.description.clone().unwrap_or_default();
+            let description = releases[newest].description.clone().unwrap_or_default();
             let lowered = id.to_lowercase();
             let mut name = lowered.chars();
             let rank = if query.is_empty() || lowered.starts_with(&query) {
@@ -446,24 +446,23 @@ impl ModStore {
             } else {
                 continue;
             };
-            packages.push((
-                rank,
-                json!({
-                    "id": id,
-                    "latest": newest.version,
-                    "description": description,
-                    "support": newest.support,
-                    "versions": releases.iter().map(|release| json!({"version": release.version,
-                        "blocked": release.blocked})).collect::<Vec<_>>(),
-                    "installed": lock.packages.get(&id).map(|package| &package.version),
-                }),
-            ));
+            packages.push((rank, id, newest, description, releases));
         }
-        packages.sort_by_key(|(rank, _)| *rank);
+        packages.sort_by_key(|(rank, ..)| *rank);
         packages.truncate(200);
         let packages = packages
             .into_iter()
-            .map(|(_, package)| package)
+            .map(|(_, id, newest, description, releases)| {
+                json!({
+                    "id": id,
+                    "latest": releases[newest].version,
+                    "description": description,
+                    "support": releases[newest].support,
+                    "versions": releases.iter().map(|release| json!({"version": release.version,
+                        "blocked": release.blocked})).collect::<Vec<_>>(),
+                    "installed": lock.packages.get(&id).map(|package| &package.version),
+                })
+            })
             .collect::<Vec<_>>();
         Ok(json!({"index": index, "packages": packages}))
     }

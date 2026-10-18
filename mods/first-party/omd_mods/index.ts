@@ -268,7 +268,7 @@ export default function activate(api: ModAPI) {
       ...(state.notice ? [line('notice', 'Result', state.notice, 'attention', 4)] : []),
       ...(state.review ? [line('review', 'Review', reviewText(state.review), 'accent', 8), button('apply', 'Apply'), button('cancel', 'Cancel')] : []),
       ...(current ? details(current) : state.directory ? directory(state) : listing(state)),
-      line('hint', 'Keys', current ? '↑↓ move · ←→ change · enter saves · esc close' : HINT, 'muted', 1),
+      line('hint', 'Keys', current ? '↑↓ move · ←→ change · enter saves · esc close' : state.directory ? 'type to search · ↑↓ move · enter picks · esc close' : HINT, 'muted', 1),
     ];
     return { type: 'dialog', id: 'omd_mods_dialog', label: 'Oh My Diff mods', title: current ? friendly(current.id) : state.directory ? 'Mod directory' : 'Mods', children };
   };
