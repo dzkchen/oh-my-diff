@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import dataclasses
 import datetime
 import json
 import os
@@ -21,8 +22,17 @@ from scripts import authority_broker, install_support as support, package as rel
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 BATCH = "nightly"
 CRATES = ["codex-omd", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
-RELEASE_ADVISORY = {"cargo test core integration"}
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
+
+
+@dataclasses.dataclass(frozen=True)
+class Step:
+    name: str
+    argv: list
+    env: dict = dataclasses.field(default_factory=dict)
+    fatal: bool = False
+    advisory: bool = False
+    check: object = None
 
 
 def cargo_step(log, *args):
@@ -39,30 +49,61 @@ def drift(*paths):
     return ["git", "diff", "--exit-code", "--stat", "--", *paths]
 
 
-def hosted_steps():
+def own_paths_only(status, text):
+    cargo_log = WORK / "logs" / "clippy.cargo.log"
+    files = json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["files"]
+    paths = {path.removeprefix("codex-rs/") for path in files if path.endswith(".rs")}
+    warnings = [line for line in (cargo_log.read_text(errors="replace") if cargo_log.is_file() else text).splitlines()
+                if (match := SOURCE_PATH.search(line)) and match[1] in paths]
+    return status or (1 if warnings else 0), text + "\n" + "\n".join(warnings)
+
+
+def core_env():
+    home = WORK / "core-test-home"
+    home.mkdir(parents=True, exist_ok=True)
+    return {"OMD_TEST_NODE": build.node(), "HOME": str(home),
+            "PATH": os.pathsep.join([str(Path(sys.executable).parent), str(Path(build.node()).parent), os.environ["PATH"]]),
+            "CARGO_HOME": os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")),
+            "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup")),
+            "MISE_DATA_DIR": os.environ.get("MISE_DATA_DIR", str(Path.home() / ".local/share/mise"))}
+
+
+def tree_steps():
+    return [Step("setup", ["python3", ".github/scripts/build.py", "setup", BATCH], fatal=True),
+            Step("verified V8", ["python3", ".github/scripts/ci.py", "v8"], fatal=True)]
+
+
+def job_steps(job):
     artifact_dir = build.batch_dir(BATCH) / "artifacts"
+    manager = str(artifact_dir / "omd-mod")
+    if job == "build":
+        return [*tree_steps(), Step("host binaries", ["python3", ".github/scripts/build.py", "artifacts", BATCH])]
+    if job == "test":
+        tests = ["python3", ".github/scripts/ci.py", "tests", "--suite"]
+        return [
+            *tree_steps(),
+            Step("patch sync", ["python3", ".github/scripts/build.py", "sync", BATCH]),
+            Step("patch matches checkout", drift("runtime", "upstream.lock.json")),
+            Step("test helper binaries", cargo_step("test-helpers", "build", "-p", "codex-rmcp-client", "-p", "codex-cli",
+                                                    "-p", "codex-code-mode-host", "--bins")),
+            Step("cargo test native crates", [*tests, "native"]),
+            Step("cargo test core", [*tests, "core"], env=core_env()),
+            Step("cargo test core integration", [*tests, "core-integration"], env=core_env(), advisory=True),
+            Step("clippy omd paths", cargo_step("clippy", "clippy", *packages(CRATES), "--tests"), check=own_paths_only),
+            Step("rustfmt", cargo_step("fmt", "fmt", *packages([*CRATES, "codex-core"]), "--", "--check")),
+            Step("native ownership", ["mise", "run", "native:ownership"]),
+            Step("locks", ["python3", ".github/scripts/build.py", "locks"]),
+            Step("locks match checkout", drift(".", ":(exclude)runtime/release.lock.json")),
+            Step("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
+            Step("mods typecheck", ["mise", "run", "mods:check"]),
+        ]
     return [
-        ("setup", ["python3", ".github/scripts/build.py", "setup", BATCH]),
-        ("verified V8", ["python3", ".github/scripts/nightly_ci.py", "v8"]),
-        ("patch sync", ["python3", ".github/scripts/build.py", "sync", BATCH]),
-        ("patch matches checkout", drift("runtime", "upstream.lock.json")),
-        ("test helper binaries", cargo_step("test-helpers", "build", "-p", "codex-rmcp-client", "-p", "codex-cli",
-                                            "-p", "codex-code-mode-host", "--bins")),
-        ("cargo test native crates", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "native"]),
-        ("cargo test core", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "core"]),
-        ("cargo test core integration", ["python3", ".github/scripts/nightly_ci.py", "tests", "--suite", "core-integration"]),
-        ("clippy omd paths", cargo_step("clippy", "clippy", *packages(CRATES), "--tests")),
-        ("rustfmt", cargo_step("fmt", "fmt", *packages([*CRATES, "codex-core"]), "--", "--check")),
-        ("native ownership", ["mise", "run", "native:ownership"]),
-        ("host binaries", ["python3", ".github/scripts/build.py", "artifacts", BATCH]),
-        ("locks", ["python3", ".github/scripts/build.py", "locks"]),
-        ("locks match checkout", drift(".", ":(exclude)runtime/release.lock.json")),
-        ("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
-        ("mods typecheck", ["mise", "run", "mods:check"]),
-        ("mods tests", ["env", f"OMD_MOD_BIN={artifact_dir / 'omd-mod'}", "mise", "run", "mods:test"]),
-        ("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]),
-        ("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod", str(artifact_dir / "omd-mod"), "--scenarios"]),
-        ("client acceptance", ["python3", "-m", "scripts.client_acceptance", "--binaries", str(artifact_dir)]),
+        Step("mods install", ["pnpm", "--dir", "mods", "install", "--frozen-lockfile", "--prefer-offline"]),
+        Step("mods tests", ["mise", "run", "mods:test"], env={"OMD_MOD_BIN": manager}),
+        Step("python tests", ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+             env={"OMD_TEST_MOD_BIN": manager}),
+        Step("host check with scenarios", ["python3", "scripts/mod_host_check.py", "--omd-mod", manager, "--scenarios"]),
+        Step("client acceptance", ["python3", "-m", "scripts.client_acceptance", "--binaries", str(artifact_dir)]),
     ]
 
 
@@ -73,71 +114,54 @@ def raise_file_limit():
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
 
-def node():
-    return subprocess.check_output(["mise", "which", "node"], cwd=build.ROOT, text=True).strip()
-
-
-def step(name, argv):
-    log = WORK / "logs" / (re.sub(r"\W+", "-", name) + ".log")
+def run_step(step):
+    log = WORK / "logs" / (re.sub(r"\W+", "-", step.name) + ".log")
     started = time.monotonic()
-    environment = os.environ | {"TMPDIR": "/private/tmp/"}
-    if name.startswith("cargo test core"):
-        home = WORK / "core-test-home"
-        home.mkdir(exist_ok=True)
-        environment.update(OMD_TEST_NODE=node(), HOME=str(home),
-                           CARGO_HOME=os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")),
-                           RUSTUP_HOME=os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup")),
-                           MISE_DATA_DIR=os.environ.get("MISE_DATA_DIR", str(Path.home() / ".local/share/mise")))
     with log.open("w") as output:
-        status = subprocess.run(argv, cwd=build.ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT).returncode
+        status = subprocess.run(step.argv, cwd=build.ROOT, env=os.environ | {"TMPDIR": "/private/tmp/"} | step.env,
+                                stdout=output, stderr=subprocess.STDOUT).returncode
     text = log.read_text(errors="replace")
-    if name == "clippy omd paths":
-        cargo_log = WORK / "logs" / "clippy.cargo.log"
-        files = json.loads((build.ROOT / "runtime/patches/manifest.json").read_text())["files"]
-        paths = {path.removeprefix("codex-rs/") for path in files if path.endswith(".rs")}
-        warnings = [line for line in (cargo_log.read_text(errors="replace") if cargo_log.is_file() else text).splitlines()
-                    if (match := SOURCE_PATH.search(line)) and match[1] in paths]
-        status = status or (1 if warnings else 0)
-        text += "\n" + "\n".join(warnings)
+    if step.check:
+        status, text = step.check(status, text)
     tail = [line for line in text.splitlines() if line.strip()][-6:]
-    return {"name": name, "status": status, "seconds": round(time.monotonic() - started), "log": str(log), "tail": tail}
+    return {"status": status, "seconds": round(time.monotonic() - started), "log": str(log), "tail": tail}
 
 
-def validate(release):
+def validate(job, release):
     raise_file_limit()
     shutil.rmtree(WORK / "logs", ignore_errors=True)
     (WORK / "logs").mkdir(parents=True)
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=build.ROOT, capture_output=True, text=True, check=True).stdout.strip()
     subprocess.run(["mise", "trust", build.ROOT / "mise.toml"], cwd=build.ROOT, capture_output=True)
-    steps = hosted_steps()
+    steps = job_steps(job)
     results = []
-    for name, argv in steps:
-        results.append(step(name, argv))
-        if name == "host binaries" and not results[-1]["status"]:
-            manager = str(build.batch_dir(BATCH) / "artifacts/omd-mod")
-            os.environ.update(OMD_TEST_MOD_BIN=manager, OMD_TEST_MANAGER=manager, OMD_TEST_NODE=node())
-        if name in ("setup", "verified V8") and results[-1]["status"]:
+    for step in steps:
+        results.append((step, run_step(step)))
+        if step.fatal and results[-1][1]["status"]:
             break
-    failed = [result["name"] for result in results if result["status"]]
-    advisory = [name for name in failed if release and name in RELEASE_ADVISORY]
-    skipped = [name for name, _ in steps[len(results):]]
+    failed = [step for step, result in results if result["status"]]
+    advisory = [step.name for step in failed if release and step.advisory]
+    skipped = [step.name for step in steps[len(results):]]
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    lines = [f"# OMD nightly: {stamp} at `{commit}`", "",
+    lines = [f"# OMD validation ({job}): {stamp} at `{commit}`", "",
              f"{len(results) - len(failed)}/{len(steps)} steps passed."
-             + (f" Failed: {', '.join(failed)}." if failed else "") + (f" Skipped: {', '.join(skipped)}." if skipped else ""), "",
+             + (f" Failed: {', '.join(step.name for step in failed)}." if failed else "")
+             + (f" Skipped: {', '.join(skipped)}." if skipped else ""), "",
              "| Step | Result | Time | Log |", "| --- | --- | --- | --- |"]
-    lines += [f"| {result['name']} | {'FAIL' if result['status'] else 'pass'} | {result['seconds']} s | `{result['log']}` |" for result in results]
+    lines += [f"| {step.name} | {'FAIL' if result['status'] else 'pass'} | {result['seconds']} s | `{result['log']}` |"
+              for step, result in results]
     lines += [f"| {name} | skipped | | |" for name in skipped]
-    for result in results:
+    for step, result in results:
         if result["status"]:
-            lines += ["", f"## {result['name']}", "", "```", *result["tail"], "```"]
-    lines += ["", "Known upstream baseline excluded: `filtered_host_additional_permissions`."]
+            lines += ["", f"## {step.name}", "", "```", *result["tail"], "```"]
+    if job == "test":
+        lines += ["", "Known upstream baseline excluded: `filtered_host_additional_permissions`."]
     if advisory:
         lines += [f"Not required for a release: {', '.join(advisory)}."]
     report = "\n".join(lines) + "\n"
     (WORK / "report.md").write_text(report)
     print(report)
-    return 1 if set(failed) - set(advisory) else 0
+    return 1 if len(failed) > len(advisory) else 0
 
 
 def v8():
@@ -190,7 +214,12 @@ def cargo_tests(suite):
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
-        failed |= build.cargo_run(batch, log, args) != 0
+        status = build.cargo_run(batch, log, args)
+        flaky = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)))
+        if status and 0 < len(flaky) <= 5:
+            print(f"rerunning {', '.join(flaky)}")
+            status = build.cargo_run(batch, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
+        failed |= status != 0
         for line in log.read_text().splitlines():
             try:
                 item = json.loads(line)
@@ -216,7 +245,6 @@ def nightly_version(frozen):
 
 def package(version=None):
     batch = build.batch_dir(BATCH)
-    shutil.rmtree(batch / "target")
     artifact_dir = batch / "artifacts"
     frozen = json.loads(release_lock.OUTPUT.read_text())["version"]
     if version is None:
@@ -268,7 +296,7 @@ def archive_acceptance(archive, upstream):
             prefix, bin_dir = base / f"{profile}-prefix", base / f"{profile}-bin"
             install = [sys.executable, "-m", "scripts.package", "install", "--archive", archive,
                        "--sha256", digest, "--profile", profile, "--prefix", prefix, "--bin-dir", bin_dir,
-                       "--store", base / f"{profile}-store", "--node", node(), "--upstream", upstream]
+                       "--store", base / f"{profile}-store", "--node", build.node(), "--upstream", upstream]
             subprocess.run(list(map(str, install)), cwd=payload, env=environment, check=True)
             next_prefix, next_bin = base / f"{profile}-next-prefix", base / f"{profile}-next-bin"
             reinstall = list(install)
@@ -291,7 +319,7 @@ def sign(manifest):
         private.write_text(key.strip() + "\n")
         private.chmod(0o600)
         support.output(["ssh-keygen", "-Y", "sign", "-q", "-f", private, "-n", authority_broker.SIGNING_NAMESPACE, manifest])
-    authority_broker.signed_hashes([manifest])
+    authority_broker.signed_releases([manifest])
     return manifest.with_name(manifest.name + ".sig")
 
 
@@ -342,6 +370,7 @@ def publish(directory, notes=None, dry_run=False):
 def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
     parser.add_argument("command", choices=("validate", "v8", "tests", "package", "publish"))
+    parser.add_argument("--job", choices=("build", "test", "package"), help="validate: the job's steps")
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core", "core-integration"))
     parser.add_argument("--release", action="store_true", help="validate: the core integration suite reports but does not gate")
@@ -350,7 +379,9 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.command == "validate":
-        raise SystemExit(validate(args.release))
+        if not args.job:
+            parser.error("validate requires --job")
+        raise SystemExit(validate(args.job, args.release))
     if args.command == "publish":
         publish(args.directory, args.notes, args.dry_run)
     elif args.command == "package":

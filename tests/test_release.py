@@ -26,7 +26,10 @@ class ReleaseTests(unittest.TestCase):
                                      LOCK=root / "lock.json"), \
                     mock.patch.object(release, "run", return_value="README.md\nCHANGELOG.md"):
                 release.check("1.0.0")
-                self.assertIn("### Fixed\n\n- Update path", release.notes(entries, "1.0.0"))
+                notes = release.notes(entries, "1.0.0")
+                self.assertIn("### Fixed\n\n- Update path", notes)
+                self.assertIn("labeled beta", notes)
+                self.assertIn("v1.0.0/install.sh | sh -s -- --profile full", notes)
                 with self.assertRaisesRegex(SystemExit, "release.lock.json is 1.0.0, not 1.0.1"):
                     release.check("1.0.1")
                 (root / "README.md").write_text("[guide](docs/missing.md) [first](CHANGELOG.md#100--2026-10-17) [gone](CHANGELOG.md#nope) <a href=\"docs/html.md\">x</a>\n")

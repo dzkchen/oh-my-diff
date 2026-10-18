@@ -53,8 +53,16 @@ def cdhash(path):
     return match.group(1)
 
 
-def signed_hashes(manifests):
-    hashes = {}
+def version_key(value):
+    found = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?", value)
+    if not found:
+        raise ValueError(f"malformed release version {value!r}")
+    pre = tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in found[4].split(".")) if found[4] else ()
+    return int(found[1]), int(found[2]), int(found[3]), not found[4], pre
+
+
+def signed_releases(manifests):
+    releases = []
     for manifest in map(Path, manifests):
         signature = Path(f"{manifest}.sig")
         if not manifest.is_file() or not signature.is_file():
@@ -69,9 +77,29 @@ def signed_hashes(manifests):
                                            check=False).returncode == 0
         if not verified:
             raise ValueError(f"{manifest} is not signed by the Oh My Diff release key")
-        for name, value in json.loads(body)["artifacts"].items():
+        release = json.loads(body)
+        version_key(release["version"])
+        releases.append(release)
+    return releases
+
+
+def signed_hashes(releases):
+    hashes = {}
+    for release in releases:
+        for name, value in release["artifacts"].items():
             hashes.setdefault(name, set()).add(value)
     return hashes
+
+
+def older(candidate, current):
+    first, second = version_key(candidate), version_key(current)
+    if first[:3] != second[:3]:
+        return first[:3] < second[:3]
+    return ("-nightly." in candidate) == ("-nightly." in current) and first < second
+
+
+def newest(releases):
+    return max(releases, key=lambda release: version_key(release["version"]))
 
 
 def signed_bytes(path, hashes, role=None):
@@ -132,17 +160,26 @@ def write_root(path, data, mode):
     os.replace(temporary, path)
 
 
-def write_pins(binaries, manifests, add=False):
-    pins = set(signed_cdhashes(binaries, signed_hashes(manifests)))
+def write_pins(binaries, manifests, tooling, add=False):
+    releases = signed_releases(manifests)
+    latest, current = newest(releases), json.loads((ROOT / "pins.json").read_text())
+    if older(latest["version"], current["version"]):
+        raise ValueError(f"the authority broker pins {current['version']}; refusing the older {latest['version']}. "
+                         "Reinstall the broker to pin an older release on purpose")
+    pins = set(signed_cdhashes(binaries, signed_hashes(releases)))
     if add:
-        pins.update(json.loads((ROOT / "pins.json").read_text())["cdhashes"])
+        pins.update(current["cdhashes"])
+    tooling_data = Path(tooling).read_bytes()
+    if hashlib.sha256(tooling_data).hexdigest() == latest["artifacts"].get("authority_broker.py"):
+        write_root(COPY, tooling_data, 0o644)
     pins = sorted(pins)
-    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins}).encode(), 0o644)
+    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins, "version": latest["version"]}).encode(), 0o644)
     return pins
 
 
 def install(helper, tooling, binaries, manifests):
-    hashes = signed_hashes(manifests)
+    releases = signed_releases(manifests)
+    hashes = signed_hashes(releases)
     helper_data, tooling_data = signed_bytes(helper, hashes, "omd-broker"), signed_bytes(tooling, hashes, "authority_broker.py")
     signed_cdhashes([helper], hashes)
     pins = sorted(set(signed_cdhashes(binaries, hashes)))
@@ -157,7 +194,7 @@ def install(helper, tooling, binaries, manifests):
     os.chmod(ROOT, 0o700)
     HELPER.parent.mkdir(mode=0o755, exist_ok=True)
     write_root(HELPER, helper_data, 0o755)
-    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins}).encode(), 0o644)
+    write_root(ROOT / "pins.json", json.dumps({"cdhashes": pins, "version": newest(releases)["version"]}).encode(), 0o644)
     for name, rule in RIGHTS.items():
         run("/usr/bin/security", "authorizationdb", "write", name, stdin=plistlib.dumps(rule))
     daemon = {"Label": LABEL, "ProgramArguments": [str(HELPER)], "UserName": ACCOUNT, "GroupName": ACCOUNT,
@@ -227,10 +264,10 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     install_parser = commands.add_parser("install", help="create the broker account, daemon and rights (sudo)")
     install_parser.add_argument("--helper", type=Path, required=True)
-    install_parser.add_argument("--tooling", type=Path, default=Path(__file__).resolve(),
-                                help="authority_broker.py to install as the root-owned copy; must be in a signed manifest")
-    pin_parser = commands.add_parser("pin", help="replace the pinned host binaries (sudo)")
+    pin_parser = commands.add_parser("pin", help="replace the pinned host binaries; refreshes the root-owned tooling (sudo)")
     for command in (install_parser, pin_parser):
+        command.add_argument("--tooling", type=Path, default=Path(__file__).resolve(),
+                             help="authority_broker.py for the root-owned copy; must be in the newest signed manifest")
         command.add_argument("--pin", type=Path, action="append", required=True)
         command.add_argument("--manifest", type=Path, action="append", required=True,
                              help="signed omd-release.json listing the helper and pinned binaries")
@@ -247,7 +284,7 @@ def main(argv=None):
         return status()
     if os.geteuid() != 0:
         arguments = [*(sys.argv[1:] if argv is None else argv)]
-        if args.command == "install":
+        if args.command in ("install", "pin"):
             arguments.append(f"--tooling={args.tooling}")
         script = COPY if trusted(COPY) else Path(__file__).resolve()
         elevated = subprocess.run(["/usr/bin/sudo", "/usr/bin/python3", "-I", str(script), *map(str, arguments)],
@@ -259,7 +296,7 @@ def main(argv=None):
     if args.command == "install":
         return install(args.helper.resolve(), args.tooling.resolve(), [path.resolve() for path in args.pin], args.manifest)
     if args.command == "pin":
-        return {"pins": write_pins([path.resolve() for path in args.pin], args.manifest, args.add)}
+        return {"pins": write_pins([path.resolve() for path in args.pin], args.manifest, args.tooling.resolve(), args.add)}
     if args.command.startswith("policy-"):
         return policy(args.command, getattr(args, "source", None))
     return reset() if args.command == "reset" else uninstall()

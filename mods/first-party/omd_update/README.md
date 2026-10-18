@@ -28,7 +28,7 @@ Also available from `omd update` in a shell. See [Update](../../../docs/install.
 | --- | --- | --- |
 | `checks` | `on` | Check for new releases (`on` or `off`). |
 | `auto` | `off` | Install updates automatically (`on` or `off`). |
-| `channel` | `stable` | `stable`, `beta` or `nightly`. |
+| `channel` | `stable` | `stable`, `prerelease` or `nightly`. |
 | `cadence` | `daily` | Check `daily` or `weekly`. |
 | `pin` | empty | Stay on an exact version. |
 
@@ -37,5 +37,5 @@ Also available from `omd update` in a shell. See [Update](../../../docs/install.
 - A running session is never replaced. Updates install when OMD next starts with no other session open.
 - Automatic updates skip mods you installed yourself.
 - An update that fails once isn't retried automatically.
-- Nightly is opt-in. Stable and beta never offer it.
+- Nightly is opt-in. Stable and prerelease never offer it.
 - `--no-alt-screen` sessions show no welcome notice. `/update` still works.

@@ -34,7 +34,7 @@ class SignedReleaseAnchorTest(unittest.TestCase):
             for path in (helper, codex, stray):
                 path.write_bytes(path.name.encode())
             artifacts = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (helper, codex)}
-            body = json.dumps({"schema": 1, "artifacts": artifacts}).encode()
+            body = json.dumps({"schema": 1, "version": "1.0.0", "artifacts": artifacts}).encode()
             manifest = signed(key, base / "omd-release.json", body)
             forged = signed(other_key, base / "forged/omd-release.json", body)
             missing = base / "missing/omd-release.json"
@@ -43,8 +43,6 @@ class SignedReleaseAnchorTest(unittest.TestCase):
             with mock.patch.object(authority_broker, "RELEASE_KEY", public), \
                     mock.patch.object(authority_broker, "cdhash", side_effect=AssertionError("cdhash before the signature check")), \
                     mock.patch.object(authority_broker, "create_account", side_effect=AssertionError("deployed unsigned")):
-                with self.assertRaisesRegex(ValueError, "stray is not listed"):
-                    authority_broker.write_pins([codex, stray], [manifest])
                 with self.assertRaisesRegex(ValueError, "stray is not listed"):
                     authority_broker.install(stray, helper, [codex], [manifest])
                 with self.assertRaisesRegex(ValueError, "codex is not listed as omd-broker"):
@@ -56,10 +54,35 @@ class SignedReleaseAnchorTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, error):
                         authority_broker.install(helper, helper, [codex], [unsigned])
             hashed = []
+            tooling, copy = base / "tooling.py", base / "tools/authority_broker.py"
+            tooling.write_bytes(b"new tooling")
+            copy.parent.mkdir()
+            copy.write_bytes(b"old tooling")
+            (base / "pins.json").write_text(json.dumps({"cdhashes": ["old"], "version": "1.0.0"}))
+            newer = dict(artifacts, **{"authority_broker.py": hashlib.sha256(b"new tooling").hexdigest()})
+            update = signed(key, base / "update/omd-release.json",
+                            json.dumps({"schema": 1, "version": "1.0.1", "artifacts": newer}).encode())
+            older = signed(key, base / "older/omd-release.json",
+                           json.dumps({"schema": 1, "version": "1.0.0-rc.1", "artifacts": newer}).encode())
             with mock.patch.object(authority_broker, "RELEASE_KEY", public), \
-                    mock.patch.object(authority_broker, "ROOT", base), mock.patch("os.chown"), \
+                    mock.patch.multiple(authority_broker, ROOT=base, COPY=copy), mock.patch("os.chown"), \
                     mock.patch.object(authority_broker, "cdhash", side_effect=lambda path: hashed.append(path) or path.read_text()):
-                self.assertEqual(authority_broker.write_pins([codex, helper], [manifest]), ["codex", "omd-broker"])
+                with self.assertRaisesRegex(ValueError, "stray is not listed"):
+                    authority_broker.write_pins([codex, stray], [manifest], tooling)
+                self.assertEqual(authority_broker.write_pins([codex, helper], [manifest], tooling), ["codex", "omd-broker"])
+                self.assertEqual(copy.read_bytes(), b"old tooling")
+                self.assertEqual(authority_broker.write_pins([codex], [manifest, update], tooling, add=True),
+                                 ["codex", "omd-broker"])
+                self.assertEqual(copy.read_bytes(), b"new tooling")
+                self.assertEqual(json.loads((base / "pins.json").read_text())["version"], "1.0.1")
+                with self.assertRaisesRegex(ValueError, "pins 1.0.1; refusing the older 1.0.0-rc.1"):
+                    authority_broker.write_pins([codex], [older], tooling)
+                with self.assertRaisesRegex(ValueError, "refusing the older 1.0.0"):
+                    authority_broker.write_pins([codex], [manifest], tooling)
+                nightly = signed(key, base / "nightly/omd-release.json", json.dumps(
+                    {"schema": 1, "version": "1.0.1-nightly.20261018000000.1.1", "artifacts": newer}).encode())
+                authority_broker.write_pins([codex], [nightly], tooling)
+                self.assertEqual(json.loads((base / "pins.json").read_text())["version"], "1.0.1-nightly.20261018000000.1.1")
             self.assertNotIn(codex, hashed)
             self.assertNotIn(helper, hashed)
 

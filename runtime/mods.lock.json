@@ -419,11 +419,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "cfafe02662da694d30da6b39fddaaedf5d3b1632789c2d1616fa345fda3278e4",
-        "mod.json": "123c278603a4f6bf0fa6faa7b71f5e23be66f2f3519679175c01c93b880312c6"
+        "index.ts": "98dc689721df96ed591a58ddd1cd55c9e9804bff13825d1dc8260d924dc1dc8d",
+        "mod.json": "d355e5fbb2b05303c09b090f0a707cb183c7d97c15c4e3603d422ba3828c5e45"
       },
       "id": "omd_update",
-      "package_sha256": "05f27ae25ada1e879bb36b2778f5366068e34f492fb3aaf90e72c4d2d795a891",
+      "package_sha256": "0dcfaf5a635b30cbc859cc654facdd1ece5679882c546cfa58b383b7cc485030",
       "source": "mods/first-party/omd_update",
       "version": "0.1.0-preview.1"
     },

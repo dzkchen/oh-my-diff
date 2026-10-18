@@ -11,12 +11,15 @@
 ## Install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.1/install.sh | sh -s -- --channel prerelease --profile full
 ```
 
+- `--channel prerelease` installs the `1.0.0` release candidate.
 - `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
   with `/mods`.
 - `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
+
+OMD `1.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
 
 Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
 sign-in and sessions aren't touched.
@@ -61,7 +64,8 @@ delete it to remove them.
 
 ## More
 
-- **Beta or nightly builds:** `--channel beta|nightly` on install, or `omd update channel beta|nightly|stable`.
+- **Release candidates or nightly builds:** `--channel prerelease|nightly` on install, or
+  `omd update channel prerelease|nightly|stable`.
 - **Update settings:** `omd update checks on|off`, `cadence daily|weekly`, `pin VERSION|none`, `enable|disable`, or
   `/update`.
 - **Locations:** `--root DIR` (default `~/.local/share/oh-my-diff`), `--bin-dir DIR` (default `~/.local/bin`). An
