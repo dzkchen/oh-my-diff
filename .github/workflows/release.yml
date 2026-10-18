@@ -71,4 +71,4 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && 'yes' || '' }}
         run: |
           python3 scripts/release.py notes "$VERSION" > notes.md
-          python3 .github/scripts/nightly_ci.py publish --directory release --notes notes.md ${DRY_RUN:+--dry-run}
+          python3 .github/scripts/ci.py publish --directory release --notes notes.md ${DRY_RUN:+--dry-run}

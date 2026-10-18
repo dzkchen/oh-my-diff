@@ -2,21 +2,24 @@
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `validate.yml` | called by the two below | Full validation, then builds and tests the Apple Silicon package (`macos-15`) |
-| `nightly.yml` | **Run workflow** (manual) | Validates; on `main` publishes a nightly prerelease |
+| `validate.yml` | called by the two below | Tests, builds and packages on `macos-15` |
+| `nightly.yml` | daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
 
 ## Validation
 
-`.github/scripts/nightly_ci.py validate` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if
-the result differs from the checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership,
-mod type checks and tests, Python tests, lock drift, mod-host scenarios and client acceptance. No provider
-credentials are used. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline
-failure. The `codex-core` integration suite is advisory for a release and required for a nightly.
+`validate.yml` runs `.github/scripts/ci.py validate --job JOB` in three jobs. No provider credentials are used.
 
-`package` then builds release binaries, packs one archive for both profiles and tests install, reinstall, uninstall
-and recovery. The `package` artifact (7 days) holds the archive, `omd-release.json`, `provenance.json`, `install.sh`, a
-source tarball and `SHA256SUMS`. Logs are in `validation-report` (14 days).
+- `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
+  checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
+  checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
+  `codex-core` integration suite is advisory for a release and required for a nightly.
+- `build` builds and signs the release host binaries in parallel with `test`.
+- `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
+  one archive for both profiles and tests install, reinstall, uninstall and recovery.
+
+The `package` artifact (7 days) holds the archive, `omd-release.json`, `provenance.json`, `install.sh`, a source
+tarball and `SHA256SUMS`. Each job's logs are in `validation-report-JOB` (14 days).
 
 ## Nightly
 
@@ -38,7 +41,7 @@ The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.m
 4. Squash-merge, then run `mise run release -- 1.2.0` once more to tag `main`.
 5. The tag runs `release.yml`: it checks the tag is on `main` and that versions and changelog agree, validates,
    then publishes a draft release and makes it live (this is what the installer and `omd update` read). `-rc.N`
-   tags are prereleases, offered on the beta channel.
+   tags are prereleases, offered on the prerelease channel.
 
 **Signing:** publication signs `omd-release.json` (`ssh-keygen -Y sign`, namespace `oh-my-diff-release`) with the
 `OMD_RELEASE_SIGNING_KEY` secret. The installer (`install.sh`) and `scripts/authority_broker.py` verify it against a

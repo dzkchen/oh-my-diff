@@ -21,7 +21,8 @@ fn name() -> String {
 }
 
 pub fn directory() -> PathBuf {
-    temporary().join(name())
+    crate::workspace::private_path(&temporary(), &[&name()], "workspace_ownership_unavailable")
+        .unwrap_or_else(|_| temporary().join(name()))
 }
 
 fn identity(path: &Path, exclusive: bool) -> io::Result<(PathBuf, String)> {
