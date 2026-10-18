@@ -181,9 +181,14 @@ def node_binary(args, required="24.18.0", recorded=None):
             fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
         return Path(run(["mise", "which", "node"]).strip()).resolve()
 
+    def on_path():
+        if not shutil.which("node"):
+            fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
+        return Path(shutil.which("node")).resolve()
+
     if args.node:
         return first_passing([lambda: Path(args.node).expanduser().resolve()], accept)
-    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered], accept)
+    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered, on_path], accept)
 
 
 def profile_choice(args):

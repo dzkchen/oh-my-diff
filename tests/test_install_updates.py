@@ -548,6 +548,18 @@ class UpdateSelection(unittest.TestCase):
 
 
 class ProfilePrompt(unittest.TestCase):
+    def test_node_on_path_is_used_without_mise(self):
+        module = installer()
+        with tempfile.TemporaryDirectory(prefix="omd-node-", dir="/private/tmp") as temporary:
+            node = Path(temporary).resolve() / "node"
+            node.write_text("#!/bin/sh\necho v24.18.1\n")
+            node.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{temporary}:/usr/bin:/bin"}):
+                self.assertEqual(module.node_binary(types.SimpleNamespace(node=None)), node)
+                node.write_text("#!/bin/sh\necho v22.1.0\n")
+                with self.assertRaisesRegex(ValueError, "Node 24.18 or a later 24.x is required"):
+                    module.node_binary(types.SimpleNamespace(node=None))
+
     def test_piped_install_reads_the_profile_from_the_terminal(self):
         module = installer()
         pid, leader = pty.fork()
