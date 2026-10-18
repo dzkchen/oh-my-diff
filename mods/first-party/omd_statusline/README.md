@@ -14,7 +14,7 @@ The native row and `/statusline` return, also if the mod fails. Your `tui.status
 
 ## Use it
 
-Run `/statusline` to open the editor. It previews your draft live: placement, preset, segment order, glyphs, bars and thresholds.
+Run `/statusline` to open the editor. It previews your draft live: placement, preset, segment order, glyphs, bars and thresholds. Up and Down move between controls, Left and Right change a choice, Enter runs a button; Show/hide, Earlier, Later and Next line act on the highlighted segment.
 
 Apply saves. Cancel or `Esc` discards. Reset restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 

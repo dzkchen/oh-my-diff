@@ -1789,16 +1789,18 @@ impl ThreadLifecycleContributor<Config> for Mods {
             };
             self.native_agent_started(thread, input.session_source, input.thread_store);
             let host = self.host_for(input.config.cwd.as_path());
-            self.views.diagnostic(
-                &self.host,
-                "directory",
-                host.is_none().then(|| {
-                    format!(
-                        "Mods are off in {}: it is neither the launch project nor one of its worktrees",
-                        input.config.cwd.display()
-                    )
-                }),
-            );
+            if !input.session_source.is_non_root_agent() {
+                self.views.diagnostic(
+                    &self.host,
+                    "directory",
+                    host.is_none().then(|| {
+                        format!(
+                            "Mods are off in {}: it is neither the launch project nor one of its worktrees",
+                            input.config.cwd.display()
+                        )
+                    }),
+                );
+            }
             let Some(host) = host else {
                 return;
             };

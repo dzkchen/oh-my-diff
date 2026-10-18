@@ -1329,9 +1329,10 @@ impl ResponseObserver for Accounts {
         inject_credential(request, account.credential.as_deref(), &url)?;
         let Some(rates) = account.rates.clone() else {
             let model = requested.unwrap_or_else(|| account.model.clone());
-            return Ok(Some(Box::new(self.attempt(
-                account, thread, request_id, attempt, model, None, None,
-            ))));
+            let mut unrated = self.attempt(account, thread, request_id, attempt, model, None, None);
+            unrated.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
+                && request.headers.contains_key("chatgpt-account-id");
+            return Ok(Some(Box::new(unrated)));
         };
         let model = account.model.clone();
         if let Some((path, sha)) = &account.worker_authorization {
@@ -1618,6 +1619,7 @@ struct Attempt {
     state: Arc<Mutex<RequestState>>,
     required: bool,
     synthetic: Option<String>,
+    subscription: bool,
     settled: bool,
     failed: bool,
     reported: bool,
@@ -1659,6 +1661,7 @@ impl Accounts {
             state: self.requests.clone(),
             required: self.required("response_stream"),
             synthetic,
+            subscription: false,
             settled: false,
             failed: false,
             reported: false,
@@ -2180,6 +2183,9 @@ impl Attempt {
             }
             (None, Some(_), Some(amount)) => json!({"microusd": amount, "basis": "settled"}),
             (None, Some(_), None) => json!({"microusd": null, "basis": "unsettled"}),
+            (None, None, _) if self.subscription => {
+                json!({"microusd": 0, "basis": "included_subscription"})
+            }
             (None, None, _) => json!({"microusd": null, "basis": "unpriced"}),
         };
         let payload = json!({"request_id": self.request_id, "attempt": self.attempt,

@@ -316,9 +316,8 @@ export default function activate(api: ModAPI) {
     const problem = configured.error ?? state.notice;
     return { type: 'dialog', id: 'omd_statusline_dialog', label: 'Status line', title: 'Status line', children: [
       { type: 'text', id: 'omd_statusline_preview_label', label: 'Preview', text: `${problem ? `${visible(problem, 200)} · ` : ''}Preview (${state.draft.placement} the composer)`, tone: problem ? 'attention' : 'muted' },
-      // One document keeps the dialog's component ids, and so its keyboard focus, stable as the line count changes.
-      { type: 'document', id: 'omd_statusline_preview', label: 'Preview', height: Math.max(1, preview.length),
-        lines: preview.length ? preview.map(spans => spans.map(({ link: _link, ...span }) => span)) : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' }]] },
+      { type: 'box', id: 'omd_statusline_preview', label: 'Preview', children: (preview.length ? preview : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' as const }]])
+        .map((spans, index): TerminalComponent => ({ type: 'line', id: `omd_statusline_preview_${index}`, label: 'Preview', spans: spans.map(({ link: _link, ...span }) => span) })) },
       select('placement', 'Placement', state.draft.placement, ['below', 'above']),
       select('preset', 'Preset', state.draft.preset, ['compact', 'detailed', 'custom']),
       { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'pick' } },
@@ -327,6 +326,7 @@ export default function activate(api: ModAPI) {
       select('bars', 'Progress bars', String(state.draft.bars), ['true', 'false']),
       { type: 'input', id: 'omd_statusline_thresholds', label: 'Thresholds (warn,alert)', value: state.draft.thresholds, action: { command: COMMAND, args: 'set thresholds' } },
       { type: 'box', id: 'omd_statusline_actions', label: 'Actions', style: { direction: 'row', gap: 1 }, children: [button('apply', 'Apply'), button('cancel', 'Cancel'), button('reset', 'Reset')] },
+      { type: 'text', id: 'omd_statusline_keys', label: 'Keys', text: '↑↓ move · ←→ change · enter runs · esc closes', tone: 'muted' },
     ] };
   };
 
@@ -371,7 +371,7 @@ export default function activate(api: ModAPI) {
       return { display: 'Status line saved' };
     }
     if (verb && !['open', 'set', 'pick', 'toggle', 'move', 'line', 'reset'].includes(verb)) return { display: HELP };
-    const base: Editor = state.open ? state : { open: true, draft: effective(saved()), selected: null, notice: null };
+    const base: Editor = state.open ? state : { open: true, draft: effective(saved()), selected: ids()[0] ?? null, notice: null };
     const next = verb && verb !== 'open' ? edit(base, verb, rest) : base;
     // Returning a view reopens the dialog and moves focus to its first control, so an open editor only updates its state.
     if (state.open) {
@@ -387,6 +387,7 @@ export default function activate(api: ModAPI) {
     if (event.kind === 'close') return api.uiState.set({ open: false });
     if (event.kind !== 'change' || typeof event.value !== 'string') return;
     const key = event.component.slice('omd_statusline_'.length);
+    if (key === 'segments') return api.uiState.set(edit(state, 'pick', [event.value]) as unknown as Json);
     if (['placement', 'preset', 'glyphs', 'bars', 'thresholds'].includes(key)) api.uiState.set(edit(state, 'set', [key, event.value]) as unknown as Json);
   });
 

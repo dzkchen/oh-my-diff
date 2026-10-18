@@ -57,6 +57,17 @@ const settled = (answer = host()) => {
 };
 const started = () => settled();
 
+test('a segment row only selects it, and Earlier and Later act on the highlighted first segment before any arrow key', () => {
+  const output = call({ event: 'command', name: 'edit', payload: '' });
+  const opened = output.ui;
+  assert.equal(opened.selected, 'model');
+  const moved = call({ event: 'command', name: 'edit', payload: 'move down', ui_state: opened }).ui;
+  assert.notEqual(moved.draft.layout, opened.draft.layout);
+  const list = output.value.terminal.sites.dialog.components[1].children.find(item => item.id === 'omd_statusline_segments');
+  const clicked = call({ event: 'command', name: 'edit', payload: `${list.action.args} ${list.rows[1].value}`, ui_state: opened }).ui;
+  assert.deepEqual([clicked.selected, clicked.draft.layout], [list.rows[1].value, opened.draft.layout]);
+});
+
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
   const settings = { preset: 'custom', layout: 'model script:weather', scripts: JSON.stringify([{ id: 'weather', command: ['sh', 'weather.sh'], interval_s: 60, timeout_ms: 800 }]) };
   const runs = [];

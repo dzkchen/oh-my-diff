@@ -211,7 +211,8 @@ The payload carries:
 - `output {text (first 4 KiB), tool_calls}`.
 - Raw `usage`, and `cache {read_tokens, write_tokens}`.
 - `cost {microusd, basis}`, where `basis` is `settled`, `unsettled`, `provider_reported`, `included_subscription`,
-  `unpriced` or `synthetic`.
+  `unpriced` or `synthetic`. A request without route rates is `included_subscription` on a ChatGPT login and
+  `unpriced` otherwise.
 - `context_window` when the session knows it.
 - `timing {started_at_ms, first_event_ms, duration_ms}`.
 - `synthetic` and `error`.

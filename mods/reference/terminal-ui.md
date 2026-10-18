@@ -131,12 +131,13 @@ initial view; real disabled, broken or reloaded publications replace it.
 ### `welcome` site
 
 The reserved `welcome` site renders bounded generic components centered in the owned transcript's unused area.
-`welcome: {show_while_composing: true}` keeps the site visible with a draft; the default shows it only with an
-empty composer.
+`welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash-command, file
+or mention popup is open; the default shows it only with an empty composer.
 
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
-- Existing transcript, failures, approvals and input retain their space; if no blank space fits the components, the
-  site does not draw.
+- Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
+  thread, like Codex's own welcome.
+- Approvals and input retain their space; if no blank space fits the components, the site does not draw.
 - Inline output retains the native transcript without the centered decoration.
 - No welcome site preserves Codex's normal blossom policy.
 
@@ -318,7 +319,7 @@ also reports, with `origin` `user` or `mod`:
 | Event | Reports |
 | --- | --- |
 | `focus` and `blur` | Focus changes. |
-| `change` | An input's or select's new `value` or a multiselect's checked `values`, on every edit. |
+| `change` | An input's or select's new `value`, a list's highlighted row `value` or a multiselect's checked `values`, on every edit. |
 | `scroll` | A pane's `offset`. |
 | `pointer` | Cell-relative `{column, row, action, button}`. |
 | `open` / `close` | Panes and dialogs (`ui_composition_v1`). |
@@ -533,8 +534,8 @@ draw no frame.
   `sidebar_style` sets one, which then carries the view `title`.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
-- The host's progress and mod diagnostics draw as cards above the prompt (four lines each, then `+N more`), so the
-  sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
+- The host's progress and mod diagnostics draw as cards above the prompt (six wrapped lines
+  each, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 ### Terminal operations
 

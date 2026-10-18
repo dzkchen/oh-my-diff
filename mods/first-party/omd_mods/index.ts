@@ -11,7 +11,7 @@ const EMPTY: Saved = { open: false, generation: 0, packages: [], reloadError: nu
   directory: false, catalog: [], catalogError: null, query: '', picked: null, pickedVersion: '', scope: 'user' };
 const CLOSED = { open: false, details: null, review: null, notice: null, directory: false, picked: null, query: '' } as const;
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
-const HINT = '↑↓ move · space toggle · tab more · esc close';
+const HINT = 'type to filter · ↑↓ move · space toggle · esc close';
 
 export default function activate(api: ModAPI) {
   const compare = new Intl.Collator().compare;
@@ -19,6 +19,25 @@ export default function activate(api: ModAPI) {
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const key = (item: Listed) => `${item.scope}:${item.id}`;
   const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ') || id;
+  // Subsequence match on the name, ranked by consecutive and word-start hits; a description match ranks last.
+  const rank = (needle: string, name: string, description: string | null | undefined): number | null => {
+    const text = name.toLowerCase();
+    let score = 1, at = -1, run = 0;
+    for (const char of needle.toLowerCase().replace(/\s+/g, '')) {
+      const next = text.indexOf(char, at + 1);
+      if (next < 0) return description?.toLowerCase().includes(needle.toLowerCase()) ? 0 : null;
+      run = next === at + 1 ? run + 1 : 0;
+      score += 1 + run * 2 + (next === 0 || /[\s_\-./@]/.test(text[next - 1]) ? 3 : 0);
+      at = next;
+    }
+    return score;
+  };
+  const ranked = <T,>(items: T[], needle: string, name: (item: T) => string, description: (item: T) => string | null | undefined) => {
+    if (!needle.trim()) return items;
+    return items.map(item => ({ item, score: rank(needle.trim(), name(item), description(item)) }))
+      .filter((entry): entry is { item: T; score: number } => entry.score !== null)
+      .sort((a, b) => b.score - a.score).map(entry => entry.item);
+  };
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: PackageState) => item.installed && (key(item) === argument || item.id === argument);
   const describe = (argument: string): PackageState | null => {
@@ -132,8 +151,11 @@ export default function activate(api: ModAPI) {
     return { display: next.review ? `${reviewText(next.review)}\nRun /mods apply or /mods cancel` : next.notice ?? 'No change' };
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
   api.on('component_event', event => {
-    if (!event.component.startsWith('omd_mods_') || event.kind !== 'close') return;
-    api.uiState.set({ ...saved(), ...CLOSED });
+    if (event.kind === 'close' && event.component.startsWith('omd_mods_')) api.uiState.set({ ...saved(), ...CLOSED });
+    if (event.kind !== 'change') return;
+    const value = visible(event.value ?? '', 64);
+    if (event.component === 'omd_mods_filter') api.uiState.set({ ...saved(), filter: value, details: null });
+    if (event.component === 'omd_mods_search') api.uiState.set(search({ ...saved(), picked: null }, value));
   });
 
   // Dialog height counts text lines, so long text is wrapped here instead of by the renderer.
@@ -161,21 +183,19 @@ export default function activate(api: ModAPI) {
   const section = (title: string, items: Listed[]): TerminalListRow[] => items.length
     ? [{ value: `group:${title}`, label: title, spans: [{ text: `${title} ${items.length}`, tone: 'accent', bold: true }] }, ...items.map(row)] : [];
   const listing = (state: Saved): TerminalComponent[] => {
-    const needle = state.filter.toLowerCase();
-    const shown = state.packages.filter(item => !needle || `${friendly(item.id)} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(needle));
+    const shown = ranked(state.packages, state.filter, item => `${friendly(item.id)} ${item.id}`, item => item.description);
     const failed = shown.filter(item => item.failed);
     const on = shown.filter(item => !item.failed && item.enabled);
     const off = shown.filter(item => !item.failed && !item.enabled);
     const configurable = state.packages.filter(item => item.installed && item.configurable);
     const rows = [...section('Failed', failed), ...section('On', on), ...section('Off', off)];
     return [
+      { type: 'input', id: 'omd_mods_filter', label: 'Filter', value: state.filter, placeholder: 'type a name or purpose', autofocus: true, action: { command: 'omd_mods:mods', args: 'filter' } },
       rows.length ? { type: 'list', id: 'omd_mods_list', label: 'Mods', height: 12, rows, action: { command: 'omd_mods:mods', args: 'toggle' } }
         : line('empty', 'Mods', state.filter ? `No mod matches "${state.filter}"` : 'No mods are installed', 'muted'),
-      { type: 'input', id: 'omd_mods_filter', label: 'Filter', value: state.filter, placeholder: 'type a name, Enter filters', action: { command: 'omd_mods:mods', args: 'filter' } },
       ...(configurable.length ? [{ type: 'select' as const, id: 'omd_mods_settings', label: 'Settings', value: key(configurable[0]),
         options: configurable.slice(0, 16).map(item => ({ value: key(item), label: friendly(item.id) })), action: { command: 'omd_mods:mods', args: 'details' } }] : []),
       button('directory', 'Browse the directory'),
-      ...adding(state),
     ];
   };
   const adding = (state: Saved): TerminalComponent[] => [
@@ -190,12 +210,11 @@ export default function activate(api: ModAPI) {
     const entry = picked(state);
     const available = entry?.versions.filter(item => !item.blocked) ?? [];
     const blocked = entry?.versions.filter(item => item.blocked) ?? [];
+    const found = ranked(state.catalog, state.query, item => `${friendly(item.id)} ${item.id}`, item => item.description);
     return [
-      button('installed', 'Back to installed mods'),
-      ...adding(state),
       ...(state.catalogError ? [line('catalog_error', 'Directory', `The directory is unavailable (${brief(state.catalogError)}). Add a mod from npm, Git or a folder below.`, 'attention', 6)] : [
-        { type: 'input' as const, id: 'omd_mods_search', label: 'Search', value: state.query, placeholder: 'name or purpose, Enter searches', action: { command: 'omd_mods:mods', args: 'search' } },
-        state.catalog.length ? { type: 'list' as const, id: 'omd_mods_catalog', label: 'Directory', height: 10, rows: state.catalog.slice(0, 200).map(catalogRow), action: { command: 'omd_mods:mods', args: 'pick' } }
+        { type: 'input' as const, id: 'omd_mods_search', label: 'Search', value: state.query, placeholder: 'type a name or purpose', autofocus: true, action: { command: 'omd_mods:mods', args: 'search' } },
+        found.length ? { type: 'list' as const, id: 'omd_mods_catalog', label: 'Directory', height: 10, rows: found.slice(0, 200).map(catalogRow), action: { command: 'omd_mods:mods', args: 'pick' } }
           : line('catalog_empty', 'Directory', state.query ? `No directory mod matches "${state.query}"` : 'The directory is empty', 'muted'),
       ]),
       ...(entry ? [
@@ -204,6 +223,8 @@ export default function activate(api: ModAPI) {
         ...(blocked.length ? [line('blocked', 'Blocked', blocked.map(item => `${item.version}: ${item.blocked}`).join('; '), 'failure', 2)] : []),
         button('get', 'Review install'),
       ] : []),
+      ...adding(state),
+      button('installed', 'Back to installed mods'),
     ];
   };
   const tag = (text: string) => {
@@ -247,7 +268,7 @@ export default function activate(api: ModAPI) {
       ...(state.notice ? [line('notice', 'Result', state.notice, 'attention', 4)] : []),
       ...(state.review ? [line('review', 'Review', reviewText(state.review), 'accent', 8), button('apply', 'Apply'), button('cancel', 'Cancel')] : []),
       ...(current ? details(current) : state.directory ? directory(state) : listing(state)),
-      line('hint', 'Keys', current ? '↑↓ move · enter changes · esc close' : HINT, 'muted', 1),
+      line('hint', 'Keys', current ? '↑↓ move · ←→ change · enter saves · esc close' : state.directory ? 'type to search · ↑↓ move · enter picks · esc close' : HINT, 'muted', 1),
     ];
     return { type: 'dialog', id: 'omd_mods_dialog', label: 'Oh My Diff mods', title: current ? friendly(current.id) : state.directory ? 'Mod directory' : 'Mods', children };
   };
