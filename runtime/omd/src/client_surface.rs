@@ -74,6 +74,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "terminal.prompt",
     "terminal.pane",
     "terminal.panes",
+    "terminal.panel",
     "terminal.notice",
     "terminal.selection",
     "terminal.copy",
@@ -84,6 +85,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
 pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "terminal.selection",
     "terminal.copy",
+    "terminal.panel",
     "credentials.request",
     "terminal.import_file",
     "builtins.invoke",
@@ -95,7 +97,10 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
 
 pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
     (USER_ONLY_OPERATIONS.contains(&operation)
-        && !matches!(operation, "terminal.selection" | "terminal.copy"))
+        && !matches!(
+            operation,
+            "terminal.selection" | "terminal.copy" | "terminal.panel"
+        ))
         || operation == "terminal.prompt"
         || (operation == "app.request"
             && arguments["method"]

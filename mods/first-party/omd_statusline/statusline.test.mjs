@@ -95,3 +95,20 @@ test('user scripts get session JSON on stdin and only safe styled text reaches t
   assert.match(lines(view(started(), { scripts: 'not json', preset: 'custom', layout: 'model' }))[0] ?? '', /^gpt-6\.1-sol$/);
 });
 
+
+test('a segment moved to Line N joins the row the panel shows as Line N', () => {
+  const answer = host({ 'terminal.panel': () => ({ shown: true }) });
+  const edit = (payload, ui_state) => call({ event: 'command', name: 'edit', payload, ui_state }, answer);
+  const ordered = edit('panel order model; git cwd', edit('').ui);
+  const moved = edit('panel segment:model 2', ordered.ui);
+  const panel = moved.calls.findLast(item => item.operation === 'terminal.panel').arguments;
+  assert.equal(panel.items.find(item => item.id === 'order').value, 'git cwd model');
+});
+
+test('a panel action after the UI state was cleared edits the saved settings and clips long text values', () => {
+  const settings = { preset: 'custom', layout: 'model git', thresholds: `context=${'7'.repeat(2040)}` };
+  const edited = call({ event: 'command', name: 'edit', payload: 'panel glyphs ascii', ui_state: null, settings }, host({ 'terminal.panel': () => ({ shown: true }) }));
+  assert.deepEqual([edited.ui.draft.preset, edited.ui.draft.layout, edited.ui.draft.glyphs], ['custom', 'model git', 'ascii']);
+  const panel = edited.calls.findLast(item => item.operation === 'terminal.panel').arguments;
+  assert.equal(panel.items.find(item => item.id === 'thresholds').value.length, 2000);
+});

@@ -135,6 +135,12 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
+export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string } & (
+  | { kind: 'toggle'; value?: boolean }
+  | { kind: 'choice'; value?: string; options: TerminalSelectOption[] }
+  | { kind: 'text'; value?: string }
+  | { kind: 'action' });
+export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; action: TerminalCommandAction };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
@@ -459,6 +465,7 @@ export interface HostOperations {
     result: { status: 'accepted'; value?: string; values?: string[]; other?: boolean } | Declined };
   'terminal.pane': { arguments: { action: 'open' | 'close' | 'focus' | 'reveal'; id: string } | { action: 'scroll'; id: string; offset: number }; result: { applied: true } };
   'terminal.panes': { arguments: Record<string, never>; result: { panes: { id: string; visible: boolean; collapsed: boolean; focused: boolean; scroll: number }[] } };
+  'terminal.panel': { arguments: TerminalPanel; result: { shown: true } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
   /** The `pixels` form needs the `raster_pixels_v1` feature. */

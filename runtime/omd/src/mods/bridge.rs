@@ -64,6 +64,7 @@ impl ModHostCall {
             | "terminal.prompt"
             | "terminal.pane"
             | "terminal.panes"
+            | "terminal.panel"
             | "terminal.notice"
             | "terminal.selection"
             | "terminal.copy"

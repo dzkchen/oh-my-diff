@@ -189,7 +189,7 @@ Capabilities name authority classes. A call or registration outside the package'
 
 | Capability | Grants |
 | --- | --- |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
@@ -3719,6 +3719,34 @@ caller's own panes, dialogs or controls; another mod's component is `terminal_pa
 
 `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as `{panes: [{id, visible, collapsed,
 focused, scroll}]}`; a pane is `visible` while its header row was on screen in the last frame.
+
+##### `terminal.panel`
+
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
+bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
+tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
+unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
+
+| `kind` | `value` | Space or Enter |
+| --- | --- | --- |
+| `toggle` | boolean | Flips it. |
+| `choice` | one of `options`, 1–32 `{value, label}` with unique values without spaces | Moves to the next option. |
+| `text` | string up to 2,000 bytes | Opens Codex's single-line prompt; an empty answer is ignored. |
+| `action` | none | Runs the action. |
+
+Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
+(`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
+switch tabs, `/` searches labels, descriptions and tab titles across every tab when `search` is true, and Esc clears
+the search or closes the panel. A call with the title of the caller's open panel replaces it in place and keeps its
+tab (also across a tab-less panel such as a confirmation), selected item and search; another title opens a new panel
+over it, and Esc returns to the one below. Only the user's own commands and panel actions open panels
+(`host_operation_user_only` elsewhere). Returns `{shown: true}`.
+
+A package or settings change (`packages.apply`, `settings.write`) reloads mods, and the rest of that callback's
+panel calls fail with `callback_cancelled`. When a command that changed packages or settings finishes, every open
+panel's `action.command` runs again with its `args` alone, bottom panel first, so each mod redraws its panels from
+current state; keep anything the redraw needs, such as a result notice, in `api.uiState` or in `args`.
 
 ##### `terminal.notice`
 
