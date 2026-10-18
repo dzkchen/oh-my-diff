@@ -2,6 +2,57 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
+
+Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 with a TypeScript mod host, the OMD Core and OMD+ collections and a signed curl installer.
+
+### New
+
+- Installer: one curl command installs OMD Core or OMD+, with `omd update`, update channels, rollback, profile switching and an uninstall that restores upstream Codex.
+- Signed releases: the installer and `omd update` refuse a release whose manifest is unsigned or doesn't match its archive.
+- OMD+ mods on by default: status line above or below the prompt (`omd_statusline`), plan panel, tool lines, idle compaction before the prompt cache expires, and auto-continue for approvals and questions left unanswered for two minutes.
+- Opt-in mods: Claude subscription as a native provider with status, billing routes and extra usage (`omd_claude_cli`, Claude CLI 2.1.296), `/continue`, and a preview thumbnail strip.
+- Claude Code ports: `burn_meter`, `token_weather` and `blast_radius`, each installable with one command.
+- Mod API: multi-file packages, component modules on the draw path, live continuations, raw process streams and raw terminal frames.
+- Mod API: composer key interception, completion rows and mention reads; persisted-history interception, session tool records and prompt-cache marks.
+- Mod authors: typed mocks and an offline test kit, scaffold and reload workflows, manifest schema checks in `omd-mod`, and published mod index entries.
+- Managed mod policy that fails closed, with deployment sync and provenance checks.
+- Update channels `stable`, `prerelease` and `nightly` (`omd update channel`); release candidates install from `prerelease`.
+
+### Changed
+
+- Pinned to Codex 0.163.0.
+- The repository holds only the launch collection: OMD Core installs 3 mods; OMD+ adds 8 more on by default, 11 opt-in mods and 3 inert plugins.
+- Mod API `0.2.0-experimental.5`: entries marked frozen in the conformance registry keep their shape; experimental ones, such as `terminal.blit` and `process_raster_v1`, may change.
+- Mod callbacks reuse a warm runner per package with smaller requests; package listings and terminal views are cached.
+- Mod UI drops backdrops and glass effects; the package listing is narrower.
+- `/continue` is opt-in.
+- Docs: short install, collection, manage-mods and write-a-mod guides, an agent mod guide, and every mod README on one template.
+- Release archives include the licenses and third-party notices.
+- The mod API reference is split into topic pages.
+
+### Fixed
+
+- Security: mod realm containment, private store files, owner-only component events, config redaction, sealed provider port hand-off, a protected runner and an MCP approval gate.
+- Security: the broker binds stores and evidence to their owner; a runner memory watchdog stops runaway mods at 512 MiB.
+- Install: resumable uninstall and recovery, release asset URL and SHA-256 required together, and a warning when the `codex` on PATH isn't the OMD launcher.
+- Mod runtime: runner reuse and cancellation, transactional reloads, state migration on `state_version` changes, thread-scoped routes and state, and receipt budget edge cases.
+- Mod runtime: the idle watchdog no longer kills stateful runners; offline timers bind to the right thread.
+- Terminal UI: Esc closes mod completion popups on the first press; modal dialogs, button hotkeys, prompt wrapping, ASCII glyphs and pane scroll; host diagnostics are never clipped.
+- Terminal UI: raw-frame retries, hidden raster backoff and mouse-look motion capture.
+- Mods: status line startup and refresh timing, stale LSP answers and bounded resync of large or non-UTF-8 files, preview truncation notices and watch retries.
+- Mods: Claude route extra usage, billing reruns and error mapping; `/burn` and token usage in the ports.
+- Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix.
+- Install: a piped install without `--profile` shows the profile prompt; Node 24 on `PATH` works without mise; the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.
+- Security: the authority broker checks roles, refuses to pin an older signed release, and refreshes its root tooling only from the newest signed manifest.
+- Mod runtime: workspace folders that don't exist take no lease.
+- Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.
+
+### Decided
+
+- 1.0.0 ships labeled beta: not every planned capability is in yet.
+- Packages outside the launch collection return in post-launch waves.
+
 ## 2026-10-08 — Launch scope and upstream pin
 
 A smaller launch collection, a planned API freeze and refreshed Codex.
