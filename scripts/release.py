@@ -21,7 +21,7 @@ def run(*args, capture=True):
     result = subprocess.run([str(arg) for arg in args], cwd=ROOT, text=True,
                             stdout=subprocess.PIPE if capture else None, stderr=subprocess.PIPE if capture else None)
     if result.returncode:
-        raise SystemExit(f"{' '.join(map(str, args[:3]))} failed:\n{(result.stderr or '')[-3000:]}")
+        raise SystemExit(f"{' '.join(map(str, args[:3]))} failed:\n{(result.stderr or result.stdout or '')[-3000:]}")
     return (result.stdout or "").strip()
 
 
@@ -51,7 +51,12 @@ def notes(entries, version):
     entry = next((item for item in entries if item.get("version") == version), None)
     if entry is None:
         raise SystemExit(f"changelog.json has no {version} entry")
+    channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
+                      "OMD 1.0 is labeled beta: not every planned capability is included yet. The label does not mean "
+                      "unstable.", "", "```sh",
+                      f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{REPOSITORY}/releases/download/v{version}"
+                      f"/install.sh | sh -s --{channel} --profile full", "```", "",
                       f"Full history: [CHANGELOG.md](https://github.com/{REPOSITORY}/blob/v{version}/CHANGELOG.md)"]) + "\n"
 
 
@@ -118,23 +123,30 @@ def check(version=None):
     print(f"release metadata consistent{f' for {version}' if version else ''}")
 
 
-def release_entry(entries, version, summary):
+def uncovered(entries):
     covered = {commit for entry in entries for commit in entry["commits"]}
-    commits = [commit[:7] for commit in run("git", "rev-list", "--reverse", "HEAD").split()]
-    commits = [commit for commit in commits if commit not in covered]
-    if not commits:
-        raise SystemExit("no commits since the last changelog entry")
-    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "cliff.toml"))
+    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "origin/main").split() if commit[:7] not in covered]
+
+
+def changes(commits, existing=()):
     grouped = {label: [] for label in LABELS}
+    for section in existing:
+        grouped[section["label"]] += section["items"]
+    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "cliff.toml"))
     for item in (commit for release in context for commit in release["commits"]):
         line = item["message"].splitlines()[0]
         text = line[:1].upper() + line[1:]
         if item["id"][:7] in commits and item.get("group") in grouped and text not in grouped[item["group"]]:
             grouped[item["group"]].append(text)
+    return [{"label": label, "items": items} for label, items in grouped.items() if items]
+
+
+def release_entry(entries, version, summary):
+    commits = uncovered(entries)
+    if not commits:
+        raise SystemExit("no commits since the last changelog entry")
     return {"version": version, "date": f"{datetime.datetime.now(datetime.UTC):%Y-%m-%d}",
-            "title": f"Oh My Diff {version}", "summary": summary,
-            "sections": [{"label": label, "items": items} for label, items in grouped.items() if items],
-            "commits": commits}
+            "title": f"Oh My Diff {version}", "summary": summary, "sections": changes(commits), "commits": commits}
 
 
 def prepare(version, summary):
@@ -150,11 +162,14 @@ def prepare(version, summary):
         run("git", "push", "origin", tag)
         print(f"pushed {tag}; https://github.com/{REPOSITORY}/actions/workflows/release.yml builds, verifies and publishes it")
         return
-    if summary is None:
-        raise SystemExit("--summary is required to open the release pull request")
     if run("git", "status", "--porcelain"):
         raise SystemExit("commit or set aside local changes first")
     branch = f"release/{tag}"
+    if run("git", "ls-remote", "origin", f"refs/heads/{branch}"):
+        refresh(version, branch)
+        return
+    if summary is None:
+        raise SystemExit("--summary is required to open the release pull request")
     run("git", "switch", "--create", branch, "origin/main")
     lock = json.loads(LOCK.read_text())
     lock["version"] = version
@@ -170,7 +185,24 @@ def prepare(version, summary):
     run("gh", "pr", "create", "--repo", REPOSITORY, "--base", "main", "--head", branch,
         "--title", f"chore(release): {version}",
         "--body", "Review and edit the generated `changelog.json` entry, then run `python3 scripts/release.py render`. "
-                  f"After this merges, run `mise run release -- {version}` again to tag it.", capture=False)
+                  f"Run `mise run release -- {version}` again to cover changes merged to main since, and once more after "
+                  "this merges to tag it.", capture=False)
+
+
+def refresh(version, branch):
+    run("git", "fetch", "origin", branch)
+    run("git", "switch", branch)
+    run("git", "merge", "--no-edit", "origin/main")
+    entries = json.loads(CHANGELOG.read_text())
+    if commits := uncovered(entries):
+        entries[0]["sections"] = changes(commits, entries[0]["sections"])
+        entries[0]["commits"] += commits
+        CHANGELOG.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
+        MARKDOWN.write_text(render(entries))
+        check(version)
+        run("git", "add", CHANGELOG, MARKDOWN)
+        run("git", "commit", "--message", f"chore(release): add changes merged since {version} was prepared")
+    run("git", "push", "origin", branch)
 
 
 def rollback(version):
@@ -186,7 +218,7 @@ def rollback(version):
 def main():
     parser = argparse.ArgumentParser(description="Prepare, check and publish Oh My Diff releases")
     commands = parser.add_subparsers(dest="command", required=True)
-    prepare_parser = commands.add_parser("prepare", help="open the release pull request, or tag it once merged")
+    prepare_parser = commands.add_parser("prepare", help="open the release pull request, refresh it from main, or tag it once merged")
     prepare_parser.add_argument("version")
     prepare_parser.add_argument("--summary", help="one-sentence release summary")
     check_parser = commands.add_parser("check", help="verify changelog, links and, with VERSION, release versions")

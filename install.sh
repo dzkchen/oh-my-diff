@@ -42,7 +42,7 @@ RELEASE_HOSTS = ("api.github.com", "localhost", "127.0.0.1")
 TARGET = "aarch64-apple-darwin"
 UPDATE_MOD = "omd_update"
 CADENCES = {"daily": 86_400, "weekly": 604_800}
-POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "beta", "nightly"), "cadence": ("daily", "weekly")}
+POLICY = {"checks": ("on", "off"), "auto": ("off", "on"), "channel": ("stable", "prerelease", "nightly"), "cadence": ("daily", "weekly")}
 RELEASE_URL = ""
 RELEASE_SHA256 = ""
 LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
@@ -192,6 +192,7 @@ def profile_choice(args):
     try:
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff\n"
+                           "OMD 1.0 is labeled beta: not every planned capability is included yet. It does not mean unstable.\n"
                            "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
                            "2) OMD+: also the first-party mod collection and bundled plugins.\n"
                            "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
@@ -329,7 +330,7 @@ def install(args, root, current):
     if bool(args.asset_url) != bool(args.asset_sha256):
         fail("Pass --asset-url and --asset-sha256 together; nothing was installed.")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
-        fail("This release candidate supports Apple Silicon macOS only.")
+        fail("Oh My Diff supports Apple Silicon macOS only.")
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
@@ -382,6 +383,8 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
     check_links(root, args.bin_dir)
     if current:
         status(current, Path(upstream["path"]), args.bin_dir)
+    previous = receipt(current) if current else {}
+    releases_url = release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         payload = extract(archive, Path(temporary) / "unpacked")
         generation = root / "releases" / uuid.uuid4().hex
@@ -399,14 +402,13 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
             command.append("--attach-store")
         if current:
             command += ["--previous", current / "prefix"]
-        previous = receipt(current) if current else {}
         try:
             run(command, cwd=payload, env=environment(Path(upstream["path"]), args.bin_dir))
             installed = json.loads((generation / "prefix/install.json").read_text())
             record = {"schema": 1, "generation": generation.name, "profile": profile, "version": installed["version"],
                       "asset_url": url, "asset_sha256": expected, "bin_dir": str(args.bin_dir),
                       "upstream": upstream | {"sha256": digest(Path(upstream["path"]))},
-                      "releases_url": release_source(args.releases_url or previous.get("releases_url") or RELEASES_URL),
+                      "releases_url": releases_url,
                       "previous": current.name if current else None}
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
@@ -505,7 +507,8 @@ def remove_generation(generation, upstream, bin_dir, *flags):
         prefix.rmdir()
     for name in LINKS:
         (generation / "bin" / name).unlink(missing_ok=True)
-    (generation / "receipt.json").unlink(missing_ok=True)
+    for name in ("receipt.json", RELEASE_MANIFEST, RELEASE_SIGNATURE):
+        (generation / name).unlink(missing_ok=True)
     for directory in (generation / "bin", generation):
         if directory.is_dir():
             directory.rmdir()
@@ -708,7 +711,7 @@ def releases(url, channel="stable", pin=""):
 
 def on_channel(channel, item):
     is_nightly = "-nightly." in item["version"]
-    return is_nightly if channel == "nightly" else not is_nightly and (channel == "beta" or not item.get("prerelease"))
+    return is_nightly if channel == "nightly" else not is_nightly and (channel == "prerelease" or not item.get("prerelease"))
 
 
 def channel_newer(channel, version, installed):
@@ -716,7 +719,7 @@ def channel_newer(channel, version, installed):
     if candidate[:3] != current[:3]:
         return candidate[:3] > current[:3]
     if (channel == "nightly" and "-nightly." not in installed
-            or channel == "beta" and "-nightly." in installed):
+            or channel == "prerelease" and "-nightly." in installed):
         return version != installed
     return candidate > current
 
@@ -981,7 +984,7 @@ def manual(args, root, current):
         return set_policy(root, record, action, value)
     if action == "pin":
         if value != "none" and not version_key(value):
-            fail("omd update pin takes an exact version such as 0.2.0 or 0.2.0-beta.1, or none")
+            fail("omd update pin takes an exact version such as 0.2.0 or 0.2.0-rc.1, or none")
         return set_policy(root, record, "pin", "" if value == "none" else value)
     if action == "status":
         saved = state(root)
@@ -1102,9 +1105,9 @@ def main():
     if sys.version_info < (3, 12):
         fail("Python 3.12 or newer is required for verified archive extraction")
     parser = argparse.ArgumentParser(
-        description="Install, update and roll back the Apple Silicon Oh My Diff release candidate",
+        description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
-               "omd update channel stable|beta|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
+               "omd update channel stable|prerelease|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
     parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "tick", "launch"),
                         default="install")
     parser.add_argument("action", nargs="?", choices=("now", "status", "check", "enable", "disable", "rollback", "pin", *POLICY),

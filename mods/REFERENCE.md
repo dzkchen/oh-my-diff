@@ -1,33 +1,27 @@
 # Mod API reference
 
-This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version
-loads. A store also generates `active-host.d.ts` and
-`installed-contracts.d.ts`; those files identify the running host and the exact
-service contracts available to consumers. Once a session has listed its tools,
-the store also generates `tool-types.d.ts` for the tools the host actually has
+This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` on OMD `0.1.0` and Codex
+`0.163.0`. [`api.d.ts`](api.d.ts) is the complete typed surface. Only this API version loads.
+
+A store also generates `active-host.d.ts` and `installed-contracts.d.ts`, which describe the running host and the
+service contracts available to consumers. Once a session has listed its tools, it generates `tool-types.d.ts` too
 ([Typed tool declarations](#typed-tool-declarations)).
 
-The launch surface is frozen at this API version, with support through
-`2027-03-20`. [The conformance registry](conformance/contract.json) classifies every public operation,
-event, capability, replacement, interceptor, component, render site, view field,
-classic hook and author command. Frozen entries name a retained consumer and
-executable evidence. Explicitly experimental entries remain outside the freeze;
-the package itself retains its pre-release compatibility label. The freeze is
-a contract boundary, not a public-release or provider qualification.
-Before the release freeze names the API `1.0.0`, only safety fixes and the
-recorded launch gap list may change it. After launch, additions use minor
-versions; breaking changes require a major version and a migration note.
+The API is pre-release. [The conformance registry](conformance/contract.json) marks each public operation, event,
+capability, interceptor, component, render site, view field, classic hook and author command as frozen or
+experimental. Frozen entries keep their shape through `2027-03-20`; experimental ones may change. Version and
+support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
-The raster frame-stream (`terminal.blit`, `process_raster_v1`, `raster_pixels_v1`) remains experimental.
-Launch does not promise closure-based client modules, vendor kill switches,
-raw secret access, hosted mobile/desktop clients or rich children inside buttons.
-Buttons use their typed `text` field. [COMPATIBILITY.md](COMPATIBILITY.md) defines
-version and support-window rules.
-First-party desktop/VS Code, mobile and hosted clients, vendor kill switches and
-raw secrets are excluded. Audio, telemetry and pane drag are deferred beyond
-launch; outside authors can use the public client APIs.
+Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
+
+- Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
+- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
+- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
+- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- `api.uiState` and command views.
+
+Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop
+clients, rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
 
 ## Mods, plugins and hooks
 
@@ -1223,10 +1217,7 @@ capabilities.
 
 API `0.2.0-experimental.5` provides these generic primitives. Each advertises a
 host feature a package can require. With no mod registered for a primitive the host allocates nothing for it and
-changes no decision. Mapping from pinned upstream surfaces to these routes, and
-the recorded exclusions, live in `scripts/upstream_routes.json`;
-`python3 scripts/upstream_surfaces.py check /path/to/codex` flags upstream
-surfaces without a route.
+changes no decision.
 
 ### App-server bridge (`app_v1`)
 
@@ -1598,7 +1589,7 @@ code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
 `sessions.list {since?, until?, cursor?, limit?}` pages this repository's
-recorded sessions that allow memory, and `sessions.read {session_id, revision,
+recorded sessions that allow memory, and the experimental `sessions.read {session_id, revision,
 handle, cursor?, max_bytes?}` pages one session's `local_visible_records`:
 `message` records (`role`, `text`), `tool_call` records (`name`, `call_id`,
 `arguments`) and `tool_result` records (`call_id`, `output`, text parts only),
@@ -1825,7 +1816,11 @@ go only to the mod whose view supplied the layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
-is ignored with a warning. Key bindings and component actions run only the
+is ignored with a warning. On macOS, Kitty and Ghostty send Option+letter as a
+composed character (`π` for Option+p) unless Option-as-Alt is enabled
+(`macos_option_as_alt` in Kitty, `macos-option-as-alt` in Ghostty), so an
+`Alt+` binding should not be a control's only affordance: name its slash
+command next to it in the hint. Key bindings and component actions run only the
 contributing mod's commands: a bare name is its own `id:name`, and a binding or
 control naming another mod's command is dropped. `component_event`, `view` and `focus` report
 interaction; `component_event` goes only to the component's owner and also reports, with `origin` `user` or `mod`, `focus` and `blur`, `change` with an input's or
@@ -2015,7 +2010,7 @@ Operations:
   native picker of up to 32 options: one value, several with `multiple`, or a
   typed answer through an `Other…` row with `other`; it returns
   `{status: 'accepted', values, other?}` or `declined` when cancelled.
-- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`) queues a raster
+- `terminal.blit {key, rect, cells}` (`terminal_raster_v1`, experimental) queues a raster
   update, described above.
 - `terminal.pane {action, id, offset?}` (`ui_composition_v1`) opens, closes,
   focuses, scrolls (`offset`; a pane shows 8 rows and stops scrolling once
@@ -2560,7 +2555,7 @@ are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`)
+### Store-time history rewriting (`history_persist_v1`, experimental)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`)
 rewrites history text before it is stored, for redaction: every text written to
@@ -2828,6 +2823,15 @@ any it refuses.
   `name` is the Web Crypto error name. There is no `TextDecoder`, `Buffer` or
   `structuredClone`, and no code is compiled from strings (`eval`,
   `new Function`), in the mod's context or the runner process.
+- Manifest `environment`: `"environment": ["crypto"]` in `mod.json` admits the
+  `crypto` global above; it is the only environment a mod can declare (another
+  or repeated name fails with `unsupported_or_duplicate_environment_access`).
+  Source that uses `crypto.` or `crypto[` outside string literals without it is
+  refused at load with `undeclared_environment_use: crypto (crypto.)`, naming
+  the matched text. The same error names `network` (`fetch(`, `WebSocket(`),
+  `process` (`process.`, `Deno.`, `Bun.`), `dom` (`document.`, `window.`) and
+  `filesystem` (`node:fs` or `require('fs`, matched inside literals too), which
+  no manifest admits.
 - Experimental session UI state: `api.uiState.get()` / `.set(value)` requires
   `terminal`. Values are bounded to 65,536 UTF-8 bytes of compact
   `JSON.stringify(value)` output, including quotes, keys and escapes. Strings
@@ -3405,11 +3409,12 @@ wait, output, and session count. Sessions belong to one mod and generation;
 disable, reload, cancellation, and thread stop clean them up. A process cannot
 write the repository through this API. The first-party `omd_lsp_sync` mod owns
 Python, TypeScript/JavaScript, Rust and Java server choices and language
-protocol; it is installed inactive with OMD+ and can also be installed
-explicitly in a OMD Core store. It never installs a language server.
-Definition, references and code-action discovery return bounded read-only
-results for observed sources; applying an action and symbol rename remain
-unsupported. Absent or unsupported servers report fallback.
+protocol; it is off by default in OMD+ and can be installed in an OMD Core
+store. It never installs a language server. Definition, references and
+code-action discovery return bounded read-only results for observed sources.
+Symbol rename and text-only code actions apply with a backup and roll back on
+failure; actions that run server commands are refused. Absent or unsupported
+servers report fallback.
 `api.host.tryCall` returns `{ok:true,value}` or `{ok:false,error}` for an
 expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
@@ -3435,7 +3440,7 @@ sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
 omits the sidebar, header and named sites; dialogs, status segments, mod
 progress and diagnostics, the composer, approvals and scrollback remain, and
 the owned fullscreen viewport is unchanged. The `above_composer` and
-`below_composer` sites draw in both modes, host-sized to their wrapped
+`below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints
 and status row), with styles, links and focusable controls; `above_composer`
 is clipped to 8 rows and `below_composer` to 6, each scrolling to the focused

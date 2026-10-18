@@ -49,7 +49,7 @@ export default function activate(api: ModAPI) {
     else current.all = !current.all;
     api.uiState.set(current as unknown as Json);
     return null;
-  }, { description: 'Toggle the plan panel between its row limit and every step (Alt+p collapses it)' });
+  }, { description: 'Toggle the plan panel between its row limit and every step (/todos toggle or Alt+p collapses it)' });
 
   api.on('terminal', ({ ledger }): TerminalPatch | null => {
     const steps = ledger ? load().plans[ledger.thread_id]?.steps ?? [] : [];
@@ -59,7 +59,7 @@ export default function activate(api: ModAPI) {
     const line = (id: string, label: string, spans: { text: string; tone?: TerminalTone }[]): TerminalComponent => ({ type: 'line', id: `omd_plan_panel_${id}`, label, spans });
     const open = done < steps.length;
     const components = [line('heading', 'Plan progress', [{ text: `${open ? '●' : '○'} Plan (${done}/${steps.length})`, tone: open ? 'accent' : 'muted' }])];
-    if (state.collapsed) components.push(line('hint', 'Collapsed plan', [{ text: '└─ Alt+p to expand', tone: 'muted' }]));
+    if (state.collapsed) components.push(line('hint', 'Collapsed plan', [{ text: '└─ Alt+p or /todos toggle to expand', tone: 'muted' }]));
     else {
       const { shown, hidden } = fit(steps, state.all ? STEPS : rows);
       const closed = hidden.filter(step => step.status === 'completed').length;

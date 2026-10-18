@@ -145,6 +145,7 @@ async function headless() {
   const self = rows.findIndex(row => row.value === text.session.attachment.clientId);
   const picked = await time('action_ms', () => text.session.action({ component: 'external_clients', row: self }));
   assert.equal(picked.outcome.display, `Picked ${text.session.attachment.clientId}`);
+  await until('pick redraw', () => component(text.view(), 'external_status')?.text.includes(`picked ${text.session.attachment.clientId};`));
   const spent = text.session.actionToken;
   await text.session.request('omd/action', { actionToken: spent, component: 'external_clients', row: self }).catch(() => {});
   await rejects(text.session.request('omd/action', { actionToken: spent, component: 'external_clients', row: self }), 'action_replayed');

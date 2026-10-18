@@ -9,7 +9,7 @@ import tempfile
 import time
 import tomllib
 
-from scripts import install_support as support
+from scripts import install_support as support, profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,7 @@ PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_"
 
 
 def expected_defaults(profile="full"):
-    return json.loads((ROOT / "integration/matrix.json").read_text())["profiles"][profile]["first_party_default_active"]
+    return sorted(set(profiles.profile_packages(profile)) & set(profiles.DEFAULT_ACTIVE))
 
 
 def call(arguments, env, parse=True):
@@ -244,13 +244,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert activated["host_mode"] == "omd"
         direct = command("full", "activate", "direct")
         assert not any(item["loaded_by_profile"] for item in direct["packages"])
-        try:
-            command("full", "uninstall")
-        except RuntimeError as error:
-            assert "marketplace" in str(error) and "references the installation" in str(error)
-        else:
-            raise AssertionError("uninstall removed an installed marketplace source")
-        call([base / "full-bin/codex", "plugin", "marketplace", "remove", "oh-my-diff"], env, False)
+        assert "oh-my-diff" in tomllib.loads((home / "config.toml").read_text()).get("marketplaces", {})
         note = base / "full-prefix/personal-note.txt"
         note.write_text("User file to preserve\n")
         try:
@@ -261,6 +255,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
             raise AssertionError("uninstall removed an unmanaged user file")
         note.unlink()
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
+        assert "oh-my-diff" not in tomllib.loads((home / "config.toml").read_text()).get("marketplaces", {})
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
         assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == sorted(set(expected_defaults()) - {"omd_inspector"})
@@ -273,7 +268,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
                                 "plugin_explicit_install_remove": full["plugin_bundle"]["plugins"], "disable": True,
                                 "staged_skills": staged_skills, "inactive_hook_noops": inert_hooks,
                                 "omd_profile_selection": True, "direct_switch": True,
-                                "marketplace_reference_protected": True,
+                                "marketplace_removed_on_uninstall": True,
                                 "unmanaged_user_file_protected": True,
                                 "attach_preserved_disable": True,
                                 "side_by_side_attach_preserved_disable": True,

@@ -20,63 +20,62 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Oh My Diff (OMD) is a patched [Codex CLI](https://github.com/openai/codex). Mods can change its commands, tools,
-context and screen. OMD ships with a small set of mods, and you can write your own. You still start it with
-`codex`, and it keeps your Codex settings, sign-in and sessions.
+Oh My Diff (OMD) is [Codex CLI](https://github.com/openai/codex) with a host for TypeScript mods: new commands,
+tools, context and screens. You still run `codex`, with your settings, sign-in and sessions.
 
-## Quickstart
+## Install
 
-You need an Apple Silicon Mac with Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+Needs an Apple Silicon Mac, Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
-1. Install OMD with its mod collection:
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.1/install.sh | sh -s -- --channel prerelease --profile full
+```
 
-   ```sh
-   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
-   ```
+This installs the `1.0.0` release candidate from the prerelease channel. `--profile full` is OMD+ (OMD plus the
+[mod collection](docs/collection.md)); `--profile platform` is OMD Core.
+[Update, switch profile and uninstall](docs/install.md).
 
-2. Start it:
+## First run
 
-   ```sh
-   codex
-   ```
+```sh
+codex
+```
 
-   If this starts plain Codex, add the `export PATH=...` line the installer printed to your shell profile.
+Type `/mods` to see which mods are on and turn others on or off. If `codex` is still plain Codex, add the
+`export PATH=...` line the installer printed to your shell profile and open a new shell. To check the install, run
+`omd update status`.
 
-3. Type `/mods` to see which mods are on and to turn others on.
+## Status
 
-For the minimal install, other options, updates and removal, see [Install Oh My Diff](docs/install.md).
+**Personal tool.** OMD is built for the creator's own workflow and has not been pressure-tested across other
+devices or workflows. If something breaks, [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
 
-## Learn more
+**Why it exists.** Small, everyday improvements to a developer's workflow get less attention than the larger priorities
+of frontier labs. OMD is a place for them.
 
-- [Mods included with OMD+](docs/collection.md)
-- [Install and manage mods](docs/manage-mods.md)
-- [Write your first mod](docs/write-a-mod.md)
-- [Mod API reference](mods/REFERENCE.md)
-- [Agent mod guide](docs/AGENT_MOD_GUIDE.md): building a mod with a coding agent
+**Maintenance.** After release the creator expects to focus mainly on critical fixes. Anyone prepared to take over
+responsible maintenance is welcome to get in touch (open an issue).
 
-## Project status
+**Beta.** `1.0.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
+The mod API is still experimental ([compatibility](mods/COMPATIBILITY.md)).
 
-**OMD is in beta.** Beta means it doesn't have every planned feature yet, not that it's unstable. More OMD+ mods
-and a fuller OMD Core are coming in the next updates ([what's planned](docs/collection.md#not-in-this-release)).
+**Codex versions.** OMD follows the latest stable Codex; each release supports one version line, now `0.163.x`. Turn off automatic Codex updates,
+and update Codex only after `omd update` supports the new version.
 
-OMD follows the latest stable Codex CLI and moves to each new Codex release as soon as it can. Each OMD release
-supports one Codex version line (now `0.163.x`), so updating Codex on its own can stop OMD from working until OMD
-catches up. To stay safe, turn off automatic Codex updates and update Codex only after `omd update` brings an OMD
-release that supports it.
+## Help and contributing
 
-OMD is a personal developer tool. It hasn't been tested across many machines or workflows, so expect rough edges.
+- Bug or docs problem: [open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
+- Security problem: [report it privately](SECURITY.md), not in a public issue.
+- Missing API for a mod: [request it](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml).
+- Code or docs change: see [CONTRIBUTING.md](CONTRIBUTING.md). New features are best written as mods.
 
-- **Something broke?** [Open an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
-- **Found a security problem?** Report it privately; see [SECURITY.md](SECURITY.md).
-- **A mod needs something the API can't do?** Open a
-  [mod or API request](https://github.com/dzkchen/oh-my-diff/issues/new?template=mod-api.yml) or send a
-  [pull request](CONTRIBUTING.md).
+## Docs
 
-OMD exists because small, everyday workflow improvements get less attention than bigger AI-lab priorities. If
-you'd like to help maintain it, get in touch.
+- [Install, update, remove](docs/install.md)
+- [Included mods](docs/collection.md) and [manage mods](docs/manage-mods.md)
+- [Write a mod](docs/write-a-mod.md), [API reference](mods/REFERENCE.md) and [agent mod guide](docs/AGENT_MOD_GUIDE.md)
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
-[MIT License](LICENSE) ([Codex patch notice](NOTICE)) ·
-[Third-party notices](THIRD_PARTY_NOTICES.md)
+[MIT License](LICENSE) ([Codex patch notice](NOTICE)) · [Third-party notices](THIRD_PARTY_NOTICES.md)

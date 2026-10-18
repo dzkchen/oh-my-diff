@@ -2,7 +2,8 @@
   "schema": 1,
   "settings": {
     "omd_advisor": {
-      "observe": true
+      "observe": true,
+      "route": "astra"
     }
   },
   "host_operations": {

@@ -200,4 +200,3 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
     assert_eq!(sidebar["mode"], "replace");
     assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 }
-

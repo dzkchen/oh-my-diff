@@ -63,4 +63,3 @@ fn consents_are_single_use_content_bound_and_reconciled_by_client_id() {
     );
     assert!(grant(root, "../escape", "queue", &sha, "c3").is_err());
 }
-

@@ -317,7 +317,7 @@ export default function activate(api: ModAPI) {
     save({ ...state, open: true });
     const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
     return asked.ok ? null : { display: `Usage refresh unavailable: ${asked.error}` };
-  }, { description: 'Open or refresh the usage dialog (Alt+a toggles it)' });
+  }, { description: 'Open or refresh the usage dialog (/omd_usage:hud toggle or Alt+a toggles it)' });
   const write = (values: { [key: string]: Json }, done: string) => {
     const written = api.host.tryCall('settings.write', { values });
     return { display: written.ok ? `${done}; applies when the mod reloads at the next turn` : `Usage settings unchanged: ${written.error}` };

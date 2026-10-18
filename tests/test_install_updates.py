@@ -114,9 +114,9 @@ class UpdateSelection(unittest.TestCase):
     def test_nightly_is_explicit_and_cached_nightlies_follow_channel_changes(self):
         self.published = [release("0.1.0-nightly.20261009070000.100.1", prerelease=True),
                           release("0.1.0-nightly.20261008070000.99.1", prerelease=True),
-                          release("0.2.0-beta.1", prerelease=True), release("0.1.1")]
+                          release("0.2.0-rc.1", prerelease=True), release("0.1.1")]
         self.assertEqual(self.check()["available"]["version"], "0.1.1")
-        self.assertEqual(self.check(channel="beta")["available"]["version"], "0.2.0-beta.1")
+        self.assertEqual(self.check(channel="prerelease")["available"]["version"], "0.2.0-rc.1")
         self.assertEqual(self.check(channel="nightly")["available"]["version"], "0.1.0-nightly.20261009070000.100.1")
 
     def test_install_keeps_saved_channel_and_explicit_stable_replaces_it(self):
@@ -142,8 +142,8 @@ class UpdateSelection(unittest.TestCase):
         for channel, candidate, installed, expected in (
                 ("nightly", "0.1.0-nightly.20261008.99.1", "0.2.0", False),
                 ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0", True),
-                ("beta", "0.2.0-beta.1", "0.2.0-nightly.20261008.99.1", True),
-                ("beta", "0.1.0-beta.1", "0.2.0-nightly.20261008.99.1", False),
+                ("prerelease", "0.2.0-rc.1", "0.2.0-nightly.20261008.99.1", True),
+                ("prerelease", "0.1.0-rc.1", "0.2.0-nightly.20261008.99.1", False),
                 ("stable", "0.2.0", "0.2.0-nightly.20261008.99.1", True),
                 ("nightly", "0.2.0-nightly.20261008.99.1", "0.2.0-nightly.20261009.100.1", False)):
             with self.subTest(channel=channel, candidate=candidate, installed=installed):
@@ -152,7 +152,7 @@ class UpdateSelection(unittest.TestCase):
 
     def test_old_pins_and_beta_releases_are_not_hidden_by_stable_or_nightly_history(self):
         url = "https://api.github.com/repos/example/omd/releases?per_page=20"
-        versions = ["0.3.0-beta.1", "0.2.0", "0.1.0"]
+        versions = ["0.3.0-rc.1", "0.2.0", "0.1.0"]
         refs = [{"ref": f"refs/tags/v0.4.0-nightly.20261008.{number}.1"} for number in range(300)]
         refs += [{"ref": f"refs/tags/v{version}"} for version in versions]
         def fetch(address, limit):
@@ -165,7 +165,7 @@ class UpdateSelection(unittest.TestCase):
                 return release(version, prerelease="-" in version)
             self.fail(f"unexpected history scan: {address}")
         with patch.object(self.module, "fetch_json", side_effect=fetch) as fetched:
-            self.assertEqual([item["version"] for item in self.module.releases(url, channel="beta")], versions)
+            self.assertEqual([item["version"] for item in self.module.releases(url, channel="prerelease")], versions)
             self.assertEqual(fetched.call_count, 4)
             fetched.reset_mock()
             self.assertEqual(self.module.releases(url, pin="0.1.0")[0]["version"], "0.1.0")
@@ -283,7 +283,7 @@ class UpdateSelection(unittest.TestCase):
             self.assertFalse((root / "update/journal.json").exists())
 
     def test_channel_pin_compatibility_and_failures(self):
-        self.published = [release("0.3.0-beta.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.163.0"),
+        self.published = [release("0.3.0-rc.1", prerelease=True), release("0.2.1", upstream_tag="rust-v0.163.0"),
                           release("0.2.0"), release("0.1.0"), release("0.1.5"),
                           {"tag_name": "nightly", "assets": []}, {**release("0.4.0"), "draft": True}]
         stable = self.check()
@@ -291,7 +291,7 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(stable["blocked"]["version"], "0.2.1")
         self.assertIn("0.163.x", stable["blocked"]["reasons"][0])
         self.assertEqual(stable["available"]["manifest"]["url"], "https://example.test/0.2.0/oh-my-diff-0.2.0.tar.xz")
-        self.assertEqual(self.check(channel="beta")["available"]["version"], "0.3.0-beta.1")
+        self.assertEqual(self.check(channel="prerelease")["available"]["version"], "0.3.0-rc.1")
         self.assertEqual(self.check(pin="0.1.0")["available"], None)
         self.assertEqual(self.check(pin="0.9.9")["error"], "pinned version 0.9.9 is not published")
         self.settings = {}
@@ -348,11 +348,11 @@ class UpdateSelection(unittest.TestCase):
         for changes in ({"auto": "off"}, {"pin": "0.1.0"}, {"auto": "off", "pin": "0.1.0"}, {"channel": "stable"},
                         {"incompatible": True}, {"user_mods": True}, {"held": True}, {"failed": True}, {}):
             with self.subTest(changes=changes):
-                self.settings = {"auto": "on", "channel": "beta"}
+                self.settings = {"auto": "on", "channel": "prerelease"}
                 self.write_settings()
-                beta = "channel" in changes
-                version = "0.2.0-beta.1" if beta else "0.2.0"
-                self.published = [release(version, prerelease=beta)]
+                prerelease = "channel" in changes
+                version = "0.2.0-rc.1" if prerelease else "0.2.0"
+                self.published = [release(version, prerelease=prerelease)]
                 self.module.save(self.root, held=None, failed=None)
                 self.module.tick(args, self.root, self.current)
                 self.assertTrue((self.root / "update/ready.json").is_file())
@@ -408,6 +408,8 @@ class UpdateSelection(unittest.TestCase):
             (generation / "prefix").mkdir(exist_ok=True)
             (generation / "prefix/install.json").touch()
             (generation / "receipt.json").write_text("{}")
+            (generation / self.module.RELEASE_MANIFEST).write_text("{}")
+            (generation / self.module.RELEASE_SIGNATURE).write_text("sig")
         (older / "prefix/personal.txt").write_text("keep")
         (self.root / "previous").symlink_to(older)
         (self.root / "releases/failed-stranded/prefix").mkdir(parents=True)

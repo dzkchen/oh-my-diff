@@ -147,4 +147,3 @@ fn a_turn_without_an_end_is_interrupted_unless_running_or_paused() {
         (Some("unknown"), Some(false))
     );
 }
-

@@ -1216,4 +1216,3 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
         vec![(true, Some(500)), (true, Some(700))]
     );
 }
-

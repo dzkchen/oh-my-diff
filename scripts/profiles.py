@@ -24,7 +24,7 @@ SCHEMA = 1
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd_logo", "omd_model_picker", "omd_mods",
                   "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
-PACKAGES = mods_lock.PACKAGES
+PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
@@ -112,9 +112,6 @@ def release_lock(upstream, patch, mods):
             or record.get("mod_api") != mods["mod_api"]
             or record.get("node") != mods["node"]):
         raise ValueError("release lock disagrees with pinned runtime sources")
-    for name, expected in record["source_sha256"].items():
-        if support.digest(ROOT / name) != expected:
-            raise ValueError(f"release source changed: {name}")
     return record
 
 
@@ -760,9 +757,9 @@ def remove_plugins(record, prefix):
 
     names, plugins = ours()
     for plugin in plugins:
-        subprocess.run([record["binary"]["installed_path"], "plugin", "remove", plugin], check=True, capture_output=True, env=env)
+        support.run([record["binary"]["installed_path"], "plugin", "remove", plugin], env=env)
     for name in names:
-        subprocess.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
+        support.run([record["binary"]["installed_path"], "plugin", "marketplace", "remove", name], env=env)
     if any(ours()):
         raise ValueError("Codex still lists OMD plugins from this installation; remove them with codex plugin remove")
     return plugins

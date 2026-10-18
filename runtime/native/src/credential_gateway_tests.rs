@@ -260,4 +260,3 @@ fn concurrent_forwards_are_limited_per_registration() {
         closed(&mut upstream);
     }
 }
-

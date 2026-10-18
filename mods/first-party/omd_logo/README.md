@@ -1,6 +1,6 @@
 # omd_logo
 
-Shows the OMD mark and your install profile when a session starts.
+Shows the OMD mark, your install profile (OMD+ or OMD Core), the Codex version and the mod count when a session starts. The profile is also added to the session title.
 
 ## Turn it off
 

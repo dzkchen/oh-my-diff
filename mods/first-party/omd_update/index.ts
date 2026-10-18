@@ -14,7 +14,7 @@ type Saved = {
 const EMPTY: Saved = { info: null, open: false, notice: null, banner: [], overrides: {}, snoozed: null, skipped: null, shown: null, seen: 0, requests: 0, mark: null };
 const DAY = 86_400_000;
 const VARIABLE = 'OH_MY_DIFF_UPDATE=';
-const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'beta', 'nightly'], cadence: ['daily', 'weekly'] };
+const CHOICES: Record<string, string[]> = { checks: ['on', 'off'], auto: ['off', 'on'], channel: ['stable', 'prerelease', 'nightly'], cadence: ['daily', 'weekly'] };
 
 export default function activate(api: ModAPI) {
   const saved = (): Saved => ({ ...EMPTY, ...(api.state.get() as Partial<Saved> | null ?? {}) });

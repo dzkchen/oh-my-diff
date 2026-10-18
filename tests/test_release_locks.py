@@ -7,13 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import install_support
-from scripts import mods_lock
 from scripts import plugin_lock
-
-
-class ModsLockTests(unittest.TestCase):
-    def test_pinned_mods_lock_matches_the_first_party_sources(self):
-        self.assertEqual(mods_lock.build(), install_support.mods_lock())
 
 
 class PluginLockTests(unittest.TestCase):

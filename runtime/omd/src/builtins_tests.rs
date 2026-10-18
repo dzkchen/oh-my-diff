@@ -36,4 +36,3 @@ fn key_and_command_replacements_validate_and_drop_conflicts() {
             .unwrap();
     assert!(restored.replaced_commands.is_empty());
 }
-

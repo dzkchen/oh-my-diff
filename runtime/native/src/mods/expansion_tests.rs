@@ -537,6 +537,10 @@ async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[expect(
+    clippy::await_holding_invalid_type,
+    reason = "Serialize tests that replace the shared dispatcher"
+)]
 async fn scoped_environment_session_dispatch_rejects_a_different_captured_source() {
     let _guard = DISPATCHER_TEST.lock().await;
     let Some(mut fixture) = fixture(&[Package {

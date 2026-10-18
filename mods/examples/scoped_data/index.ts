@@ -3,19 +3,20 @@ import type { Json, ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
 export default function activate(api: ModAPI) {
   const retain = () => {
     const source = api.host.call('workspace.read', { paths: ['fact.txt'] }).files['fact.txt'];
-    if (!source) throw new Error('fixture_fact_missing');
+    if (!source) return { error: 'fixture_fact_missing' };
     return api.host.call('store.put', { key: 'fixture-fact', expected_revision: null,
       value: { id: 'fixture-fact', source: 'fact.txt:1', text: source.text, sha256: source.sha256 } });
   };
   const freeze = () => {
     const entry = api.host.call('store.get', { key: 'fixture-fact' });
-    if (!entry) throw new Error('retain_fixture_fact_first');
+    if (!entry) return { error: 'retain_fixture_fact_first' };
     const reference = api.host.call('evidence.write', { media_type: 'application/json', label: 'Selected fixture fact', content: entry.value });
     api.state.set(reference);
     return reference;
   };
   api.tool({ name: 'worker', description: 'Exercise a read-only worker with a frozen fixture snapshot and selected fact.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
     const evidence = freeze();
+    if ('error' in evidence) return evidence;
     const snapshot = api.host.call('workspace.snapshot', {}).snapshot;
     const route = api.host.call('routes.list', null).find(item => item.name === 'reviewer' && item.available && item.roles.includes('worker'));
     if (!route) throw new Error('configured_reviewer_route_unavailable');

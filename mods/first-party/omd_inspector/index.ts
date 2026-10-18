@@ -54,7 +54,7 @@ export default function activate(api: ModAPI) {
     save({ ...saved(), open: true });
     const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
     return asked.ok ? null : { display: `Inspector refresh unavailable: ${asked.error}` };
-  }, { description: 'Open or refresh the Oh My Diff inspector (Alt+i closes it)' });
+  }, { description: 'Open or refresh the Oh My Diff inspector (/inspect close or Alt+i closes it)' });
   api.on('channel', ({ channel }) => {
     if (channel === 'omd_inspector/refresh') save(capture(saved()));
   });

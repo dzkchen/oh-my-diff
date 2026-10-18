@@ -607,4 +607,3 @@ fn decoder_rejects_oversized_dimensions_before_pixel_allocation() {
     assert!(decode_image(b"GIF89a").is_err());
     assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
 }
-

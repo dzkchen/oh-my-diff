@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -14,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[2]
 TMP = Path(os.environ.get("OMD_BATCH_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
-BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
          "-p", "codex-omd-extension", "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
@@ -44,6 +44,11 @@ def run(*args, cwd=None, allowed=(0,)):
 
 def git(tree, *args, allowed=(0,)):
     return run("git", *args, cwd=tree, allowed=allowed)
+
+
+@functools.cache
+def node():
+    return run("mise", "which", "node", cwd=ROOT).decode().strip()
 
 
 def sha(data):
@@ -93,7 +98,7 @@ def cargo_env(batch):
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
         "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
-        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or run("mise", "which", "node", cwd=ROOT).decode().strip(),
+        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or node(),
         "RUST_MIN_STACK": "16777216",
     })
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
@@ -132,10 +137,10 @@ def sync(args):
     batch = batch_dir(args.batch)
     source = batch / "codex"
     base = base_tag()
-    patch = git(source, "diff", "--binary", "--no-renames", base, "--", "codex-rs")
+    patch = git(source, "diff", "--binary", "--full-index", "--no-renames", base, "--", "codex-rs")
     changed = set(git(source, "diff", "--name-only", "--no-renames", base, "--", "codex-rs").decode().splitlines())
     for name in git(source, "ls-files", "--others", "--exclude-standard", "--", "codex-rs").decode().splitlines():
-        patch += git(source, "diff", "--no-index", "--binary", "--", "/dev/null", name, allowed=(0, 1))
+        patch += git(source, "diff", "--no-index", "--binary", "--full-index", "--", "/dev/null", name, allowed=(0, 1))
         changed.add(name)
     # Git accepts an empty patch context line; omit its otherwise trailing marker space.
     patch = b"".join(b"\n" if line == b" \n" else line for line in patch.splitlines(keepends=True))
@@ -207,28 +212,22 @@ def artifacts(args):
     built = batch / "target/release"
     output = batch / "artifacts"
     log = batch / "logs/build-artifacts.log"
-    provenance = sys.platform == "darwin"
-    if provenance:
-        tree, environment = batch / "codex", cargo_env(batch)
-        before = build_provenance.inputs(tree, BUILD, environment)
-        (built / build_provenance.RECORD).unlink(missing_ok=True)
-        if cargo_run(batch, log, BUILD):
-            raise SystemExit(1)
-        build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
-        unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
-    elif cargo_run(batch, log, BUILD):
+    tree, environment = batch / "codex", cargo_env(batch)
+    before = build_provenance.inputs(tree, BUILD, environment)
+    (built / build_provenance.RECORD).unlink(missing_ok=True)
+    if cargo_run(batch, log, BUILD):
         raise SystemExit(1)
+    build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
+    unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
     shutil.rmtree(output, ignore_errors=True)
     output.mkdir()
-    for name in BINARIES:
+    for name in build_provenance.BINARIES:
         shutil.copy2(built / name, output / name)
-    if sys.platform == "darwin":
-        for name in release_lock.HARDENED:
-            release_lock.sign(output / name)
-    if provenance:
-        if build_provenance.hashes(output) != unsigned["unsigned"]:
-            raise SystemExit("release artifacts changed during copying")
-        build_provenance.record_signing(output, unsigned)
+    if build_provenance.hashes(output) != unsigned["unsigned"]:
+        raise SystemExit("release artifacts changed during copying")
+    for name in release_lock.HARDENED:
+        release_lock.sign(output / name)
+    build_provenance.record_signing(output, unsigned)
     pack_sdk(output)
     print(output)
 

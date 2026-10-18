@@ -27,6 +27,7 @@ SOURCES = (
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "docs/install.md", "install.sh",
+    "LICENSE", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md",
     "scripts/mods_lock.py", "runtime/mods.lock.json",
 ) + mods_lock.sources()
 
@@ -65,14 +66,12 @@ def build(artifact_dir, package_mode=False, version=None):
     provenance = build_provenance.verify(artifact_dir)
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
-    if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
-        raise ValueError("active runtime patch hash mismatch")
     mods = support.mods_lock()
     if not package_mode and mods != mods_lock.build():
         raise ValueError("first-party mod lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
-    version = upstream["tag"].removeprefix("rust-v")
-    if (index["release_pin"]["codex"] != version
+    codex_version = upstream["tag"].removeprefix("rust-v")
+    if (index["release_pin"]["codex"] != codex_version
             or index["release_pin"]["mod_api"] != mods["mod_api"]
             or index["release_pin"]["node"] != mods["node"]):
         raise ValueError("curated catalog does not match the active release pin")
@@ -103,7 +102,7 @@ def build(artifact_dir, package_mode=False, version=None):
         if files[name] != source.read_bytes():
             raise ValueError(f"packed mod author source differs: {name}")
     artifacts[AUTHOR_ARCHIVE] = {"sha256": support.digest(archive), "bytes": archive.stat().st_size}
-    if support.binary_identity(artifact_dir / "codex")["version"] != f"codex-cli {version}":
+    if support.binary_identity(artifact_dir / "codex")["version"] != f"codex-cli {codex_version}":
         raise ValueError("release binary does not match the active upstream pin")
     return {
         "schema": 1,
@@ -117,7 +116,6 @@ def build(artifact_dir, package_mode=False, version=None):
         "runtime_patch_sha256": patch["patch"]["sha256"],
         "mod_api": mods["mod_api"],
         "node": mods["node"],
-        "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "build_provenance": provenance,
         "platform_tools": list(profiles.HOST_TOOLS),

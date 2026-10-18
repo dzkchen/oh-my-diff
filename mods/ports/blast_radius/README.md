@@ -2,38 +2,46 @@
 
 Holds a risky shell command until you have seen what it would change.
 
-On every `exec_command` call the mod classifies the command. Anything else runs untouched. For a risky one it measures the effect with read-only, sandboxed `exec.run` calls, asks with a native Proceed / Cancel choice (`terminal.prompt`) and runs the command only on Proceed, with a `Blast Radius: running it` toast. Cancel, dismissing, a prompt that cannot be shown, or a mod error denies the call with a reason the model sees ("do not retry unless the user asks"). Codex's own approval may still ask afterwards when the command needs it.
+## Install it
+
+From the curated directory:
+
+```sh
+omd install blast_radius
+omd mods enable blast_radius
+```
+
+## How it works
+
+1. Anything not risky runs untouched.
+2. For a risky `exec_command`, the mod measures the effect with read-only commands in a sandbox.
+3. You choose Proceed or Cancel.
+4. Cancel, dismissing, or any mod error denies the call. The model is told not to retry unless you ask.
+
+Codex's own approval may still ask afterwards.
 
 ## What counts as risky
 
-| Command | Measured with |
+| Command | What you see |
 | --- | --- |
-| `rm` with `-r`, `-R`, `-f` or long forms | `find` and `du -k` over the expanded paths: files, size, first 10 names |
-| `git reset --hard` | `git status --porcelain` (tracked changes) and `git diff --shortstat HEAD` |
-| `git checkout .`, `git restore .` (not `--staged` only) | the unstaged subset of the same status, limited to the current folder |
-| `git clean` | `git clean -n` with your `-d`, `-x`, `-X`, `-e` and pathspecs, never `-f` |
-| `git push` with `--force`, `-f`, `--force-with-lease` or `+ref` | `git log <source>..<remote>/<branch>`: commits the push drops, as of the last fetch |
-| `alembic upgrade`, `rails db:migrate`, `prisma migrate`, `manage.py migrate`, other `migrate` | the tool's status or history command, pending migrations only |
+| `rm` with `-r`, `-R`, `-f` or long forms | Files, size, first 10 names |
+| `git reset --hard` | Tracked changes and a diff summary |
+| `git checkout .`, `git restore .` (not `--staged` only) | Unstaged changes in the current folder |
+| `git clean` | A dry run (`-n`) with your options, never `-f` |
+| `git push` with `--force`, `-f`, `--force-with-lease` or `+ref` | Commits the push drops, as of the last fetch |
+| `alembic upgrade`, `rails db:migrate`, `prisma migrate`, `manage.py migrate`, other `migrate` | Pending migrations |
 
-`cd`, `pushd`, `popd`, `( subshell )` and `git -C` earlier in the line move the folder measured. `sudo`, `env`, `time`, `nice`, `VAR=value` and a leading backslash are looked through. Only the first risky segment of a compound command is measured.
+A `cd`, `pushd`, `popd`, `( subshell )` or `git -C` earlier in the line changes the folder measured. `sudo`, `env`, `time`, `nice` and `VAR=value` are looked through. Only the first risky part of a compound command is measured.
 
 ## Limits of this port
 
-- Measurements run in OMD's sandbox, so the folder must be inside the repository. A `cd` or `-C` to `-`, to `~` or outside the repository, and paths using `~`, `$` or backticks, are not measured. The prompt then says "could not measure" and still asks.
-- `exec.run` has no network and a private `HOME`. Migration status commands that need a database can fail; the prompt says so and still asks.
-- The Prisma lister runs `prisma migrate status` through the runner the command used (`npx`, `pnpm`, `pnpm exec`, `yarn`, `bunx` or none; any other prefix is not measured). The Rails lister is `bundle exec rails db:migrate:status`; upstream used `bin/rails`, which `exec.run` cannot start from inside the repository.
-- Git runs with `LC_ALL=C` so its output parses the same in every locale.
-- The report is one line (`Command: … · Would … · note · files`) because the native prompt shows its message as one wrapped line; upstream's pane listed one file per line with colours. Non-ASCII characters are shown as `?`, and the report is cut at about 1,900 bytes.
-- A failed measurement says `could not measure it` with the error, where upstream had separate wording for a missing folder, a non-Git folder and a failed dry run. There is no 10-minute timeout or queue of held calls; the native prompt waits.
-- Only `exec_command` is intercepted, not `write_stdin` or tools that run commands another way.
-
-## Capabilities
-
-- `interception`: a required `tool` interceptor for `exec_command`, so a mod fault fails the call closed rather than letting it run.
-- `terminal`: `terminal.prompt` confirmation.
-- `exec`: read-only `exec.run` for `pwd`, `bash`, `env` (to run `git`), `python3`, `alembic`, `bundle` and the Prisma runner.
-
-No state, store, settings or network.
+- The folder must be inside the repository. Paths with `~`, `$` or backticks, and a `cd` or `-C` to `-`, `~` or outside, aren't measured. The prompt says "could not measure" and still asks.
+- The sandbox has no network, so migration status commands that need a database can fail. The prompt says so and still asks.
+- Prisma runs through the runner your command used (`npx`, `pnpm`, `pnpm exec`, `yarn`, `bunx` or none). Any other prefix isn't measured.
+- Rails uses `bundle exec rails db:migrate:status`, not upstream's `bin/rails`.
+- The report is one line, non-ASCII shown as `?`, cut at about 1,900 bytes.
+- There is no 10-minute timeout or queue of held calls.
+- Only `exec_command` is checked, not `write_stdin`.
 
 ## Credit
 
