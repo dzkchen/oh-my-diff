@@ -29,7 +29,7 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - `/continue` is opt-in.
 - Docs: short install, collection, manage-mods and write-a-mod guides, an agent mod guide, and every mod README on one template.
 - Release archives include the licenses and third-party notices.
-- Split the mod API reference into readable topic pages
+- The mod API reference is split into topic pages.
 
 ### Fixed
 
@@ -43,11 +43,10 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mods: status line startup and refresh timing, stale LSP answers and bounded resync of large or non-UTF-8 files, preview truncation notices and watch retries.
 - Mods: Claude route extra usage, billing reruns and error mapping; `/burn` and token usage in the ports.
 - Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix.
-- Install: the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.
+- Install: a piped install without `--profile` shows the profile prompt; the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.
 - Security: the authority broker checks roles, refuses to pin an older signed release, and refreshes its root tooling only from the newest signed manifest.
 - Mod runtime: workspace folders that don't exist take no lease.
 - Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.
-- Installer prompts read the terminal through separate handles (#241)
 
 ### Decided
 
