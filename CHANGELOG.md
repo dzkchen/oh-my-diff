@@ -17,7 +17,7 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mod API: composer key interception, completion rows and mention reads; persisted-history interception, session tool records and prompt-cache marks.
 - Mod authors: typed mocks and an offline test kit, scaffold and reload workflows, manifest schema checks in `omd-mod`, and published mod index entries.
 - Managed mod policy that fails closed, with deployment sync and provenance checks.
-- Prerelease update channel, beta label and split hosted validation (#239)
+- Update channels `stable`, `prerelease` and `nightly` (`omd update channel`); release candidates install from `prerelease`.
 
 ### Changed
 
@@ -28,9 +28,7 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mod UI drops backdrops and glass effects; the package listing is narrower.
 - `/continue` is opt-in.
 - Docs: short install, collection, manage-mods and write-a-mod guides, an agent mod guide, and every mod README on one template.
-- Move workflow notes out of .github/README.md so GitHub shows the root README
-- Shorter, scannable user docs; compact agent docs
-- Lean public docs and a leaner release toolchain (#236)
+- Release archives include the licenses and third-party notices.
 
 ### Fixed
 
@@ -44,16 +42,10 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mods: status line startup and refresh timing, stale LSP answers and bounded resync of large or non-UTF-8 files, preview truncation notices and watch retries.
 - Mods: Claude route extra usage, billing reruns and error mapping; `/burn` and token usage in the ports.
 - Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix.
-- Fixed-length patch index hashes so hosted sync matches the checkout
-- Check copied release binaries before ad-hoc signing
-- Rustfmt, host-check thread probe, example refusals, CI-temp-safe Claude CLI test
-- Missing workspace folders take no lease, CI test helper binaries, clippy and timing-safe tests; release gate skips the core integration suite
-- /config in the TUI surface list; native tests run every target
-- Clear rendered selection areas each owned-transcript frame
-- Hosted validation test failures under mise shims and slow runners
-- Signed-generation uninstall, broker role checks and release publish flags
-- Advisor route setup, Alt-key fallbacks, crypto environment docs
-- Release lock without source hashes; supervisor without expect
+- Install: the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.
+- Security: the authority broker checks roles, refuses to pin an older signed release, and refreshes its root tooling only from the newest signed manifest.
+- Mod runtime: workspace folders that don't exist take no lease.
+- Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.
 
 ### Decided
 
