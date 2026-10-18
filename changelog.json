@@ -16,7 +16,8 @@
           "Mod API: multi-file packages, component modules on the draw path, live continuations, raw process streams and raw terminal frames.",
           "Mod API: composer key interception, completion rows and mention reads; persisted-history interception, session tool records and prompt-cache marks.",
           "Mod authors: typed mocks and an offline test kit, scaffold and reload workflows, manifest schema checks in `omd-mod`, and published mod index entries.",
-          "Managed mod policy that fails closed, with deployment sync and provenance checks."
+          "Managed mod policy that fails closed, with deployment sync and provenance checks.",
+          "Prerelease update channel, beta label and split hosted validation (#239)"
         ]
       },
       {
@@ -28,7 +29,10 @@
           "Mod callbacks reuse a warm runner per package with smaller requests; package listings and terminal views are cached.",
           "Mod UI drops backdrops and glass effects; the package listing is narrower.",
           "`/continue` is opt-in.",
-          "Docs: short install, collection, manage-mods and write-a-mod guides, an agent mod guide, and every mod README on one template."
+          "Docs: short install, collection, manage-mods and write-a-mod guides, an agent mod guide, and every mod README on one template.",
+          "Move workflow notes out of .github/README.md so GitHub shows the root README",
+          "Shorter, scannable user docs; compact agent docs",
+          "Lean public docs and a leaner release toolchain (#236)"
         ]
       },
       {
@@ -43,7 +47,17 @@
           "Terminal UI: raw-frame retries, hidden raster backoff and mouse-look motion capture.",
           "Mods: status line startup and refresh timing, stale LSP answers and bounded resync of large or non-UTF-8 files, preview truncation notices and watch retries.",
           "Mods: Claude route extra usage, billing reruns and error mapping; `/burn` and token usage in the ports.",
-          "Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix."
+          "Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix.",
+          "Fixed-length patch index hashes so hosted sync matches the checkout",
+          "Check copied release binaries before ad-hoc signing",
+          "Rustfmt, host-check thread probe, example refusals, CI-temp-safe Claude CLI test",
+          "Missing workspace folders take no lease, CI test helper binaries, clippy and timing-safe tests; release gate skips the core integration suite",
+          "/config in the TUI surface list; native tests run every target",
+          "Clear rendered selection areas each owned-transcript frame",
+          "Hosted validation test failures under mise shims and slow runners",
+          "Signed-generation uninstall, broker role checks and release publish flags",
+          "Advisor route setup, Alt-key fallbacks, crypto environment docs",
+          "Release lock without source hashes; supervisor without expect"
         ]
       },
       {
@@ -329,7 +343,40 @@
       "132e609",
       "003c17c",
       "922a469",
-      "c340cb9"
+      "c340cb9",
+      "e2631b2",
+      "3902713",
+      "4b22b91",
+      "b22ddba",
+      "4df24e7",
+      "8c79575",
+      "bd00035",
+      "8d2a091",
+      "31587e7",
+      "b991157",
+      "d1f44f5",
+      "3e04a69",
+      "6d53173",
+      "83478d5",
+      "2f97488",
+      "e7d83ff",
+      "7584bd3",
+      "8070336",
+      "96129a5",
+      "a837aad",
+      "796fa58",
+      "2d584f8",
+      "bbe952c",
+      "07dad10",
+      "2a53409",
+      "a8d1195",
+      "d6a67b0",
+      "d17bfa6",
+      "668c5b9",
+      "6f50084",
+      "39cb0ba",
+      "31854a7",
+      "b0c1a60"
     ]
   },
   {
