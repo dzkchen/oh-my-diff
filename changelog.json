@@ -47,11 +47,10 @@
           "Mods: status line startup and refresh timing, stale LSP answers and bounded resync of large or non-UTF-8 files, preview truncation notices and watch retries.",
           "Mods: Claude route extra usage, billing reruns and error mapping; `/burn` and token usage in the ports.",
           "Upstream-direct mode keeps upstream Codex behavior, with no footer status prefix.",
-          "Install: a piped install without `--profile` shows the profile prompt; the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.",
+          "Install: a piped install without `--profile` shows the profile prompt; Node 24 on `PATH` works without mise; the first thread after a reboot no longer fails with `protected_path_unavailable`; installed `omd-package` commands no longer look for mod sources; uninstall removes the installation's own Codex plugins and marketplace.",
           "Security: the authority broker checks roles, refuses to pin an older signed release, and refreshes its root tooling only from the newest signed manifest.",
           "Mod runtime: workspace folders that don't exist take no lease.",
-          "Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.",
-          "Installer accepts Node 24 on PATH when mise is absent (#242)"
+          "Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup."
         ]
       },
       {
