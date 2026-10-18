@@ -116796,10 +116796,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a442a170915f11b88a6de18f27fe323366dfcae
+index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52f37218e7
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,665 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -116907,6 +116907,19 @@ index 0000000000000000000000000000000000000000..1a442a170915f11b88a6de18f27fe323
 +
 +static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
 +
++/// The last listing, reused while its selections are the same and the runtime fields it reads are unchanged.
++type Listing = (Arc<Selections>, Value, Value);
++static LISTING: Mutex<Option<Listing>> = Mutex::new(None);
++const LISTING_RUNTIME_FIELDS: [&str; 7] = [
++    "id",
++    "scope",
++    "sha256",
++    "error",
++    "version",
++    "api",
++    "capabilities",
++];
++
 +/// The store side of a listing, reused while the store files and every package file are unchanged.
 +fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
 +    let key = store.listing_stamp();
@@ -116976,12 +116989,50 @@ index 0000000000000000000000000000000000000000..1a442a170915f11b88a6de18f27fe323
 +
 +pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
 +    let selections = selections(store)?;
++    let read = listing_key(runtime);
++    if let Some((cached, key, listed)) = &*LISTING.lock().unwrap_or_else(PoisonError::into_inner)
++        && Arc::ptr_eq(cached, &selections)
++        && *key == read
++    {
++        return Ok(listed.clone());
++    }
++    let listed = listing(&selections, runtime)?;
++    if !selections.status["selections"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .any(|selection| selection["reason"] == "managed_pending_sync")
++    {
++        *LISTING.lock().unwrap_or_else(PoisonError::into_inner) =
++            Some((selections, read, listed.clone()));
++    }
++    Ok(listed)
++}
++
++/// The runtime status fields a listing reads; a listing stays current while they are unchanged.
++pub fn listing_key(runtime: Option<&Value>) -> Value {
++    runtime.map_or(Value::Null, |runtime| {
++        let fields = |key: &str, names: &[&str]| -> Vec<Vec<Value>> {
++            let items = runtime[key].as_array().into_iter().flatten();
++            items
++                .map(|item| names.iter().map(|name| item[*name].clone()).collect())
++                .collect()
++        };
++        json!([
++            fields("mods", &LISTING_RUNTIME_FIELDS),
++            fields("rejected", &["path", "reason"]),
++            runtime["reload_error"],
++        ])
++    })
++}
++
++fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<Value> {
 +    let Selections {
 +        lock,
 +        configuration,
 +        status,
 +        manifests,
-+    } = &*selections;
++    } = selections;
 +    let generation = configuration.revision;
 +    let selections = status["selections"]
 +        .as_array()
@@ -148052,10 +148103,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7b6f23a48
+index 0000000000000000000000000000000000000000..973d486b0b4c0017d2a432dbd38e2a27f66eacd0
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1565 @@
+@@ -0,0 +1,1570 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -148299,14 +148350,19 @@ index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7
 +        if prepared
 +            && let Some(store) = crate::omd::mod_paths_for(repository).and_then(|paths| paths.store)
 +        {
-+            std::thread::spawn(move || {
-+                let _ = codex_omd::ModStore::open(store).and_then(|store| {
-+                    store.verify_selections()?;
-+                    codex_omd::package_controls::list(&store, None)
-+                });
-+            });
++            warm_listing(store);
 +        }
 +    }
++}
++
++/// Lists the packages off the command path so `packages.list` answers from the listing cache.
++pub(crate) fn warm_listing(store: PathBuf) {
++    std::thread::spawn(move || {
++        let _ = codex_omd::ModStore::open(store).and_then(|store| {
++            store.verify_selections()?;
++            codex_omd::package_controls::list(&store, crate::omd::mod_status().as_deref())
++        });
++    });
 +}
 +
 +fn builtin(name: &str) -> bool {
@@ -148343,7 +148399,7 @@ index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7
 +        let runtime = shared_host().ok()?;
 +        let mut runtime = lock_within(&runtime, LOCK_WAIT)?;
 +        reload(&mut runtime);
-+        Some(runtime.status())
++        Some(Arc::new(runtime.status()))
 +    })()
 +    .or_else(crate::omd::mod_status);
 +    if let Some(status) = status {
@@ -149076,7 +149132,7 @@ index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7
 +    let store =
 +        codex_omd::ModStore::open(paths.store.clone().ok_or("mod store is not configured")?)
 +            .map_err(|error| error.to_string())?;
-+    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_ref())
++    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_deref())
 +        .map_err(|error| error.to_string())
 +}
 +
@@ -150252,7 +150308,7 @@ index 0000000000000000000000000000000000000000..4a1ca43cd08ebf72dae4ec5962137273
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..474adaed693191af2ec66fa4334a763814f86dc9
+index 0000000000000000000000000000000000000000..e49e77eac4f6632e4fd0ca9355d5545d3fe38d1f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
 @@ -0,0 +1,1125 @@
@@ -151362,7 +151418,7 @@ index 0000000000000000000000000000000000000000..474adaed693191af2ec66fa4334a7638
 +            match operation {
 +                "packages.list" => codex_omd::package_controls::list_fields(
 +                    &store,
-+                    crate::omd::mod_status().as_ref(),
++                    crate::omd::mod_status().as_deref(),
 +                    call.arguments,
 +                ),
 +                "packages.index" => codex_omd::package_controls::index(&store, call.arguments),
@@ -159348,10 +159404,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a02dd55fe8
+index 0000000000000000000000000000000000000000..7268245a3d7452b01e008f6de209ff48ba8a6ee1
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,703 @@
+@@ -0,0 +1,714 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -159416,7 +159472,7 @@ index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a0
 +    {
 +        return (true, snapshot.clone());
 +    }
-+    let snapshot = read_mod_snapshot(&view, &status);
++    let snapshot = read_mod_snapshot(&view);
 +    *cache = Some((root, stamps, snapshot.clone()));
 +    (true, snapshot)
 +}
@@ -159448,12 +159504,9 @@ index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a0
 +        .map(|metadata| codex_omd::file_stamp(&metadata))
 +}
 +
-+fn read_mod_snapshot(view: &Path, status: &Path) -> codex_omd::ModViewSnapshot {
++fn read_mod_snapshot(view: &Path) -> codex_omd::ModViewSnapshot {
 +    let mut snapshot = view_snapshot(view).unwrap_or_default();
-+    if let Some(status) = bounded_read(status, 262_144)
-+        .ok()
-+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+    {
++    if let Some(status) = mod_status() {
 +        let errors = status["mods"]
 +            .as_array()
 +            .into_iter()
@@ -159589,12 +159642,14 @@ index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a0
 +    protected
 +}
 +
-+pub(crate) fn mod_status() -> Option<Value> {
-+    type Cached = (PathBuf, FileStamp, Option<Value>);
++pub(crate) fn mod_status() -> Option<std::sync::Arc<Value>> {
++    type Cached = (PathBuf, FileStamp, Option<std::sync::Arc<Value>>);
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
 +    let path = store_root()?.join("mod-status.json");
 +    let Some(stamp) = file_stamp(&path) else {
-+        return serde_json::from_slice(&bounded_read(&path, 262_144).ok()?).ok();
++        return serde_json::from_slice(&bounded_read(&path, 262_144).ok()?)
++            .ok()
++            .map(std::sync::Arc::new);
 +    };
 +    let mut cache = CACHE.locked();
 +    if let Some((cached_path, cached, status)) = cache.as_ref()
@@ -159605,8 +159660,20 @@ index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a0
 +    }
 +    let status = bounded_read(&path, 262_144)
 +        .ok()
-+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
++        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++        .map(std::sync::Arc::new);
++    let listing = |status: Option<&std::sync::Arc<Value>>| {
++        codex_omd::package_controls::listing_key(status.map(std::sync::Arc::as_ref))
++    };
++    let previous = cache.as_ref().and_then(|(_, _, status)| status.clone());
 +    *cache = Some((path, stamp, status.clone()));
++    drop(cache);
++    if status.is_some()
++        && listing(status.as_ref()) != listing(previous.as_ref())
++        && let Some(store) = store_root()
++    {
++        crate::mod_runtime::warm_listing(store);
++    }
 +    status
 +}
 +
@@ -159844,7 +159911,7 @@ index 0000000000000000000000000000000000000000..d9c3ae40b03690251cc0df40e35ba9a0
 +        Ok(codex_omd::RuntimeMode::UpstreamDirect) => return None,
 +        Ok(_) => {
 +            let status = mod_status();
-+            match snapshot_with_status(status.as_ref().unwrap_or(&Value::Null), false) {
++            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null), false) {
 +                _ if status
 +                    .as_ref()
 +                    .is_some_and(|status| status["activation_error"].is_string()) =>

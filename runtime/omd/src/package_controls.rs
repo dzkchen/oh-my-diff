@@ -105,6 +105,19 @@ type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
 
 static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
 
+/// The last listing, reused while its selections are the same and the runtime fields it reads are unchanged.
+type Listing = (Arc<Selections>, Value, Value);
+static LISTING: Mutex<Option<Listing>> = Mutex::new(None);
+const LISTING_RUNTIME_FIELDS: [&str; 7] = [
+    "id",
+    "scope",
+    "sha256",
+    "error",
+    "version",
+    "api",
+    "capabilities",
+];
+
 /// The store side of a listing, reused while the store files and every package file are unchanged.
 fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
     let key = store.listing_stamp();
@@ -174,12 +187,50 @@ pub fn list_fields(
 
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let selections = selections(store)?;
+    let read = listing_key(runtime);
+    if let Some((cached, key, listed)) = &*LISTING.lock().unwrap_or_else(PoisonError::into_inner)
+        && Arc::ptr_eq(cached, &selections)
+        && *key == read
+    {
+        return Ok(listed.clone());
+    }
+    let listed = listing(&selections, runtime)?;
+    if !selections.status["selections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|selection| selection["reason"] == "managed_pending_sync")
+    {
+        *LISTING.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((selections, read, listed.clone()));
+    }
+    Ok(listed)
+}
+
+/// The runtime status fields a listing reads; a listing stays current while they are unchanged.
+pub fn listing_key(runtime: Option<&Value>) -> Value {
+    runtime.map_or(Value::Null, |runtime| {
+        let fields = |key: &str, names: &[&str]| -> Vec<Vec<Value>> {
+            let items = runtime[key].as_array().into_iter().flatten();
+            items
+                .map(|item| names.iter().map(|name| item[*name].clone()).collect())
+                .collect()
+        };
+        json!([
+            fields("mods", &LISTING_RUNTIME_FIELDS),
+            fields("rejected", &["path", "reason"]),
+            runtime["reload_error"],
+        ])
+    })
+}
+
+fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<Value> {
     let Selections {
         lock,
         configuration,
         status,
         manifests,
-    } = &*selections;
+    } = selections;
     let generation = configuration.revision;
     let selections = status["selections"]
         .as_array()
