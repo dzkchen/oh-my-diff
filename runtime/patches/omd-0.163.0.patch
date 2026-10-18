@@ -29609,16 +29609,15 @@ index a4359cd3e4b37cb005c136b6223bff9ebef05b49..3eda601f18f87e891f4c03c39430228e
                  self.transcript_view
                      .show_copy_feedback(&completion.1, characters);
 diff --git a/codex-rs/tui/src/app/empty_state_animation_tests.rs b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe2ec3f56b 100644
+index a1a9a66c1cc653cd7227110b5866dada70f8110a..bf0a5bf46b4a7f63364d751d08fd80fa5d99db28 100644
 --- a/codex-rs/tui/src/app/empty_state_animation_tests.rs
 +++ b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-@@ -37,6 +37,152 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
+@@ -37,6 +37,160 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
  }
 
  #[tokio::test]
 +#[serial_test::serial]
-+async fn mod_welcome_survives_draft_paste_clear_rejection_and_stops_on_observed_start() -> Result<()>
-+{
++async fn mod_welcome_survives_drafts_and_popups_and_stops_on_history() -> Result<()> {
 +    use codex_app_server_protocol::{Turn, TurnItemsView, TurnStartedNotification, TurnStatus};
 +    let mut app = crate::app::test_support::make_test_app().await;
 +    let mut tui = crate::tui::test_support::make_test_tui()?;
@@ -29648,6 +29647,15 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
 +        assert!(frame.contains("╭─╮ ╭╮╭╮ ┌─╮"), "{frame}");
 +        assert!(frame.contains("Project tools"), "{frame}");
 +    }
++    app.chat_widget
++        .handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
++    draw(&mut app, &mut tui, size)?;
++    let popup = text(crate::custom_terminal::test_support::last_rendered_buffer(
++        &tui.terminal,
++    ));
++    assert!(popup.contains("╭─╮ ╭╮╭╮ ┌─╮"), "{popup}");
++    app.chat_widget
++        .handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
 +    assert!(
 +        !app.chat_widget
 +            .empty_state_animation
@@ -29678,7 +29686,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
 +        &tui.terminal,
 +    ));
 +    assert!(
-+        rejected.contains("Submission rejected") && rejected.contains("╭─╮ ╭╮╭╮ ┌─╮"),
++        rejected.contains("Submission rejected") && !rejected.contains("╭─╮ ╭╮╭╮ ┌─╮"),
 +        "{rejected}"
 +    );
 +    app.chat_widget.handle_server_notification(
@@ -29765,7 +29773,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -87,6 +233,7 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
+@@ -87,6 +241,7 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29773,7 +29781,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -131,7 +278,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
+@@ -131,7 +286,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
      app.insert_history_cell(
          &mut tui,
          Box::new(history_cell::SessionNoticeCell(
@@ -29782,7 +29790,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
          )),
      );
      draw(&mut app, &mut tui, size)?;
-@@ -175,6 +322,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
+@@ -175,6 +330,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29790,7 +29798,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -207,10 +355,13 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+@@ -207,10 +363,13 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
      );
      insta::assert_snapshot!(
          "fresh_thread_header",
@@ -29808,7 +29816,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
          )
      );
      let short = Size::new(/*width*/ 120, /*height*/ 12);
-@@ -246,6 +397,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+@@ -246,6 +405,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
  }
 
  #[tokio::test]
@@ -29816,7 +29824,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
      let (mut app, _events, _ops) = crate::app::tests::make_test_app_with_channels().await;
      app.local_settings.tui.animations = true;
-@@ -286,6 +438,7 @@ async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
+@@ -286,6 +446,7 @@ async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29825,10 +29833,10 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
      use crossterm::event::MouseButton;
      use crossterm::event::MouseEvent;
 diff --git a/codex-rs/tui/src/app/empty_state_policy.rs b/codex-rs/tui/src/app/empty_state_policy.rs
-index 1d328eae53536d0899756dde97a2c23329771e76..201f2e0f0215104d3a1a81bb63a71786ce5c54d6 100644
+index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc8235874d813767 100644
 --- a/codex-rs/tui/src/app/empty_state_policy.rs
 +++ b/codex-rs/tui/src/app/empty_state_policy.rs
-@@ -7,6 +7,33 @@ use crate::empty_state_animation::is_startup_cell;
+@@ -7,6 +7,37 @@ use crate::empty_state_animation::is_startup_cell;
  use crate::history_cell::HistoryRenderMode;
 
  impl App {
@@ -29845,6 +29853,10 @@ index 1d328eae53536d0899756dde97a2c23329771e76..201f2e0f0215104d3a1a81bb63a71786
 +                    .thread_id()
 +                    .map(|id| id.to_string())
 +                    .as_deref()
++            || !self
++                .transcript_cells
++                .iter()
++                .all(|cell| is_startup_cell(cell.as_ref()))
 +            || self.overlay.is_some()
 +            || crate::mod_ui::dialog_visible(snapshot)
 +            || self.chat_widget.history_render_mode() == HistoryRenderMode::Raw
@@ -32761,6 +32773,50 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
 
+diff --git a/codex-rs/tui/src/bottom_pane/empty_state_policy.rs b/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
+index b83daa5c59f445b86a4f6b0bf9f3ca4ce16f92cd..991a7b1035c3e6a71fd5213b5df654f05e20c4d1 100644
+--- a/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
++++ b/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
+@@ -5,16 +5,28 @@ use crate::empty_state_animation::ComposerState;
+
+ impl BottomPane {
+     pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
+-        match (
+-            self.view_stack.as_slice(),
+-            self.warnings_view.as_ref(),
+-            self.questions
+-                .as_ref()
+-                .filter(|questions| questions.expanded),
+-            self.inline_banner_accepts_dismissal(),
+-        ) {
+-            ([], None, None, false) => self.composer.empty_state_composer(),
+-            _ => None,
+-        }
++        self.plain_composer()
++            .then(|| self.composer.empty_state_composer())
++            .flatten()
++    }
++
++    pub(crate) fn mod_welcome_composer(&self) -> Option<ComposerState> {
++        self.plain_composer()
++            .then(|| self.composer.mod_welcome_composer())
++            .flatten()
++    }
++
++    fn plain_composer(&self) -> bool {
++        matches!(
++            (
++                self.view_stack.as_slice(),
++                self.warnings_view.as_ref(),
++                self.questions
++                    .as_ref()
++                    .filter(|questions| questions.expanded),
++                self.inline_banner_accepts_dismissal(),
++            ),
++            ([], None, None, false)
++        )
+     }
+ }
 diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
 index f0b809ce50cd238a1e5208ccdd999695c1783658..6ca31803f6474287a816d074148b103cb389a723 100644
 --- a/codex-rs/tui/src/bottom_pane/footer.rs
@@ -33579,26 +33635,46 @@ index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..441aeb64dce696ae240817cdebf6df8e
              next_status_refresh_request_id: 0,
              pending_rate_limit_reset_request_id: None,
 diff --git a/codex-rs/tui/src/chatwidget/empty_state_policy.rs b/codex-rs/tui/src/chatwidget/empty_state_policy.rs
-index 017c9fb0665fbb166c75f9aa3cf93b5fbc391eaf..20b50af23a28d2217369c140414becb52a6d443b 100644
+index 017c9fb0665fbb166c75f9aa3cf93b5fbc391eaf..a78ac611e99f4c72ba1319cfa8d53135b504586d 100644
 --- a/codex-rs/tui/src/chatwidget/empty_state_policy.rs
 +++ b/codex-rs/tui/src/chatwidget/empty_state_policy.rs
-@@ -6,6 +6,16 @@ use crate::empty_state_animation::ComposerState;
+@@ -6,9 +6,19 @@ use crate::empty_state_animation::ComposerState;
  use crate::empty_state_animation::is_startup_cell;
 
  impl ChatWidget {
+-    pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
+-        let startup_only = self
+-            .transcript
 +    pub(crate) fn mod_welcome_composer(&self) -> Option<ComposerState> {
 +        if self.turn_lifecycle.last_turn_id.is_some()
++            || !self.live_cells_startup_only()
 +            || self.external_editor_state != ExternalEditorState::Closed
 +            || self.external_writer_view
 +        {
 +            return None;
 +        }
-+        self.bottom_pane.empty_state_composer()
++        self.bottom_pane.mod_welcome_composer()
 +    }
 +
-     pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
-         let startup_only = self
-             .transcript
++    fn live_cells_startup_only(&self) -> bool {
++        self.transcript
+             .active_cell
+             .as_deref()
+             .into_iter()
+@@ -19,8 +29,11 @@ impl ChatWidget {
+                     .chain(self.realtime_conversation.live_transcript_cells())
+                     .map(AsRef::as_ref),
+             )
+-            .all(is_startup_cell);
+-        if !startup_only
++            .all(is_startup_cell)
++    }
++
++    pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
++        if !self.live_cells_startup_only()
+             || self.is_user_turn_pending_or_running()
+             || self.initial_user_message.is_some()
+         {
 diff --git a/codex-rs/tui/src/chatwidget/input_flow.rs b/codex-rs/tui/src/chatwidget/input_flow.rs
 index 5b44cac1b0a97e94a786705c490dd80e5a7a8888..e08bab7008c176261dcd2aec1e401e2d5390489d 100644
 --- a/codex-rs/tui/src/chatwidget/input_flow.rs
@@ -59265,10 +59341,10 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9802075a1
+index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8d0d83847
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2473 @@
+@@ -0,0 +1,2511 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -61049,6 +61125,16 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +    }
 +}
 +
++/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
++/// "Mods are off" directory warning; only a thread the user opened does.
++fn reports_directory(
++    source: &SessionSource,
++    cwd: &std::path::Path,
++    codex_home: &std::path::Path,
++) -> bool {
++    !source.is_non_root_agent() && !cwd.starts_with(codex_home)
++}
++
 +impl ThreadLifecycleContributor<Config> for Mods {
 +    fn on_thread_start<'a>(
 +        &'a self,
@@ -61060,16 +61146,22 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +            };
 +            self.native_agent_started(thread, input.session_source, input.thread_store);
 +            let host = self.host_for(input.config.cwd.as_path());
-+            self.views.diagnostic(
-+                &self.host,
-+                "directory",
-+                host.is_none().then(|| {
-+                    format!(
-+                        "Mods are off in {}: it is neither the launch project nor one of its worktrees",
-+                        input.config.cwd.display()
-+                    )
-+                }),
-+            );
++            if reports_directory(
++                input.session_source,
++                input.config.cwd.as_path(),
++                input.config.codex_home.as_path(),
++            ) {
++                self.views.diagnostic(
++                    &self.host,
++                    "directory",
++                    host.is_none().then(|| {
++                        format!(
++                            "Mods are off in {}: it is neither the launch project nor one of its worktrees",
++                            input.config.cwd.display()
++                        )
++                    }),
++                );
++            }
 +            let Some(host) = host else {
 +                return;
 +            };
@@ -61741,6 +61833,28 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +    fn drop(&mut self) {
 +        self.0.store(true, Ordering::Release);
 +    }
++}
++
++#[cfg(test)]
++#[test]
++fn directory_warning_comes_only_from_user_threads() {
++    let home = std::path::Path::new("/home/user/.codex");
++    let outside = std::path::Path::new("/elsewhere");
++    let memories = SessionSource::Internal(
++        codex_protocol::protocol::InternalSessionSource::MemoryConsolidation,
++    );
++    assert!(reports_directory(&SessionSource::Cli, outside, home));
++    assert!(!reports_directory(
++        &memories,
++        home.join("memories").as_path(),
++        home
++    ));
++    assert!(!reports_directory(&memories, outside, home));
++    assert!(!reports_directory(
++        &SessionSource::Cli,
++        home.join("memories").as_path(),
++        home
++    ));
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
@@ -140509,10 +140623,10 @@ index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72bbf2b6cc822c9e826658640cf4fc690e5f897b
+index 0000000000000000000000000000000000000000..27fe722f2d143943373c6d26098a6ecc76482b74
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,428 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -140843,6 +140957,16 @@ index 0000000000000000000000000000000000000000..72bbf2b6cc822c9e826658640cf4fc69
 +
 +    pub(crate) fn mod_draft_take_events(&mut self) -> Vec<(Option<String>, Value)> {
 +        std::mem::take(&mut self.draft.mod_draft.events)
++    }
++
++    /// The welcome site's composer state, where an open slash, file or mention popup is a draft.
++    pub(crate) fn mod_welcome_composer(
++        &self,
++    ) -> Option<crate::empty_state_animation::ComposerState> {
++        self.empty_state_composer().or_else(|| {
++            (!matches!(self.popups.active, ActivePopup::None) && self.history_search.is_none())
++                .then_some(crate::empty_state_animation::ComposerState::Draft)
++        })
 +    }
 +
 +    fn mod_suggestion_visible(&self) -> Option<&str> {
@@ -143574,10 +143698,10 @@ index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1e
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b93aaa9c4decf77f9e803aae432727dfa0c45e6
+index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609dc79ac89b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,695 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -144220,6 +144344,15 @@ index 0000000000000000000000000000000000000000..3b93aaa9c4decf77f9e803aae432727d
 +        (KeyCode::Char('N'), KeyModifiers::SHIFT | KeyModifiers::NONE) => DocumentKey::FindPrevious,
 +        (KeyCode::Esc, _) => DocumentKey::Escape,
 +        _ => return None,
++    })
++}
++
++/// Whether Up/Down would move past the document's first or last line.
++pub(crate) fn at_edge(id: &str, key: DocumentKey) -> bool {
++    documents().get(id).is_some_and(|document| match key {
++        DocumentKey::Up => document.view.cursor == 0,
++        DocumentKey::Down => document.view.cursor + 1 >= document.lines.len(),
++        _ => false,
 +    })
 +}
 +
@@ -152354,10 +152487,10 @@ index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f87629d03
+index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf8099f9ee
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4644 @@
+@@ -0,0 +1,4843 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -153925,9 +154058,16 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +        .collect()
 +}
 +
-+fn native_cards(snapshot: &ModViewSnapshot) -> Option<ModComponent> {
++fn native_cards(snapshot: &ModViewSnapshot, width: u16) -> Option<ModComponent> {
 +    const LINES: usize = 4;
-+    let cards = native_panels(snapshot)
++    let panels = native_panels(snapshot);
++    let count = u16::try_from(panels.len()).unwrap_or(u16::MAX).max(1);
++    let text_width = usize::from(
++        (width.saturating_sub(count - 1) / count)
++            .saturating_sub(4)
++            .max(8),
++    );
++    let cards = panels
 +        .into_iter()
 +        .enumerate()
 +        .map(|(index, panel)| {
@@ -153937,6 +154077,20 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            if more > 0 {
 +                lines.push(format!("+{more} more"));
 +            }
++            let lines = lines
++                .iter()
++                .flat_map(|line| {
++                    let mut wrapped = textwrap::wrap(line, text_width)
++                        .into_iter()
++                        .map(std::borrow::Cow::into_owned)
++                        .collect::<Vec<_>>();
++                    if wrapped.len() > 6 {
++                        wrapped.truncate(6);
++                        wrapped[5].push('…');
++                    }
++                    wrapped
++                })
++                .collect();
 +            ModComponent::Box {
 +                id: format!("@native_card_{index}"),
 +                label: panel.title.clone(),
@@ -155452,8 +155606,22 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            .retain(|hitbox| dialog_ids.contains(&hitbox.id));
 +        interaction.dialog_area = Some(dialog_area);
 +        if interaction.dialog.as_ref() != Some(&key) {
++            // A shown dialog whose content changed keeps its focused control; a newly shown one starts at its
++            // autofocus control or its first.
++            let kept = interaction.dialog.is_some()
++                && interaction
++                    .focused
++                    .as_ref()
++                    .is_some_and(|focused| dialog_ids.contains(focused));
 +            interaction.dialog = Some(key);
-+            interaction.focused = interaction.order.first().cloned();
++            if !kept {
++                interaction.focused = interaction
++                    .autofocus
++                    .iter()
++                    .find(|id| dialog_ids.contains(*id))
++                    .or(interaction.order.first())
++                    .cloned();
++            }
 +        }
 +    }
 +}
@@ -156043,6 +156211,16 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +
 +fn handle_input(key: KeyEvent) -> Option<ModInput> {
 +    let mut interaction = INTERACTION.locked();
++    // Held keys repeat only inside a dialog or a focused control, and never fire hotkeys or bindings.
++    let repeated = repeats(key) && (interaction.focused.is_some() || modal(&interaction, key));
++    let key = if repeated {
++        KeyEvent {
++            kind: KeyEventKind::Press,
++            ..key
++        }
++    } else {
++        key
++    };
 +    if key.kind != KeyEventKind::Press {
 +        return modal(&interaction, key).then_some(ModInput::Consumed);
 +    }
@@ -156076,13 +156254,19 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            return Some(ModInput::Consumed);
 +        }
 +    }
-+    if matches!(
++    let arrow = matches!(
 +        (key.code, key.modifiers),
-+        (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
-+    ) && interaction.focused.is_none()
++        (KeyCode::Up | KeyCode::Down, KeyModifiers::NONE)
++    ) && modal(&interaction, key);
++    if (arrow
++        || matches!(
++            (key.code, key.modifiers),
++            (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
++        ))
++        && interaction.focused.is_none()
 +        && !interaction.order.is_empty()
 +    {
-+        interaction.focused = if key.code == KeyCode::BackTab {
++        interaction.focused = if matches!(key.code, KeyCode::BackTab | KeyCode::Up) {
 +            interaction.order.last().cloned()
 +        } else {
 +            interaction.order.first().cloned()
@@ -156138,6 +156322,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +        && let Some(ComponentTarget::Document(_)) = interaction.targets.get(&focused)
 +        && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab | KeyCode::Enter)
 +        && let Some(document_key) = crate::mod_components::key(key.code, key.modifiers)
++        && !crate::mod_components::at_edge(&focused, document_key)
 +    {
 +        crate::mod_components::handle(&focused, document_key);
 +        return Some(ModInput::Consumed);
@@ -156180,9 +156365,18 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +                toggle(&mut interaction, &focused, &target);
 +                return Some(ModInput::Consumed);
 +            }
++            (KeyCode::Char(' '), KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Select { .. }) =>
++            {
++                step(&mut interaction, focused, &target, true);
++                return Some(ModInput::Consumed);
++            }
 +            (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char(' '), KeyModifiers::NONE)
 +                if key.code == KeyCode::Enter
-+                    || matches!(target, ComponentTarget::ListRow { .. }) =>
++                    || matches!(
++                        target,
++                        ComponentTarget::ListRow { .. } | ComponentTarget::Button(_)
++                    ) =>
 +            {
 +                let label = interaction
 +                    .hitboxes
@@ -156192,11 +156386,26 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +                    .unwrap_or_else(|| focused.clone());
 +                return activate_target(&focused, &label, &target, &mut interaction);
 +            }
-+            (KeyCode::Left | KeyCode::Up | KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => {
-+                let forward = matches!(key.code, KeyCode::Right | KeyCode::Down);
-+                if step(&mut interaction, focused, &target, forward) {
-+                    return Some(ModInput::Consumed);
-+                }
++            (KeyCode::Up | KeyCode::Down, KeyModifiers::NONE)
++                if within(
++                    &mut interaction,
++                    focused.clone(),
++                    &target,
++                    key.code == KeyCode::Down,
++                ) || move_focus(&mut interaction, &focused, key.code == KeyCode::Down) =>
++            {
++                return Some(ModInput::Consumed);
++            }
++            (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Select { .. }) =>
++            {
++                step(
++                    &mut interaction,
++                    focused,
++                    &target,
++                    key.code == KeyCode::Right,
++                );
++                return Some(ModInput::Consumed);
 +            }
 +            _ => {}
 +        }
@@ -156217,6 +156426,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            )
 +    };
 +    if !editing
++        && !repeated
 +        && let Some(name) = key_name(key).filter(|name| codex_omd::mod_key_name(name))
 +        && let Some((id, target)) = interaction
 +            .hotkeys
@@ -156235,11 +156445,133 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            ModInput::Binding(name, action)
 +        });
 +    }
-+    with_cache(|cache| action_for(&cache.snapshot.view, key))
-+        .flatten()
-+        .filter(|(_, action)| !blocked(action))
-+        .map(|(name, action)| ModInput::Binding(name, action))
-+        .or(modal.then_some(ModInput::Consumed))
++    if !repeated
++        && let Some(binding) = with_cache(|cache| action_for(&cache.snapshot.view, key))
++            .flatten()
++            .filter(|(_, action)| !blocked(action))
++    {
++        return Some(ModInput::Binding(binding.0, binding.1));
++    }
++    // Unbound typing in a dialog goes to its autofocus text input, so a filter needs no focusing first.
++    let document = interaction.focused.as_ref().is_some_and(|focused| {
++        matches!(
++            interaction.targets.get(focused),
++            Some(ComponentTarget::Document(_))
++        )
++    });
++    if modal
++        && !editing
++        && !document
++        && let KeyCode::Char(character) = key.code
++        && character != ' '
++        && !key
++            .modifiers
++            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++        && let Some(id) = interaction
++            .autofocus
++            .iter()
++            .find(|id| {
++                interaction.order.contains(*id)
++                    && matches!(
++                        interaction.targets.get(*id),
++                        Some(ComponentTarget::Input(_))
++                    )
++            })
++            .cloned()
++    {
++        interaction.focused = Some(id.clone());
++        edit_input(&mut interaction, &id, key.code);
++    }
++    modal.then_some(ModInput::Consumed)
++}
++
++/// Held navigation and editing keys repeat; Enter, Space, Tab and Esc act once per press.
++fn repeats(key: KeyEvent) -> bool {
++    key.kind == KeyEventKind::Repeat
++        && match key.code {
++            KeyCode::Up
++            | KeyCode::Down
++            | KeyCode::Left
++            | KeyCode::Right
++            | KeyCode::PageUp
++            | KeyCode::PageDown
++            | KeyCode::Home
++            | KeyCode::End
++            | KeyCode::Backspace
++            | KeyCode::Delete => true,
++            KeyCode::Char(character) => {
++                character != ' '
++                    && !key
++                        .modifiers
++                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++            }
++            _ => false,
++        }
++}
++
++/// Moves within a list or scrolled pane; false at its edge or for a control without rows.
++fn within(
++    interaction: &mut Interaction,
++    id: String,
++    target: &ComponentTarget,
++    forward: bool,
++) -> bool {
++    match target {
++        ComponentTarget::ListRow { options, .. } | ComponentTarget::Multiselect { options, .. } => {
++            let selected = interaction.selected.entry(id).or_default();
++            match forward {
++                true if *selected + 1 < options.len() => *selected += 1,
++                false if *selected > 0 => *selected -= 1,
++                _ => return false,
++            }
++        }
++        ComponentTarget::Pane => {
++            let limit = interaction.scroll_limits.get(&id).copied().unwrap_or(0);
++            let scroll = interaction.scroll.entry(id).or_default();
++            match forward {
++                true if *scroll < limit => *scroll += 1,
++                false if *scroll > 0 => *scroll -= 1,
++                _ => return false,
++            }
++        }
++        _ => return false,
++    }
++    true
++}
++
++/// Up/Down past a control's edge focus the previous or next control, entering a list at its near end; key panes
++/// and terminals, which keep every key, are reached only with Tab or a click. False when no control lies that way.
++fn move_focus(interaction: &mut Interaction, focused: &str, forward: bool) -> bool {
++    let Some(index) = interaction.order.iter().position(|id| id == focused) else {
++        return false;
++    };
++    let reachable = |id: &&String| {
++        interaction
++            .targets
++            .get(*id)
++            .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _)))
++    };
++    let next = if forward {
++        interaction.order[index + 1..].iter().find(reachable)
++    } else {
++        interaction.order[..index].iter().rev().find(reachable)
++    };
++    let Some(id) = next.cloned() else {
++        return false;
++    };
++    if let Some(
++        ComponentTarget::ListRow { options, .. } | ComponentTarget::Multiselect { options, .. },
++    ) = interaction.targets.get(&id)
++    {
++        let row = if forward {
++            0
++        } else {
++            options.len().saturating_sub(1)
++        };
++        interaction.selected.insert(id.clone(), row);
++    }
++    interaction.focused = Some(id);
++    true
 +}
 +
 +fn toggle(interaction: &mut Interaction, id: &str, target: &ComponentTarget) {
@@ -157004,7 +157336,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d0c425a8d
+index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056fa838348
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
 @@ -0,0 +1,244 @@
@@ -157089,7 +157421,7 @@ index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d
 +                    .collect()
 +            };
 +            mod_rows = rows.len();
-+            if let Some(cards) = native_cards(&snapshot) {
++            if let Some(cards) = native_cards(&snapshot, width) {
 +                rows.extend(component_rows(&[cards], width, &mut interaction, look));
 +            }
 +            rows.extend(
@@ -157254,10 +157586,10 @@ index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f81fb43f2
+index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e85c36ed3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1966 @@
+@@ -0,0 +1,2050 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -157505,6 +157837,16 @@ index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f
 +            && notes.contains("+2 more"),
 +        "{notes}"
 +    );
++    snapshot.diagnostics = vec![
++        "Mods are off in /Users/someone/project: it is neither the launch project nor one of its worktrees".into(),
++    ];
++    preview(snapshot.clone());
++    let notes = footer_hyperlink_lines(66)
++        .iter()
++        .map(|line| line.line.to_string())
++        .collect::<Vec<_>>()
++        .join("\n");
++    assert!(notes.contains("worktrees"), "{notes}");
 +    snapshot.view.panels.clear();
 +    assert_eq!(sidebar(area, &snapshot), None);
 +    preview(ModViewSnapshot::default());
@@ -157639,6 +157981,80 @@ index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f
 +    assert!(!preserve_preview(&preview, &later));
 +    later.view.sites.clear();
 +    assert!(!preserve_preview(&preview, &later));
++}
++
++#[test]
++#[serial_test::serial]
++fn dialog_arrows_cross_controls_repeat_and_typing_reaches_a_leading_filter() {
++    let snapshot = snapshot(serde_json::json!({
++        "sites":{"dialog":{"components":[{
++            "type":"dialog","id":"picker","label":"Picker","title":"Picker","children":[
++                {"type":"input","id":"filter","label":"Filter","value":"","autofocus":true,"action":{"command":"m:c","args":"filter"}},
++                {"type":"list","id":"rows","label":"Rows","rows":[
++                    {"value":"a","label":"A","spans":[{"text":"A"}]},
++                    {"value":"b","label":"B","spans":[{"text":"B"}]},
++                    {"value":"c","label":"C","spans":[{"text":"C"}]}],"action":{"command":"m:c","args":"pick"}},
++                {"type":"select","id":"mode","label":"Mode","value":"x","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"action":{"command":"m:c","args":"mode"}},
++                {"type":"button","id":"go","label":"Go","text":"Go","action":{"command":"m:c","args":"go"}}
++            ]
++        }]}}
++    }));
++    sync_interaction(&snapshot.view);
++    let area = Rect::new(0, 0, 80, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let key = |code| input(KeyEvent::new(code, KeyModifiers::NONE));
++    let state = || {
++        let interaction = INTERACTION.locked();
++        (
++            interaction.focused.clone().unwrap_or_default(),
++            interaction.selected.get("rows").copied(),
++            interaction.selected.get("mode").copied(),
++        )
++    };
++    assert_eq!(state().0, "filter");
++    key(KeyCode::Down);
++    assert_eq!((state().0, state().1), ("rows".into(), Some(0)));
++    let mut held = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
++    held.kind = KeyEventKind::Repeat;
++    input(held);
++    input(held);
++    assert_eq!(state().1, Some(2), "a held arrow repeats");
++    key(KeyCode::Down);
++    assert_eq!(
++        state().0,
++        "mode",
++        "Down past a list's last row reaches the next control"
++    );
++    key(KeyCode::Up);
++    assert_eq!(
++        (state().0, state().1),
++        ("rows".into(), Some(2)),
++        "entering from below starts at the last row"
++    );
++    assert!(focus("mode"));
++    key(KeyCode::Right);
++    assert_eq!(state().2, Some(1));
++    key(KeyCode::Char(' '));
++    assert_eq!(state().2, Some(0), "Space steps a select");
++    key(KeyCode::Down);
++    assert_eq!(state().0, "go", "Up and Down never change a select");
++    assert!(matches!(
++        key(KeyCode::Char(' ')),
++        Some(ModInput::Interaction(_, ModKeyAction::Command { args, .. })) if args == "go"
++    ));
++    let mut held_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
++    held_enter.kind = KeyEventKind::Repeat;
++    assert!(
++        matches!(input(held_enter), Some(ModInput::Consumed)),
++        "a held Enter acts once"
++    );
++    assert!(focus("rows"));
++    key(KeyCode::Char('q'));
++    let interaction = INTERACTION.locked();
++    assert_eq!(interaction.focused.as_deref(), Some("filter"));
++    assert_eq!(interaction.input_values["filter"], "q");
++    drop(interaction);
++    preview(ModViewSnapshot::default());
 +}
 +
 +#[test]

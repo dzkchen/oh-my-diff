@@ -146,6 +146,7 @@ export default function activate(api: ModAPI) {
     if (windows.length) data.limits = windows;
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
+    if (typeof snapshot.planType === 'string') data.subscription = snapshot.planType;
   };
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
@@ -179,10 +180,13 @@ export default function activate(api: ModAPI) {
     const summary = api.usage.summarize(response);
     const usage = object(response.usage);
     const reported = object(usage.omd_reported_cost);
-    const [kind, amount] = charge(response.cost.basis, response.cost.microusd, number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
     const tokens = summary.measured ? summary.tokens : null;
     const now = Date.now();
     update(data => {
+      // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
+      const plan = response.cost.basis === 'unpriced' && response.route === 'codex' && response.provider === 'openai' && data.subscription !== null;
+      const [kind, amount] = charge(plan ? 'included_subscription' : response.cost.basis, response.cost.microusd,
+        number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
       const key = `${response.request_id}#${response.attempt}`;
       const entry: Seen = [tokens?.input ?? 0, tokens?.output ?? 0, tokens?.reasoning ?? 0, tokens?.cached ?? 0, tokens?.cache_write ?? 0, kind as Charge, amount];
       if (data.seen[key]) apply(data, data.seen[key], -1);
@@ -225,7 +229,7 @@ export default function activate(api: ModAPI) {
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
-    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; });
+    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; data.subscription = null; });
     if (method === 'account/rateLimits/updated') return update(data => limits(data, update_));
     const thread = thread_id ?? update_.threadId ?? null;
     const current = saved().thread;
@@ -316,17 +320,17 @@ export default function activate(api: ModAPI) {
     const problem = configured.error ?? state.notice;
     return { type: 'dialog', id: 'omd_statusline_dialog', label: 'Status line', title: 'Status line', children: [
       { type: 'text', id: 'omd_statusline_preview_label', label: 'Preview', text: `${problem ? `${visible(problem, 200)} · ` : ''}Preview (${state.draft.placement} the composer)`, tone: problem ? 'attention' : 'muted' },
-      // One document keeps the dialog's component ids, and so its keyboard focus, stable as the line count changes.
-      { type: 'document', id: 'omd_statusline_preview', label: 'Preview', height: Math.max(1, preview.length),
-        lines: preview.length ? preview.map(spans => spans.map(({ link: _link, ...span }) => span)) : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' }]] },
+      { type: 'box', id: 'omd_statusline_preview', label: 'Preview', children: (preview.length ? preview : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' as const }]])
+        .map((spans, index): TerminalComponent => ({ type: 'line', id: `omd_statusline_preview_${index}`, label: 'Preview', spans: spans.map(({ link: _link, ...span }) => span) })) },
       select('placement', 'Placement', state.draft.placement, ['below', 'above']),
       select('preset', 'Preset', state.draft.preset, ['compact', 'detailed', 'custom']),
-      { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'pick' } },
-      { type: 'box', id: 'omd_statusline_order', label: 'Order', style: { direction: 'row', gap: 1 }, children: [button('toggle', 'Show/hide'), button('move up', 'Earlier'), button('move down', 'Later'), button('line', 'Next line')] },
+      { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'toggle' } },
+      { type: 'box', id: 'omd_statusline_order', label: 'Order', style: { direction: 'row', gap: 1 }, children: [button('move up', 'Earlier'), button('move down', 'Later'), button('line', 'Next line')] },
       select('glyphs', 'Glyphs', state.draft.glyphs, ['unicode', 'ascii']),
       select('bars', 'Progress bars', String(state.draft.bars), ['true', 'false']),
       { type: 'input', id: 'omd_statusline_thresholds', label: 'Thresholds (warn,alert)', value: state.draft.thresholds, action: { command: COMMAND, args: 'set thresholds' } },
       { type: 'box', id: 'omd_statusline_actions', label: 'Actions', style: { direction: 'row', gap: 1 }, children: [button('apply', 'Apply'), button('cancel', 'Cancel'), button('reset', 'Reset')] },
+      { type: 'text', id: 'omd_statusline_keys', label: 'Keys', text: '↑↓ move · space shows/hides a segment · ←→ change · enter runs · esc closes', tone: 'muted' },
     ] };
   };
 
@@ -387,6 +391,7 @@ export default function activate(api: ModAPI) {
     if (event.kind === 'close') return api.uiState.set({ open: false });
     if (event.kind !== 'change' || typeof event.value !== 'string') return;
     const key = event.component.slice('omd_statusline_'.length);
+    if (key === 'segments') return api.uiState.set(edit(state, 'pick', [event.value]) as unknown as Json);
     if (['placement', 'preset', 'glyphs', 'bars', 'thresholds'].includes(key)) api.uiState.set(edit(state, 'set', [key, event.value]) as unknown as Json);
   });
 

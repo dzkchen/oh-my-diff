@@ -11,15 +11,16 @@ It is on by default in OMD+ and OMD Core. Turn it off with `omd-package mod disa
 | Command or key | What it does |
 | --- | --- |
 | `/mods` | Open the screen. Mods are listed as Failed, On and Off. |
-| Up and Down | Move through the list. |
+| Typing | Filter the list as you type; letters match in order, so `adv` finds Advisor. |
+| Up and Down | Move through the filter, the list and the controls below it. |
 | Space or Enter | Turn the highlighted mod on or off. |
-| Tab | Reach the filter, settings, Browse and Add from source. |
+| Left and Right | Change a choice such as Settings. |
 | Esc | Close the screen. |
 | `/mods ACTION MOD` | Run an action without the screen. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |
 | `/mods reload` | Reload the list. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
-Browse searches the mod directory. Add from source takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute folder or a directory id.
+Browse opens the mod directory, filtered the same way as you type. Add from source, in the directory, takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute folder or a directory id.
 
 ## Needs and limits
 

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "0aa9326218f646d8fdbfe8bb30a564e20457fca7dff3d09f003fc136c3b9cfc9"
+    "sha256": "7cde70e60d1b64fba28a0af5c1620b8f1bda98b282989b7bb426aa612f4ab0bc"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -907,7 +907,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "f3658c6d8fa3a61199373545d113ab0c771a228351ff1cc806209d41a3bab397"
+      "after": "9b5bdd7c157d085c4a1f8a21c0ccbea90bb32af8fe05c6caeda2992456031c74"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1523,11 +1523,11 @@
     },
     "codex-rs/tui/src/app/empty_state_animation_tests.rs": {
       "before": "99d5730a19aee4c9ca3909a0dd185e1bfc6d09c1b4c32162173e31efca3ef320",
-      "after": "844bf6d9e2a14f6f8584ba7734e9c351a41932854cc99e136836a6013c01ba0d"
+      "after": "87444b69ebfefbb2cb297c763fe88b604cd62ad36f4b5960b36553173b966753"
     },
     "codex-rs/tui/src/app/empty_state_policy.rs": {
       "before": "6a0db23c9349437261638734f604ea38b630b9701c556442727f079d819a0493",
-      "after": "ca06cac12727c8e98105c62a700e0b3ebafe3201fed25b85ee1f127afce9ea8c"
+      "after": "02efc84ee69399c10cea125f7e54c610f35748e8fcde4af4e2cace6a5ee2c64f"
     },
     "codex-rs/tui/src/app/event_dispatch.rs": {
       "before": "f2fc5875439971057488cbe99d8b3cc748620aa5027af131a40b48896668f6db",
@@ -1711,7 +1711,7 @@
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs": {
       "before": null,
-      "after": "d4a08ec5e51ae7727852dd6a538d4efbeeeb62628b20195e9e22c71bed5687bc"
+      "after": "ad899680d8e2f1ced175fa060f822f4f7a7dd93b85af1e3e62be49d91b973349"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/mod_draft_tests.rs": {
       "before": null,
@@ -1740,6 +1740,10 @@
     "codex-rs/tui/src/bottom_pane/command_popup.rs": {
       "before": "807d0301c7ffa244612db6500352e2bab162bcfd9851b6484ac0f2ab5cc9d49a",
       "after": "8ec9b7cc2a7f40336763bcc1b5da898916fee269d2e0ebe012d20b5454dcf5cb"
+    },
+    "codex-rs/tui/src/bottom_pane/empty_state_policy.rs": {
+      "before": "86645341873e753c238e44718fcb5619e27875c51bca0cd3ad399da1f2cd5275",
+      "after": "3ea291b3da42192ce2e01574a82b03acdf2c0870c2724d55bd10a96c0ee2d440"
     },
     "codex-rs/tui/src/bottom_pane/footer.rs": {
       "before": "cba851759c13f631ed95bbb243f36d4c70e7f7f28c991f8bf14a5b5fc19a0a1d",
@@ -1799,7 +1803,7 @@
     },
     "codex-rs/tui/src/chatwidget/empty_state_policy.rs": {
       "before": "ac07de6d08e7040d70bbeb499a386eb2e644bd3174074ef3010dc50dcb82b94d",
-      "after": "846bcb291f429ed9df42d5d3828ebb09bf45aad6709f8c26339adf061734914d"
+      "after": "685787c9e76bbc0dfe8088a54bf058b0450dc2020326b8a9a74030088b39cf39"
     },
     "codex-rs/tui/src/chatwidget/input_flow.rs": {
       "before": "297e45e088a5e1a0099d09bd0249797df11243d4976e90af43252ebb6efd696a",
@@ -2079,7 +2083,7 @@
     },
     "codex-rs/tui/src/mod_components.rs": {
       "before": null,
-      "after": "e6896333a122686fc666c8ad4f9dcf641f639cf76bef104110c9b5a1e1d8cf3f"
+      "after": "230fc1d68504708dd11d2c2412d50693c897360048b5d37ee4950fd65ba59bf8"
     },
     "codex-rs/tui/src/mod_components_tests.rs": {
       "before": null,
@@ -2147,15 +2151,15 @@
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
-      "after": "541186d657475b1a1bbadf72dde4ea7aab936574ed34e29e0fdfa4c72000eb36"
+      "after": "42149e782d75e6219e4a9acb3818cb997d2b1f23c69cade1742aa200426b572b"
     },
     "codex-rs/tui/src/mod_ui/footer.rs": {
       "before": null,
-      "after": "b6a677d0ef865e2e8c160da18a84bc0c9c4cb034fe8660b433220ec9e9f521fe"
+      "after": "3b0ea004ed3dcae76bf562b803c6251a119b0302a7525b2d81255e7bb73b233a"
     },
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
-      "after": "301f804fe6bf18ca1833d46ecf51c3f51237e2e942373238a9edd1c486baeea2"
+      "after": "31e44f73069896f3fe7bb56561f9893023d16f2f167aa145c7c757812da083a0"
     },
     "codex-rs/tui/src/multi_agents.rs": {
       "before": "8118da2304a7c74585f90ebc94895ae3eb9d8a5364df6db350b8e0a234017714",
