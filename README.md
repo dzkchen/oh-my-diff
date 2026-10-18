@@ -73,7 +73,7 @@ and update Codex only after `omd update` supports the new version.
 
 - [Install, update, remove](docs/install.md)
 - [Included mods](docs/collection.md) and [manage mods](docs/manage-mods.md)
-- [Write a mod](docs/write-a-mod.md), [API reference](mods/REFERENCE.md) and [agent mod guide](docs/AGENT_MOD_GUIDE.md)
+- [Write a mod](docs/write-a-mod.md), [API reference](mods/reference/README.md) and [agent mod guide](docs/AGENT_MOD_GUIDE.md)
 
 Oh My Diff is not affiliated with or endorsed by OpenAI.
 

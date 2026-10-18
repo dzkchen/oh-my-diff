@@ -35,8 +35,8 @@ It runs offline and prints a long JSON report. Exit 0 means it passed; look for 
 the top.
 
 Tests never call a real model. For mocks and helpers, see
-[Offline scenarios](../mods/REFERENCE.md#offline-scenarios) and
-[TypeScript tests](../mods/REFERENCE.md#typescript-tests).
+[Offline scenarios](../mods/reference/packaging.md#offline-scenarios) and
+[TypeScript tests](../mods/reference/authoring.md#typescript-tests).
 
 To type-check too, add TypeScript once, then run `pnpm check`:
 
@@ -116,8 +116,8 @@ Git works too: `omd install 'git+https://github.com/you/repo#v0.1.0:my_mod'`.
 ## Next steps
 
 - Read bigger working examples: `omd-mod-author examples ./examples`.
-- [Mod API reference](../mods/REFERENCE.md): every operation, event and screen surface.
+- [Mod API reference](../mods/reference/README.md): every operation, event and screen surface.
 - [Agent mod guide](AGENT_MOD_GUIDE.md): hand it to a coding agent. It also helps you
   [choose between a mod, plugin, skill or hook](AGENT_MOD_GUIDE.md#1-pick-the-right-kind-of-extension).
-- [Permissions](../mods/REFERENCE.md#capabilities) and [how mods combine](../mods/REFERENCE.md#composition-and-safety).
-- [Publishing rules](../mods/REFERENCE.md#publish-a-mod-to-npm) and [compatibility](../mods/COMPATIBILITY.md).
+- [Permissions](../mods/reference/capabilities.md#capabilities) and [how mods combine](../mods/reference/safety.md).
+- [Publishing rules](../mods/reference/packaging.md#publish-a-mod-to-npm) and [compatibility](../mods/COMPATIBILITY.md).
