@@ -116796,10 +116796,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52f37218e7
+index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b91936fbd
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,665 @@
+@@ -0,0 +1,666 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -116901,15 +116901,13 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +    configuration: crate::ModConfiguration,
 +    status: Value,
 +    manifests: Vec<Value>,
++    listing: Option<Mutex<Option<(Value, Value)>>>,
 +}
 +
 +type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
 +
 +static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
 +
-+/// The last listing, reused while its selections are the same and the runtime fields it reads are unchanged.
-+type Listing = (Arc<Selections>, Value, Value);
-+static LISTING: Mutex<Option<Listing>> = Mutex::new(None);
 +const LISTING_RUNTIME_FIELDS: [&str; 7] = [
 +    "id",
 +    "scope",
@@ -116951,6 +116949,7 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +        configuration,
 +        status,
 +        manifests,
++        listing: stamps.as_ref().map(|_| Mutex::default()),
 +    });
 +    if let (Some(key), Some(stamps)) = (key, stamps) {
 +        *LISTED.lock().unwrap_or_else(PoisonError::into_inner) =
@@ -116989,27 +116988,23 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +
 +pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
 +    let selections = selections(store)?;
++    let Some(cache) = &selections.listing else {
++        return Ok(listing(&selections, runtime)?.0);
++    };
 +    let read = listing_key(runtime);
-+    if let Some((cached, key, listed)) = &*LISTING.lock().unwrap_or_else(PoisonError::into_inner)
-+        && Arc::ptr_eq(cached, &selections)
++    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
++    if let Some((key, listed)) = &*cache
 +        && *key == read
 +    {
 +        return Ok(listed.clone());
 +    }
-+    let listed = listing(&selections, runtime)?;
-+    if !selections.status["selections"]
-+        .as_array()
-+        .into_iter()
-+        .flatten()
-+        .any(|selection| selection["reason"] == "managed_pending_sync")
-+    {
-+        *LISTING.lock().unwrap_or_else(PoisonError::into_inner) =
-+            Some((selections, read, listed.clone()));
++    let (listed, cacheable) = listing(&selections, runtime)?;
++    if cacheable {
++        *cache = Some((read, listed.clone()));
 +    }
 +    Ok(listed)
 +}
 +
-+/// The runtime status fields a listing reads; a listing stays current while they are unchanged.
 +pub fn listing_key(runtime: Option<&Value>) -> Value {
 +    runtime.map_or(Value::Null, |runtime| {
 +        let fields = |key: &str, names: &[&str]| -> Vec<Vec<Value>> {
@@ -117026,13 +117021,15 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +    })
 +}
 +
-+fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<Value> {
++fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Value, bool)> {
 +    let Selections {
 +        lock,
 +        configuration,
 +        status,
 +        manifests,
++        ..
 +    } = selections;
++    let mut cacheable = true;
 +    let generation = configuration.revision;
 +    let selections = status["selections"]
 +        .as_array()
@@ -117058,6 +117055,7 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +                .filter(|_| selection["packaged"] == true);
 +            let pending_manifest;
 +            let manifest = if selection["reason"] == "managed_pending_sync" {
++                cacheable = false;
 +                pending_manifest = selection["path"]
 +                    .as_str()
 +                    .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
@@ -117142,11 +117140,14 @@ index 0000000000000000000000000000000000000000..f7ce2e2f2766af751e45e00f3524dc52
 +                })
 +            }),
 +    );
-+    Ok(json!({
-+        "packages": packages,
-+        "generation": generation,
-+        "reload_error": runtime.map_or(Value::Null, |runtime| runtime["reload_error"].clone()),
-+    }))
++    Ok((
++        json!({
++            "packages": packages,
++            "generation": generation,
++            "reload_error": runtime.map_or(Value::Null, |runtime| runtime["reload_error"].clone()),
++        }),
++        cacheable,
++    ))
 +}
 +
 +pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
@@ -148103,10 +148104,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..973d486b0b4c0017d2a432dbd38e2a27f66eacd0
+index 0000000000000000000000000000000000000000..02419aa54b1fd72264b9a7792ae1b7a40da9d013
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1570 @@
+@@ -0,0 +1,1587 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -148355,13 +148356,30 @@ index 0000000000000000000000000000000000000000..973d486b0b4c0017d2a432dbd38e2a27
 +    }
 +}
 +
-+/// Lists the packages off the command path so `packages.list` answers from the listing cache.
 +pub(crate) fn warm_listing(store: PathBuf) {
-+    std::thread::spawn(move || {
-+        let _ = codex_omd::ModStore::open(store).and_then(|store| {
-+            store.verify_selections()?;
-+            codex_omd::package_controls::list(&store, crate::omd::mod_status().as_deref())
-+        });
++    static WARM: Mutex<(bool, Option<PathBuf>)> = Mutex::new((false, None));
++    let mut warm = WARM.locked();
++    warm.1 = Some(store);
++    if std::mem::replace(&mut warm.0, true) {
++        return;
++    }
++    drop(warm);
++    std::thread::spawn(|| {
++        loop {
++            let next = {
++                let mut warm = WARM.locked();
++                let next = warm.1.take();
++                warm.0 = next.is_some();
++                next
++            };
++            let Some(store) = next else {
++                break;
++            };
++            let _ = codex_omd::ModStore::open(store).and_then(|store| {
++                store.verify_selections()?;
++                codex_omd::package_controls::list(&store, crate::omd::mod_status().as_deref())
++            });
++        }
 +    });
 +}
 +
@@ -159404,10 +159422,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7268245a3d7452b01e008f6de209ff48ba8a6ee1
+index 0000000000000000000000000000000000000000..7de1edc40bbec218d92ab1f758722308d13d48a5
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,714 @@
+@@ -0,0 +1,717 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -159665,12 +159683,15 @@ index 0000000000000000000000000000000000000000..7268245a3d7452b01e008f6de209ff48
 +    let listing = |status: Option<&std::sync::Arc<Value>>| {
 +        codex_omd::package_controls::listing_key(status.map(std::sync::Arc::as_ref))
 +    };
-+    let previous = cache.as_ref().and_then(|(_, _, status)| status.clone());
++    let previous = cache
++        .as_ref()
++        .filter(|(cached_path, _, _)| *cached_path == path)
++        .and_then(|(_, _, status)| status.clone());
 +    *cache = Some((path, stamp, status.clone()));
 +    drop(cache);
 +    if status.is_some()
 +        && listing(status.as_ref()) != listing(previous.as_ref())
-+        && let Some(store) = store_root()
++        && let Some(store) = mod_paths().and_then(|paths| paths.store)
 +    {
 +        crate::mod_runtime::warm_listing(store);
 +    }
