@@ -65,6 +65,6 @@ network or approve actions really can. Only turn on mods you trust.
 - **Preview a plugin update:** `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE_DIR` compares
   files without changing anything; apply with `/plugins` or `codex plugin add`.
 - **Organizations:** policy files and an OS-separated credential broker (both need `sudo`):
-  [policy](../mods/REFERENCE.md#administrator-policy-and-managed-deployment),
-  [protected authority](../mods/REFERENCE.md#protected-authority-macos). Run `omd-package broker uninstall` before
+  [policy](../mods/reference/safety.md#administrator-policy-and-managed-deployment),
+  [protected authority](../mods/reference/safety.md#protected-authority-macos). Run `omd-package broker uninstall` before
   uninstalling OMD.
