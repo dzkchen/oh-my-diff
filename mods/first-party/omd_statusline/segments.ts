@@ -37,7 +37,7 @@ export type Data = {
   cache: { ratio: number | null; expires: number | null };
   cost: Record<Exclude<Charge, 'none'>, number>;
   seen: Record<string, [number, number, number, number, number, Charge, number]>;
-  limits: { minutes: number | null; used: number; resets: number | null }[]; credits: string | null; subscription: string | null;
+  limits: { minutes: number | null; used: number; resets: number | null }[]; credits: string | null;
   tools: Record<string, number>; agents: Record<string, string>; plan: { done: number; total: number; step: string | null } | null;
   git: Git | null; github: Github; scripts: Record<string, ScriptResult>; tick: number; beat: number | null; armed: string | null; viewport: { columns: number; rows: number } | null; mods: Mods | null;
   pending: { from: string[]; to: Settings; turns: number } | null;
@@ -46,7 +46,7 @@ export const EMPTY: Data = {
   thread: null, started: null, cwd: null, model: { requested: null, served: null, effort: null, provider: null, billing: null },
   context: { used: null, window: null, compactions: 0, at: null, compacted: null, reverted: null, switched: false },
   tokens: { input: 0, output: 0, reasoning: 0, cached: 0, write: 0, requests: 0 }, cache: { ratio: null, expires: null },
-  cost: { billed: 0, estimate: 0, included: 0, pending: 0, unknown: 0 }, seen: {}, limits: [], credits: null, subscription: null, tools: {}, agents: {}, plan: null,
+  cost: { billed: 0, estimate: 0, included: 0, pending: 0, unknown: 0 }, seen: {}, limits: [], credits: null, tools: {}, agents: {}, plan: null,
   git: null, github: { key: null, status: 'idle', at: null, next: 0, failures: 0, pr: null, ci: null, detail: null }, scripts: {}, tick: 0, beat: null, armed: null, viewport: null, mods: null, pending: null,
 };
 

@@ -770,6 +770,39 @@ fn observe_only_accounts_record_usage_without_admission() {
 }
 
 #[test]
+fn unrated_requests_are_included_only_on_a_chatgpt_login() {
+    let (root, accounts, task, mut request, body) = setup();
+    let mut lead = account(&task, root.path(), "lead");
+    lead.rates = None;
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("main".into(), lead);
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |_, payload| {
+        sink.lock().unwrap().push(payload["cost"].clone());
+    }));
+    request.headers.insert("thread-id", "main".parse().unwrap());
+    for login in [false, true] {
+        if login {
+            request
+                .headers
+                .insert("chatgpt-account-id", "fixture".parse().unwrap());
+        }
+        drop(accounts.before_send(&mut request, Some(&body)).unwrap());
+    }
+    assert_eq!(
+        *notified.lock().unwrap(),
+        [
+            json!({"microusd": null, "basis": "unpriced"}),
+            json!({"microusd": 0, "basis": "included_subscription"}),
+        ]
+    );
+}
+
+#[test]
 fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
     let (root, accounts, task, mut request, body) = setup();
     let mut attempt = accounts

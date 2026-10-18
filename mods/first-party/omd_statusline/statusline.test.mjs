@@ -57,12 +57,11 @@ const settled = (answer = host()) => {
 };
 const started = () => settled();
 
-test('the native route on a ChatGPT plan shows as included, not unpriced', () => {
-  const settings = { preset: 'custom', layout: 'provider cost' };
-  const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
-  const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
-  assert.deepEqual(lines(view(feed(settled(plan), unpriced), settings)), ['openai subscription · included']);
-  assert.deepEqual(lines(view(feed(started(), unpriced), settings)), ['openai unpriced · cost unknown'], 'an API key without rates stays unpriced');
+test('Earlier and Later act on the highlighted first segment before any arrow key', () => {
+  const opened = call({ event: 'command', name: 'edit', payload: '' }).ui;
+  assert.equal(opened.selected, 'model');
+  const moved = call({ event: 'command', name: 'edit', payload: 'move down', ui_state: opened }).ui;
+  assert.notEqual(moved.draft.layout, opened.draft.layout);
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {

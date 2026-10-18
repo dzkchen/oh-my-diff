@@ -71,7 +71,7 @@ export default function activate(api: ModAPI) {
       : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
   };
   const search = (state: Saved, query: string): Saved => {
-    const found = api.host.tryCall('packages.index', {});
+    const found = api.host.tryCall('packages.index', { query });
     return found.ok ? { ...state, query, catalog: found.value.packages, catalogError: null } : { ...state, query, catalog: [], catalogError: found.error };
   };
   const newest = (entry: PackageCatalogEntry | undefined) => entry?.versions.find(item => !item.blocked)?.version ?? '';
@@ -97,7 +97,7 @@ export default function activate(api: ModAPI) {
     if (verb === 'set') return write(state, argument);
     if (verb === 'directory') return search({ ...state, directory: true, details: null, notice: null }, state.query);
     if (verb === 'installed') return { ...state, directory: false, picked: null, notice: null };
-    if (verb === 'search') return { ...state, picked: null, query: visible(argument, 64).trim() };
+    if (verb === 'search') return search({ ...state, picked: null }, visible(argument, 64).trim());
     if (verb === 'pick') return { ...state, picked: argument || null, pickedVersion: newest(state.catalog.find(entry => entry.id === argument)) };
     if (verb === 'version') return { ...state, pickedVersion: argument };
     if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
@@ -152,11 +152,10 @@ export default function activate(api: ModAPI) {
   }, { description: 'Browse and install mods, turn them on or off and change their settings' });
   api.on('component_event', event => {
     if (event.kind === 'close' && event.component.startsWith('omd_mods_')) api.uiState.set({ ...saved(), ...CLOSED });
-    // Filter and search narrow the list as the user types.
-    if (event.kind === 'change' && (event.component === 'omd_mods_filter' || event.component === 'omd_mods_search')) {
-      const value = visible(event.value ?? '', 64);
-      api.uiState.set({ ...saved(), ...(event.component === 'omd_mods_filter' ? { filter: value, details: null } : { query: value, picked: null }) });
-    }
+    if (event.kind !== 'change') return;
+    const value = visible(event.value ?? '', 64);
+    if (event.component === 'omd_mods_filter') api.uiState.set({ ...saved(), filter: value, details: null });
+    if (event.component === 'omd_mods_search') api.uiState.set(search({ ...saved(), picked: null }, value));
   });
 
   // Dialog height counts text lines, so long text is wrapped here instead of by the renderer.

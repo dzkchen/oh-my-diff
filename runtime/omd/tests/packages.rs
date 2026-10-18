@@ -1579,3 +1579,48 @@ fn package_requests_refuse_a_wrong_action_another_scope_and_nested_index_sources
         .to_string();
     assert!(error.contains("index_release_source_invalid"), "{error}");
 }
+
+#[test]
+fn index_queries_match_id_letters_in_order_or_description_text() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = store(&temp);
+    let index = root.join("index.json");
+    let release = |description: &str| {
+        json!([{"version":"1.0.0","source":{"kind":"local","path":root},"integrity":"0".repeat(64),
+            "description":description}])
+    };
+    let write = |packages: serde_json::Value| {
+        std::fs::write(
+            &index,
+            serde_json::to_vec(&json!({"schema":1,"packages":packages})).unwrap(),
+        )
+        .unwrap();
+    };
+    write(json!({
+        "omd_statusline":release("Status row"),
+        "omd_advisor":release("Second opinion on a plan"),
+    }));
+    let found = |query: &str| {
+        store.package_index_entries(&index, query).unwrap()["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(found("stln"), ["omd_statusline"]);
+    assert_eq!(found("Opinion on"), ["omd_advisor"]);
+    assert!(found("lnst").is_empty());
+    let mut packages = (0..200)
+        .map(|n| (format!("a_s_t_{n:03}"), release("Filler")))
+        .collect::<serde_json::Map<_, _>>();
+    packages.insert("st".into(), release("Exact"));
+    write(packages.into());
+    let ranked = found("st");
+    assert_eq!(
+        (ranked.len(), ranked[0].as_str()),
+        (200, "st"),
+        "the best match survives the cap"
+    );
+}

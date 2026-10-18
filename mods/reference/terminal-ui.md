@@ -319,7 +319,7 @@ also reports, with `origin` `user` or `mod`:
 | Event | Reports |
 | --- | --- |
 | `focus` and `blur` | Focus changes. |
-| `change` | An input's or select's new `value` or a multiselect's checked `values`, on every edit. |
+| `change` | An input's or select's new `value`, a list's highlighted row `value` or a multiselect's checked `values`, on every edit. |
 | `scroll` | A pane's `offset`. |
 | `pointer` | Cell-relative `{column, row, action, button}`. |
 | `open` / `close` | Panes and dialogs (`ui_composition_v1`). |
@@ -534,8 +534,8 @@ draw no frame.
   `sidebar_style` sets one, which then carries the view `title`.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
-- The host's progress and mod diagnostics draw as cards above the prompt (four entries each, wrapped to
-  six lines, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
+- The host's progress and mod diagnostics draw as cards above the prompt (six wrapped lines
+  each, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 ### Terminal operations
 

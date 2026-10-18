@@ -32548,6 +32548,28 @@ index b219097ee18118ba7be29fd24c514d7e64b2cfb5..192ca81a4d6223645af607083a432f2a
          }
      }
  }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
+index 5db883b7e67104ffade76592d30efee8294d08f8..1dcf74230d4c0b0667e2fa009af958eb6fea04e1 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state_tests.rs
+@@ -146,3 +146,17 @@ fn interactive_query_keeps_focus_over_underlying_hints_but_empty_override_wins()
+         render(&composer, /*footer*/ None)
+     );
+ }
++
++#[test]
++fn welcome_counts_an_open_popup_as_a_draft_only_while_composing() {
++    use crate::empty_state_animation::ComposerState;
++    let mut composer = composer();
++    composer.draft.textarea.insert_str("/");
++    composer.sync_popups();
++    assert!(matches!(
++        composer.mod_welcome_composer(),
++        Some(ComposerState::Draft)
++    ));
++    composer.footer.mode = FooterMode::ShortcutOverlay;
++    assert!(composer.mod_welcome_composer().is_none());
++}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs
 index 65a5926135ecd4d211f0edf54f834e4878f52a08..d56abcc622d12cb095118e9712ce5b49c0b87b9f 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs
@@ -47992,10 +48014,10 @@ index 0000000000000000000000000000000000000000..58eda136a98fe2d713424c38b59aa7cf
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161ec1230daf
+index 0000000000000000000000000000000000000000..63e1bcc552f22dbd5faaab96d7d68d1ee396f482
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2311 @@
+@@ -0,0 +1,2316 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -49327,9 +49349,9 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +        inject_credential(request, account.credential.as_deref(), &url)?;
 +        let Some(rates) = account.rates.clone() else {
 +            let model = requested.unwrap_or_else(|| account.model.clone());
-+            return Ok(Some(Box::new(self.attempt(
-+                account, thread, request_id, attempt, model, None, None,
-+            ))));
++            let mut unrated = self.attempt(account, thread, request_id, attempt, model, None, None);
++            unrated.subscription = request.headers.contains_key("chatgpt-account-id");
++            return Ok(Some(Box::new(unrated)));
 +        };
 +        let model = account.model.clone();
 +        if let Some((path, sha)) = &account.worker_authorization {
@@ -49616,6 +49638,7 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +    state: Arc<Mutex<RequestState>>,
 +    required: bool,
 +    synthetic: Option<String>,
++    subscription: bool,
 +    settled: bool,
 +    failed: bool,
 +    reported: bool,
@@ -49657,6 +49680,7 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +            state: self.requests.clone(),
 +            required: self.required("response_stream"),
 +            synthetic,
++            subscription: false,
 +            settled: false,
 +            failed: false,
 +            reported: false,
@@ -50178,6 +50202,9 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +            }
 +            (None, Some(_), Some(amount)) => json!({"microusd": amount, "basis": "settled"}),
 +            (None, Some(_), None) => json!({"microusd": null, "basis": "unsettled"}),
++            (None, None, _) if self.subscription => {
++                json!({"microusd": 0, "basis": "included_subscription"})
++            }
 +            (None, None, _) => json!({"microusd": null, "basis": "unpriced"}),
 +        };
 +        let payload = json!({"request_id": self.request_id, "attempt": self.attempt,
@@ -50309,10 +50336,10 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f314421916682f4d54b7c56a3fc26b8ae8837e26
+index 0000000000000000000000000000000000000000..6759a568402f66e72f97407a8dd455fa2d4e2687
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1218 @@
+@@ -0,0 +1,1251 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -51082,6 +51109,39 @@ index 0000000000000000000000000000000000000000..f314421916682f4d54b7c56a3fc26b8a
 +    assert_eq!(capture.observed.len(), 1);
 +    assert_eq!(capture.observed[0].model, "any-model");
 +    assert_eq!(capture.observed[0].raw_usage, Some(usage));
++}
++
++#[test]
++fn unrated_requests_are_included_only_on_a_chatgpt_login() {
++    let (root, accounts, task, mut request, body) = setup();
++    let mut lead = account(&task, root.path(), "lead");
++    lead.rates = None;
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .insert("main".into(), lead);
++    let notified = Arc::new(Mutex::new(Vec::new()));
++    let sink = notified.clone();
++    accounts.install_mod_notifier(Arc::new(move |_, payload| {
++        sink.lock().unwrap().push(payload["cost"].clone());
++    }));
++    request.headers.insert("thread-id", "main".parse().unwrap());
++    for login in [false, true] {
++        if login {
++            request
++                .headers
++                .insert("chatgpt-account-id", "fixture".parse().unwrap());
++        }
++        drop(accounts.before_send(&mut request, Some(&body)).unwrap());
++    }
++    assert_eq!(
++        *notified.lock().unwrap(),
++        [
++            json!({"microusd": null, "basis": "unpriced"}),
++            json!({"microusd": 0, "basis": "included_subscription"}),
++        ]
++    );
 +}
 +
 +#[test]
@@ -59341,10 +59401,10 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8d0d83847
+index 0000000000000000000000000000000000000000..62d84ed18b5ea8986cd8516826e90ad4a10ce15b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2511 @@
+@@ -0,0 +1,2475 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -61125,16 +61185,6 @@ index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8
 +    }
 +}
 +
-+/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
-+/// "Mods are off" directory warning; only a thread the user opened does.
-+fn reports_directory(
-+    source: &SessionSource,
-+    cwd: &std::path::Path,
-+    codex_home: &std::path::Path,
-+) -> bool {
-+    !source.is_non_root_agent() && !cwd.starts_with(codex_home)
-+}
-+
 +impl ThreadLifecycleContributor<Config> for Mods {
 +    fn on_thread_start<'a>(
 +        &'a self,
@@ -61146,11 +61196,7 @@ index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8
 +            };
 +            self.native_agent_started(thread, input.session_source, input.thread_store);
 +            let host = self.host_for(input.config.cwd.as_path());
-+            if reports_directory(
-+                input.session_source,
-+                input.config.cwd.as_path(),
-+                input.config.codex_home.as_path(),
-+            ) {
++            if !input.session_source.is_non_root_agent() {
 +                self.views.diagnostic(
 +                    &self.host,
 +                    "directory",
@@ -61833,28 +61879,6 @@ index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8
 +    fn drop(&mut self) {
 +        self.0.store(true, Ordering::Release);
 +    }
-+}
-+
-+#[cfg(test)]
-+#[test]
-+fn directory_warning_comes_only_from_user_threads() {
-+    let home = std::path::Path::new("/home/user/.codex");
-+    let outside = std::path::Path::new("/elsewhere");
-+    let memories = SessionSource::Internal(
-+        codex_protocol::protocol::InternalSessionSource::MemoryConsolidation,
-+    );
-+    assert!(reports_directory(&SessionSource::Cli, outside, home));
-+    assert!(!reports_directory(
-+        &memories,
-+        home.join("memories").as_path(),
-+        home
-+    ));
-+    assert!(!reports_directory(&memories, outside, home));
-+    assert!(!reports_directory(
-+        &SessionSource::Cli,
-+        home.join("memories").as_path(),
-+        home
-+    ));
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
@@ -106084,10 +106108,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..64b35784d76e6ce389ef4dac1c48317e4f2bd563
+index 0000000000000000000000000000000000000000..01c1d35f0308424094126e477ef8217d814fd3fc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2898 @@
+@@ -0,0 +1,2915 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -106519,25 +106543,42 @@ index 0000000000000000000000000000000000000000..64b35784d76e6ce389ef4dac1c48317e
 +                continue;
 +            };
 +            let description = newest.description.clone().unwrap_or_default();
-+            if !query.is_empty()
-+                && !id.to_lowercase().contains(&query)
-+                && !description.to_lowercase().contains(&query)
++            let lowered = id.to_lowercase();
++            let mut name = lowered.chars();
++            let rank = if query.is_empty() || lowered.starts_with(&query) {
++                0
++            } else if lowered.contains(&query) {
++                1
++            } else if query
++                .chars()
++                .filter(|wanted| !wanted.is_whitespace())
++                .all(|wanted| name.any(|letter| letter == wanted))
 +            {
++                2
++            } else if description.to_lowercase().contains(&query) {
++                3
++            } else {
 +                continue;
-+            }
-+            packages.push(json!({
-+                "id": id,
-+                "latest": newest.version,
-+                "description": description,
-+                "support": newest.support,
-+                "versions": releases.iter().map(|release| json!({"version": release.version,
-+                    "blocked": release.blocked})).collect::<Vec<_>>(),
-+                "installed": lock.packages.get(&id).map(|package| &package.version),
-+            }));
-+            if packages.len() == 200 {
-+                break;
-+            }
++            };
++            packages.push((
++                rank,
++                json!({
++                    "id": id,
++                    "latest": newest.version,
++                    "description": description,
++                    "support": newest.support,
++                    "versions": releases.iter().map(|release| json!({"version": release.version,
++                        "blocked": release.blocked})).collect::<Vec<_>>(),
++                    "installed": lock.packages.get(&id).map(|package| &package.version),
++                }),
++            ));
 +        }
++        packages.sort_by_key(|(rank, _)| *rank);
++        packages.truncate(200);
++        let packages = packages
++            .into_iter()
++            .map(|(_, package)| package)
++            .collect::<Vec<_>>();
 +        Ok(json!({"index": index, "packages": packages}))
 +    }
 +
@@ -132165,10 +132206,10 @@ index 0000000000000000000000000000000000000000..7025789681af30d794136622e3ce490a
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4ff1e2a282
+index 0000000000000000000000000000000000000000..d3acce1fcf4a82b9b2f762da7f289bf409fc9fd2
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1581 @@
+@@ -0,0 +1,1626 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -133749,6 +133790,51 @@ index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4f
 +        .unwrap_err()
 +        .to_string();
 +    assert!(error.contains("index_release_source_invalid"), "{error}");
++}
++
++#[test]
++fn index_queries_match_id_letters_in_order_or_description_text() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = store(&temp);
++    let index = root.join("index.json");
++    let release = |description: &str| {
++        json!([{"version":"1.0.0","source":{"kind":"local","path":root},"integrity":"0".repeat(64),
++            "description":description}])
++    };
++    let write = |packages: serde_json::Value| {
++        std::fs::write(
++            &index,
++            serde_json::to_vec(&json!({"schema":1,"packages":packages})).unwrap(),
++        )
++        .unwrap();
++    };
++    write(json!({
++        "omd_statusline":release("Status row"),
++        "omd_advisor":release("Second opinion on a plan"),
++    }));
++    let found = |query: &str| {
++        store.package_index_entries(&index, query).unwrap()["packages"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .map(|entry| entry["id"].as_str().unwrap().to_owned())
++            .collect::<Vec<_>>()
++    };
++    assert_eq!(found("stln"), ["omd_statusline"]);
++    assert_eq!(found("Opinion on"), ["omd_advisor"]);
++    assert!(found("lnst").is_empty());
++    let mut packages = (0..200)
++        .map(|n| (format!("a_s_t_{n:03}"), release("Filler")))
++        .collect::<serde_json::Map<_, _>>();
++    packages.insert("st".into(), release("Exact"));
++    write(packages.into());
++    let ranked = found("st");
++    assert_eq!(
++        (ranked.len(), ranked[0].as_str()),
++        (200, "st"),
++        "the best match survives the cap"
++    );
 +}
 diff --git a/codex-rs/omd/tests/review_bridge.rs b/codex-rs/omd/tests/review_bridge.rs
 new file mode 100644
@@ -140623,10 +140709,10 @@ index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..27fe722f2d143943373c6d26098a6ecc76482b74
+index 0000000000000000000000000000000000000000..b798ae8839045059f57c78855cd3b13b6bbdabeb
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,433 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -140964,8 +141050,13 @@ index 0000000000000000000000000000000000000000..27fe722f2d143943373c6d26098a6ecc
 +        &self,
 +    ) -> Option<crate::empty_state_animation::ComposerState> {
 +        self.empty_state_composer().or_else(|| {
-+            (!matches!(self.popups.active, ActivePopup::None) && self.history_search.is_none())
-+                .then_some(crate::empty_state_animation::ComposerState::Draft)
++            (!matches!(self.popups.active, ActivePopup::None)
++                && matches!(
++                    self.footer_mode(),
++                    crate::bottom_pane::footer::FooterMode::ComposerEmpty
++                        | crate::bottom_pane::footer::FooterMode::ComposerHasDraft
++                ))
++            .then_some(crate::empty_state_animation::ComposerState::Draft)
 +        })
 +    }
 +
@@ -152487,10 +152578,10 @@ index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf8099f9ee
+index 0000000000000000000000000000000000000000..9097a6c14b74bd9b94a6c913e2d585b0aa7e63ca
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4843 @@
+@@ -0,0 +1,4860 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -154059,7 +154150,7 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +}
 +
 +fn native_cards(snapshot: &ModViewSnapshot, width: u16) -> Option<ModComponent> {
-+    const LINES: usize = 4;
++    const ROWS: usize = 6;
 +    let panels = native_panels(snapshot);
 +    let count = u16::try_from(panels.len()).unwrap_or(u16::MAX).max(1);
 +    let text_width = usize::from(
@@ -154071,26 +154162,41 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +        .into_iter()
 +        .enumerate()
 +        .map(|(index, panel)| {
-+            let mut lines = panel.lines;
-+            let more = lines.len().saturating_sub(LINES);
-+            lines.truncate(LINES);
-+            if more > 0 {
-+                lines.push(format!("+{more} more"));
-+            }
-+            let lines = lines
++            let wrapped = panel
++                .lines
 +                .iter()
-+                .flat_map(|line| {
-+                    let mut wrapped = textwrap::wrap(line, text_width)
++                .map(|line| {
++                    textwrap::wrap(line, text_width)
 +                        .into_iter()
 +                        .map(std::borrow::Cow::into_owned)
-+                        .collect::<Vec<_>>();
-+                    if wrapped.len() > 6 {
-+                        wrapped.truncate(6);
-+                        wrapped[5].push('…');
-+                    }
-+                    wrapped
++                        .collect::<Vec<_>>()
 +                })
-+                .collect();
++                .collect::<Vec<_>>();
++            let budget = if wrapped.len() > 1 && wrapped.iter().map(Vec::len).sum::<usize>() > ROWS
++            {
++                ROWS - 1
++            } else {
++                ROWS
++            };
++            let mut lines = Vec::new();
++            let mut shown = 0;
++            for entry in &wrapped {
++                if lines.len() + entry.len() > budget {
++                    if shown == 0 {
++                        lines.extend(entry.iter().take(budget).cloned());
++                        if let Some(last) = lines.last_mut() {
++                            last.push('…');
++                        }
++                        shown = 1;
++                    }
++                    break;
++                }
++                lines.extend(entry.iter().cloned());
++                shown += 1;
++            }
++            if shown < wrapped.len() {
++                lines.push(format!("+{} more", wrapped.len() - shown));
++            }
 +            ModComponent::Box {
 +                id: format!("@native_card_{index}"),
 +                label: panel.title.clone(),
@@ -155606,8 +155712,7 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +            .retain(|hitbox| dialog_ids.contains(&hitbox.id));
 +        interaction.dialog_area = Some(dialog_area);
 +        if interaction.dialog.as_ref() != Some(&key) {
-+            // A shown dialog whose content changed keeps its focused control; a newly shown one starts at its
-+            // autofocus control or its first.
++            // A changed dialog keeps its focus; a new one starts at its autofocus control or its first.
 +            let kept = interaction.dialog.is_some()
 +                && interaction
 +                    .focused
@@ -156392,7 +156497,8 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +                    focused.clone(),
 +                    &target,
 +                    key.code == KeyCode::Down,
-+                ) || move_focus(&mut interaction, &focused, key.code == KeyCode::Down) =>
++                ) || repeated
++                    || move_focus(&mut interaction, &focused, key.code == KeyCode::Down) =>
 +            {
 +                return Some(ModInput::Consumed);
 +            }
@@ -156539,17 +156645,17 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +    true
 +}
 +
-+/// Up/Down past a control's edge focus the previous or next control, entering a list at its near end; key panes
-+/// and terminals, which keep every key, are reached only with Tab or a click. False when no control lies that way.
++/// Focuses the nearest control past the edge, skipping key panes and terminals, which keep every key.
 +fn move_focus(interaction: &mut Interaction, focused: &str, forward: bool) -> bool {
 +    let Some(index) = interaction.order.iter().position(|id| id == focused) else {
 +        return false;
 +    };
 +    let reachable = |id: &&String| {
-+        interaction
-+            .targets
-+            .get(*id)
-+            .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _)))
++        !interaction.key_panes.contains(*id)
++            && interaction
++                .targets
++                .get(*id)
++                .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _)))
 +    };
 +    let next = if forward {
 +        interaction.order[index + 1..].iter().find(reachable)
@@ -156559,17 +156665,6 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +    let Some(id) = next.cloned() else {
 +        return false;
 +    };
-+    if let Some(
-+        ComponentTarget::ListRow { options, .. } | ComponentTarget::Multiselect { options, .. },
-+    ) = interaction.targets.get(&id)
-+    {
-+        let row = if forward {
-+            0
-+        } else {
-+            options.len().saturating_sub(1)
-+        };
-+        interaction.selected.insert(id.clone(), row);
-+    }
 +    interaction.focused = Some(id);
 +    true
 +}
@@ -157146,6 +157241,37 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +    }
 +}
 +
++fn value_changes(
++    before: &Observed,
++    after: &Observed,
++    targets: &BTreeMap<String, ComponentTarget>,
++) -> Vec<(String, String, bool)> {
++    let mut changed = after
++        .values
++        .iter()
++        .filter(|(id, value)| before.values.get(*id) != Some(*value))
++        .map(|(id, value)| (id.clone(), value.clone(), true))
++        .collect::<Vec<_>>();
++    for (id, index) in &after.selected {
++        if before.selected.get(id) == Some(index) {
++            continue;
++        }
++        let value = match targets.get(id) {
++            Some(ComponentTarget::Select { options, .. }) => {
++                options.get(*index).map(|(value, _)| (value.clone(), true))
++            }
++            Some(ComponentTarget::ListRow { options, .. }) => {
++                options.get(*index).map(|(value, _)| (value.clone(), false))
++            }
++            _ => None,
++        };
++        if let Some((value, controlled)) = value {
++            changed.push((id.clone(), value, controlled));
++        }
++    }
++    changed
++}
++
 +fn report(before: &Observed, after: &Observed, interaction: &mut Interaction, origin: &str) {
 +    let send = |component: &str, mut event: serde_json::Value| {
 +        event["component"] = component.into();
@@ -157165,26 +157291,6 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +            );
 +        }
 +    }
-+    let mut changed = Vec::new();
-+    for (id, value) in &after.values {
-+        if before.values.get(id) != Some(value) {
-+            changed.push((id.clone(), value.clone()));
-+        }
-+    }
-+    for (id, index) in &after.selected {
-+        if before.selected.get(id) == Some(index) {
-+            continue;
-+        }
-+        let value = match interaction.targets.get(id) {
-+            Some(ComponentTarget::Select { options, .. }) => {
-+                options.get(*index).map(|(value, _)| value.clone())
-+            }
-+            _ => None,
-+        };
-+        if let Some(value) = value {
-+            changed.push((id.clone(), value));
-+        }
-+    }
 +    let echo = |interaction: &mut Interaction, id: &str, value: String| {
 +        let echoes = interaction.echoes.entry(id.to_owned()).or_default();
 +        echoes.push_back(value);
@@ -157192,8 +157298,10 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +            echoes.pop_front();
 +        }
 +    };
-+    for (id, value) in changed {
-+        echo(interaction, &id, value.clone());
++    for (id, value, controlled) in value_changes(before, after, &interaction.targets) {
++        if controlled {
++            echo(interaction, &id, value.clone());
++        }
 +        send(
 +            &id,
 +            serde_json::json!({"kind": "change", "value": value, "origin": origin}),
@@ -157586,10 +157694,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e85c36ed3
+index 0000000000000000000000000000000000000000..09a633e0ce57913de5e82a5fed48612a636af3bd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2050 @@
+@@ -0,0 +1,2085 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -157822,21 +157930,35 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        ),
 +        Rect::new(24, 0, 66, 12)
 +    );
-+    snapshot.diagnostics = (1..=6).map(|line| format!("conflict {line}")).collect();
++    snapshot.diagnostics = (1..=8).map(|line| format!("conflict {line}")).collect();
 +    preview(snapshot.clone());
 +    let notes = footer_hyperlink_lines(66)
 +        .iter()
 +        .map(|line| line.line.to_string())
 +        .collect::<Vec<_>>();
-+    assert_eq!(notes.len(), 7, "{notes:#?}");
++    assert_eq!(notes.len(), 8, "{notes:#?}");
 +    let notes = notes.join("\n");
 +    assert!(
 +        notes.contains("Progress · Echo")
-+            && notes.contains("conflict 4")
-+            && !notes.contains("conflict 5")
-+            && notes.contains("+2 more"),
++            && notes.contains("conflict 5")
++            && !notes.contains("conflict 6")
++            && notes.contains("+3 more"),
 +        "{notes}"
 +    );
++    snapshot.diagnostics = (1..=4)
++        .map(|line| format!("warning {line} {}", "/deep/path".repeat(12)))
++        .collect();
++    preview(snapshot.clone());
++    let notes = footer_hyperlink_lines(66);
++    assert_eq!(notes.len(), 8, "long entries share the card's six rows");
++    snapshot.diagnostics = vec![format!("warning {}", "/deep/path".repeat(60))];
++    preview(snapshot.clone());
++    let notes = footer_hyperlink_lines(66)
++        .iter()
++        .map(|line| line.line.to_string())
++        .collect::<Vec<_>>();
++    assert_eq!(notes.len(), 8, "one long entry fills all six rows");
++    assert!(notes.join("\n").contains('…'), "{notes:#?}");
 +    snapshot.diagnostics = vec![
 +        "Mods are off in /Users/someone/project: it is neither the launch project nor one of its worktrees".into(),
 +    ];
@@ -157995,6 +158117,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +                    {"value":"b","label":"B","spans":[{"text":"B"}]},
 +                    {"value":"c","label":"C","spans":[{"text":"C"}]}],"action":{"command":"m:c","args":"pick"}},
 +                {"type":"select","id":"mode","label":"Mode","value":"x","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"action":{"command":"m:c","args":"mode"}},
++                {"type":"document","id":"keys","label":"Keys","keys":true,"lines":[]},
 +                {"type":"button","id":"go","label":"Go","text":"Go","action":{"command":"m:c","args":"go"}}
 +            ]
 +        }]}}
@@ -158016,9 +158139,21 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    assert_eq!((state().0, state().1), ("rows".into(), Some(0)));
 +    let mut held = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
 +    held.kind = KeyEventKind::Repeat;
-+    input(held);
-+    input(held);
-+    assert_eq!(state().1, Some(2), "a held arrow repeats");
++    for _ in 0..3 {
++        input(held);
++    }
++    assert_eq!(
++        (state().0, state().1),
++        ("rows".into(), Some(2)),
++        "a held arrow repeats and stops at the list's edge"
++    );
++    let before = observe(&INTERACTION.locked());
++    key(KeyCode::Up);
++    let interaction = INTERACTION.locked();
++    let changes = value_changes(&before, &observe(&interaction), &interaction.targets);
++    drop(interaction);
++    assert_eq!(changes, [("rows".into(), "b".into(), false)]);
++    key(KeyCode::Down);
 +    key(KeyCode::Down);
 +    assert_eq!(
 +        state().0,
@@ -158026,10 +158161,14 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        "Down past a list's last row reaches the next control"
 +    );
 +    key(KeyCode::Up);
++    key(KeyCode::Up);
++    assert_eq!(state().1, Some(1));
++    assert!(focus("mode"));
++    key(KeyCode::Up);
 +    assert_eq!(
 +        (state().0, state().1),
-+        ("rows".into(), Some(2)),
-+        "entering from below starts at the last row"
++        ("rows".into(), Some(1)),
++        "entering a list keeps its highlighted row"
 +    );
 +    assert!(focus("mode"));
 +    key(KeyCode::Right);
@@ -158037,7 +158176,11 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    key(KeyCode::Char(' '));
 +    assert_eq!(state().2, Some(0), "Space steps a select");
 +    key(KeyCode::Down);
-+    assert_eq!(state().0, "go", "Up and Down never change a select");
++    assert_eq!(
++        state().0,
++        "go",
++        "Up and Down never change a select and skip key panes"
++    );
 +    assert!(matches!(
 +        key(KeyCode::Char(' ')),
 +        Some(ModInput::Interaction(_, ModKeyAction::Command { args, .. })) if args == "go"

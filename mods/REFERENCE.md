@@ -1103,7 +1103,8 @@ The payload carries:
 - `output {text (first 4 KiB), tool_calls}`.
 - Raw `usage`, and `cache {read_tokens, write_tokens}`.
 - `cost {microusd, basis}`, where `basis` is `settled`, `unsettled`, `provider_reported`, `included_subscription`,
-  `unpriced` or `synthetic`.
+  `unpriced` or `synthetic`. A request without route rates is `included_subscription` on a ChatGPT login and
+  `unpriced` otherwise.
 - `context_window` when the session knows it.
 - `timing {started_at_ms, first_event_ms, duration_ms}`.
 - `synthetic` and `error`.
@@ -3453,7 +3454,7 @@ also reports, with `origin` `user` or `mod`:
 | Event | Reports |
 | --- | --- |
 | `focus` and `blur` | Focus changes. |
-| `change` | An input's or select's new `value` or a multiselect's checked `values`, on every edit. |
+| `change` | An input's or select's new `value`, a list's highlighted row `value` or a multiselect's checked `values`, on every edit. |
 | `scroll` | A pane's `offset`. |
 | `pointer` | Cell-relative `{column, row, action, button}`. |
 | `open` / `close` | Panes and dialogs (`ui_composition_v1`). |
@@ -3668,8 +3669,8 @@ draw no frame.
   `sidebar_style` sets one, which then carries the view `title`.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
-- The host's progress and mod diagnostics draw as cards above the prompt (four entries each, wrapped to
-  six lines, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
+- The host's progress and mod diagnostics draw as cards above the prompt (six wrapped lines
+  each, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 #### Terminal operations
 
@@ -4238,7 +4239,9 @@ or with a `reference` string and an optional `version`.
 {index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}]}
 ```
 
-It reads the named index (the store's `package-index.json` by default), filtered by `query`. It fails with
+It reads the named index (the store's `package-index.json` by default), at most 200 packages matching `query`: its
+letters in order in the id, ignoring spaces, or its text in the description. Ids starting with or containing `query`
+come first, description matches last. It fails with
 `package_index_unavailable` when no index exists.
 
 #### Package state fields
@@ -4338,11 +4341,11 @@ reports the composed view's diagnostics under `terminal`.
 
 - A dialog focuses its first item when it opens, or the control it `autofocus`es.
 - Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
-  first or last row (or on any other control), focus the previous or next control; entering a list from above
-  starts at its first row, from below at its last; key panes and terminals are reached only with Tab or a click.
-  Left and Right change a `select`.
+  first or last row (or on any other control), focus the previous or next control; a list keeps its highlighted
+  row; key panes and terminals are reached only with Tab or a click. Left and Right change a `select`.
 - While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
-  repeat; Enter, Space, Tab and Esc act once per press, and a held key never fires a hotkey or view binding.
+  repeat; Enter, Space, Tab and Esc act once per press, a held arrow stops at a control's edge, and a held key never
+  fires a hotkey or view binding.
 - In a dialog, typing that no binding takes goes to its `autofocus` input.
 - Esc, Ctrl+] or a click outside releases focus and hides the dialog until a mod command runs, and Esc reaches the
   focused component's owner as `component_event {kind: 'input', events: [{key: 'Esc'}]}`.

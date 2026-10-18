@@ -66,7 +66,9 @@ or with a `reference` string and an optional `version`.
 {index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}]}
 ```
 
-It reads the named index (the store's `package-index.json` by default), filtered by `query`. It fails with
+It reads the named index (the store's `package-index.json` by default), at most 200 packages matching `query`: its
+letters in order in the id, ignoring spaces, or its text in the description. Ids starting with or containing `query`
+come first, description matches last. It fails with
 `package_index_unavailable` when no index exists.
 
 ### Package state fields
@@ -166,11 +168,11 @@ reports the composed view's diagnostics under `terminal`.
 
 - A dialog focuses its first item when it opens, or the control it `autofocus`es.
 - Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
-  first or last row (or on any other control), focus the previous or next control; entering a list from above
-  starts at its first row, from below at its last; key panes and terminals are reached only with Tab or a click.
-  Left and Right change a `select`.
+  first or last row (or on any other control), focus the previous or next control; a list keeps its highlighted
+  row; key panes and terminals are reached only with Tab or a click. Left and Right change a `select`.
 - While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
-  repeat; Enter, Space, Tab and Esc act once per press, and a held key never fires a hotkey or view binding.
+  repeat; Enter, Space, Tab and Esc act once per press, a held arrow stops at a control's edge, and a held key never
+  fires a hotkey or view binding.
 - In a dialog, typing that no binding takes goes to its `autofocus` input.
 - Esc, Ctrl+] or a click outside releases focus and hides the dialog until a mod command runs, and Esc reaches the
   focused component's owner as `component_event {kind: 'input', events: [{key: 'Esc'}]}`.

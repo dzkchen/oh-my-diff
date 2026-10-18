@@ -1778,16 +1778,6 @@ impl codex_extension_api::TokenUsageContributor for Mods {
     }
 }
 
-/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
-/// "Mods are off" directory warning; only a thread the user opened does.
-fn reports_directory(
-    source: &SessionSource,
-    cwd: &std::path::Path,
-    codex_home: &std::path::Path,
-) -> bool {
-    !source.is_non_root_agent() && !cwd.starts_with(codex_home)
-}
-
 impl ThreadLifecycleContributor<Config> for Mods {
     fn on_thread_start<'a>(
         &'a self,
@@ -1799,11 +1789,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             };
             self.native_agent_started(thread, input.session_source, input.thread_store);
             let host = self.host_for(input.config.cwd.as_path());
-            if reports_directory(
-                input.session_source,
-                input.config.cwd.as_path(),
-                input.config.codex_home.as_path(),
-            ) {
+            if !input.session_source.is_non_root_agent() {
                 self.views.diagnostic(
                     &self.host,
                     "directory",
@@ -2486,26 +2472,4 @@ impl Drop for Cancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);
     }
-}
-
-#[cfg(test)]
-#[test]
-fn directory_warning_comes_only_from_user_threads() {
-    let home = std::path::Path::new("/home/user/.codex");
-    let outside = std::path::Path::new("/elsewhere");
-    let memories = SessionSource::Internal(
-        codex_protocol::protocol::InternalSessionSource::MemoryConsolidation,
-    );
-    assert!(reports_directory(&SessionSource::Cli, outside, home));
-    assert!(!reports_directory(
-        &memories,
-        home.join("memories").as_path(),
-        home
-    ));
-    assert!(!reports_directory(&memories, outside, home));
-    assert!(!reports_directory(
-        &SessionSource::Cli,
-        home.join("memories").as_path(),
-        home
-    ));
 }
