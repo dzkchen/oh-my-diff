@@ -9,7 +9,10 @@ from scripts import install_support as support
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/mods.lock.json"
 NODE = "24.18.0"
-PACKAGES = tuple(sorted(path.name for path in (ROOT / "mods/first-party").iterdir() if path.is_dir()))
+
+
+def identifiers():
+    return tuple(sorted(path.name for path in (ROOT / "mods/first-party").iterdir() if path.is_dir()))
 
 
 def source_files(identifier):
@@ -18,12 +21,12 @@ def source_files(identifier):
 
 
 def sources():
-    return tuple(f"mods/first-party/{identifier}/{name}" for identifier in PACKAGES for name in source_files(identifier))
+    return tuple(f"mods/first-party/{identifier}/{name}" for identifier in identifiers() for name in source_files(identifier))
 
 
 def build():
     packages = {}
-    for identifier in PACKAGES:
+    for identifier in identifiers():
         base = ROOT / "mods/first-party" / identifier
         manifest = json.loads((base / "mod.json").read_text())
         support.validate_manifest(manifest, identifier)
