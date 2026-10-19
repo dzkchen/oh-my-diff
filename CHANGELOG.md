@@ -8,19 +8,20 @@ Second release candidate: a native mod settings panel, Claude subscription model
 
 ### New
 
-- In-session Claude subscription models with per-thread provider switch
-- Native mod settings panel with host redraw after changes
+- Claude subscription in the session (`omd_claude_cli`, opt-in): `/claude login` in a terminal pane, your plan's Claude models in `/model`, and switching a thread between Claude and OpenAI from the next turn without a relaunch.
+- `/mods` and `/statusline` open in Codex's native settings panel, with tabs, search and toggles, and redraw from real state after every change.
+- Mod API: `terminal.panel`, `providers.models` and `model_provider` on thread settings (experimental).
 
 ### Changed
 
-- Shared mod status and cached package listing
-- Single warm worker and per-selection listing cache
-- Install command for 1.0.0-rc.2 (#246)
+- Mod dialogs work from the keyboard: arrows move between controls, held keys repeat, Space toggles, and `/mods` filters as you type with fuzzy matching.
+- `/mods` opens faster in OMD+: mod status is shared and the package listing is cached.
 
 ### Fixed
 
-- Keyboard-first mod dialogs, welcome logo and directory diagnostics
-- Mods self-protection, directory reinstall guard and /omd reload
+- Mods: `/mods` can't turn itself off or remove itself, an installed mod updates from its own panel instead of reinstalling, and `/omd`'s Reload mods works without an attached client.
+- Terminal UI: the welcome logo stays while you type a command and hides after the first history line; mod diagnostics wrap and no longer fire for Codex's internal threads.
+- Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.
 
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
