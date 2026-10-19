@@ -99,11 +99,22 @@ struct Selections {
     configuration: crate::ModConfiguration,
     status: Value,
     manifests: Vec<Value>,
+    listing: Option<Mutex<Option<(Value, Value)>>>,
 }
 
 type Listed = (Value, Vec<(PathBuf, crate::FileStamp)>, Arc<Selections>);
 
 static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
+
+const LISTING_RUNTIME_FIELDS: [&str; 7] = [
+    "id",
+    "scope",
+    "sha256",
+    "error",
+    "version",
+    "api",
+    "capabilities",
+];
 
 /// The store side of a listing, reused while the store files and every package file are unchanged.
 fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
@@ -136,6 +147,7 @@ fn selections(store: &ModStore) -> io::Result<Arc<Selections>> {
         configuration,
         status,
         manifests,
+        listing: stamps.as_ref().map(|_| Mutex::default()),
     });
     if let (Some(key), Some(stamps)) = (key, stamps) {
         *LISTED.lock().unwrap_or_else(PoisonError::into_inner) =
@@ -174,12 +186,48 @@ pub fn list_fields(
 
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let selections = selections(store)?;
+    let Some(cache) = &selections.listing else {
+        return Ok(listing(&selections, runtime)?.0);
+    };
+    let read = listing_key(runtime);
+    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((key, listed)) = &*cache
+        && *key == read
+    {
+        return Ok(listed.clone());
+    }
+    let (listed, cacheable) = listing(&selections, runtime)?;
+    if cacheable {
+        *cache = Some((read, listed.clone()));
+    }
+    Ok(listed)
+}
+
+pub fn listing_key(runtime: Option<&Value>) -> Value {
+    runtime.map_or(Value::Null, |runtime| {
+        let fields = |key: &str, names: &[&str]| -> Vec<Vec<Value>> {
+            let items = runtime[key].as_array().into_iter().flatten();
+            items
+                .map(|item| names.iter().map(|name| item[*name].clone()).collect())
+                .collect()
+        };
+        json!([
+            fields("mods", &LISTING_RUNTIME_FIELDS),
+            fields("rejected", &["path", "reason"]),
+            runtime["reload_error"],
+        ])
+    })
+}
+
+fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Value, bool)> {
     let Selections {
         lock,
         configuration,
         status,
         manifests,
-    } = &*selections;
+        ..
+    } = selections;
+    let mut cacheable = true;
     let generation = configuration.revision;
     let selections = status["selections"]
         .as_array()
@@ -205,6 +253,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
                 .filter(|_| selection["packaged"] == true);
             let pending_manifest;
             let manifest = if selection["reason"] == "managed_pending_sync" {
+                cacheable = false;
                 pending_manifest = selection["path"]
                     .as_str()
                     .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
@@ -289,11 +338,14 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
                 })
             }),
     );
-    Ok(json!({
-        "packages": packages,
-        "generation": generation,
-        "reload_error": runtime.map_or(Value::Null, |runtime| runtime["reload_error"].clone()),
-    }))
+    Ok((
+        json!({
+            "packages": packages,
+            "generation": generation,
+            "reload_error": runtime.map_or(Value::Null, |runtime| runtime["reload_error"].clone()),
+        }),
+        cacheable,
+    ))
 }
 
 pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
