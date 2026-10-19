@@ -17,7 +17,8 @@
         "label": "Changed",
         "items": [
           "Mod dialogs work from the keyboard: arrows move between controls, held keys repeat, Space toggles, and `/mods` filters as you type with fuzzy matching.",
-          "`/mods` opens faster in OMD+: mod status is shared and the package listing is cached."
+          "`/mods` opens faster in OMD+: mod status is shared and the package listing is cached.",
+          "Rustfmt the patched sources (#250)"
         ]
       },
       {
@@ -46,7 +47,8 @@
       "bd0aef8",
       "0bf84bd",
       "6831325",
-      "70322dd"
+      "70322dd",
+      "2768db6"
     ]
   },
   {
