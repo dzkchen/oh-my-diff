@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 TMP = Path(os.environ.get("OMD_BATCH_ROOT", "/private/tmp"))
@@ -114,10 +116,39 @@ def cargo_run(batch, log, cargo_args):
         status = subprocess.run(["cargo", *cargo_args], cwd=batch / "codex/codex-rs", env=cargo_env(batch),
                                 stdout=output, stderr=subprocess.STDOUT).returncode
         output.write(f"exit={status}\n")
-    lines = [line for line in log.read_text(errors="replace").splitlines() if SUMMARY.search(line)]
-    print("\n".join(lines[:30]))
+    text = log.read_text(errors="replace").splitlines()
+    # A panic's assertion message follows on the next lines.
+    lines = [line for index, line in enumerate(text)
+             if SUMMARY.search(line) or any("panicked" in previous for previous in text[max(0, index - 3):index])]
+    print("\n".join(lines[:40]))
     print(f"exit={status} log={log}")
     return status
+
+
+def v8(args):
+    if os.environ.get("V8_FROM_SOURCE") or os.environ.get("RUSTY_V8_ARCHIVE"):
+        return
+    checkout = batch_dir(args.batch) / "codex"
+    lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
+    (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
+    target = run("rustc", "-vV", cwd=checkout / "codex-rs").decode().split("host: ", 1)[1].split()[0]
+    url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
+    manifest = f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256"
+    names = (f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz", f"src_binding_ptrcomp_sandbox_release_{target}.rs")
+    V8.mkdir(parents=True, exist_ok=True)
+
+    def checksums(path):
+        return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
+
+    expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
+    for name in (manifest, *names):
+        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
+            data = response.read()
+        if expected.get(name) != sha(data):
+            raise SystemExit(f"V8 prebuilt checksum mismatch: {name}")
+        (V8 / name).write_bytes(data)
+        if name == manifest:
+            expected = checksums(V8 / manifest)
 
 
 def cargo(args):
@@ -256,6 +287,9 @@ def main():
     command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
+    command = commands.add_parser("v8", help="download and verify the V8 prebuilt that codex-cli builds link")
+    command.add_argument("batch")
+    command.set_defaults(handler=v8)
     command = commands.add_parser("sync", help="regenerate patch, manifest, pin hash and runtime mirrors; verify replay")
     command.add_argument("batch")
     command.set_defaults(handler=sync)

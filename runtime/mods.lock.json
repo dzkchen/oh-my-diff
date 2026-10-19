@@ -70,13 +70,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "071242d80c6b3b8221303184e56955c56fc8907386de8318f2e3ae191efdb267",
+        "index.ts": "529d9783493145b81ccf9709d9fef4940894b538c46d40d1803294de3576110b",
         "mod.json": "739ea7f82dedd77cecb5e7a9f8df914a978de3fa1dcc59706f907427c8d4417e",
         "setup.mjs": "4fa5b4f35c37f63a83aca8316559f360777d84bf829d5ed8181be7caafd81142",
         "transport.mjs": "dd8fc34857f530eae9961d92d37c189060304d43e9e497c61e5819f588399a2e"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "411b3408cb37266339be42c80047774541e76466906a8d6b5924c7e3a824c2e6",
+      "package_sha256": "afa71f7637521ccc13e2d11f627063dca62c7820a9f2d981bbad3e92b492048d",
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.3.0-preview.1"
     },
