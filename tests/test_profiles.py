@@ -49,6 +49,13 @@ def uninstalling(record):
 
 
 class ProfileModeTests(unittest.TestCase):
+    def test_every_selection_keeps_the_background_server_off(self):
+        for selection in ("platform", "full", "direct"):
+            with self.subTest(selection=selection):
+                record = {"binary": {"installed_path": "/omd/codex"}, "store": "/omd/store", "profile": "full",
+                          "activation": {"selection": selection}}
+                self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
+
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
             with self.subTest(unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:

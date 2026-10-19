@@ -165,8 +165,8 @@ def selected_text(record):
         lines.append("export OMD_MODE=upstream_direct")
     else:
         lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
-    # Oh My Diff runs Codex in embedded mode, so the launcher keeps the shared background server from starting.
-    flags = ["-c", "features.daemon_auto_start=false"] if selection != "direct" else []
+    # The installed binary is not a packaged Codex CLI, so upstream's background server can't install from it; every mode runs embedded.
+    flags = ["-c", "features.daemon_auto_start=false"]
     for provider in record.get("providers", {}).values() if selection != "direct" else ():
         key = provider["env_key"]
         lines.append(f'{key}="$(cat {shlex.quote(provider["token"])} 2>/dev/null)"; export {key}')
