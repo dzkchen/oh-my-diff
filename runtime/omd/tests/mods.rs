@@ -3318,6 +3318,9 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
         read(&mut runtime),
         json!(r#"{"count":2,"mode":"a","nullable":null}"#)
     );
+    let revision = store.configuration().unwrap().revision;
+    codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();
+    assert_eq!(store.configuration().unwrap().revision, revision);
 }
 
 #[test]
