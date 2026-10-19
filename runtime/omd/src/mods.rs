@@ -500,8 +500,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "turns.queued",
     "turns.dequeue",
 ];
-pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-    &[(MOD_API_VERSION, "stable", "2027-10-19")];
+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[(MOD_API_VERSION, "stable", "2027-10-19")];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",

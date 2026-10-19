@@ -198,16 +198,16 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                 .unwrap_or_default();
             let last_session = |package: &Value| {
                 let failed = |key: &str, field: &str, matches: &dyn Fn(&Value) -> bool| {
-                    status[key]
-                        .as_array()?
-                        .iter()
-                        .find(|item| matches(item))?[field]
-                        .as_str()
+                    status[key].as_array()?.iter().find(|item| matches(item))?[field].as_str()
                 };
                 failed("mods", "error", &|item| {
                     item["id"] == package["id"] && item["scope"] == package["scope"]
                 })
-                .or_else(|| failed("rejected", "reason", &|item| item["path"] == package["path"]))
+                .or_else(|| {
+                    failed("rejected", "reason", &|item| {
+                        item["path"] == package["path"]
+                    })
+                })
                 .filter(|_| package["enabled"] == true)
             };
             let rows = listed["packages"]

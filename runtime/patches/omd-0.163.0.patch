@@ -86947,7 +86947,7 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4dfa068998f8c3d6c2d29bed31462260374659b0
+index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5e2cddbce
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
 @@ -0,0 +1,712 @@
@@ -87151,16 +87151,16 @@ index 0000000000000000000000000000000000000000..4dfa068998f8c3d6c2d29bed31462260
 +                .unwrap_or_default();
 +            let last_session = |package: &Value| {
 +                let failed = |key: &str, field: &str, matches: &dyn Fn(&Value) -> bool| {
-+                    status[key]
-+                        .as_array()?
-+                        .iter()
-+                        .find(|item| matches(item))?[field]
-+                        .as_str()
++                    status[key].as_array()?.iter().find(|item| matches(item))?[field].as_str()
 +                };
 +                failed("mods", "error", &|item| {
 +                    item["id"] == package["id"] && item["scope"] == package["scope"]
 +                })
-+                .or_else(|| failed("rejected", "reason", &|item| item["path"] == package["path"]))
++                .or_else(|| {
++                    failed("rejected", "reason", &|item| {
++                        item["path"] == package["path"]
++                    })
++                })
 +                .filter(|_| package["enabled"] == true)
 +            };
 +            let rows = listed["packages"]
@@ -99229,10 +99229,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fec28c7d48ee894f646c6782ae536f2bd849bcf5
+index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfed8884f08
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6144 @@
+@@ -0,0 +1,6143 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99735,8 +99735,7 @@ index 0000000000000000000000000000000000000000..fec28c7d48ee894f646c6782ae536f2b
 +    "turns.queued",
 +    "turns.dequeue",
 +];
-+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-+    &[(MOD_API_VERSION, "stable", "2027-10-19")];
++pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[(MOD_API_VERSION, "stable", "2027-10-19")];
 +pub const MOD_CAPABILITIES: &[&str] = &[
 +    "context",
 +    "tools",
