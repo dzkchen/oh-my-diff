@@ -360,6 +360,8 @@ def install(args, root, current):
         if policy(store)["channel"] != channel:
             set_policy(root, record, "channel", channel)
         print(json.dumps(result, indent=2))
+        # A shell that already looked up codex keeps running the old one until its command cache is cleared.
+        print(result.get("path_warning") or "Installed. Run hash -r or open a new terminal, then codex.", file=sys.stderr)
 
 
 class SessionsOpen(ValueError):
