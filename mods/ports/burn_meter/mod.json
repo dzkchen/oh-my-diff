@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "burn_meter",
   "version": "0.1.0",
-  "api": "0.2.0-experimental.5",
+  "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Session spend as a burning fuse above the prompt, with plan-limit bars, burrito comparisons, a per-turn chart, lifetime total and threshold toasts",

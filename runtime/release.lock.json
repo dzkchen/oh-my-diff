@@ -89,7 +89,7 @@
       "omd-mod": "406eb85445e9bce935f891e81e8ddab3887ec177eb52d5d1bf79b92e6e209c93"
     }
   },
-  "mod_api": "0.2.0-experimental.5",
+  "mod_api": "1.0.0",
   "node": "24.18.0",
   "normalized_cargo_lock_sha256": "cae541406f7ec43a418e126be2bcd5de00b243e7bbf6382570028727d99c1069",
   "platform_tools": [
@@ -165,5 +165,5 @@
   "target": "aarch64-apple-darwin",
   "upstream_commit": "83086188ae0614bd882818ff1aa23f3194962012",
   "upstream_tag": "rust-v0.163.0",
-  "version": "1.0.0-rc.2"
+  "version": "1.0.0"
 }

@@ -1,6 +1,6 @@
 # Approval desk example
 
-Shares approval history between the terminal and attached external clients over the client protocol (`omd-client/1`). An independent-author API `0.2.0-experimental.5` mod plus a client adapter. It's unrelated to `external_client` and can run beside it.
+Shares approval history between the terminal and attached external clients over the client protocol (`omd-client/1`). An independent-author API `1.0.0` mod plus a client adapter. It's unrelated to `external_client` and can run beside it.
 
 ## What it shows
 

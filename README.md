@@ -58,7 +58,7 @@ of frontier labs. OMD is a place for them.
 responsible maintenance is welcome to get in touch (open an issue).
 
 **Beta.** `1.0.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
-The mod API is still experimental ([compatibility](mods/COMPATIBILITY.md)).
+Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/COMPATIBILITY.md)).
 
 **Codex versions.** OMD follows the latest stable Codex; each release supports one version line, now `0.163.x`. Turn off automatic Codex updates,
 and update Codex only after `omd update` supports the new version.

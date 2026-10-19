@@ -9,7 +9,7 @@ import time
 
 from scripts.pty_session import ROOT, Session, call, environment, fresh, git, provider
 
-BROKEN_MANIFEST = {"schema": 1, "id": "broken_fixture", "version": "1.0.0", "api": "0.2.0-experimental.5", "state_version": 1,
+BROKEN_MANIFEST = {"schema": 1, "id": "broken_fixture", "version": "1.0.0", "api": "1.0.0", "state_version": 1,
                    "license": "Apache-2.0", "description": "Throws on every render.", "capabilities": ["terminal"],
                    "compatibility": {"required_features": ["terminal_surface_v1"]}}
 BROKEN_SOURCE = "export default function activate(api) {\n  api.on('terminal', () => { throw new Error('broken on purpose'); });\n}\n"

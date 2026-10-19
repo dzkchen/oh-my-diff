@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_frecency",
-  "version": "0.1.0-preview.2",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "description": "Ranks @ file mentions by typo-tolerant fuzzy match, per-project frecency and Git status",
   "license": "MIT",

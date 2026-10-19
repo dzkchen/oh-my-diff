@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_auto_continue",
-  "version": "0.1.0-preview.1",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Declines an approval or answers a question nobody responded to within two minutes, so a turn keeps going while you are away",

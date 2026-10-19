@@ -1,5 +1,47 @@
 [
   {
+    "version": "1.0.0",
+    "date": "2026-10-19",
+    "title": "Oh My Diff 1.0.0",
+    "summary": "First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the stable mod API 1.0.0.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Redesigned curl installer output: the OMD mark with the version and beta tag, OMD+ listed first, progress and summary on stderr, JSON only with `--json`"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Mod API `1.0.0` is stable and supported through 2027-10-19: frozen entries keep their shape and a breaking change needs a major version; experimental entries may change",
+          "The launch collection's packages and the mod host are versioned `1.0.0`"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "/preview in a fresh session says there are no responses yet (#255)",
+          "Clearer mod author errors, scaffold and docs (#257)",
+          "A mod command typed right after launch waits for the session instead of failing; a mod turned off after repeated failures says so, and `omd mods list` shows failed mods"
+        ]
+      }
+    ],
+    "commits": [
+      "142deba",
+      "4cb6263",
+      "c54e5fe",
+      "c5a4fd9",
+      "bf90a2d",
+      "54a1fdc",
+      "e742651",
+      "0e75948",
+      "bcd0a5d",
+      "2e87090",
+      "9206568"
+    ]
+  },
+  {
     "version": "1.0.0-rc.2",
     "date": "2026-10-19",
     "title": "Oh My Diff 1.0.0-rc.2",

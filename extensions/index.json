@@ -1,26 +1,26 @@
 {
   "schema": 1,
-  "as_of": "2026-10-10",
+  "as_of": "2026-10-19",
   "release_pin": {
     "codex": "0.163.0",
-    "omd": "0.1.0",
-    "mod_api": "0.2.0-experimental.5",
+    "omd": "1.0.0",
+    "mod_api": "1.0.0",
     "node": "24.18.0"
   },
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "0.3.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model, plus ask_claude delegation",
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.302",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.302",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0",
         "Claude CLI 2.1.302"
       ],
@@ -28,47 +28,47 @@
     },
     {
       "id": "omd_privacy",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Fail-closed final-request policy that replaces secrets and selected PII with stable opaque placeholders and asks before shell reads of sensitive paths",
       "source": "mods/first-party/omd_privacy",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; approval_v1, final_request_policy_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; approval_v1, final_request_policy_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_usage",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Provider usage HUD: per-request ledger with context, cache, cost, quota windows, workers and an allowance bar",
       "source": "mods/first-party/omd_usage",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_logo",
-      "version": "0.2.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Oh My Diff terminal logo and launch status in both profiles",
       "source": "mods/first-party/omd_logo",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -79,13 +79,13 @@
     },
     {
       "id": "omd_model_picker",
-      "version": "0.3.0-preview.2",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Compact OMD+ /model and reasoning picker presentation",
       "source": "mods/first-party/omd_model_picker",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -96,204 +96,204 @@
     },
     {
       "id": "omd_plan_panel",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Pins Codex's update_plan steps above the composer",
       "source": "mods/first-party/omd_plan_panel",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_continue",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "/continue resumes an interrupted turn from recorded activity",
       "source": "mods/first-party/omd_continue",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; turn_activity_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_tool_lines",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "One line per agent tool call; opens to the native row",
       "source": "mods/first-party/omd_tool_lines",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; render_hooks_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; render_hooks_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.162.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_auto_continue",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Declines an unanswered approval or answers an unanswered question after two minutes so a turn keeps going while you are away",
       "source": "mods/first-party/omd_auto_continue",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_respond_v1; timers_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_respond_v1; timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_idle_compact",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Compacts a large idle conversation just before the provider prompt cache expires, including while a turn waits on an approval or question",
       "source": "mods/first-party/omd_idle_compact",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1; timers_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1; timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_statusline",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Configurable status line below or above the composer with Git, pull request, CI and script segments",
       "source": "mods/first-party/omd_statusline",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; structured_access_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; builtins_v1; structured_access_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_plan_removal",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Removes /plan and plan mode through public built-in controls",
       "source": "mods/first-party/omd_plan_removal",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; builtins_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_preview",
-      "version": "0.2.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog, inline Mermaid drawings in responses and draft image thumbnails",
       "source": "mods/first-party/omd_preview",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_lsp_view",
-      "version": "0.2.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Opt-in code-intelligence view (hover, definition, references, symbols, diagnostics, code actions, formatting) over omd_lsp_sync's servers",
       "source": "mods/first-party/omd_lsp_view",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_frecency",
-      "version": "0.1.0-preview.2",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
       "source": "mods/first-party/omd_frecency",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_mods",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "/mods control screen: installed, active, pending and failed mods with host-confirmed enable, trust, update, remove and reload, plus a one-time first-run card",
       "source": "mods/first-party/omd_mods",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; package_controls_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; package_controls_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_update",
-      "version": "0.1.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Update notices and /update controls: installed vs available OMD release, notes, copyable omd update, snooze/skip, update checks, channel, cadence, pin and opt-in automatic updates applied at launch",
       "source": "mods/first-party/omd_update",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -306,7 +306,7 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.162.0 and OMD 0.1.0; mod API 0.2.0-experimental.5; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.162.0 and OMD 1.0.0; mod API 1.0.0; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -324,85 +324,85 @@
     },
     {
       "id": "omd_profiles",
-      "version": "0.1.0-preview.2",
+      "version": "1.0.0",
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
       "extension_type": "mod",
       "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn",
       "source": "mods/first-party/omd_profiles",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
     },
     {
       "id": "omd_lsp_sync",
-      "version": "0.5.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Language servers report the diagnostics each edit introduces and answer definition, reference and rename requests",
       "source": "mods/first-party/omd_lsp_sync",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_advisor",
-      "version": "0.4.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "An independent advisor reviews plans, stalls and claimed completion with typed, cited findings and can flag consequential output the user should know",
       "source": "mods/first-party/omd_advisor",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_inspector",
-      "version": "0.2.0-preview.1",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
       "source": "mods/first-party/omd_inspector",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "omd_workflow",
-      "version": "0.2.0-preview.2",
+      "version": "1.0.0",
       "extension_type": "mod",
       "capability": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
       "source": "mods/first-party/omd_workflow",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -416,11 +416,11 @@
       "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "e718fa2d8173e5ef419feaa42d3fc495c3abbb84", "sha256": "fc8b5ebdad8790bc35a8baf1db659d3d47449337cdfc1a76dc1abfe7705a9cdd"},
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -434,11 +434,11 @@
       "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "e718fa2d8173e5ef419feaa42d3fc495c3abbb84", "sha256": "138d1edce801a53d075ec7dc4a3ecc319f7fce3787525d7b9beed427d42d5595"},
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -452,11 +452,11 @@
       "published": {"repository": "https://github.com/dzkchen/oh-my-diff", "revision": "34de8a94eca519b6d1a324184e769b627c1f1a1c", "sha256": "02dfe40eecbaa3e0005a266ee0f78b2684682dd8dcb494d59acad84780f2feaa"},
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; tool_continuation_v2, terminal_prompt_v1, exec_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; tool_continuation_v2, terminal_prompt_v1, exec_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"

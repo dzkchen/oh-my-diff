@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_lsp_view",
-  "version": "0.2.0-preview.1",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Hover, definition, references, symbols, diagnostics, code actions and formatting from the omd_lsp_sync language servers",

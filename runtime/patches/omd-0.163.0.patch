@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index dfb17c17c723c6f70afbf2a9199a361465c768e2..d416219a9dfaf736afc7e740e7aacbc792f75065 100644
+index dfb17c17c723c6f70afbf2a9199a361465c768e2..183e759a571a58dff49cea15a0a23dc77c94976b 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2121,6 +2121,8 @@ dependencies = [
@@ -49,7 +49,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d416219a9dfaf736afc7e740e7aacbc7
 
 +[[package]]
 +name = "codex-omd"
-+version = "0.1.0"
++version = "1.0.0"
 +dependencies = [
 + "base64 0.22.1",
 + "ignore",
@@ -82189,13 +82189,13 @@ index 0000000000000000000000000000000000000000..718e22cefc873de1bc9335e714dff717
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..38c5a1de4da5a91903c9a4b1bd9174279cb44d9a
+index 0000000000000000000000000000000000000000..985b7e7465fe981cc534568673b14fd8e98597f1
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,24 @@
 +[package]
 +name = "codex-omd"
-+version = "0.1.0"
++version = "1.0.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -99229,7 +99229,7 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33aa730687f
+index 0000000000000000000000000000000000000000..fec28c7d48ee894f646c6782ae536f2bd849bcf5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,6144 @@
@@ -99367,7 +99367,7 @@ index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33a
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-+pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
++pub const MOD_API_VERSION: &str = "1.0.0";
 +pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 +pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 +
@@ -99736,7 +99736,7 @@ index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33a
 +    "turns.dequeue",
 +];
 +pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-+    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
++    &[(MOD_API_VERSION, "stable", "2027-10-19")];
 +pub const MOD_CAPABILITIES: &[&str] = &[
 +    "context",
 +    "tools",
@@ -130765,7 +130765,7 @@ index 0000000000000000000000000000000000000000..8ef5a1e8f0f07f44c92d1c96708b6629
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7276715d276d97e10018b1a7faf8da53fa10ac97
+index 0000000000000000000000000000000000000000..279fbdc1a84e609d6fa4db0180621ceb06ced122
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
 @@ -0,0 +1,4780 @@
@@ -131640,7 +131640,7 @@ index 0000000000000000000000000000000000000000..7276715d276d97e10018b1a7faf8da53
 +        MOD_STATE_STORAGE_SCHEMA_VERSION
 +    );
 +    assert_eq!(status["host"]["features"], json!(MOD_HOST_FEATURES));
-+    assert_ne!(status["host"]["omd"], status["api"]);
++    assert_eq!(status["api"], MOD_API_VERSION);
 +}
 +
 +#[test]

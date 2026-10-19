@@ -1,6 +1,6 @@
 # Box model example
 
-Draws bordered cards and flat filled panels with the terminal box model (`terminal_box_model_v1`). It's an independent-author API `0.2.0-experimental.5` mod and uses no first-party mod.
+Draws bordered cards and flat filled panels with the terminal box model (`terminal_box_model_v1`). It's an independent-author API `1.0.0` mod and uses no first-party mod.
 
 ## What it shows
 

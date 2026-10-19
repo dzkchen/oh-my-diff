@@ -186,7 +186,7 @@
       "path": "mods/examples/release_check",
       "extension_type": "mod",
       "role": "author_example",
-      "why_mod": "An independent author package that uses only the 0.2 host primitives: a contract document, receipts, sandboxed commands, workspace listing, durable store and evidence, stream control, built-in controls and a list replacement."
+      "why_mod": "An independent author package that uses only the host primitives: a contract document, receipts, sandboxed commands, workspace listing, durable store and evidence, stream control, built-in controls and a list replacement."
     },
     {
       "path": "mods/examples/snapshot_review",

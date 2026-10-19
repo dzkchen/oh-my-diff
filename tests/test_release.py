@@ -81,6 +81,17 @@ class ReleaseTests(unittest.TestCase):
                                                         {"label": "Fixed", "items": ["B"]}])
             self.assertTrue((root / "b.txt").exists())
 
+    def test_rollback_drafts_the_release_and_restores_the_previous_stable_as_latest(self):
+        listed = json.dumps([{"tagName": "v1.1.0"}, {"tagName": "v1.0.0"}])
+        with mock.patch.object(release, "run", return_value=listed) as run, mock.patch("builtins.print") as printed:
+            release.rollback("1.1.0", dry_run=True)
+            self.assertEqual(run.call_count, 1)
+            release.rollback("1.1.0")
+        edits = [call.args for call in run.call_args_list[2:]]
+        self.assertEqual(edits, [("gh", "release", "edit", "v1.1.0", "--repo", release.REPOSITORY, "--draft=true"),
+                                 ("gh", "release", "edit", "v1.0.0", "--repo", release.REPOSITORY, "--latest")])
+        self.assertIn("v1.0.0 is the latest", printed.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()

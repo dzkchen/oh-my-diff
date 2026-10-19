@@ -1,6 +1,6 @@
 # Snapshot review example
 
-Captures a frozen copy of the workspace, checks it in a sandbox, has a separate read-only agent inspect it, and keeps the contract receipts across a restart. It's an independent-author API `0.2.0-experimental.5` mod that loads no first-party mod and defines its own schema-2 contract, `snapshot_review@1`.
+Captures a frozen copy of the workspace, checks it in a sandbox, has a separate read-only agent inspect it, and keeps the contract receipts across a restart. It's an independent-author API `1.0.0` mod that loads no first-party mod and defines its own schema-2 contract, `snapshot_review@1`.
 
 ## Try it
 

@@ -132,7 +132,7 @@ pub use store::Trust;
 
 pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
+pub const MOD_API_VERSION: &str = "1.0.0";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 
@@ -501,7 +501,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "turns.dequeue",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
+    &[(MOD_API_VERSION, "stable", "2027-10-19")];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",

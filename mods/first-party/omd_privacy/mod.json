@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_privacy",
-  "version": "0.1.0-preview.1",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "description": "Redacts secrets and optional PII from every provider-bound request with stable opaque placeholders and gates reads of sensitive paths",
   "license": "MIT",

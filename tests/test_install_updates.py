@@ -36,7 +36,7 @@ def release(version, prerelease=False, **manifest):
                 {"name": name, "browser_download_url": f"https://example.test/{version}/{name}",
                  "digest": f"sha256:{manifest.get('sha256', 'a' * 64)}"}],
             "manifest": {"schema": 1, "version": version, "target": "aarch64-apple-darwin", "upstream_tag": "rust-v0.162.0",
-                         "mod_api": "0.2.0-experimental.5", "node": "24.18.0", "archive": name, "sha256": "a" * 64,
+                         "mod_api": "1.0.0", "node": "24.18.0", "archive": name, "sha256": "a" * 64,
                          "artifacts": {"codex": "c" * 64}, **manifest}}
 
 
