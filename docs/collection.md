@@ -49,7 +49,7 @@ OMD Core includes only the first three.
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
-| `omd_claude_cli` | Claude models in `codex`, using your Claude plan | Claude CLI `2.1.296`, signed in to Pro, Max, Team or Enterprise. See [Claude](#claude). |
+| `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI `2.1.302`. See [Claude](#claude). |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
@@ -60,12 +60,9 @@ Each mod's README in [`mods/first-party`](../mods/first-party) lists its setting
 
 ### Claude
 
-```sh
-omd-package claude --setup
-omd-package claude --model sonnet
-```
-
-The first command checks the Claude CLI and turns on `omd_claude_cli`. The second starts a session on Claude.
+In a session, turn on `omd_claude_cli` in `/mods` and approve its trust dialog, then run `/claude login` for your
+Claude plan or `/claude login api` for Console API credits. Claude models then appear in `/model`. The
+[`omd_claude_cli` README](../mods/first-party/omd_claude_cli/README.md) has the details.
 
 ### An API key or another provider
 

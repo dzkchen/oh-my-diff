@@ -29,7 +29,7 @@ PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
-ROUTES = {"claude": "omd_claude_cli", "profiles": "omd_profiles"}
+ROUTES = {"profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/mods_lock.py", "runtime/mods.lock.json",
                     "upstream.lock.json", "docs/install.md", "install.sh")
@@ -349,9 +349,8 @@ def route(prefix, bin_dir, name, args):
     if args.setup:
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
         extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
-                            "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
-        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra,
-                                 *([args.billing] if name == "claude" and args.billing else [])], stdout=subprocess.PIPE, text=True)
+                            "remove": args.remove, "allowance": args.allowance})
+        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra], stdout=subprocess.PIPE, text=True)
         if result.returncode:
             raise ValueError(f"{name} setup failed")
         details = json.loads(result.stdout)
@@ -573,8 +572,9 @@ def install(args):
                                 "python": sys.executable}
         if previous and previous["profile"] == args.profile:
             record["activation"]["selection"] = previous["activation"]["selection"]
-            if previous.get("providers"):
-                record["providers"] = previous["providers"]
+            providers = {key: value for key, value in previous.get("providers", {}).items() if key in ROUTES.values()}
+            if providers:
+                record["providers"] = providers
         launcher = bin_dir / "codex"
         support.atomic_text(launcher, selected_text(record), 0o755)
         made_launchers.append(launcher)
@@ -811,17 +811,12 @@ def main():
     for name in ROUTES:
         route_parser = commands.add_parser(name, help=f"set up or launch the opt-in {name} route")
         route_parser.add_argument("--setup", action="store_true")
-        route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI or SDK module path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
-        if name == "claude":
-            route_parser.add_argument("--billing", choices=("subscription", "api"),
-                                      help="for --setup: claude.ai plan limits (first setup default), or Console API credits; reruns keep the current choice")
-        if name == "profiles":
-            for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
-                route_parser.add_argument(f"--{flag}")
-            route_parser.add_argument("--reasoning", action="store_true")
-            route_parser.add_argument("--cache-control", action="store_true")
-            route_parser.add_argument("--text-only", action="store_true")
+        for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
+            route_parser.add_argument(f"--{flag}")
+        route_parser.add_argument("--reasoning", action="store_true")
+        route_parser.add_argument("--cache-control", action="store_true")
+        route_parser.add_argument("--text-only", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))

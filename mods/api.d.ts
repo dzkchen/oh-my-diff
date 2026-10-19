@@ -333,6 +333,7 @@ export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollba
 export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
+export type ProviderModel = { slug: string; display: string; context_window: number; efforts: string[]; default_effort?: string };
 export interface HostOperations {
   'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] }; exclusive_workspace?: string; sandbox?: 'none' }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
   'exec.output_page': { arguments: { artifact: ResourceRef; cursor?: number; max_bytes?: number }; result: { text: string; cursor: number | null; bytes: number; sha256: string } };
@@ -395,6 +396,8 @@ export interface HostOperations {
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
   'providers.register': { arguments: { id: string; secrets?: string[] }; result: Json };
+  /** Replaces the models `/model` lists for a provider the caller registered; at most 16. */
+  'providers.models': { arguments: { provider: string; name?: string; models: ProviderModel[] }; result: { provider: string; models: number } };
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };

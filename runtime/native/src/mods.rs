@@ -189,6 +189,7 @@ struct Mods {
     settled: Mutex<BTreeMap<String, (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
     elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
+    provider_switches: Mutex<BTreeMap<String, Config>>,
 }
 
 struct PendingTool {
@@ -435,6 +436,7 @@ fn initialize(
         ModHost::open_in(host.root.clone(), validate_tool_schema, &host.repository)
             .map_err(|e| e.to_string())?;
     let persist_required = persist_runtime.required_surfaces();
+    services::define_providers(&host.config, |id| runtime.grants(id).is_some());
     let _ = host.persist_json("mod-status.json", &runtime.status());
     let required = runtime.required_surfaces();
     let environment = runtime.environment();
@@ -472,6 +474,7 @@ fn initialize(
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
+        provider_switches: Mutex::default(),
     });
     let dispatcher = intercept::dispatcher(&extension.core);
     registration
@@ -841,6 +844,16 @@ impl Core {
 }
 
 impl Mods {
+    fn switch_ledger_provider(&self, lead: &Lead, config: &Config) {
+        if let Err(error) = lead.host.switch_provider(lead, config) {
+            self.views.diagnostic(
+                &self.host,
+                "session",
+                Some(format!("OMD ledger provider switch failed: {error}")),
+            );
+        }
+    }
+
     fn take_turn(&self, thread: &ThreadId) -> Option<TurnRecord> {
         self.turns
             .lock()
@@ -1113,6 +1126,21 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         previous: &Config,
         next: &Config,
     ) {
+        if previous.model_provider_id != next.model_provider_id
+            && let Some(lead) = thread_store.get::<Lead>()
+            && lead.owner == "lead"
+        {
+            let thread = lead.thread.to_string();
+            let running = self
+                .turns
+                .lock()
+                .is_ok_and(|turns| turns.contains_key(&thread));
+            if !running {
+                self.switch_ledger_provider(&lead, next);
+            } else if let Ok(mut switches) = self.provider_switches.lock() {
+                switches.insert(thread, next.clone());
+            }
+        }
         if lead_thread(thread_store)
             && let Some(change) = settings_change(&settings_view(previous), &settings_view(next))
         {
@@ -1706,6 +1734,14 @@ impl TurnLifecycleContributor for Mods {
             };
             self.views
                 .presentation(&lead.thread.to_string(), Some("started"));
+            let switch = self
+                .provider_switches
+                .lock()
+                .ok()
+                .and_then(|mut switches| switches.remove(&lead.thread.to_string()));
+            if let Some(config) = switch {
+                self.switch_ledger_provider(&lead, &config);
+            }
             // Batches settle within their turn; calls an aborted turn left behind are dropped here.
             if let Ok(mut settled) = self.settled.lock() {
                 settled.clear();

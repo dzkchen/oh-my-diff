@@ -164,6 +164,7 @@ fn mods(core: &Arc<Core>) -> Mods {
         child_errors: Mutex::new(BTreeMap::new()),
         settled: Mutex::new(BTreeMap::new()),
         elicitations: Mutex::default(),
+        provider_switches: Mutex::default(),
     }
 }
 

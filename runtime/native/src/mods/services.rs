@@ -35,6 +35,45 @@ pub(crate) struct Grant {
     credentials: BTreeSet<String>,
 }
 
+/// Defines the provider of each loopback provider grant of an active mod for this process; configured providers keep precedence.
+pub(crate) fn define_providers(config: &crate::config::HostConfig, active: impl Fn(&str) -> bool) {
+    for grant in &config.services {
+        let Some(route) = grant.route.as_ref().filter(|_| active(&grant.mod_id)) else {
+            continue;
+        };
+        let Some(base_url) = route
+            .responses_url
+            .strip_suffix("/responses")
+            .filter(|url| url.starts_with("http://127.0.0.1:"))
+        else {
+            continue;
+        };
+        let token = grant
+            .secrets
+            .values()
+            .next()
+            .filter(|_| grant.secrets.len() == 1)
+            .and_then(|reference| config.secret_refs.get(reference))
+            .filter(|path| {
+                std::fs::symlink_metadata(path)
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 4096)
+            })
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|token| token.trim().to_string().into());
+        codex_model_provider_info::set_runtime_provider(
+            &route.provider,
+            Some(codex_model_provider_info::ModelProviderInfo {
+                name: route.provider.clone(),
+                base_url: Some(base_url.to_string()),
+                experimental_bearer_token: token,
+                request_max_retries: Some(0),
+                stream_max_retries: Some(0),
+                ..Default::default()
+            }),
+        );
+    }
+}
+
 impl Grant {
     pub(crate) fn billed_rates(&self, provider: &str) -> Option<&crate::accounting::Rates> {
         self.route
@@ -71,6 +110,10 @@ struct Service {
 
 impl Drop for Service {
     fn drop(&mut self) {
+        if let Some(route) = &self.route {
+            codex_models_manager::runtime_models::set(&route.provider, Vec::new());
+            codex_models_manager::runtime_models::set_name(&route.provider, None);
+        }
         if let Some(job) = self.job.take() {
             job.abort();
         }
@@ -152,6 +195,110 @@ impl Services {
         }
     }
 
+    async fn publish_models(
+        &self,
+        mod_id: &str,
+        generation: u64,
+        arguments: Value,
+    ) -> Result<Value, String> {
+        use codex_protocol::openai_models::ReasoningEffort;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Model {
+            slug: String,
+            display: String,
+            context_window: i64,
+            efforts: Vec<ReasoningEffort>,
+            #[serde(default)]
+            default_effort: Option<ReasoningEffort>,
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            provider: String,
+            #[serde(default)]
+            name: Option<String>,
+            models: Vec<Model>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+        if input.models.len() > 16 {
+            return Err("provider_model_limit".into());
+        }
+        if input
+            .name
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty() || name.len() > 64)
+        {
+            return Err("provider_name_invalid".into());
+        }
+        let mut models = Vec::with_capacity(input.models.len());
+        for model in input.models {
+            if model.slug.is_empty()
+                || model.slug.len() > 64
+                || !model
+                    .slug
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+                || model.display.trim().is_empty()
+                || model.display.len() > 64
+                || !(1..=10_000_000).contains(&model.context_window)
+                || model.efforts.len() > 8
+                || model
+                    .default_effort
+                    .as_ref()
+                    .is_some_and(|effort| !model.efforts.contains(effort))
+                || models.iter().any(|known: &codex_protocol::openai_models::ModelInfo| {
+                    known.slug == model.slug
+                })
+                || codex_models_manager::runtime_models::find(&model.slug)
+                    .is_some_and(|(owner, _)| owner != input.provider)
+            {
+                return Err(format!("provider_model_invalid: {}", model.slug));
+            }
+            let mut info = codex_models_manager::model_info::model_info_from_slug(&model.slug);
+            info.display_name = model.display;
+            info.context_window = Some(model.context_window);
+            info.max_context_window = Some(model.context_window);
+            info.auto_compact_token_limit = Some(model.context_window / 10 * 9);
+            info.default_reasoning_level = model
+                .default_effort
+                .or_else(|| model.efforts.first().cloned());
+            info.supported_reasoning_levels = model
+                .efforts
+                .into_iter()
+                .map(|effort| codex_protocol::openai_models::ReasoningEffortPreset {
+                    description: effort.to_string(),
+                    effort,
+                })
+                .collect();
+            info.visibility = codex_protocol::openai_models::ModelVisibility::List;
+            info.apply_patch_tool_type =
+                Some(codex_protocol::openai_models::ApplyPatchToolType::Freeform);
+            info.truncation_policy =
+                codex_protocol::openai_models::TruncationPolicyConfig::tokens(10_000);
+            info.supports_search_tool = true;
+            info.used_fallback_model_metadata = false;
+            models.push(info);
+        }
+        let records = self.records.lock().await;
+        if !records.values().any(|service| {
+            service.mod_id == mod_id
+                && service.generation == generation
+                && !service.finished()
+                && service
+                    .route
+                    .as_ref()
+                    .is_some_and(|route| route.provider == input.provider)
+        }) {
+            return Err("provider_not_registered_or_stopped".into());
+        }
+        let count = models.len();
+        codex_models_manager::runtime_models::set_name(&input.provider, input.name);
+        codex_models_manager::runtime_models::set(&input.provider, models);
+        drop(records);
+        Ok(json!({"provider": input.provider, "models": count}))
+    }
+
     pub(super) async fn route(
         &self,
         mod_id: &str,
@@ -179,6 +326,11 @@ impl Services {
         generation: u64,
         request: codex_omd::ModHostCall,
     ) -> Result<Value, String> {
+        if request.operation == "providers.models" {
+            return self
+                .publish_models(mod_id, generation, request.arguments)
+                .await;
+        }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Selection {
@@ -236,8 +388,9 @@ impl Services {
             return Err("service_already_registered".into());
         }
         let host = &lead.host;
-        let mut grant = host
-            .config
+        let current = host.route_config().0;
+        define_providers(&current, |id| id == mod_id);
+        let mut grant = current
             .services
             .iter()
             .find(|g| g.id == selection.id && g.mod_id == mod_id)
@@ -456,8 +609,7 @@ impl Services {
             {
                 return Err("invalid_secret_environment_key".into());
             }
-            let path = host
-                .config
+            let path = current
                 .secret_refs
                 .get(reference)
                 .ok_or("unknown_secret_reference")?;
@@ -522,7 +674,8 @@ impl Services {
             if route.model.is_empty() || route.model.len() > 128 {
                 return Err("unsupported_adapter_model".into());
             }
-            if !config.model_providers.contains_key(&route.provider)
+            if !(config.model_providers.contains_key(&route.provider)
+                || codex_model_provider_info::runtime_provider(&route.provider).is_some())
                 || !route.responses_url.starts_with("http://127.0.0.1:")
             {
                 return Err("configured_loopback_provider_required".into());
@@ -814,6 +967,34 @@ async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_provider_grants_define_their_provider() {
+        let store = tempfile::tempdir().unwrap();
+        let token = store.path().join("local-token");
+        std::fs::write(&token, "local-secret\n").unwrap();
+        let rates = json!({"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1,
+            "input_token_ceiling": 1, "included_subscription": true});
+        let grant = |id: &str, url: &str| json!({"id": id, "mod_id": "m", "program": "/bin/sh",
+            "program_sha256": "0", "secrets": {"TOKEN": "local"}, "route": {"name": id,
+            "provider": format!("{id}_provider"), "model": "m1", "reasoning_effort": "high",
+            "responses_url": url, "rates": rates}});
+        let config: crate::config::HostConfig = serde_json::from_value(json!({
+            "secret_refs": {"local": token},
+            "services": [grant("loopback", "http://127.0.0.1:4321/v1/responses"),
+                grant("remote", "https://example.com/v1/responses")]}))
+        .unwrap();
+        define_providers(&config, |_| true);
+        let provider = codex_model_provider_info::runtime_provider("loopback_provider").unwrap();
+        assert_eq!(provider.base_url.as_deref(), Some("http://127.0.0.1:4321/v1"));
+        assert_eq!(
+            provider.experimental_bearer_token.map(|token| token.into_inner()).as_deref(),
+            Some("local-secret")
+        );
+        assert!(!provider.requires_openai_auth && !provider.supports_websockets);
+        assert!(codex_model_provider_info::runtime_provider("remote_provider").is_none());
+    }
 
     #[tokio::test]
     async fn endpoint_handoff_reads_only_the_granted_file() {

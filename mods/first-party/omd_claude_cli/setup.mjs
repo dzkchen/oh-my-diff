@@ -5,7 +5,7 @@ import { createServer as createNet } from 'node:net';
 import { constants } from 'node:fs';
 import { access, chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLI_VERSION, checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
 
@@ -79,29 +79,18 @@ export async function discover(claude) {
     entry.window = probe.find(event => event.type === 'result')?.modelUsage?.[entry.cli]?.contextWindow;
     if (!Number.isInteger(entry.window) || entry.window < 100000) throw new Error(`claude_context_window_unmeasured:${entry.cli}`);
     models.push(entry);
+    if (models.length === 16) break;
   }
   if (!models.length) throw new Error('claude_model_catalog_empty');
   return models;
 }
 
-function catalog(models, template) {
-  return { models: models.map((model, index) => ({ ...template, slug: model.slug, display_name: model.name,
-    description: `${model.description} Official Claude CLI subscription route through the opt-in OMD mod.`.trim(),
-    context_window: model.window, max_context_window: model.window, auto_compact_token_limit: Math.floor(model.window * 0.9),
-    default_reasoning_level: model.efforts.includes('high') ? 'high' : null,
-    supported_reasoning_levels: model.efforts.map(effort => ({ effort, description: effort })),
-    supports_reasoning_summaries: model.thinking, default_reasoning_summary: model.thinking ? 'auto' : 'none',
-    priority: 90 + index })) };
-}
-
-async function setup(recordPath, claudePath, billing) {
-  const record = JSON.parse(await readFile(recordPath, 'utf8'));
-  if (record.profile !== 'full' || !record.packages?.omd_claude_cli) throw new Error('omd_plus_claude_mod_required');
-  const mod = await realpath(join(record.store, 'sources', 'omd_claude_cli'));
-  if (mod !== source) throw new Error('setup_must_run_from_installed_mod');
-  const directory = join(record.store, 'routes', 'claude');
+async function setup(claudePath, billing) {
+  const mod = await realpath(source);
+  const store = dirname(dirname(mod));
+  if (basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
+  const directory = join(store, 'routes', 'claude');
   const routePath = join(directory, 'route.json');
-  const catalogPath = join(directory, 'models.json');
   const tokenPath = join(directory, 'local-token');
   let previous = {};
   try { previous = JSON.parse(await readFile(routePath, 'utf8')); } catch {}
@@ -117,19 +106,17 @@ async function setup(recordPath, claudePath, billing) {
   const port = previous.port ?? await unusedPort();
   const fallback = models.find(model => model.family === 'opus') ?? models[0];
   await writeFile(routePath, `${JSON.stringify({ port, claude, billing, default: fallback.slug, models }, null, 2)}\n`);
-  const template = JSON.parse(await readFile(join(source, 'models.json'), 'utf8')).models[0];
-  await writeFile(catalogPath, `${JSON.stringify(catalog(models, template), null, 2)}\n`);
-  const node = await realpath(record.author.node);
+  const node = await realpath(process.execPath);
   const home = homedir();
   const username = userInfo().username;
   const readPaths = [];
-  for (const path of [mod, directory, join(record.store, 'mods.json'), claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
+  for (const path of [mod, directory, join(store, 'mods.json'), claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
     join(home, '.claude'), join(home, '.claude.json'), join(home, 'Library/Keychains'), '/System', '/usr/lib',
     '/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib']) {
     try { const real = await realpath(path); if (!readPaths.includes(real)) readPaths.push(real); } catch {}
   }
   const url = `http://127.0.0.1:${port}/v1`;
-  const hostPath = join(record.store, 'host.json');
+  const hostPath = join(store, 'host.json');
   let host = {};
   try { host = JSON.parse(await readFile(hostPath, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -147,15 +134,13 @@ async function setup(recordPath, claudePath, billing) {
         output_microusd_per_million: 0, reservation_microusd: 0, max_output_tokens: 128000,
         input_token_ceiling: fallback.window, ...billing === 'api' ? { provider_billed: true } : { included_subscription: true } } } }];
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
-  return { provider: { id: 'omd_claude_cli', name: 'OMD Claude CLI', base_url: url, env_key: 'OMD_CLAUDE_LOCAL_TOKEN',
-    token: tokenPath, catalog: catalogPath, route: routePath }, cli: CLI_VERSION, billing,
-    models: models.map(({ slug, family, window }) => ({ slug, family, window })), default: fallback.slug };
+  return { cli: CLI_VERSION, billing, models: models.map(model => ({ slug: model.slug, display: model.name,
+    context_window: model.window, efforts: model.efforts, ...model.efforts.includes('high') ? { default_effort: 'high' } : {} })) };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [action, record, claude, billing] = process.argv.slice(2);
+  const [claude, billing] = process.argv.slice(2);
   try {
-    if (action !== 'setup') throw new Error('unsupported_claude_setup_action');
-    console.log(JSON.stringify(await setup(record, claude || '', billing)));
+    console.log(JSON.stringify(await setup(claude, billing)));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

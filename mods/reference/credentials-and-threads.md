@@ -68,7 +68,20 @@ by `MOD_ID` for `ORIGIN`, the same profile `credentials.request {kind: 'secret'}
 that mod's existing secret with the same label and origin, prints the profile, and asks for broker authorization
 when the authority broker is deployed. Package setup scripts use it to enroll a key without writing it to disk.
 
-`providers.register {id, secrets?}` delivers owned secrets to a provider service as `sidecars.start` does.
+`providers.register {id, secrets?}` delivers owned secrets to a provider service as `sidecars.start` does. It reads
+the store's `host.json` services at call time, so a grant written during the session needs no restart. A routed grant
+with a loopback `responses_url` defines its `route.provider` for the process (at startup when its mod is active, and
+at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
+thread resumed after its provider is gone continues on the configured provider.
+
+The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
+grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
+or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
+(shell, freeform `apply_patch`, tool search). Picking one switches the thread to that provider from the next turn;
+history carries over except reasoning another provider produced. A compaction checkpoint only another provider can
+read is first rewritten as a plaintext summary by that provider (one request on its account); if that fails, the turn
+shows a warning and runs without the summary.
 
 ### Service launch snapshots
 

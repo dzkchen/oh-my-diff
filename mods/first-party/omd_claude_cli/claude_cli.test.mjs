@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { translateRequest, responseEvents } from './index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, withoutCliContext } from './transport.mjs';
+import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -50,6 +50,17 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
   const returned = responseEvents({ id: 'names', model, usage: { input_tokens: 1, output_tokens: 1 }, content: names.map((name, index) => ({ type: 'tool_use', id: `name-${index}`, name: `mcp__omd__${name}`, input: {} })) }, {}, model, prototypeTools.reverse);
   assert.deepEqual(returned.filter(event => event.type === 'response.output_item.done').map(event => event.item.name), names);
+});
+
+test('history from another provider carries over: opaque reasoning dropped, hosted calls kept as text', () => {
+  const carried = translateRequest({ ...prompt, input: [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Find the docs.' }] },
+    { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
+    { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'codex docs' } },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found them.' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
+  assert.deepEqual(carried.frames.map(frame => frame.message.content.map(block => block.text)), [
+    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.']]);
 });
 
 async function fakeCli(script) {
@@ -218,6 +229,26 @@ test('missing subscription login fails before routing and inherited API override
     for (const name of names) delete process.env[name];
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('an expired login and a missing entitlement tell the user to run /claude login', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-expired-'));
+  const fake = join(root, 'claude');
+  try {
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else echo '{"loggedIn":false}'; fi\n`);
+    await chmod(fake, 0o700);
+    assert.throws(() => checkCli(fake), /claude_ai_subscription_login_required: run `\/claude login`/);
+    assert.throws(() => checkCli(fake, 'api'), /claude_console_api_key_login_required: run `\/claude login api`/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+  const expired = upstreamFailure(401, {}, '{"error":{"type":"authentication_error"}}');
+  assert.equal(expired.code, 'claude_login_expired');
+  assert.match(expired.message, /run `\/claude login` and retry/);
+  assert.equal(upstreamFailure(403, {}, 'OAuth token has been revoked').code, 'claude_login_expired');
+  assert.match(upstreamFailure(401, {}, '', 'api').message, /run `\/claude login api` and retry/);
+  const entitlement = upstreamFailure(403, {}, '{"error":{"message":"your account cannot use this model"}}');
+  assert.equal(entitlement.code, 'claude_model_not_entitled');
+  assert.match(entitlement.message, /\/model.*`\/claude login`/);
+  assert.match(upstreamFailure(404, {}, 'model not found', 'api').message, /`\/claude login api`/);
 });
 
 test('official CLI auth probe uses the approved user identity', async () => {

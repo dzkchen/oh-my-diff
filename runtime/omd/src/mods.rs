@@ -423,6 +423,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "process.stop",
     "providers.register",
     "providers.unregister",
+    "providers.models",
     "sidecars.invoke",
     "sidecars.start",
     "sidecars.status",

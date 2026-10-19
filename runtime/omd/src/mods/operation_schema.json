@@ -57,6 +57,7 @@
     "process.status": {"arguments":{"$ref":"#/$defs/56"},"result":{"type":"object","properties":{"session":{"type":"string"},"running":{"const":true},"idle_ms":{"type":"number"}},"required":["session","running","idle_ms"]}},
     "process.stop": {"arguments":{"$ref":"#/$defs/56"},"result":{"$ref":"#/$defs/57"}},
     "providers.register": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
+    "providers.models": {"arguments":{"type":"object","properties":{"provider":{"type":"string"},"name":{"type":"string"},"models":{"type":"array","items":{"type":"object","properties":{"slug":{"type":"string"},"display":{"type":"string"},"context_window":{"type":"number"},"efforts":{"type":"array","items":{"type":"string"}},"default_effort":{"type":"string"}},"required":["slug","display","context_window","efforts"]}}},"required":["provider","models"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"models":{"type":"number"}},"required":["provider","models"]}},
     "providers.unregister": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
     "sidecars.invoke": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"input":{}},"required":["id","input"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"program_sha256":{"type":"string"},"source_hashes":{"$ref":"#/$defs/0"},"result":{},"untrusted":{"const":true}},"required":["provider","program_sha256","source_hashes","result","untrusted"]}},
     "sidecars.start": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
