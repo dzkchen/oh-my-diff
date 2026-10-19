@@ -2,6 +2,31 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.0-rc.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.2) — 2026-10-19
+
+Second release candidate: a native mod settings panel, Claude subscription models inside the session, keyboard-first mod dialogs and faster mod status.
+
+### New
+
+- Claude subscription in the session (`omd_claude_cli`, opt-in): `/claude login` in a terminal pane, your plan's Claude models in `/model`, and switching a thread between Claude and OpenAI from the next turn without a relaunch.
+- `/mods` and `/statusline` open in Codex's native settings panel, with tabs, search and toggles, and redraw from real state after every change.
+- Mod API: `terminal.panel`, `providers.models` and `model_provider` on thread settings (experimental).
+
+### Changed
+
+- Mod dialogs work from the keyboard: arrows move between controls, held keys repeat, Space toggles, and `/mods` filters as you type with fuzzy matching.
+- `/mods` opens faster in OMD+: mod status is shared and the package listing is cached.
+
+### Fixed
+
+- Mods: `/mods` can't turn itself off or remove itself, an installed mod updates from its own panel instead of reinstalling, and `/omd`'s Reload mods works without an attached client.
+- Terminal UI: the welcome logo stays while you type a command and hides after the first history line; mod diagnostics wrap and no longer fire for Codex's internal threads.
+- Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.
+- Install: `omd-package activate direct` no longer exits right after launch on a machine where packaged Codex never ran.
+- Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes.
+- Install: the installer ends with the next step, `hash -r` or a new terminal before `codex`, because a shell that already looked up `codex` keeps starting plain Codex.
+- Mods: a typed `/mods` action reports its own result while another change waits for `/mods apply`.
+
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
 Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 with a TypeScript mod host, the OMD Core and OMD+ collections and a signed curl installer.
