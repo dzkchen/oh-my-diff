@@ -3,8 +3,8 @@
 Build a `/hello` command, test it, run it in `codex` and share it.
 
 A **mod** is a small TypeScript package that runs inside OMD. It can add commands and tools, change what the model
-sees, and draw on screen. The mod API is experimental: only the current API loads, so a mod may need changes
-after an update ([compatibility](../mods/COMPATIBILITY.md)).
+sees, and draw on screen. Mod API `1.0.0` is stable, but only the current API loads and its experimental surfaces can change, so a mod may
+need changes after an update ([compatibility](../mods/COMPATIBILITY.md)).
 
 ## Before you begin
 

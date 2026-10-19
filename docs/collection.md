@@ -4,8 +4,8 @@ What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
 - **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
-- **Experimental:** the mod API is experimental and the mods are labeled preview, so behavior can change between
-  releases.
+- **Beta:** OMD `1.0.0` is labeled beta: not every planned capability is included yet. Mod API surfaces marked
+  experimental can change between releases.
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
 

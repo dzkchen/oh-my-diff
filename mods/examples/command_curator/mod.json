@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "command_curator",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.5",
+  "api": "1.0.0",
   "state_version": 1,
   "license": "MIT",
   "description": "Curates slash commands and settings: hints, hidden rows, trimmed arguments and a capped subagent depth.",

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index dfb17c17c723c6f70afbf2a9199a361465c768e2..d416219a9dfaf736afc7e740e7aacbc792f75065 100644
+index dfb17c17c723c6f70afbf2a9199a361465c768e2..183e759a571a58dff49cea15a0a23dc77c94976b 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2121,6 +2121,8 @@ dependencies = [
@@ -49,7 +49,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d416219a9dfaf736afc7e740e7aacbc7
 
 +[[package]]
 +name = "codex-omd"
-+version = "0.1.0"
++version = "1.0.0"
 +dependencies = [
 + "base64 0.22.1",
 + "ignore",
@@ -82189,13 +82189,13 @@ index 0000000000000000000000000000000000000000..718e22cefc873de1bc9335e714dff717
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..38c5a1de4da5a91903c9a4b1bd9174279cb44d9a
+index 0000000000000000000000000000000000000000..985b7e7465fe981cc534568673b14fd8e98597f1
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,24 @@
 +[package]
 +name = "codex-omd"
-+version = "0.1.0"
++version = "1.0.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -86947,7 +86947,7 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4dfa068998f8c3d6c2d29bed31462260374659b0
+index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5e2cddbce
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
 @@ -0,0 +1,712 @@
@@ -87151,16 +87151,16 @@ index 0000000000000000000000000000000000000000..4dfa068998f8c3d6c2d29bed31462260
 +                .unwrap_or_default();
 +            let last_session = |package: &Value| {
 +                let failed = |key: &str, field: &str, matches: &dyn Fn(&Value) -> bool| {
-+                    status[key]
-+                        .as_array()?
-+                        .iter()
-+                        .find(|item| matches(item))?[field]
-+                        .as_str()
++                    status[key].as_array()?.iter().find(|item| matches(item))?[field].as_str()
 +                };
 +                failed("mods", "error", &|item| {
 +                    item["id"] == package["id"] && item["scope"] == package["scope"]
 +                })
-+                .or_else(|| failed("rejected", "reason", &|item| item["path"] == package["path"]))
++                .or_else(|| {
++                    failed("rejected", "reason", &|item| {
++                        item["path"] == package["path"]
++                    })
++                })
 +                .filter(|_| package["enabled"] == true)
 +            };
 +            let rows = listed["packages"]
@@ -99229,10 +99229,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33aa730687f
+index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfed8884f08
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6144 @@
+@@ -0,0 +1,6143 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99367,7 +99367,7 @@ index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33a
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-+pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
++pub const MOD_API_VERSION: &str = "1.0.0";
 +pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 +pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 +
@@ -99735,8 +99735,7 @@ index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33a
 +    "turns.queued",
 +    "turns.dequeue",
 +];
-+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-+    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
++pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[(MOD_API_VERSION, "stable", "2027-10-19")];
 +pub const MOD_CAPABILITIES: &[&str] = &[
 +    "context",
 +    "tools",
@@ -130765,7 +130764,7 @@ index 0000000000000000000000000000000000000000..8ef5a1e8f0f07f44c92d1c96708b6629
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7276715d276d97e10018b1a7faf8da53fa10ac97
+index 0000000000000000000000000000000000000000..279fbdc1a84e609d6fa4db0180621ceb06ced122
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
 @@ -0,0 +1,4780 @@
@@ -131640,7 +131639,7 @@ index 0000000000000000000000000000000000000000..7276715d276d97e10018b1a7faf8da53
 +        MOD_STATE_STORAGE_SCHEMA_VERSION
 +    );
 +    assert_eq!(status["host"]["features"], json!(MOD_HOST_FEATURES));
-+    assert_ne!(status["host"]["omd"], status["api"]);
++    assert_eq!(status["api"], MOD_API_VERSION);
 +}
 +
 +#[test]

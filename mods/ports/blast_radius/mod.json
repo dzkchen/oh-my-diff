@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "blast_radius",
-  "version": "0.1.0",
-  "api": "0.2.0-experimental.5",
+  "version": "0.2.0",
+  "api": "1.0.0",
   "state_version": 1,
   "description": "Measures what a risky shell command would delete, discard or drop and holds it for a Proceed or Cancel answer",
   "license": "Apache-2.0",

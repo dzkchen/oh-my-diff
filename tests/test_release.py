@@ -66,10 +66,12 @@ class ReleaseTests(unittest.TestCase):
             git("add", ".")
             git("commit", "-m", "chore(release): 1.0.0")
             git("push", "origin", "release/v1.0.0")
-            git("switch", "main")
+            git("switch", "-c", "someone/b", "main")
             (root / "b.txt").write_text("b\n")
             git("add", "b.txt")
-            git("commit", "-m", "fix: b")
+            git("commit", "-m", "wip")
+            git("switch", "main")
+            git("merge", "--no-ff", "someone/b", "-m", "Merge pull request #7 from someone/b\n\nfix: b")
             second = git("rev-parse", "--short=7", "HEAD")
             git("push", "origin", "main")
             with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "changelog.json", MARKDOWN=root / "CHANGELOG.md",
@@ -78,8 +80,19 @@ class ReleaseTests(unittest.TestCase):
             published = json.loads(git("show", "origin/release/v1.0.0:changelog.json"))
             self.assertEqual(published[0]["commits"], [first, second])
             self.assertEqual(published[0]["sections"], [{"label": "New", "items": ["Curated line"]},
-                                                        {"label": "Fixed", "items": ["B"]}])
+                                                        {"label": "Fixed", "items": ["B (#7)"]}])
             self.assertTrue((root / "b.txt").exists())
+
+    def test_rollback_drafts_the_release_and_restores_the_previous_stable_as_latest(self):
+        listed = json.dumps([{"tagName": "v1.1.0"}, {"tagName": "v1.0.0"}])
+        with mock.patch.object(release, "run", return_value=listed) as run, mock.patch("builtins.print") as printed:
+            release.rollback("1.1.0", dry_run=True)
+            self.assertEqual(run.call_count, 1)
+            release.rollback("1.1.0")
+        edits = [call.args for call in run.call_args_list[2:]]
+        self.assertEqual(edits, [("gh", "release", "edit", "v1.1.0", "--repo", release.REPOSITORY, "--draft=true"),
+                                 ("gh", "release", "edit", "v1.0.0", "--repo", release.REPOSITORY, "--latest")])
+        self.assertIn("v1.0.0 is the latest", printed.call_args.args[0])
 
 
 if __name__ == "__main__":

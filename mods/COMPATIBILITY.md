@@ -3,18 +3,18 @@
 Which hosts a mod runs on. The source is [compatibility.json](compatibility.json); `python3 scripts/mod_compatibility.py`
 checks it against the host.
 
-API `0.2.0-experimental.5` is supported through `2027-03-20`. Entries marked frozen in
-[the conformance registry](conformance/contract.json) keep their shape until then. Experimental entries
-(including the raster surfaces `terminal.blit` and `process_raster_v1`) may change, and the host and SDK are
-pre-release.
+API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
+[the conformance registry](conformance/contract.json) keep their shape until then; a breaking change needs a
+major version and a migration note in [the reference](REFERENCE.md). Experimental entries (including the raster
+surfaces `terminal.blit` and `process_raster_v1`) may change in any release.
 
 ## Supported versions
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.163.0 | 0.1.0 | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or `^x.y.z` | 1 | 2027-03-20 |
+| 0.163.0 | 1.0.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
-Only the current API loads. Until `1.0.0`, every API change drops the previous version.
+Only the current API loads.
 
 ## What the host checks
 

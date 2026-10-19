@@ -69,13 +69,13 @@ contract; retaining an older runtime does not authorize stale callbacks.
 Raster producers distinguish retryable, revoked and fatal failures by explicit categories, independently of
 diagnostic wording. Thread-store destination conflicts use the native `AlreadyExists` category.
 
-## API 0.2 host primitives
+## Host primitives
 
 The host is feature-agnostic: every operation, event and capability in this reference is available to any trusted mod
 on equal terms, and none of them names a product feature. The [`release_check` example](../examples/release_check) is
 an independent author package that uses only this surface.
 
-Each primitive advertises a host feature a package can require (API `0.2.0-experimental.5`). With no mod registered
+Each primitive advertises a host feature a package can require (API `1.0.0`). With no mod registered
 for a primitive the host allocates nothing for it and changes no decision.
 
 ### `OMD_MODE`

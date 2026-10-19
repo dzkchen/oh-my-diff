@@ -2,8 +2,8 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` and Codex `0.163.0`.
-The `omd` value in `omd-mod status` is the host contract version, not the release. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
+`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -15,12 +15,12 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-The API is pre-release. [The conformance registry](conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
-- Frozen entries keep their shape through `2027-03-20`.
-- Experimental ones may change.
+- Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
+- Experimental ones may change in any release.
 
 Version and support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
@@ -128,13 +128,13 @@ contract; retaining an older runtime does not authorize stale callbacks.
 Raster producers distinguish retryable, revoked and fatal failures by explicit categories, independently of
 diagnostic wording. Thread-store destination conflicts use the native `AlreadyExists` category.
 
-### API 0.2 host primitives
+### Host primitives
 
 The host is feature-agnostic: every operation, event and capability in this reference is available to any trusted mod
 on equal terms, and none of them names a product feature. The [`release_check` example](examples/release_check) is
 an independent author package that uses only this surface.
 
-Each primitive advertises a host feature a package can require (API `0.2.0-experimental.5`). With no mod registered
+Each primitive advertises a host feature a package can require (API `1.0.0`). With no mod registered
 for a primitive the host allocates nothing for it and changes no decision.
 
 #### `OMD_MODE`
@@ -3269,7 +3269,7 @@ The terminal event's read-only `presentation` is `{thread_id, phase, surface?}`.
   `resumed`, from existing host markers before the first ready publication.
 - Before the first editable frame, a repeatable `event: 'startup'` callback has `ledger: null` and a null
   `thread_id`; its phase comes from the host's new/resume/fork selection.
-- Native task, app and paid operations are unavailable through the host boundary in this preview.
+- Native task, app and paid operations are unavailable through the host boundary.
 - Before local presentation is available, the whole presentation value may be absent or null.
 
 This is a presentation refresh, not a once-only session or turn event. Composer input, submission rejection,

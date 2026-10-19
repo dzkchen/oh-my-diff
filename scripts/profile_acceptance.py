@@ -184,7 +184,8 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert active == sorted(expected_defaults())
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
-        assert not next(item for item in full["packages"] if item["id"] == "omd_usage")["active"]
+        opt_in = [item for item in full["packages"] if item["id"] not in active]
+        assert opt_in and not any(item["active"] or item["enabled_in_store"] for item in opt_in)
         assert set(full["installed_tools"]) == {"omd", "omd-contract", "omd-mod"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
         if managed_policy:

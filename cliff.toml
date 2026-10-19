@@ -3,6 +3,9 @@ conventional_commits = true
 filter_unconventional = false
 filter_commits = true
 tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+(-rc\\.[0-9]+)?$"
+commit_preprocessors = [
+  { pattern = "^Merge pull request #([0-9]+) from \\S+\\s+([^\\n]+)[\\s\\S]*$", replace = "${2} (#${1})" },
+]
 commit_parsers = [
   { message = "^[Mm]erge", skip = true },
   { message = "^feat", group = "New" },

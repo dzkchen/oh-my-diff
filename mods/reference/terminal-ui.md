@@ -120,7 +120,7 @@ The terminal event's read-only `presentation` is `{thread_id, phase, surface?}`.
   `resumed`, from existing host markers before the first ready publication.
 - Before the first editable frame, a repeatable `event: 'startup'` callback has `ledger: null` and a null
   `thread_id`; its phase comes from the host's new/resume/fork selection.
-- Native task, app and paid operations are unavailable through the host boundary in this preview.
+- Native task, app and paid operations are unavailable through the host boundary.
 - Before local presentation is available, the whole presentation value may be absent or null.
 
 This is a presentation refresh, not a once-only session or turn event. Composer input, submission rejection,

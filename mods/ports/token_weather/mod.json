@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "token_weather",
-  "version": "0.1.0",
-  "api": "0.2.0-experimental.5",
+  "version": "0.2.0",
+  "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "A weather forecast of the context window above the prompt: icon, percent, tokens used and a chart of recent turns",

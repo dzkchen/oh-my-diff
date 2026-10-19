@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "external_client",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.5",
+  "api": "1.0.0",
   "state_version": 1,
   "license": "Apache-2.0",
   "description": "Shows attached external clients and launches a text renderer that joins this session over the client protocol.",

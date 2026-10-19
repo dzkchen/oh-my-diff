@@ -869,7 +869,7 @@ fn host_versions_and_storage_schemas_are_reported_independently() {
         MOD_STATE_STORAGE_SCHEMA_VERSION
     );
     assert_eq!(status["host"]["features"], json!(MOD_HOST_FEATURES));
-    assert_ne!(status["host"]["omd"], status["api"]);
+    assert_eq!(status["api"], MOD_API_VERSION);
 }
 
 #[test]

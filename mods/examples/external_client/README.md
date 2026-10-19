@@ -1,6 +1,6 @@
 # External client example
 
-Shows a mod that owns its client adapter: a text renderer process that joins the session over the client protocol (`omd-client/1`) with the SDK in `@oh-my-diff/mod-api/client`. An independent-author API `0.2.0-experimental.5` mod.
+Shows a mod that owns its client adapter: a text renderer process that joins the session over the client protocol (`omd-client/1`) with the SDK in `@oh-my-diff/mod-api/client`. An independent-author API `1.0.0` mod.
 
 ## What it shows
 

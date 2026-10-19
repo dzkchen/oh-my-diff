@@ -1,8 +1,8 @@
 # Agent mod guide
 
 For coding agents building an Oh My Diff (OMD) mod. Follow it top to bottom. Everything here is for mod API
-`0.2.0-experimental.5`, Codex `0.163.0`, Apple Silicon macOS and Node 24.18 or a later 24.x. The API is
-experimental: check `api` in a mod's `mod.json` against this version before reusing older code.
+`1.0.0`, Codex `0.163.0`, Apple Silicon macOS and Node 24.18 or a later 24.x. Only this API
+version loads: check `api` in a mod's `mod.json` against it before reusing older code.
 
 Ground rules:
 
@@ -126,7 +126,7 @@ export default function activate(api: ModAPI) {
   "schema": 1,
   "id": "notes",
   "version": "0.1.0",
-  "api": "0.2.0-experimental.5",
+  "api": "1.0.0",
   "state_version": 1,
   "description": "Notes the model can save, shown above the prompt",
   "license": "MIT",
@@ -310,7 +310,7 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 
 - **Installed and on:** the default OMD+ mods in [the collection](collection.md).
 - **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
-- **Frozen or experimental:** the API version is pre-1.0. Entries that
+- **Frozen or experimental:** API `1.0.0` is stable. Entries that
   [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
   including raster and `terminal.blit` frames and `omd/*` external-client methods.
 - **Authority:** a mod gets only the capabilities its manifest lists and the user trusts. Codex and the host keep

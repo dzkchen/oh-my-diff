@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_statusline",
-  "version": "0.1.0-preview.1",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
   "description": "Configurable status line below or above the composer: model, context, usage limits, cost, Git, pull request and CI status, and your own scripts",

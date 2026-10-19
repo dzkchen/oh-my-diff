@@ -2,6 +2,25 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0) — 2026-10-19
+
+First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the stable mod API 1.0.0.
+
+### New
+
+- Redesigned curl installer output: the OMD mark with the version and beta tag, OMD+ listed first, progress and summary on stderr, JSON only with `--json` (#260)
+
+### Changed
+
+- Mod API `1.0.0` is stable and supported through 2027-10-19: frozen entries keep their shape and a breaking change needs a major version; experimental entries may change
+- The launch collection's packages and the mod host are versioned `1.0.0`
+
+### Fixed
+
+- /preview in a fresh session says there are no responses yet (#255)
+- Clearer mod author errors, scaffold and docs (#257)
+- A mod command typed right after launch waits for the session instead of failing; a mod turned off after repeated failures says so, and `omd mods list` shows failed mods
+
 ## [1.0.0-rc.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.2) — 2026-10-19
 
 Second release candidate: a native mod settings panel, Claude subscription models inside the session, keyboard-first mod dialogs and faster mod status.

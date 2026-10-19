@@ -602,7 +602,7 @@ export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(h
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
-  readonly version: '0.2.0-experimental.5';
+  readonly version: '1.0.0';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: {

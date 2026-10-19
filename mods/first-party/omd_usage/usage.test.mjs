@@ -11,7 +11,7 @@ const NOW = 1_800_000_000_000;
 
 function call({ source, capabilities }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
   const published = [];
-  const output = callback({ source, filename: 'index.ts', api: '0.2.0-experimental.5', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
+  const output = callback({ source, filename: 'index.ts', api: '1.0.0', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
     if (hostCall.operation === 'events.publish') published.push(hostCall.arguments);
     const value = answer(hostCall);
     if (value instanceof Error) throw value;

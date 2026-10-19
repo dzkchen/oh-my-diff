@@ -125,7 +125,9 @@ def check(version=None):
 
 def uncovered(entries):
     covered = {commit for entry in entries for commit in entry["commits"]}
-    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "origin/main").split() if commit[:7] not in covered]
+    # One line per change on main: a merge commit stands for its pull request, not the branch commits it brings in.
+    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "--first-parent", "origin/main").split()
+            if commit[:7] not in covered]
 
 
 def changes(commits, existing=()):
@@ -205,14 +207,18 @@ def refresh(version, branch):
     run("git", "push", "origin", branch)
 
 
-def rollback(version):
+def rollback(version, dry_run=False):
     tag = f"v{version}"
-    run("gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=true")
-    previous = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--exclude-drafts",
-                              "--exclude-pre-releases", "--limit", "1", "--json", "tagName"))
+    listed = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--exclude-drafts",
+                            "--exclude-pre-releases", "--limit", "2", "--json", "tagName"))
+    previous = next((item["tagName"] for item in listed if item["tagName"] != tag), None)
+    edits = [("gh", "release", "edit", tag, "--repo", REPOSITORY, "--draft=true")]
     if previous and "-" not in version:
-        run("gh", "release", "edit", previous[0]["tagName"], "--repo", REPOSITORY, "--latest")
-    print(f"{tag} is a draft again; installers and `omd update` no longer offer it")
+        edits.append(("gh", "release", "edit", previous, "--repo", REPOSITORY, "--latest"))
+    for edit in edits:
+        print(" ".join(edit)) if dry_run else run(*edit)
+    fallback = "" if "-" in version else (f"; {previous} is the latest" if previous else "; no earlier stable release exists")
+    print(f"{tag} {'would be' if dry_run else 'is'} a draft again; installers and `omd update` no longer offer it{fallback}")
 
 
 def main():
@@ -225,7 +231,9 @@ def main():
     check_parser.add_argument("version", nargs="?")
     commands.add_parser("render", help="regenerate CHANGELOG.md from changelog.json")
     commands.add_parser("notes").add_argument("version")
-    commands.add_parser("rollback", help="withdraw a published release").add_argument("version")
+    rollback_parser = commands.add_parser("rollback", help="withdraw a published release")
+    rollback_parser.add_argument("version")
+    rollback_parser.add_argument("--dry-run", action="store_true", help="print the release edits without making them")
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.version, args.summary)
@@ -236,7 +244,7 @@ def main():
     elif args.command == "notes":
         sys.stdout.write(notes(json.loads(CHANGELOG.read_text()), args.version))
     else:
-        rollback(args.version)
+        rollback(args.version, args.dry_run)
 
 
 if __name__ == "__main__":

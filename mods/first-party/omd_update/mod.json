@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_update",
-  "version": "0.1.0-preview.1",
-  "api": "0.2.0-experimental.5",
+  "version": "1.0.0",
+  "api": "1.0.0",
   "state_version": 1,
   "description": "Tells you when a newer Oh My Diff release is out and controls update checks, channel, cadence, version pin and automatic updates",
   "license": "MIT",
