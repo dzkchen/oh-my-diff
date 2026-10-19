@@ -332,7 +332,7 @@ export default function activate(api: ModAPI): void {
     const write = value.mode === 'write';
     const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,
       parent_history: value.isolated !== true,
-      ...(write ? { workspace: 'isolated_worktree' } : { workspace: 'read_only', tools: ['exec_command', 'write_stdin', 'read', 'grep_files', 'list_dir'] }) });
+      ...(write ? { workspace: 'isolated_worktree' } : { workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }) });
     if (!spawned.ok) return { status: 'denied', reason: spawned.error };
     const handle = spawned.value.handle;
     const wait = () => api.host.tryCall('agents.wait', { handle, consume: true });

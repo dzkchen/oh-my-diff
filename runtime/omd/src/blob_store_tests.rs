@@ -42,6 +42,20 @@ fn blobs_are_content_addressed_and_verified() {
 }
 
 #[test]
+fn text_evidence_repairs_a_truncated_rotating_blob() {
+    with_store(|store| {
+        let digest = hash(b"hello");
+        let path = store
+            .rotating_directory()
+            .unwrap()
+            .join(format!("{digest}.bin"));
+        fs::write(&path, b"he").unwrap();
+        store.text_evidence("log", "hello").unwrap();
+        assert_eq!(store.blob(&digest).unwrap(), b"hello");
+    });
+}
+
+#[test]
 fn svg_evidence_is_gated() {
     with_store(|store| {
         let record = |svg: &str| {

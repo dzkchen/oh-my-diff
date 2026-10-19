@@ -12,8 +12,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
-import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import build
@@ -70,7 +68,7 @@ def core_env():
 
 def tree_steps():
     return [Step("setup", ["python3", ".github/scripts/build.py", "setup", BATCH], fatal=True),
-            Step("verified V8", ["python3", ".github/scripts/ci.py", "v8"], fatal=True)]
+            Step("verified V8", ["python3", ".github/scripts/build.py", "v8", BATCH], fatal=True)]
 
 
 def job_steps(job):
@@ -162,32 +160,6 @@ def validate(job, release):
     (WORK / "report.md").write_text(report)
     print(report)
     return 1 if len(failed) > len(advisory) else 0
-
-
-def v8():
-    if os.environ.get("V8_FROM_SOURCE") or os.environ.get("RUSTY_V8_ARCHIVE"):
-        return
-    checkout, directory = build.batch_dir(BATCH) / "codex", build.V8
-    lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
-    (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
-    target = support.output(["rustc", "-vV"], cwd=checkout / "codex-rs").split("host: ", 1)[1].split()[0]
-    url = f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
-    manifest = f"rusty_v8_ptrcomp_sandbox_release_{target}.sha256"
-    names = {"archive": f"librusty_v8_ptrcomp_sandbox_release_{target}.a.gz",
-             "binding": f"src_binding_ptrcomp_sandbox_release_{target}.rs"}
-    directory.mkdir(parents=True, exist_ok=True)
-
-    def checksums(path):
-        return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
-
-    expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
-    for name in (manifest, *names.values()):
-        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response, (directory / name).open("wb") as file:
-            shutil.copyfileobj(response, file)
-        if expected.get(name) != support.digest(directory / name):
-            raise ValueError(f"V8 prebuilt checksum mismatch: {name}")
-        if name == manifest:
-            expected = checksums(directory / manifest)
 
 
 def cargo_tests(suite):
@@ -369,7 +341,7 @@ def publish(directory, notes=None, dry_run=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Hosted validation, packaging and publication for nightlies and tagged releases")
-    parser.add_argument("command", choices=("validate", "v8", "tests", "package", "publish"))
+    parser.add_argument("command", choices=("validate", "tests", "package", "publish"))
     parser.add_argument("--job", choices=("build", "test", "package"), help="validate: the job's steps")
     parser.add_argument("--directory", type=Path, default=Path("release"))
     parser.add_argument("--suite", choices=("native", "core", "core-integration"))
@@ -386,12 +358,10 @@ def main():
         publish(args.directory, args.notes, args.dry_run)
     elif args.command == "package":
         package(args.version)
-    elif args.command == "tests":
+    else:
         if not args.suite:
             parser.error("tests requires --suite")
         cargo_tests(args.suite)
-    else:
-        v8()
 
 
 if __name__ == "__main__":

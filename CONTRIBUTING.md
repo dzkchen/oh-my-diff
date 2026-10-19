@@ -29,7 +29,8 @@ Run only the checks for what you changed:
 
 | You changed | Run |
 | --- | --- |
-| A mod or the SDK | `mise run mods:check`, then a related test file: `node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)) |
+| A mod or the SDK | `mise run mods:check`, then a related test file: `mise exec -- node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)) |
+| The patched Codex code (`runtime/`) | See [Change the patched Codex code](#change-the-patched-codex-code) |
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
 
@@ -37,17 +38,32 @@ Add a test only for behavior nothing else covers. The full suite runs nightly on
 
 ### Change the patched Codex code
 
-Edit the patch in a scratch copy of upstream Codex at the pinned version, then save it back. `NAME` is any label for
-your scratch tree:
+You also need [rustup](https://rustup.rs); the scratch tree's `rust-toolchain.toml` installs the pinned Rust (see
+`upstream.lock.json`) on first use. A first test build takes a few minutes and a target needs 15–20 GB.
+
+Edit Rust in a scratch copy of upstream Codex at the pinned version, never `runtime/` itself, then save it back.
+`NAME` is any label for your scratch tree:
 
 ```sh
-python3 .github/scripts/build.py setup NAME                       # prints the scratch tree path
-python3 .github/scripts/build.py cargo NAME LOG test -p codex-omd FILTER   # cargo in the tree; LOG is a log file path
-python3 .github/scripts/build.py sync NAME                        # writes runtime/patches and checks it applies
-python3 .github/scripts/build.py locks                            # updates the generated lock files
+python3 .github/scripts/build.py setup NAME                                  # prints the scratch tree path
+python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER # cargo in the tree; LOG is a log file path
+python3 .github/scripts/build.py sync NAME                                   # writes runtime/ back and checks it replays
+python3 .github/scripts/build.py locks                                       # regenerates the source locks
 ```
 
-Scratch trees live under `/private/tmp` unless `OMD_BATCH_ROOT` points elsewhere.
+- **Crates:** `runtime/omd` is `codex-omd` and `runtime/native` is `codex-omd-extension`. Rust tests sit beside the code
+  in `*_tests.rs` files. Always run cargo through `build.py cargo`: it sets the target and the Node the mod tests need.
+- **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_BATCH_ROOT`
+  replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
+  (`git -C TREE diff normalized1630 -- codex-rs/PATH`).
+- **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
+  changing `mods/first-party/` or `plugins/` and commit the result.
+- **V8:** the OMD crates' tests don't need it. Building `codex-cli` links a V8 prebuilt: fetch it once with
+  `python3 .github/scripts/build.py v8 NAME`.
+- **Check:** the regression test for your fix, the crate's tests (`-- --test-threads=1`),
+  `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
+  `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.
+  `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
 
 ## Open a pull request
 

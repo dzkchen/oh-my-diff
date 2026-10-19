@@ -165,7 +165,25 @@ fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
             .inspect_err(|_| {
                 let _ = fs::remove_file(path);
             }),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if fs::read(path)? == bytes {
+                return Ok(());
+            }
+            static REPAIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let serial = REPAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            file.write_all(bytes)
+                .and_then(|()| file.sync_all())
+                .and_then(|()| fs::rename(&temporary, path))
+                .inspect_err(|_| {
+                    let _ = fs::remove_file(&temporary);
+                })
+        }
         Err(error) => Err(error),
     }
 }
