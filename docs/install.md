@@ -11,7 +11,7 @@
 ## Install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.1/install.sh | sh -s -- --channel prerelease --profile full
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.2/install.sh | sh -s -- --channel prerelease --profile full
 ```
 
 - `--channel prerelease` installs the `1.0.0` release candidate.
