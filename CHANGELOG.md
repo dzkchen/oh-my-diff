@@ -2,6 +2,26 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.0-rc.2](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.2) — 2026-10-19
+
+Second release candidate: a native mod settings panel, Claude subscription models inside the session, keyboard-first mod dialogs and faster mod status.
+
+### New
+
+- In-session Claude subscription models with per-thread provider switch
+- Native mod settings panel with host redraw after changes
+
+### Changed
+
+- Shared mod status and cached package listing
+- Single warm worker and per-selection listing cache
+- Install command for 1.0.0-rc.2 (#246)
+
+### Fixed
+
+- Keyboard-first mod dialogs, welcome logo and directory diagnostics
+- Mods self-protection, directory reinstall guard and /omd reload
+
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
 Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 with a TypeScript mod host, the OMD Core and OMD+ collections and a signed curl installer.

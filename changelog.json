@@ -1,5 +1,50 @@
 [
   {
+    "version": "1.0.0-rc.2",
+    "date": "2026-10-19",
+    "title": "Oh My Diff 1.0.0-rc.2",
+    "summary": "Second release candidate: a native mod settings panel, Claude subscription models inside the session, keyboard-first mod dialogs and faster mod status.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "In-session Claude subscription models with per-thread provider switch",
+          "Native mod settings panel with host redraw after changes"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Shared mod status and cached package listing",
+          "Single warm worker and per-selection listing cache",
+          "Install command for 1.0.0-rc.2 (#246)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Keyboard-first mod dialogs, welcome logo and directory diagnostics",
+          "Mods self-protection, directory reinstall guard and /omd reload"
+        ]
+      }
+    ],
+    "commits": [
+      "7dd9acd",
+      "428bff9",
+      "23ff5a8",
+      "b9835bc",
+      "d482c2c",
+      "759afff",
+      "4bce2b8",
+      "1b32599",
+      "7d470ad",
+      "01b39f5",
+      "58e171c",
+      "bd0aef8",
+      "0bf84bd"
+    ]
+  },
+  {
     "version": "1.0.0-rc.1",
     "date": "2026-10-17",
     "title": "Oh My Diff 1.0.0-rc.1",
