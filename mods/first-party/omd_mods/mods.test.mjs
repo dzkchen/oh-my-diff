@@ -61,3 +61,26 @@ test('a mod panel skips settings it cannot address, tells same-named mods apart 
   assert.equal(removed.panels[0].title, 'Gone (user)');
   assert.match(removed.panels[0].subtitle, /Gone is no longer installed/);
 });
+
+test('the mods mod cannot turn itself off or remove itself', () => {
+  const packages = [logo, mod('omd_mods')];
+  const opened = invoke('', { packages });
+  assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_mods').kind, 'action');
+  const pressed = invoke('panel user user:omd_mods', { packages, ui_state: opened.ui });
+  assert.deepEqual(operations(pressed), ['packages.list', 'terminal.panel']);
+  assert.match(pressed.panels[0].subtitle, /Mods stays on/);
+  assert.deepEqual(invoke('omd_mods', { packages }).panels[0].items.map(item => item.id), ['do:update', 'do:rollback']);
+  const typed = invoke('disable omd_mods', { packages });
+  assert.deepEqual(operations(typed), ['packages.list']);
+  assert.match(typed.value.display, /Mods stays on/);
+});
+
+test('installing never replaces an installed mod or the mods mod itself', () => {
+  const index = () => ({ packages: [{ id: 'omd_logo', description: 'Logo', latest: '1.0.0', installed: '1.0.0', versions: [{ version: '1.0.0', blocked: null }] }] });
+  const directory = invoke('panel user get:omd_logo', { ui_state: null, 'packages.index': index });
+  assert.ok(!operations(directory).includes('packages.preview'));
+  assert.match(directory.panels[0].subtitle, /Logo is already installed/);
+  const source = invoke('panel user source /mods/omd_mods', { ui_state: null, 'packages.preview': () => ({ action: 'install', id: 'omd_mods', changes: {}, grants_added: [] }) });
+  assert.ok(!operations(source).includes('packages.apply'));
+  assert.match(source.panels[0].subtitle, /Mods is already running/);
+});

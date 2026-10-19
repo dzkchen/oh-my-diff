@@ -29875,7 +29875,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a4972972786063678 100644
+index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d2f09aca986c951ed4c50926b62124bfb57d7f8a 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -122,6 +122,7 @@ impl App {
@@ -29886,7 +29886,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a49729727
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -441,6 +442,105 @@ impl App {
+@@ -441,6 +442,132 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -29951,6 +29951,33 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a49729727
 +                    .chat_widget
 +                    .add_error_message(format!("OMD state reset failed: {error}")),
 +            },
++            AppEvent::OmdReloadMods => {
++                let request_id = app_server.next_request_id();
++                let request_handle = app_server.request_handle();
++                let tx = self.app_event_tx.clone();
++                tokio::spawn(async move {
++                    let result = request_handle
++                        .request_typed::<codex_app_server_protocol::OmdRecoveryApplyResponse>(
++                            codex_app_server_protocol::ClientRequest::OmdRecoveryApply {
++                                request_id,
++                                params: codex_app_server_protocol::OmdRecoveryApplyParams {
++                                    action: codex_app_server_protocol::OmdRecoveryAction::Reload,
++                                    target: String::new(),
++                                },
++                            },
++                        )
++                        .await
++                        .map(drop)
++                        .map_err(|error| error.to_string());
++                    tx.send(AppEvent::OmdModsReloaded { result });
++                });
++            }
++            AppEvent::OmdModsReloaded { result } => match result {
++                Ok(()) => self.chat_widget.add_info_message("Mods reloaded.".to_string(), None),
++                Err(error) => self
++                    .chat_widget
++                    .add_error_message(format!("Mod reload failed: {error}")),
++            },
 +            AppEvent::ModCommandFinished {
 +                invocation,
 +                token,
@@ -29992,7 +30019,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a49729727
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -881,6 +981,10 @@ impl App {
+@@ -881,6 +1008,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -30003,7 +30030,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a49729727
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1754,8 +1858,18 @@ impl App {
+@@ -1754,8 +1885,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -30022,7 +30049,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d3705cb85b9e060e827e882a49729727
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -3029,6 +3143,14 @@ impl App {
+@@ -3029,6 +3170,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -31797,7 +31824,7 @@ index f962f3ba8e4256de7ec2962b48d0f4c58fc7fb5c..c5b2a77535b111108692e689341b91a0
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index a20193149e57e60f75e89fbd4b4aa819d511b2e5..7a51a3c016855f85ab325c986e7c600344dd9320 100644
+index a20193149e57e60f75e89fbd4b4aa819d511b2e5..8f9916189ad12fd85f22b213149f89bf26ee4988 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -416,6 +416,10 @@ pub(crate) enum AppEvent {
@@ -31811,7 +31838,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..7a51a3c016855f85ab325c986e7c6003
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -515,6 +519,50 @@ pub(crate) enum AppEvent {
+@@ -515,6 +519,54 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -31832,6 +31859,10 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..7a51a3c016855f85ab325c986e7c6003
 +    },
 +    OmdStateReset {
 +        result: Result<String, String>,
++    },
++    OmdReloadMods,
++    OmdModsReloaded {
++        result: Result<(), String>,
 +    },
 +    ModCommandFinished {
 +        invocation: String,
@@ -31862,7 +31893,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..7a51a3c016855f85ab325c986e7c6003
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -666,6 +714,10 @@ pub(crate) enum AppEvent {
+@@ -666,6 +718,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -31873,7 +31904,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..7a51a3c016855f85ab325c986e7c6003
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -712,6 +764,14 @@ pub(crate) enum AppEvent {
+@@ -712,6 +768,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -41112,10 +41143,10 @@ index 0000000000000000000000000000000000000000..aef1c863b44994cbed5b394fa99264ec
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387ad110ecb9
+index 0000000000000000000000000000000000000000..f39cb3c7a82d5c7acc86154f95e6646e16f00ba3
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,932 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -41138,6 +41169,7 @@ index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387a
 +use codex_app_server_protocol::OmdClientUpdateParams;
 +use codex_app_server_protocol::OmdClientUpdateResponse;
 +use codex_app_server_protocol::OmdPointer;
++use codex_app_server_protocol::OmdRecoveryAction;
 +use codex_app_server_protocol::OmdRecoveryApplyParams;
 +use codex_app_server_protocol::OmdRecoveryApplyResponse;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
@@ -41951,7 +41983,9 @@ index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387a
 +        connection_id: ConnectionId,
 +        params: OmdRecoveryApplyParams,
 +    ) -> Response {
-+        self.client(connection_id)?;
++        if params.action != OmdRecoveryAction::Reload {
++            self.client(connection_id)?;
++        }
 +        let action = to_value(params.action)?
 +            .as_str()
 +            .unwrap_or_default()
@@ -143177,10 +143211,10 @@ index 0000000000000000000000000000000000000000..9dff618f9fd8fb978338b619e500bd02
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fb804ecff41dc5351e3d769e949bbe48ee6d804
+index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d44bebbe3
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,263 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -143373,6 +143407,16 @@ index 0000000000000000000000000000000000000000..4fb804ecff41dc5351e3d769e949bbe4
 +                        name: "All mods…".to_string(),
 +                        description: Some("Turn any installed mod on or off".to_string()),
 +                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenAllMods))],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    });
++                    items.push(SelectionItem {
++                        name: "Reload mods".to_string(),
++                        description: Some(
++                            "Reload every mod now, including changes made outside Codex"
++                                .to_string(),
++                        ),
++                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdReloadMods))],
 +                        dismiss_on_select: true,
 +                        ..Default::default()
 +                    });

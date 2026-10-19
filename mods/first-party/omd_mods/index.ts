@@ -9,6 +9,8 @@ type Saved = { generation: number; packages: Listed[]; reloadError: string | nul
 type Property = { type?: string; enum?: Json[] };
 const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user' };
 const LIST = 'mods';
+const SELF = 'omd_mods';
+const KEPT = 'Mods stays on so you can always manage mods; /omd can turn it off';
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
@@ -54,6 +56,7 @@ export default function activate(api: ModAPI) {
   };
   const review = (state: Saved, request: PackageRequest, label: string, from: string): Saved => {
     const result = api.host.tryCall('packages.preview', { ...request, expected_generation: state.generation });
+    if (result.ok && request.action === 'install' && result.value.id === SELF) return { ...state, review: null, notice: 'Mods is already running; update it from its own panel' };
     return result.ok
       ? { ...state, review: { request: { ...request, id: result.value.id }, label, changes: result.value.changes, grants: result.value.grants_added, from, generation: state.generation }, notice: null }
       : { ...state, review: null, notice: `${label} is unavailable (${result.error})` };
@@ -81,6 +84,7 @@ export default function activate(api: ModAPI) {
     if (verb === 'get') {
       const entry = state.catalog.find(item => item.id === argument);
       const version = newest(entry);
+      if (entry?.installed) return { ...state, notice: `${friendly(entry.id)} is already installed; update it from its own panel` };
       return entry && version ? review(state, { action: 'install', reference: `${entry.id}@${version}`, scope: state.scope }, `Install ${friendly(entry.id)} ${version} (${state.scope})`, from)
         : { ...state, notice: 'That directory mod has no available version' };
     }
@@ -92,6 +96,7 @@ export default function activate(api: ModAPI) {
     }
     const target = find(state, argument);
     if (!target) return { ...state, notice: `No installed mod ${argument || 'selected'}` };
+    if (target.id === SELF && (verb === 'disable' || verb === 'remove' || (verb === 'toggle' && target.enabled))) return { ...state, notice: KEPT };
     const request = { id: target.id, scope: target.scope };
     if (verb === 'toggle') return apply(state, { action: target.enabled ? 'disable' : 'enable', ...request }, `${target.enabled ? 'Turning off' : 'Turning on'} ${friendly(target.id)}`);
     if (verb === 'enable' || verb === 'disable') return apply(state, { action: verb, ...request }, `${verb === 'enable' ? 'Turning on' : 'Turning off'} ${friendly(target.id)}`);
@@ -133,8 +138,9 @@ export default function activate(api: ModAPI) {
     const toggles = shown.map(item => {
       const word = status(item);
       const extra = word === 'on' || word === 'off' ? null : word;
-      return entry({ id: key(item), tab: 'installed', label: friendly(item.id), kind: 'toggle', value: item.enabled,
-        description: [extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · ') });
+      const fixed = item.id === SELF && item.enabled;
+      return entry({ id: key(item), tab: 'installed', label: friendly(item.id), ...fixed ? { kind: 'action' } : { kind: 'toggle', value: item.enabled },
+        description: [fixed ? 'always on' : extra, item.scope === 'project' ? 'this project' : null, item.description].filter(Boolean).join(' · ') });
     });
     const settings = shown.map(item => entry({ id: `open:${key(item)}`, tab: 'settings', label: `${friendly(item.id)} ›`, kind: 'action', description: item.description ?? undefined }));
     const sources: TerminalPanelItem[] = [
@@ -169,13 +175,14 @@ export default function activate(api: ModAPI) {
   const details = (item: PackageState, state: Saved): TerminalPanel => {
     const args = `mod ${key(item)}`;
     if (state.review?.from === key(item)) return reviewing(title(item, state), state, args);
-    const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ['remove', 'Remove']] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
+    const fixed = item.id === SELF && item.enabled;
+    const actions = item.source !== 'selection' ? [['update', 'Update'], ['rollback', 'Roll back'], ...fixed ? [] : [['remove', 'Remove']]] : item.failed?.startsWith('source_changed') ? [['trust', 'Trust the edited source']] : [];
     return {
       title: title(item, state), action: { command: 'mods', args },
       subtitle: subtitle([`${status(item)} · ${item.version} · ${item.source === 'selection' ? 'local folder' : item.source}${item.compatible ? '' : ' · needs a newer Oh My Diff'}`, item.description,
         item.blocked && `Quarantined: ${item.blocked}. Lift it from a shell with omd mods unblock ${item.id}.`, item.failed && `Why it failed: ${brief(item.failed)}`, ...item.conflicts.map(conflict => `Conflict: ${conflict}`), state.notice]),
       items: [
-        entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled }),
+        ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],

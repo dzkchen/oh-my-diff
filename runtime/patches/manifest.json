@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "0a20e3e1c201503e015a8cf5ccc25dfdca519100a8fb3c1ef70be43e55350edb"
+    "sha256": "98dabcff3616deb44faed5b8fe22cb413c4f6104d123b210f60a1f2d451a80a5"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -219,7 +219,7 @@
     },
     "codex-rs/app-server/src/omd_clients.rs": {
       "before": null,
-      "after": "080ca6aa125e6c05bfa4ea3f8e8a7a29edf68e43f70f7eb1fd4df8c3b3a0e5d0"
+      "after": "86e1a6668836f6a4258227c34bc94f64be50b5df30269db9a9b88e4de85a0edb"
     },
     "codex-rs/app-server/src/omd_clients_tests.rs": {
       "before": null,
@@ -1531,7 +1531,7 @@
     },
     "codex-rs/tui/src/app/event_dispatch.rs": {
       "before": "f2fc5875439971057488cbe99d8b3cc748620aa5027af131a40b48896668f6db",
-      "after": "bff8d2c883dd8f25866a30fc28e2aca5acccd41d493f185ba4f5eccf950ac935"
+      "after": "2f84f79762cfde5f0d7ae876a8512d1932f01f32e78185556612a1597fba551b"
     },
     "codex-rs/tui/src/app/input.rs": {
       "before": "68cf9e3fbae34ddc63ed6e32933a9cbc4191e2ce16455d2e7d6c3d8783e8296c",
@@ -1691,7 +1691,7 @@
     },
     "codex-rs/tui/src/app_event.rs": {
       "before": "c4e46d7a1daa9fd6b9fdad669a3675c054591461981c6c120717041cccc7ba31",
-      "after": "c6245ef35ef8679ab28efb65bfb02b552f2869f0530ab75813a114b8a106eb6e"
+      "after": "e1f21010987819ce4eb4cc4074f862793abdf6ff60f9b7925780322441037930"
     },
     "codex-rs/tui/src/app_server_session.rs": {
       "before": "7f82fc2ad93a6f3cd5890bc21202ac0d22d50b5e72cb6b17d5ee405decb405e5",
@@ -1839,7 +1839,7 @@
     },
     "codex-rs/tui/src/chatwidget/omd_extensions.rs": {
       "before": null,
-      "after": "f256a898433c063f3801089a5ab9744ada99830959bad6bdaf461a503df4ca4c"
+      "after": "b06fb9c505a020ad5ec3af3258760f2a9ebc3f718f1d86d684a0e109ff609116"
     },
     "codex-rs/tui/src/chatwidget/omd_extensions_tests.rs": {
       "before": null,

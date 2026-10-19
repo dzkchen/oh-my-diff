@@ -168,7 +168,8 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
 ```
 
 - `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails
-  with `recovery_unavailable_during_turn` while the lead thread's turn runs.
+  with `recovery_unavailable_during_turn` while the lead thread's turn runs. It needs no attached client: `/omd`'s
+  Reload mods sends it from the terminal.
 - `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
