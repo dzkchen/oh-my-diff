@@ -29609,16 +29609,15 @@ index a4359cd3e4b37cb005c136b6223bff9ebef05b49..3eda601f18f87e891f4c03c39430228e
                  self.transcript_view
                      .show_copy_feedback(&completion.1, characters);
 diff --git a/codex-rs/tui/src/app/empty_state_animation_tests.rs b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe2ec3f56b 100644
+index a1a9a66c1cc653cd7227110b5866dada70f8110a..bf0a5bf46b4a7f63364d751d08fd80fa5d99db28 100644
 --- a/codex-rs/tui/src/app/empty_state_animation_tests.rs
 +++ b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-@@ -37,6 +37,152 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
+@@ -37,6 +37,160 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
  }
 
  #[tokio::test]
 +#[serial_test::serial]
-+async fn mod_welcome_survives_draft_paste_clear_rejection_and_stops_on_observed_start() -> Result<()>
-+{
++async fn mod_welcome_survives_drafts_and_popups_and_stops_on_history() -> Result<()> {
 +    use codex_app_server_protocol::{Turn, TurnItemsView, TurnStartedNotification, TurnStatus};
 +    let mut app = crate::app::test_support::make_test_app().await;
 +    let mut tui = crate::tui::test_support::make_test_tui()?;
@@ -29648,6 +29647,15 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
 +        assert!(frame.contains("╭─╮ ╭╮╭╮ ┌─╮"), "{frame}");
 +        assert!(frame.contains("Project tools"), "{frame}");
 +    }
++    app.chat_widget
++        .handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
++    draw(&mut app, &mut tui, size)?;
++    let popup = text(crate::custom_terminal::test_support::last_rendered_buffer(
++        &tui.terminal,
++    ));
++    assert!(popup.contains("╭─╮ ╭╮╭╮ ┌─╮"), "{popup}");
++    app.chat_widget
++        .handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
 +    assert!(
 +        !app.chat_widget
 +            .empty_state_animation
@@ -29678,7 +29686,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
 +        &tui.terminal,
 +    ));
 +    assert!(
-+        rejected.contains("Submission rejected") && rejected.contains("╭─╮ ╭╮╭╮ ┌─╮"),
++        rejected.contains("Submission rejected") && !rejected.contains("╭─╮ ╭╮╭╮ ┌─╮"),
 +        "{rejected}"
 +    );
 +    app.chat_widget.handle_server_notification(
@@ -29765,7 +29773,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -87,6 +233,7 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
+@@ -87,6 +241,7 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29773,7 +29781,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -131,7 +278,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
+@@ -131,7 +286,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
      app.insert_history_cell(
          &mut tui,
          Box::new(history_cell::SessionNoticeCell(
@@ -29782,7 +29790,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
          )),
      );
      draw(&mut app, &mut tui, size)?;
-@@ -175,6 +322,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
+@@ -175,6 +330,7 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29790,7 +29798,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()> {
      let mut app = crate::app::test_support::make_test_app().await;
      app.local_settings.tui.animations = true;
-@@ -207,10 +355,13 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+@@ -207,10 +363,13 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
      );
      insta::assert_snapshot!(
          "fresh_thread_header",
@@ -29808,7 +29816,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
          )
      );
      let short = Size::new(/*width*/ 120, /*height*/ 12);
-@@ -246,6 +397,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
+@@ -246,6 +405,7 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
  }
 
  #[tokio::test]
@@ -29816,7 +29824,7 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
  async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
      let (mut app, _events, _ops) = crate::app::tests::make_test_app_with_channels().await;
      app.local_settings.tui.animations = true;
-@@ -286,6 +438,7 @@ async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
+@@ -286,6 +446,7 @@ async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
  }
 
  #[tokio::test]
@@ -29825,10 +29833,10 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..ae06813027d3f7e498221902b637a5fe
      use crossterm::event::MouseButton;
      use crossterm::event::MouseEvent;
 diff --git a/codex-rs/tui/src/app/empty_state_policy.rs b/codex-rs/tui/src/app/empty_state_policy.rs
-index 1d328eae53536d0899756dde97a2c23329771e76..201f2e0f0215104d3a1a81bb63a71786ce5c54d6 100644
+index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc8235874d813767 100644
 --- a/codex-rs/tui/src/app/empty_state_policy.rs
 +++ b/codex-rs/tui/src/app/empty_state_policy.rs
-@@ -7,6 +7,33 @@ use crate::empty_state_animation::is_startup_cell;
+@@ -7,6 +7,37 @@ use crate::empty_state_animation::is_startup_cell;
  use crate::history_cell::HistoryRenderMode;
 
  impl App {
@@ -29845,6 +29853,10 @@ index 1d328eae53536d0899756dde97a2c23329771e76..201f2e0f0215104d3a1a81bb63a71786
 +                    .thread_id()
 +                    .map(|id| id.to_string())
 +                    .as_deref()
++            || !self
++                .transcript_cells
++                .iter()
++                .all(|cell| is_startup_cell(cell.as_ref()))
 +            || self.overlay.is_some()
 +            || crate::mod_ui::dialog_visible(snapshot)
 +            || self.chat_widget.history_render_mode() == HistoryRenderMode::Raw
@@ -29863,7 +29875,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..201f2e0f0215104d3a1a81bb63a71786
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd0c5a6044 100644
+index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d2f09aca986c951ed4c50926b62124bfb57d7f8a 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -122,6 +122,7 @@ impl App {
@@ -29874,12 +29886,29 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -441,6 +442,88 @@ impl App {
+@@ -441,6 +442,132 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
 +            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
 +            AppEvent::OmdOpenAllMods => self.chat_widget.open_omd_all_mods(),
++            AppEvent::ModPanelCommand { command, args } => {
++                match crate::mod_runtime::find(&command) {
++                    Some(command) => self.chat_widget.run_mod_command_quietly(command, args),
++                    None => self.chat_widget.add_error_message(format!(
++                        "/{command} is not an available mod command"
++                    )),
++                }
++            }
++            AppEvent::ModPanelsReloaded => self.chat_widget.refresh_mod_panels(),
++            AppEvent::ModPanelPrompt {
++                title,
++                value,
++                command,
++                args,
++            } => self
++                .chat_widget
++                .show_mod_panel_prompt(title, value, command, args),
 +            AppEvent::OmdDispatchCommand(intercepted) => {
 +                self.chat_widget.dispatch_intercepted_command(*intercepted);
 +            }
@@ -29922,6 +29951,33 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd
 +                    .chat_widget
 +                    .add_error_message(format!("OMD state reset failed: {error}")),
 +            },
++            AppEvent::OmdReloadMods => {
++                let request_id = app_server.next_request_id();
++                let request_handle = app_server.request_handle();
++                let tx = self.app_event_tx.clone();
++                tokio::spawn(async move {
++                    let result = request_handle
++                        .request_typed::<codex_app_server_protocol::OmdRecoveryApplyResponse>(
++                            codex_app_server_protocol::ClientRequest::OmdRecoveryApply {
++                                request_id,
++                                params: codex_app_server_protocol::OmdRecoveryApplyParams {
++                                    action: codex_app_server_protocol::OmdRecoveryAction::Reload,
++                                    target: String::new(),
++                                },
++                            },
++                        )
++                        .await
++                        .map(drop)
++                        .map_err(|error| error.to_string());
++                    tx.send(AppEvent::OmdModsReloaded { result });
++                });
++            }
++            AppEvent::OmdModsReloaded { result } => match result {
++                Ok(()) => self.chat_widget.add_info_message("Mods reloaded.".to_string(), None),
++                Err(error) => self
++                    .chat_widget
++                    .add_error_message(format!("Mod reload failed: {error}")),
++            },
 +            AppEvent::ModCommandFinished {
 +                invocation,
 +                token,
@@ -29963,7 +30019,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -881,6 +964,10 @@ impl App {
+@@ -881,6 +1008,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -29974,7 +30030,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1754,8 +1841,18 @@ impl App {
+@@ -1754,8 +1885,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -29993,7 +30049,7 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..d1157da4e303e206115ec054215670bd
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -3029,6 +3126,14 @@ impl App {
+@@ -3029,6 +3170,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -31768,7 +31824,7 @@ index f962f3ba8e4256de7ec2962b48d0f4c58fc7fb5c..c5b2a77535b111108692e689341b91a0
                              lines.activity
                          })
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3d93e6650 100644
+index a20193149e57e60f75e89fbd4b4aa819d511b2e5..8f9916189ad12fd85f22b213149f89bf26ee4988 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -416,6 +416,10 @@ pub(crate) enum AppEvent {
@@ -31782,7 +31838,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3
 
      /// Fork the current thread into a transient side conversation.
      StartSide {
-@@ -515,6 +519,39 @@ pub(crate) enum AppEvent {
+@@ -515,6 +519,54 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -31804,6 +31860,10 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3
 +    OmdStateReset {
 +        result: Result<String, String>,
 +    },
++    OmdReloadMods,
++    OmdModsReloaded {
++        result: Result<(), String>,
++    },
 +    ModCommandFinished {
 +        invocation: String,
 +        token: crate::mod_runtime::ModInvocation,
@@ -31815,6 +31875,17 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3
 +        Option<crate::mod_pty::Binding>,
 +    ),
 +    ModViewChanged,
++    ModPanelCommand {
++        command: String,
++        args: String,
++    },
++    ModPanelsReloaded,
++    ModPanelPrompt {
++        title: String,
++        value: String,
++        command: String,
++        args: String,
++    },
 +    ModSurfaceConfirmed {
 +        id: u64,
 +        approved: bool,
@@ -31822,7 +31893,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -666,6 +703,10 @@ pub(crate) enum AppEvent {
+@@ -666,6 +718,10 @@ pub(crate) enum AppEvent {
          nth_user_message: usize,
      },
 
@@ -31833,7 +31904,7 @@ index a20193149e57e60f75e89fbd4b4aa819d511b2e5..59dd24a4d9b7c463fd810613835deed3
      /// Request to exit the application.
      ///
      /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the
-@@ -712,6 +753,14 @@ pub(crate) enum AppEvent {
+@@ -712,6 +768,14 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -31872,6 +31943,21 @@ index 6ab14d1f680fc8a8a1f22853fed49709a105c27e..e3de30f53c9fe6b71954696a502437e0
              ..SelectionViewParams::picker()
          };
 
+diff --git a/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs b/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
+index 6e3726352afb15a40c3de0de1558bc2b59def9cc..3e49620c08405df01131ff35d6ad8d458651e021 100644
+--- a/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
++++ b/codex-rs/tui/src/bottom_pane/bottom_pane_view.rs
+@@ -101,6 +101,10 @@ pub(crate) trait BottomPaneView: Renderable {
+         None
+     }
+
++    fn mod_panel(&mut self) -> Option<&mut super::ModPanelView> {
++        None
++    }
++
+     /// Actual item index for list-based views that want to preserve selection
+     /// across external refreshes.
+     fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc15726f84 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
@@ -32761,6 +32847,50 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
 
+diff --git a/codex-rs/tui/src/bottom_pane/empty_state_policy.rs b/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
+index b83daa5c59f445b86a4f6b0bf9f3ca4ce16f92cd..991a7b1035c3e6a71fd5213b5df654f05e20c4d1 100644
+--- a/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
++++ b/codex-rs/tui/src/bottom_pane/empty_state_policy.rs
+@@ -5,16 +5,28 @@ use crate::empty_state_animation::ComposerState;
+
+ impl BottomPane {
+     pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
+-        match (
+-            self.view_stack.as_slice(),
+-            self.warnings_view.as_ref(),
+-            self.questions
+-                .as_ref()
+-                .filter(|questions| questions.expanded),
+-            self.inline_banner_accepts_dismissal(),
+-        ) {
+-            ([], None, None, false) => self.composer.empty_state_composer(),
+-            _ => None,
+-        }
++        self.plain_composer()
++            .then(|| self.composer.empty_state_composer())
++            .flatten()
++    }
++
++    pub(crate) fn mod_welcome_composer(&self) -> Option<ComposerState> {
++        self.plain_composer()
++            .then(|| self.composer.mod_welcome_composer())
++            .flatten()
++    }
++
++    fn plain_composer(&self) -> bool {
++        matches!(
++            (
++                self.view_stack.as_slice(),
++                self.warnings_view.as_ref(),
++                self.questions
++                    .as_ref()
++                    .filter(|questions| questions.expanded),
++                self.inline_banner_accepts_dismissal(),
++            ),
++            ([], None, None, false)
++        )
+     }
+ }
 diff --git a/codex-rs/tui/src/bottom_pane/footer.rs b/codex-rs/tui/src/bottom_pane/footer.rs
 index f0b809ce50cd238a1e5208ccdd999695c1783658..6ca31803f6474287a816d074148b103cb389a723 100644
 --- a/codex-rs/tui/src/bottom_pane/footer.rs
@@ -32962,19 +33092,22 @@ index 19f365028c605762e30481d9e5c833f30c0b8000..2ff3622de5661c4be4b7eb62e679a175
  }
 
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aadac904b301 100644
+index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..dab8fc7a7aa1c4337cfcb85b0428b63f229ba309 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -72,6 +72,8 @@ use std::time::Duration;
+@@ -72,6 +72,11 @@ use std::time::Duration;
  use std::time::Instant;
 
  mod action_required_title;
 +mod secret_prompt_view;
 +pub(crate) use secret_prompt_view::SecretPromptView;
++mod mod_panel;
++pub(crate) use mod_panel::ModPanelRequest;
++pub(crate) use mod_panel::ModPanelView;
  mod actionable_banner;
  mod app_link_view;
  mod apply_patch_header;
-@@ -171,6 +173,7 @@ pub(crate) use footer::GoalStatusIndicator;
+@@ -171,6 +176,7 @@ pub(crate) use footer::GoalStatusIndicator;
  pub(crate) use footer::goal_status_indicator_line;
  pub(crate) use list_selection_view::ColumnWidthMode;
  pub(crate) use list_selection_view::ListSelectionView;
@@ -32982,7 +33115,7 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aada
  pub(crate) use list_selection_view::OnSelectionChangedCallback;
  pub(crate) use list_selection_view::PickerSurface;
  pub(crate) use list_selection_view::SearchMode;
-@@ -1203,6 +1206,14 @@ impl BottomPane {
+@@ -1203,6 +1209,14 @@ impl BottomPane {
          self.request_redraw();
      }
 
@@ -32997,7 +33130,7 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aada
      /// Get the current composer text (for tests and programmatic checks).
      pub(crate) fn composer_text(&self) -> String {
          self.composer.current_text()
-@@ -1213,6 +1224,19 @@ impl BottomPane {
+@@ -1213,6 +1227,19 @@ impl BottomPane {
          self.composer.current_cursor()
      }
 
@@ -33017,7 +33150,7 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aada
      #[cfg(test)]
      pub(crate) fn composer_text_elements(&self) -> Vec<TextElement> {
          self.composer.text_elements()
-@@ -1222,11 +1246,6 @@ impl BottomPane {
+@@ -1222,11 +1249,6 @@ impl BottomPane {
          self.composer.local_images()
      }
 
@@ -33029,7 +33162,50 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aada
      pub(crate) fn composer_text_with_pending(&self) -> String {
          self.composer.current_text_with_pending()
      }
-@@ -1853,6 +1872,13 @@ impl BottomPane {
+@@ -1499,6 +1521,42 @@ impl BottomPane {
+         }
+     }
+
++    pub(crate) fn show_mod_panel(&mut self, caller: String, request: ModPanelRequest) {
++        if let Some(panel) = self
++            .view_stack
++            .iter_mut()
++            .rev()
++            .filter_map(|view| view.mod_panel())
++            .find(|panel| panel.is_for(&caller, &request))
++        {
++            panel.replace(request);
++            self.request_redraw();
++            return;
++        }
++        let view = ModPanelView::new(
++            caller,
++            request,
++            self.app_event_tx.clone(),
++            self.keymap.list.clone(),
++        );
++        self.push_view(Box::new(view));
++    }
++
++    pub(crate) fn mod_panel_actions(&mut self) -> Vec<(String, String)> {
++        let mut actions = Vec::new();
++        for action in self
++            .view_stack
++            .iter_mut()
++            .filter_map(|view| view.mod_panel())
++            .map(|panel| panel.action())
++        {
++            if !actions.contains(&action) {
++                actions.push(action);
++            }
++        }
++        actions
++    }
++
+     /// Replace the active selection view when it matches `view_id`.
+     pub(crate) fn replace_selection_view_if_active(
+         &mut self,
+@@ -1853,6 +1911,13 @@ impl BottomPane {
          self.view_stack.last().and_then(|view| view.view_id())
      }
 
@@ -33043,7 +33219,7 @@ index ae9405e9ff3718aa8d3c6c3dfac487a3c2688823..48cfa647aa452c211cb6f4599b94aada
      /// Return true when the pane is in the regular composer state without any
      /// overlays or popups and not running a task. This is the safe context to
      /// use Esc-Esc for backtracking from the main view.
-@@ -2250,6 +2276,10 @@ impl BottomPane {
+@@ -2250,6 +2315,10 @@ impl BottomPane {
              || self.composer.is_in_paste_burst()
      }
 
@@ -33579,26 +33755,46 @@ index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..441aeb64dce696ae240817cdebf6df8e
              next_status_refresh_request_id: 0,
              pending_rate_limit_reset_request_id: None,
 diff --git a/codex-rs/tui/src/chatwidget/empty_state_policy.rs b/codex-rs/tui/src/chatwidget/empty_state_policy.rs
-index 017c9fb0665fbb166c75f9aa3cf93b5fbc391eaf..20b50af23a28d2217369c140414becb52a6d443b 100644
+index 017c9fb0665fbb166c75f9aa3cf93b5fbc391eaf..a78ac611e99f4c72ba1319cfa8d53135b504586d 100644
 --- a/codex-rs/tui/src/chatwidget/empty_state_policy.rs
 +++ b/codex-rs/tui/src/chatwidget/empty_state_policy.rs
-@@ -6,6 +6,16 @@ use crate::empty_state_animation::ComposerState;
+@@ -6,9 +6,19 @@ use crate::empty_state_animation::ComposerState;
  use crate::empty_state_animation::is_startup_cell;
 
  impl ChatWidget {
+-    pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
+-        let startup_only = self
+-            .transcript
 +    pub(crate) fn mod_welcome_composer(&self) -> Option<ComposerState> {
 +        if self.turn_lifecycle.last_turn_id.is_some()
++            || !self.live_cells_startup_only()
 +            || self.external_editor_state != ExternalEditorState::Closed
 +            || self.external_writer_view
 +        {
 +            return None;
 +        }
-+        self.bottom_pane.empty_state_composer()
++        self.bottom_pane.mod_welcome_composer()
 +    }
 +
-     pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
-         let startup_only = self
-             .transcript
++    fn live_cells_startup_only(&self) -> bool {
++        self.transcript
+             .active_cell
+             .as_deref()
+             .into_iter()
+@@ -19,8 +29,11 @@ impl ChatWidget {
+                     .chain(self.realtime_conversation.live_transcript_cells())
+                     .map(AsRef::as_ref),
+             )
+-            .all(is_startup_cell);
+-        if !startup_only
++            .all(is_startup_cell)
++    }
++
++    pub(crate) fn empty_state_composer(&self) -> Option<ComposerState> {
++        if !self.live_cells_startup_only()
+             || self.is_user_turn_pending_or_running()
+             || self.initial_user_message.is_some()
+         {
 diff --git a/codex-rs/tui/src/chatwidget/input_flow.rs b/codex-rs/tui/src/chatwidget/input_flow.rs
 index 5b44cac1b0a97e94a786705c490dd80e5a7a8888..e08bab7008c176261dcd2aec1e401e2d5390489d 100644
 --- a/codex-rs/tui/src/chatwidget/input_flow.rs
@@ -40947,10 +41143,10 @@ index 0000000000000000000000000000000000000000..aef1c863b44994cbed5b394fa99264ec
 +}
 diff --git a/codex-rs/app-server/src/omd_clients.rs b/codex-rs/app-server/src/omd_clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387ad110ecb9
+index 0000000000000000000000000000000000000000..f39cb3c7a82d5c7acc86154f95e6646e16f00ba3
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_clients.rs
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,932 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
@@ -40973,6 +41169,7 @@ index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387a
 +use codex_app_server_protocol::OmdClientUpdateParams;
 +use codex_app_server_protocol::OmdClientUpdateResponse;
 +use codex_app_server_protocol::OmdPointer;
++use codex_app_server_protocol::OmdRecoveryAction;
 +use codex_app_server_protocol::OmdRecoveryApplyParams;
 +use codex_app_server_protocol::OmdRecoveryApplyResponse;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
@@ -41786,7 +41983,9 @@ index 0000000000000000000000000000000000000000..a2f19203fa6afa57b7c474da9308387a
 +        connection_id: ConnectionId,
 +        params: OmdRecoveryApplyParams,
 +    ) -> Response {
-+        self.client(connection_id)?;
++        if params.action != OmdRecoveryAction::Reload {
++            self.client(connection_id)?;
++        }
 +        let action = to_value(params.action)?
 +            .as_str()
 +            .unwrap_or_default()
@@ -59265,10 +59464,10 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9802075a1
+index 0000000000000000000000000000000000000000..b7510846aff2fac8c27effe620c589c8d0d83847
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2473 @@
+@@ -0,0 +1,2511 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -61049,6 +61248,16 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +    }
 +}
 +
++/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
++/// "Mods are off" directory warning; only a thread the user opened does.
++fn reports_directory(
++    source: &SessionSource,
++    cwd: &std::path::Path,
++    codex_home: &std::path::Path,
++) -> bool {
++    !source.is_non_root_agent() && !cwd.starts_with(codex_home)
++}
++
 +impl ThreadLifecycleContributor<Config> for Mods {
 +    fn on_thread_start<'a>(
 +        &'a self,
@@ -61060,16 +61269,22 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +            };
 +            self.native_agent_started(thread, input.session_source, input.thread_store);
 +            let host = self.host_for(input.config.cwd.as_path());
-+            self.views.diagnostic(
-+                &self.host,
-+                "directory",
-+                host.is_none().then(|| {
-+                    format!(
-+                        "Mods are off in {}: it is neither the launch project nor one of its worktrees",
-+                        input.config.cwd.display()
-+                    )
-+                }),
-+            );
++            if reports_directory(
++                input.session_source,
++                input.config.cwd.as_path(),
++                input.config.codex_home.as_path(),
++            ) {
++                self.views.diagnostic(
++                    &self.host,
++                    "directory",
++                    host.is_none().then(|| {
++                        format!(
++                            "Mods are off in {}: it is neither the launch project nor one of its worktrees",
++                            input.config.cwd.display()
++                        )
++                    }),
++                );
++            }
 +            let Some(host) = host else {
 +                return;
 +            };
@@ -61741,6 +61956,28 @@ index 0000000000000000000000000000000000000000..1e6b29d05f2ef6e03b6b12641dd469a9
 +    fn drop(&mut self) {
 +        self.0.store(true, Ordering::Release);
 +    }
++}
++
++#[cfg(test)]
++#[test]
++fn directory_warning_comes_only_from_user_threads() {
++    let home = std::path::Path::new("/home/user/.codex");
++    let outside = std::path::Path::new("/elsewhere");
++    let memories = SessionSource::Internal(
++        codex_protocol::protocol::InternalSessionSource::MemoryConsolidation,
++    );
++    assert!(reports_directory(&SessionSource::Cli, outside, home));
++    assert!(!reports_directory(
++        &memories,
++        home.join("memories").as_path(),
++        home
++    ));
++    assert!(!reports_directory(&memories, outside, home));
++    assert!(!reports_directory(
++        &SessionSource::Cli,
++        home.join("memories").as_path(),
++        home
++    ));
 +}
 diff --git a/codex-rs/ext/omd/src/mods/access.rs b/codex-rs/ext/omd/src/mods/access.rs
 new file mode 100644
@@ -86625,10 +86862,10 @@ index 0000000000000000000000000000000000000000..320c013e6b46dccc8f0ffa8d360bafd5
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f17108e430487b0d5d92fadaea178983e6e10a17
+index 0000000000000000000000000000000000000000..1a225e968e114208135b1b15d5c3ec2417049dcd
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1516 @@
+@@ -0,0 +1,1521 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -86705,6 +86942,7 @@ index 0000000000000000000000000000000000000000..f17108e430487b0d5d92fadaea178983
 +    "terminal.prompt",
 +    "terminal.pane",
 +    "terminal.panes",
++    "terminal.panel",
 +    "terminal.notice",
 +    "terminal.selection",
 +    "terminal.copy",
@@ -86715,6 +86953,7 @@ index 0000000000000000000000000000000000000000..f17108e430487b0d5d92fadaea178983
 +pub const USER_ONLY_OPERATIONS: &[&str] = &[
 +    "terminal.selection",
 +    "terminal.copy",
++    "terminal.panel",
 +    "credentials.request",
 +    "terminal.import_file",
 +    "builtins.invoke",
@@ -86726,7 +86965,10 @@ index 0000000000000000000000000000000000000000..f17108e430487b0d5d92fadaea178983
 +
 +pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
 +    (USER_ONLY_OPERATIONS.contains(&operation)
-+        && !matches!(operation, "terminal.selection" | "terminal.copy"))
++        && !matches!(
++            operation,
++            "terminal.selection" | "terminal.copy" | "terminal.panel"
++        ))
 +        || operation == "terminal.prompt"
 +        || (operation == "app.request"
 +            && arguments["method"]
@@ -95853,10 +96095,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f93575cbbb7185ef369c16966862c37f02a93255
+index 0000000000000000000000000000000000000000..09917bee4e01e7591df55d358dd56afea3ad371f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6111 @@
+@@ -0,0 +1,6113 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -96215,6 +96457,7 @@ index 0000000000000000000000000000000000000000..f93575cbbb7185ef369c16966862c37f
 +    "component_modules_v1",
 +    "ui_composition_v1",
 +    "ui_controls_v1",
++    "terminal_panel_v1",
 +    "reactive_state_v1",
 +    "session_ports_v1",
 +    "structured_access_v1",
@@ -96325,6 +96568,7 @@ index 0000000000000000000000000000000000000000..f93575cbbb7185ef369c16966862c37f
 +    "terminal.prompt",
 +    "terminal.pane",
 +    "terminal.panes",
++    "terminal.panel",
 +    "terminal.notice",
 +    "terminal.selection",
 +    "terminal.copy",
@@ -103067,10 +103311,10 @@ index 0000000000000000000000000000000000000000..6f17df0212259789bfe883815c7d5cdc
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4afc890d9870486409c501e6d47402dc5e239472
+index 0000000000000000000000000000000000000000..228bbe3dc75c95672667904b3d63e8d3a731ab76
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,434 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -103137,6 +103381,7 @@ index 0000000000000000000000000000000000000000..4afc890d9870486409c501e6d47402dc
 +            | "terminal.prompt"
 +            | "terminal.pane"
 +            | "terminal.panes"
++            | "terminal.panel"
 +            | "terminal.notice"
 +            | "terminal.selection"
 +            | "terminal.copy"
@@ -105462,10 +105707,10 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..75a4b4a0cf9280c80e80c0827db6086ffe28ba28
+index 0000000000000000000000000000000000000000..10cf8a1f064020a6e66c8b290d5a3768142f5be7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,217 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -105554,35 +105799,36 @@ index 0000000000000000000000000000000000000000..75a4b4a0cf9280c80e80c0827db6086f
 +    "terminal.show_thread": {"arguments":{"type":"object","properties":{"thread_id":{"type":"string"}},"required":["thread_id"]},"result":{"type":"object","properties":{"shown":{"type":"boolean"}},"required":["shown"]}},
 +    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/64"}}},"required":["commands"]}},
 +    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/64"}},
-+    "commands.invoke": {"arguments":{"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
++    "commands.invoke": {"arguments":{"$ref":"#/$defs/65"},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
 +    "config.describe": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"rows":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"label":{"type":"string"},"value":{},"source":{"type":"string"},"version":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"mod"},{"const":"codex"}]},"editable":{"type":"boolean"},"managed":{"type":"boolean"},"secret":{"type":"boolean"},"hidden":{"type":"boolean"},"type":{"type":"string"},"enum":{"anyOf":[{"type":"null"},{"type":"array","items":{}}]}},"required":["key","label","value","source","version","scope","editable","managed","secret","hidden"]}}},"required":["rows"]}},
 +    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}}]}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
 +    "sessions.ports": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ports":{"type":"array","items":{"type":"object","properties":{"port":{"type":"number"},"pid":{"type":"number"},"address":{"type":"string"}},"required":["port","pid","address"]}}},"required":["ports"]}},
 +    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/44"}]}},
 +    "terminal.image_sample": {"arguments":{"type":"object","properties":{"resource":{"$ref":"#/$defs/1"},"columns":{"type":"number"},"rows":{"type":"number"}},"required":["resource","columns","rows"]},"result":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"},"rgba":{"type":"array","items":{"type":"number"}}},"required":["width","height","rgba"]}},
-+    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
-+    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/65"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
++    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/66"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
++    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/66"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
 +    "composer.suggest": {"arguments":{"anyOf":[{"type":"object","properties":{"revision":{"type":"number"},"id":{"type":"string"},"text":{"type":"string"}},"required":["revision","id","text"]},{"type":"object","properties":{"clear":{"const":true}},"required":["clear"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]},{"type":"object","properties":{"cleared":{"const":true}},"required":["cleared"]}]}},
-+    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
-+    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
-+    "prompts.status": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
-+    "prompts.revoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
++    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/67"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
++    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/67"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
++    "prompts.status": {"arguments":{"$ref":"#/$defs/68"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
++    "prompts.revoke": {"arguments":{"$ref":"#/$defs/68"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
 +    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}}},"required":["index","packages"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
-+    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
++    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
 +    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
-+    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"type":"array","items":{"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]}},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
++    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/77"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/77"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/65"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/75"},{"$ref":"#/$defs/75"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/79"},{"$ref":"#/$defs/79"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"$ref":"#/$defs/55"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/87"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/87"}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/91"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/91"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -105653,29 +105899,33 @@ index 0000000000000000000000000000000000000000..75a4b4a0cf9280c80e80c0827db6086f
 +    "62": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
 +    "63": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/62"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
 +    "64": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
-+    "65": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
-+    "66": {"type":"array","items":{"$ref":"#/$defs/1"}},
-+    "67": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
-+    "68": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
-+    "69": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
-+    "70": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
-+    "71": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
-+    "72": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
-+    "73": {"anyOf":[{"$ref":"#/$defs/69"},{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"}]},
-+    "74": {"type":"object","properties":{"action":{"$ref":"#/$defs/68"},"id":{"type":"string"},"source":{"$ref":"#/$defs/73"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
-+    "75": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "76": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "77": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "78": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/76"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/77"}},"required":["prompt"]},
-+    "79": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "80": {"type":"array","items":{"$ref":"#/$defs/79"}},
-+    "81": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "82": {"type":"array","items":{"$ref":"#/$defs/81"}},
-+    "83": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "84": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "85": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/84"}},"required":["microusd","basis"]},
-+    "86": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "87": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/80"},"tool_calls":{"$ref":"#/$defs/82"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/83"},"cost":{"$ref":"#/$defs/85"},"timing":{"$ref":"#/$defs/86"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "65": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
++    "66": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
++    "67": {"type":"array","items":{"$ref":"#/$defs/1"}},
++    "68": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
++    "69": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
++    "70": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
++    "71": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
++    "72": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
++    "73": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
++    "74": {"anyOf":[{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"}]},
++    "75": {"type":"object","properties":{"action":{"$ref":"#/$defs/69"},"id":{"type":"string"},"source":{"$ref":"#/$defs/74"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
++    "76": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
++    "77": {"type":"array","items":{"$ref":"#/$defs/76"}},
++    "78": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
++    "79": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "80": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "81": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "82": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/80"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/81"}},"required":["prompt"]},
++    "83": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "84": {"type":"array","items":{"$ref":"#/$defs/83"}},
++    "85": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "86": {"type":"array","items":{"$ref":"#/$defs/85"}},
++    "87": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "88": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "89": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/88"}},"required":["microusd","basis"]},
++    "90": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "91": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/84"},"tool_calls":{"$ref":"#/$defs/86"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/87"},"cost":{"$ref":"#/$defs/89"},"timing":{"$ref":"#/$defs/90"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -108874,10 +109124,10 @@ index 0000000000000000000000000000000000000000..64b35784d76e6ce389ef4dac1c48317e
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..299e24428084991f7235b0cc1153a85bef857d42
+index 0000000000000000000000000000000000000000..abe95876f7b7ac06213b4e2a7345a7600728ae4b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,321 @@
 +use super::*;
 +
 +impl ModStore {
@@ -108922,6 +109172,9 @@ index 0000000000000000000000000000000000000000..299e24428084991f7235b0cc1153a85b
 +        let mut settings = selection.settings.clone();
 +        change(&mut settings);
 +        validate_settings(&package, &settings)?;
++        if settings == selection.settings {
++            return Ok(settings);
++        }
 +        selection.settings = settings.clone();
 +        config.revision = config
 +            .revision
@@ -127268,10 +127521,10 @@ index 0000000000000000000000000000000000000000..8ef5a1e8f0f07f44c92d1c96708b6629
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7025789681af30d794136622e3ce490aa11741d8
+index 0000000000000000000000000000000000000000..7276715d276d97e10018b1a7faf8da53fa10ac97
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4777 @@
+@@ -0,0 +1,4780 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -130592,6 +130845,9 @@ index 0000000000000000000000000000000000000000..7025789681af30d794136622e3ce490a
 +        read(&mut runtime),
 +        json!(r#"{"count":2,"mode":"a","nullable":null}"#)
 +    );
++    let revision = store.configuration().unwrap().revision;
++    codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();
++    assert_eq!(store.configuration().unwrap().revision, revision);
 +}
 +
 +#[test]
@@ -138439,10 +138695,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89aaa4ca06
+index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191aa28c4ae
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2064 @@
+@@ -0,0 +1,2073 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -139745,6 +140001,15 @@ index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89
 +                crate::mod_ui::pane(&call.caller, &call.arguments)
 +            }
 +            "terminal.panes" => Ok(crate::mod_ui::panes(&call.caller)),
++            "terminal.panel" => {
++                crate::bottom_pane::ModPanelRequest::parse(&call.caller, &call.arguments).map(
++                    |request| {
++                        self.chat_widget
++                            .show_mod_panel(call.caller.clone(), request);
++                        json!({"shown": true})
++                    },
++                )
++            }
 +            "terminal.notice" => self.mod_notice(tui, &call),
 +            "terminal.selection" => {
 +                if call
@@ -140509,10 +140774,10 @@ index 0000000000000000000000000000000000000000..f7b625fff27743f11d5d84916fea6d89
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72bbf2b6cc822c9e826658640cf4fc690e5f897b
+index 0000000000000000000000000000000000000000..27fe722f2d143943373c6d26098a6ecc76482b74
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/mod_draft.rs
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,428 @@
 +//! Draft revisions, one mod's ghost suggestion and mod-attached images beside the native draft.
 +
 +use std::cell::Cell;
@@ -140843,6 +141108,16 @@ index 0000000000000000000000000000000000000000..72bbf2b6cc822c9e826658640cf4fc69
 +
 +    pub(crate) fn mod_draft_take_events(&mut self) -> Vec<(Option<String>, Value)> {
 +        std::mem::take(&mut self.draft.mod_draft.events)
++    }
++
++    /// The welcome site's composer state, where an open slash, file or mention popup is a draft.
++    pub(crate) fn mod_welcome_composer(
++        &self,
++    ) -> Option<crate::empty_state_animation::ComposerState> {
++        self.empty_state_composer().or_else(|| {
++            (!matches!(self.popups.active, ActivePopup::None) && self.history_search.is_none())
++                .then_some(crate::empty_state_animation::ComposerState::Draft)
++        })
 +    }
 +
 +    fn mod_suggestion_visible(&self) -> Option<&str> {
@@ -141248,6 +141523,782 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +        Paragraph::new(lines).render(area, buf);
 +    }
 +}
+diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f1e198931f4904f1db2498c780d03b5834a40e0d
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
+@@ -0,0 +1,634 @@
++use super::BottomPaneView;
++use super::CancellationEvent;
++use super::ListSelectionView;
++use super::SearchMode;
++use super::SelectionDescriptionLayout;
++use super::SelectionItem;
++use super::SelectionRowDisplay;
++use super::SelectionTab;
++use super::SelectionViewParams;
++use super::footer_hint_items_line;
++use crate::app_event::AppEvent;
++use crate::app_event_sender::AppEventSender;
++use crate::key_hint::KeyBindingListExt;
++use crate::keymap::KeymapContext;
++use crate::keymap::KeymapContextSet;
++use crate::keymap::ListAction;
++use crate::keymap::ListKeymap;
++use crate::render::renderable::Renderable;
++use codex_omd::ModCommandAction;
++use codex_omd::ModSelectOption;
++use crossterm::event::KeyCode;
++use crossterm::event::KeyEvent;
++use crossterm::event::KeyEventKind;
++use crossterm::event::KeyModifiers;
++use ratatui::buffer::Buffer;
++use ratatui::layout::Rect;
++use ratatui::text::Line;
++use serde::Deserialize;
++use serde_json::Value;
++use std::collections::HashSet;
++
++pub(crate) const MOD_PANEL_VIEW_ID: &str = "mod-panel";
++const MAX_ITEMS: usize = 200;
++const MAX_TABS: usize = 8;
++const MAX_OPTIONS: usize = 32;
++const MAX_ROWS: usize = 14;
++
++#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++enum PanelKind {
++    Toggle,
++    Choice,
++    Action,
++    Text,
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct PanelTab {
++    id: String,
++    title: String,
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct PanelItem {
++    id: String,
++    #[serde(default)]
++    tab: Option<String>,
++    label: String,
++    #[serde(default)]
++    description: Option<String>,
++    kind: PanelKind,
++    #[serde(default)]
++    value: Option<Value>,
++    #[serde(default)]
++    options: Vec<ModSelectOption>,
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(crate) struct ModPanelRequest {
++    title: String,
++    #[serde(default)]
++    subtitle: Option<String>,
++    #[serde(default)]
++    tabs: Vec<PanelTab>,
++    items: Vec<PanelItem>,
++    #[serde(default)]
++    search: bool,
++    action: ModCommandAction,
++}
++
++fn text(value: &str, limit: usize, empty: bool) -> Result<String, String> {
++    let shown: String = value
++        .chars()
++        .filter(|c| !c.is_control() || *c == '\n')
++        .collect();
++    if value.len() > limit || (!empty && shown.is_empty()) {
++        return Err(format!(
++            "terminal_panel_invalid: text must be 1-{limit} bytes"
++        ));
++    }
++    Ok(shown)
++}
++
++fn line(value: &str, limit: usize, empty: bool) -> Result<String, String> {
++    text(value, limit, empty).map(|value| value.replace('\n', " "))
++}
++
++impl ModPanelRequest {
++    pub(crate) fn parse(caller: &str, arguments: &Value) -> Result<Self, String> {
++        let mut request: Self = serde_json::from_value(arguments.clone())
++            .map_err(|error| format!("terminal_panel_invalid: {error}"))?;
++        request.title = line(&request.title, 128, false)?;
++        request.subtitle = request
++            .subtitle
++            .map(|subtitle| text(&subtitle, 2000, true))
++            .transpose()?;
++        request.action.command = codex_omd::owned_command(caller, &request.action.command)
++            .filter(|command| codex_omd::mod_command_reference(command))
++            .ok_or("terminal_panel_invalid: action must name one of the caller's commands")?;
++        request.action.args = text(&request.action.args, 512, true)?;
++        if request.tabs.len() > MAX_TABS || !(1..=MAX_ITEMS).contains(&request.items.len()) {
++            return Err(format!(
++                "terminal_panel_invalid: at most {MAX_TABS} tabs and 1-{MAX_ITEMS} items"
++            ));
++        }
++        let mut tabs = HashSet::new();
++        for tab in &mut request.tabs {
++            tab.title = line(&tab.title, 32, false)?;
++            tab.id = text(&tab.id, 64, false)?;
++            if !tabs.insert(tab.id.clone()) {
++                return Err("terminal_panel_invalid: duplicate tab id".into());
++            }
++        }
++        let mut ids = HashSet::new();
++        for item in &mut request.items {
++            item.id = text(&item.id, 128, false)?;
++            if item.id.contains(char::is_whitespace) || !ids.insert(item.id.clone()) {
++                return Err("terminal_panel_invalid: item ids must be unique words".into());
++            }
++            item.tab = item
++                .tab
++                .as_deref()
++                .map(|tab| text(tab, 64, false))
++                .transpose()?;
++            if item.tab.as_ref().is_some_and(|tab| !tabs.contains(tab))
++                || item.tab.is_none() != tabs.is_empty()
++            {
++                return Err(format!(
++                    "terminal_panel_invalid: item {} needs one of the panel's tabs",
++                    item.id
++                ));
++            }
++            item.label = line(&item.label, 128, false)?;
++            item.description = item
++                .description
++                .as_deref()
++                .map(|description| line(description, 256, true))
++                .transpose()?;
++            item.value = Some(Self::value(item)?);
++        }
++        Ok(request)
++    }
++
++    fn value(item: &mut PanelItem) -> Result<Value, String> {
++        let invalid = || format!("terminal_panel_invalid: item {} value", item.id);
++        if !item.options.is_empty() && item.kind != PanelKind::Choice {
++            return Err(invalid());
++        }
++        match (item.kind, &item.value) {
++            (PanelKind::Toggle, None) => Ok(Value::Bool(false)),
++            (PanelKind::Toggle, Some(Value::Bool(on))) => Ok(Value::Bool(*on)),
++            (PanelKind::Text, None) => Ok(Value::String(String::new())),
++            (PanelKind::Text, Some(Value::String(value))) => {
++                line(value, 2000, true).map(Value::String)
++            }
++            (PanelKind::Action, None) => Ok(Value::Null),
++            (PanelKind::Choice, value) => {
++                let mut values = HashSet::new();
++                if !(1..=MAX_OPTIONS).contains(&item.options.len())
++                    || item.options.iter().any(|option| {
++                        option.value.is_empty()
++                            || option.value.len() > 128
++                            || option
++                                .value
++                                .contains(|c: char| c.is_whitespace() || c.is_control())
++                            || !values.insert(option.value.as_str())
++                    })
++                {
++                    return Err(invalid());
++                }
++                for option in &mut item.options {
++                    option.label = line(&option.label, 128, false)?;
++                }
++                match value {
++                    None => Ok(Value::String(item.options[0].value.clone())),
++                    Some(Value::String(value))
++                        if item.options.iter().any(|option| &option.value == value) =>
++                    {
++                        Ok(Value::String(value.clone()))
++                    }
++                    Some(_) => Err(invalid()),
++                }
++            }
++            _ => Err(invalid()),
++        }
++    }
++}
++
++#[derive(Default)]
++struct PanelState {
++    tab: Option<String>,
++    selected: Option<String>,
++    query: Option<String>,
++}
++
++pub(crate) struct ModPanelView {
++    caller: String,
++    request: ModPanelRequest,
++    picker: ListSelectionView,
++    tab: Option<String>,
++    keymap: ListKeymap,
++    app_event_tx: AppEventSender,
++}
++
++impl ModPanelView {
++    pub(crate) fn new(
++        caller: String,
++        request: ModPanelRequest,
++        app_event_tx: AppEventSender,
++        keymap: ListKeymap,
++    ) -> Self {
++        let picker = picker(
++            &request,
++            PanelState::default(),
++            app_event_tx.clone(),
++            keymap.clone(),
++        );
++        Self {
++            caller,
++            request,
++            picker,
++            tab: None,
++            keymap,
++            app_event_tx,
++        }
++    }
++
++    pub(crate) fn is_for(&self, caller: &str, request: &ModPanelRequest) -> bool {
++        self.caller == caller && self.request.title == request.title
++    }
++
++    pub(crate) fn action(&self) -> (String, String) {
++        (
++            self.request.action.command.clone(),
++            self.request.action.args.clone(),
++        )
++    }
++
++    pub(crate) fn replace(&mut self, request: ModPanelRequest) {
++        let mut state = self.state();
++        state.tab = state.tab.or(self.tab.take());
++        self.tab = state.tab.clone();
++        self.request = request;
++        self.rebuild(state);
++    }
++
++    fn state(&self) -> PanelState {
++        PanelState {
++            tab: self.picker.active_tab_id().map(str::to_owned),
++            selected: self
++                .picker
++                .selected_index()
++                .and_then(|index| self.shown().get(index).map(|item| item.id.clone())),
++            query: self.picker.search_query().map(str::to_owned),
++        }
++    }
++
++    fn rebuild(&mut self, state: PanelState) {
++        self.picker = picker(
++            &self.request,
++            state,
++            self.app_event_tx.clone(),
++            self.keymap.clone(),
++        );
++    }
++
++    fn shown(&self) -> Vec<&PanelItem> {
++        shown(
++            &self.request,
++            self.picker.active_tab_id(),
++            self.picker.search_query(),
++        )
++    }
++
++    fn activate(&mut self, index: usize) {
++        let Some(id) = self.shown().get(index).map(|item| item.id.clone()) else {
++            return;
++        };
++        let Some(item) = self.request.items.iter_mut().find(|item| item.id == id) else {
++            return;
++        };
++        let value = match item.kind {
++            PanelKind::Toggle => Value::Bool(
++                !item
++                    .value
++                    .as_ref()
++                    .and_then(Value::as_bool)
++                    .unwrap_or(false),
++            ),
++            PanelKind::Choice => {
++                let current = item.value.as_ref().and_then(Value::as_str);
++                let at = item
++                    .options
++                    .iter()
++                    .position(|option| Some(option.value.as_str()) == current)
++                    .map_or(0, |at| (at + 1) % item.options.len());
++                Value::String(item.options[at].value.clone())
++            }
++            PanelKind::Action => Value::Null,
++            PanelKind::Text => {
++                self.app_event_tx.send(AppEvent::ModPanelPrompt {
++                    title: item.label.clone(),
++                    value: item
++                        .value
++                        .as_ref()
++                        .and_then(Value::as_str)
++                        .unwrap_or_default()
++                        .to_owned(),
++                    command: self.request.action.command.clone(),
++                    args: arguments(&self.request.action.args, &id, None),
++                });
++                return;
++            }
++        };
++        let shown = match &value {
++            Value::Bool(on) => Some(on.to_string()),
++            Value::String(value) => Some(value.clone()),
++            _ => None,
++        };
++        if !value.is_null() {
++            item.value = Some(value);
++        }
++        self.app_event_tx.send(AppEvent::ModPanelCommand {
++            command: self.request.action.command.clone(),
++            args: arguments(&self.request.action.args, &id, shown.as_deref()),
++        });
++        self.rebuild(self.state());
++    }
++}
++
++pub(crate) fn arguments(args: &str, id: &str, value: Option<&str>) -> String {
++    [args, id, value.unwrap_or_default()]
++        .into_iter()
++        .filter(|part| !part.is_empty())
++        .collect::<Vec<_>>()
++        .join(" ")
++}
++
++fn shown<'a>(
++    request: &'a ModPanelRequest,
++    tab: Option<&str>,
++    query: Option<&str>,
++) -> Vec<&'a PanelItem> {
++    let searching = query.is_some_and(|query| !query.is_empty());
++    let tab = tab.or_else(|| request.tabs.first().map(|tab| tab.id.as_str()));
++    request
++        .items
++        .iter()
++        .filter(|item| searching || request.tabs.is_empty() || item.tab.as_deref() == tab)
++        .collect()
++}
++
++fn value_label(item: &PanelItem) -> Option<String> {
++    let value = item.value.as_ref()?;
++    match item.kind {
++        PanelKind::Toggle => Some(
++            if value == &Value::Bool(true) {
++                "[x] On"
++            } else {
++                "[ ] Off"
++            }
++            .into(),
++        ),
++        PanelKind::Choice => item
++            .options
++            .iter()
++            .find(|option| Some(option.value.as_str()) == value.as_str())
++            .map(|option| format!("{} ›", option.label)),
++        PanelKind::Text => Some(match value.as_str().unwrap_or_default() {
++            "" => "Not set ›".into(),
++            text => format!("{} ›", text.chars().take(24).collect::<String>()),
++        }),
++        PanelKind::Action => None,
++    }
++}
++
++fn hint(keymap: &ListKeymap, tabs: bool, search: bool, accept: Option<&str>) -> Line<'static> {
++    let key = |action| keymap.primary_hint(action).map(|hint| hint.display_label());
++    let mut items = Vec::new();
++    if tabs {
++        let keys = [ListAction::MoveLeft, ListAction::MoveRight]
++            .into_iter()
++            .filter_map(key)
++            .collect::<Vec<_>>()
++            .join("/");
++        if !keys.is_empty() {
++            items.push((keys, "tab".to_owned()));
++        }
++    }
++    if search {
++        items.push(("/".to_owned(), "search".to_owned()));
++    }
++    if let Some((key, accept)) =
++        accept.and_then(|accept| key(ListAction::Accept).map(|key| (key, accept)))
++    {
++        items.push((format!("space/{key}"), accept.to_owned()));
++    }
++    if let Some(key) = key(ListAction::Cancel) {
++        items.push((
++            key,
++            if search {
++                "clear search/close"
++            } else {
++                "close"
++            }
++            .to_owned(),
++        ));
++    }
++    footer_hint_items_line(&items)
++}
++
++fn item(
++    request: &ModPanelRequest,
++    item: &PanelItem,
++    keymap: &ListKeymap,
++    searching: bool,
++) -> SelectionItem {
++    let accept = match item.kind {
++        PanelKind::Toggle => "toggle",
++        PanelKind::Choice => "change",
++        PanelKind::Action => "run",
++        PanelKind::Text => "edit",
++    };
++    let tab = item
++        .tab
++        .as_ref()
++        .and_then(|id| request.tabs.iter().find(|tab| &tab.id == id))
++        .map(|tab| tab.title.as_str());
++    let description = match (searching, tab, item.description.as_deref()) {
++        (true, Some(tab), Some(description)) => Some(format!("{tab} · {description}")),
++        (true, Some(tab), None) => Some(tab.to_owned()),
++        (_, _, description) => description.map(str::to_owned),
++    };
++    SelectionItem {
++        name: item.label.clone(),
++        category_tag: value_label(item).map(|label| format!("{label:<20}")),
++        search_value: Some(
++            [Some(item.label.as_str()), tab, item.description.as_deref()]
++                .into_iter()
++                .flatten()
++                .collect::<Vec<_>>()
++                .join(" "),
++        ),
++        description,
++        footer_hint: Some(hint(
++            keymap,
++            !request.tabs.is_empty(),
++            request.search,
++            Some(accept),
++        )),
++        dismiss_on_select: false,
++        ..Default::default()
++    }
++}
++
++fn picker(
++    request: &ModPanelRequest,
++    state: PanelState,
++    app_event_tx: AppEventSender,
++    keymap: ListKeymap,
++) -> ListSelectionView {
++    let query = state.query.filter(|_| request.search);
++    let tab = state
++        .tab
++        .filter(|tab| request.tabs.iter().any(|known| &known.id == tab));
++    let selected = state.selected.and_then(|selected| {
++        shown(request, tab.as_deref(), query.as_deref())
++            .iter()
++            .position(|item| item.id == selected)
++    });
++    let rows = if request.tabs.is_empty() {
++        request.items.len()
++    } else {
++        request
++            .tabs
++            .iter()
++            .map(|tab| {
++                request
++                    .items
++                    .iter()
++                    .filter(|item| item.tab.as_ref() == Some(&tab.id))
++                    .count()
++            })
++            .max()
++            .unwrap_or_default()
++    };
++    let items = |filter: &dyn Fn(&PanelItem) -> bool, searching: bool| {
++        request
++            .items
++            .iter()
++            .filter(|candidate| filter(candidate))
++            .map(|candidate| item(request, candidate, &keymap, searching))
++            .collect::<Vec<_>>()
++    };
++    let tabbed = !request.tabs.is_empty();
++    let params = SelectionViewParams {
++        view_id: Some(MOD_PANEL_VIEW_ID),
++        title: Some(request.title.clone()),
++        subtitle: request.subtitle.clone(),
++        max_visible_rows: rows.clamp(1, MAX_ROWS),
++        reserve_result_rows: tabbed,
++        row_display: SelectionRowDisplay::SingleLine,
++        description_layout: SelectionDescriptionLayout::SelectedBelowWhenNarrow {
++            min_description_width: 45,
++        },
++        footer_hint: Some(hint(&keymap, tabbed, request.search, None)),
++        is_searchable: request.search,
++        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
++        search_placeholder: Some("Type to search".to_owned()),
++        items: if tabbed {
++            Vec::new()
++        } else {
++            items(&|_| true, false)
++        },
++        search_items: if tabbed && request.search {
++            items(&|_| true, true)
++        } else {
++            Vec::new()
++        },
++        tabs: request
++            .tabs
++            .iter()
++            .map(|tab| SelectionTab {
++                id: tab.id.clone(),
++                label: tab.title.clone(),
++                header: Box::new(()),
++                items: items(&|item| item.tab.as_ref() == Some(&tab.id), false),
++            })
++            .collect(),
++        initial_tab_id: tab,
++        initial_selected_idx: selected,
++        initial_search_query: query,
++        ..SelectionViewParams::picker()
++    };
++    ListSelectionView::new(params, app_event_tx, keymap)
++}
++
++impl BottomPaneView for ModPanelView {
++    fn keymap_contexts(&self) -> KeymapContextSet {
++        KeymapContextSet::new(KeymapContext::List)
++    }
++
++    fn handle_key_event(&mut self, key: KeyEvent) {
++        if key.kind == KeyEventKind::Release {
++            return;
++        }
++        let plain = key.modifiers == KeyModifiers::NONE;
++        if self.picker.selected_index().is_none()
++            && (self.keymap.accept.is_pressed(key) || plain && key.code == KeyCode::Enter)
++            || !self.request.search
++                && plain
++                && matches!(key.code, KeyCode::Char(c) if c.is_ascii_digit())
++        {
++            return;
++        }
++        if key.code == KeyCode::Char(' ') && plain && self.picker.search_query().is_none() {
++            if let Some(index) = self.picker.selected_index() {
++                self.activate(index);
++            }
++            return;
++        }
++        self.picker.handle_key_event(key);
++        if let Some(index) = self.picker.take_last_selected_index() {
++            self.activate(index);
++        }
++    }
++
++    fn handle_paste(&mut self, text: String) -> bool {
++        self.picker.handle_paste(text)
++    }
++
++    fn prefer_esc_to_handle_key_event(&self) -> bool {
++        true
++    }
++
++    fn is_complete(&self) -> bool {
++        self.picker.is_complete()
++    }
++
++    fn view_id(&self) -> Option<&'static str> {
++        Some(MOD_PANEL_VIEW_ID)
++    }
++
++    fn selected_index(&self) -> Option<usize> {
++        self.picker.selected_index()
++    }
++
++    fn search_query(&self) -> Option<&str> {
++        self.picker.search_query()
++    }
++
++    fn active_tab_id(&self) -> Option<&str> {
++        self.picker.active_tab_id()
++    }
++
++    fn on_ctrl_c(&mut self) -> CancellationEvent {
++        self.picker.on_ctrl_c()
++    }
++
++    fn mod_panel(&mut self) -> Option<&mut ModPanelView> {
++        Some(self)
++    }
++}
++
++impl Renderable for ModPanelView {
++    fn desired_height(&self, width: u16) -> u16 {
++        self.picker.desired_height(width)
++    }
++
++    fn render(&self, area: Rect, buf: &mut Buffer) {
++        self.picker.render(area, buf);
++    }
++
++    fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
++        self.picker.cursor_pos(area)
++    }
++}
++
++#[cfg(test)]
++#[path = "mod_panel_tests.rs"]
++mod tests;
+diff --git a/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b9246e57b91f
+--- /dev/null
++++ b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
+@@ -0,0 +1,130 @@
++use super::*;
++use crate::keymap::RuntimeKeymap;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++use tokio::sync::mpsc::UnboundedReceiver;
++use tokio::sync::mpsc::unbounded_channel;
++
++fn request(changed: bool) -> ModPanelRequest {
++    let mut arguments = json!({
++        "title": "Demo",
++        "subtitle": "Preview\nsecond line",
++        "tabs": [{"id": "main", "title": "Main"}, {"id": "more", "title": "More"}],
++        "search": true,
++        "action": {"command": "panel", "args": "set"},
++        "items": [
++            {"id": "alpha", "tab": "main", "label": "Alpha", "kind": "toggle", "value": changed},
++            {"id": "mode", "tab": "main", "label": "Mode", "kind": "choice", "value": "b",
++                "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}]},
++            {"id": "name", "tab": "more", "label": "Name", "kind": "text", "value": "x"},
++            {"id": "reset", "tab": "more", "label": "Reset", "kind": "action"},
++        ],
++    });
++    if changed {
++        arguments["items"].as_array_mut().unwrap().insert(
++            2,
++            json!({"id": "added", "tab": "more", "label": "Added", "kind": "action"}),
++        );
++    }
++    ModPanelRequest::parse("demo", &arguments).expect("valid panel")
++}
++
++fn view() -> (ModPanelView, UnboundedReceiver<AppEvent>) {
++    let (tx, rx) = unbounded_channel();
++    let view = ModPanelView::new(
++        "demo".into(),
++        request(false),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    (view, rx)
++}
++
++fn press(view: &mut ModPanelView, code: KeyCode) {
++    view.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE));
++}
++
++fn sent(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
++    std::iter::from_fn(|| rx.try_recv().ok())
++        .filter_map(|event| match event {
++            AppEvent::ModPanelCommand { command, args } => Some(format!("{command} {args}")),
++            AppEvent::ModPanelPrompt {
++                title,
++                value,
++                command,
++                args,
++            } => Some(format!("prompt {title}={value} {command} {args}")),
++            _ => None,
++        })
++        .collect()
++}
++
++#[test]
++fn rejects_panels_that_name_another_mods_command_or_an_unknown_tab() {
++    let mut arguments = json!({"title": "T", "action": {"command": "other:cmd"},
++        "items": [{"id": "a", "label": "A", "kind": "action"}]});
++    assert!(ModPanelRequest::parse("demo", &arguments).is_err());
++    arguments["action"]["command"] = json!("cmd");
++    arguments["items"][0]["tab"] = json!("missing");
++    assert!(ModPanelRequest::parse("demo", &arguments).is_err());
++    arguments["items"][0] = json!({"id": "a", "label": "A", "kind": "choice",
++        "options": [{"value": "x", "label": "X"}, {"value": "x", "label": "Y"}]});
++    assert!(ModPanelRequest::parse("demo", &arguments).is_err());
++    arguments["items"][0]["options"][1]["value"] = json!("y z");
++    assert!(ModPanelRequest::parse("demo", &arguments).is_err());
++}
++
++#[test]
++fn keys_toggle_cycle_prompt_and_run_through_the_mods_command() {
++    let (mut view, mut rx) = view();
++    press(&mut view, KeyCode::Char(' '));
++    press(&mut view, KeyCode::Down);
++    press(&mut view, KeyCode::Enter);
++    press(&mut view, KeyCode::Right);
++    press(&mut view, KeyCode::Enter);
++    press(&mut view, KeyCode::Down);
++    press(&mut view, KeyCode::Char(' '));
++    assert_eq!(
++        sent(&mut rx),
++        [
++            "demo:panel set alpha true",
++            "demo:panel set mode a",
++            "prompt Name=x demo:panel set name",
++            "demo:panel set reset",
++        ]
++    );
++    assert!(!view.is_complete());
++    press(&mut view, KeyCode::Esc);
++    assert!(view.is_complete());
++}
++
++#[test]
++fn replacing_keeps_the_tab_selection_and_search() {
++    let (mut view, _rx) = view();
++    press(&mut view, KeyCode::Right);
++    press(&mut view, KeyCode::Down);
++    view.replace(request(true));
++    assert_eq!(view.active_tab_id(), Some("more"));
++    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "reset");
++    press(&mut view, KeyCode::Char('/'));
++    for c in "mod".chars() {
++        press(&mut view, KeyCode::Char(c));
++    }
++    view.replace(request(true));
++    assert_eq!(view.search_query(), Some("mod"));
++    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "mode");
++    press(&mut view, KeyCode::Char('z'));
++    press(&mut view, KeyCode::Enter);
++    assert!(!view.is_complete());
++    press(&mut view, KeyCode::Esc);
++    view.replace(
++        ModPanelRequest::parse(
++            "demo",
++            &json!({"title": "Demo", "action": {"command": "panel"},
++                "items": [{"id": "apply", "label": "Apply", "kind": "action"}]}),
++        )
++        .expect("valid panel"),
++    );
++    view.replace(request(false));
++    assert_eq!(view.active_tab_id(), Some("more"));
++}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fea70efeb5
@@ -141490,10 +142541,10 @@ index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fe
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2dbe93eba10212ab125b81cc455caae76c975569
+index 0000000000000000000000000000000000000000..9dff618f9fd8fb978338b619e500bd025892ac17
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,664 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -141552,27 +142603,56 @@ index 0000000000000000000000000000000000000000..2dbe93eba10212ab125b81cc455caae7
 +
 +    fn start_mod_command(&mut self, command: ModSlashCommand, args: String, quiet: bool) {
 +        crate::mod_ui::reopen_dialogs();
-+        let tx = self.app_event_tx.clone();
-+        let invocation = command.invocation.clone();
 +        let token = self.mod_token();
++        self.spawn_mod_commands(vec![(command, args)], token, quiet, true);
++    }
++
++    pub(crate) fn refresh_mod_panels(&mut self) {
++        let commands = self
++            .bottom_pane
++            .mod_panel_actions()
++            .into_iter()
++            .filter_map(|(command, args)| {
++                crate::mod_runtime::find(&command).map(|command| (command, args))
++            })
++            .collect::<Vec<_>>();
++        if !commands.is_empty() {
++            let token = self.mod_invocation(crate::mod_runtime::join);
++            self.spawn_mod_commands(commands, token, true, false);
++        }
++    }
++
++    fn spawn_mod_commands(
++        &mut self,
++        commands: Vec<(ModSlashCommand, String)>,
++        token: crate::mod_runtime::ModInvocation,
++        quiet: bool,
++        refresh_panels: bool,
++    ) {
++        let tx = self.app_event_tx.clone();
 +        let running = self.turn_lifecycle.agent_turn_running;
 +        std::thread::spawn(move || {
-+            let result = crate::mod_runtime::run_command(
-+                &command.invocation,
-+                &args,
-+                Some(&command.target),
-+                command.immediate,
-+                running,
-+                "user",
-+                &token,
-+                |_| Err("builtin_unavailable".to_owned()),
-+            );
-+            tx.send(AppEvent::ModCommandFinished {
-+                invocation,
-+                token,
-+                result,
-+                quiet,
-+            });
++            for (command, args) in commands {
++                let result = crate::mod_runtime::run_command(
++                    &command.invocation,
++                    &args,
++                    Some(&command.target),
++                    command.immediate,
++                    running,
++                    "user",
++                    &token,
++                    |_| Err("builtin_unavailable".to_owned()),
++                );
++                tx.send(AppEvent::ModCommandFinished {
++                    invocation: command.invocation,
++                    token: token.clone(),
++                    result,
++                    quiet,
++                });
++            }
++            if crate::mod_runtime::reloaded() && refresh_panels {
++                tx.send(AppEvent::ModPanelsReloaded);
++            }
 +        });
 +    }
 +
@@ -141618,6 +142698,39 @@ index 0000000000000000000000000000000000000000..2dbe93eba10212ab125b81cc455caae7
 +
 +    pub(crate) fn show_mod_secret_prompt(&mut self, view: crate::bottom_pane::SecretPromptView) {
 +        self.bottom_pane.show_view(Box::new(view));
++        self.request_redraw();
++    }
++
++    pub(crate) fn show_mod_panel(
++        &mut self,
++        caller: String,
++        request: crate::bottom_pane::ModPanelRequest,
++    ) {
++        self.bottom_pane.show_mod_panel(caller, request);
++        self.request_redraw();
++    }
++
++    pub(crate) fn show_mod_panel_prompt(
++        &mut self,
++        title: String,
++        value: String,
++        command: String,
++        args: String,
++    ) {
++        let tx = self.app_event_tx.clone();
++        let view = crate::bottom_pane::custom_prompt_view::CustomPromptView::new(
++            title,
++            String::new(),
++            value,
++            None,
++            Box::new(move |text| {
++                tx.send(AppEvent::ModPanelCommand {
++                    command: command.clone(),
++                    args: format!("{args} {text}"),
++                });
++            }),
++        );
++        self.bottom_pane.show_text_prompt(view);
 +        self.request_redraw();
 +    }
 +
@@ -142098,10 +143211,10 @@ index 0000000000000000000000000000000000000000..2dbe93eba10212ab125b81cc455caae7
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fb804ecff41dc5351e3d769e949bbe48ee6d804
+index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d44bebbe3
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,263 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -142294,6 +143407,16 @@ index 0000000000000000000000000000000000000000..4fb804ecff41dc5351e3d769e949bbe4
 +                        name: "All mods…".to_string(),
 +                        description: Some("Turn any installed mod on or off".to_string()),
 +                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenAllMods))],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    });
++                    items.push(SelectionItem {
++                        name: "Reload mods".to_string(),
++                        description: Some(
++                            "Reload every mod now, including changes made outside Codex"
++                                .to_string(),
++                        ),
++                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdReloadMods))],
 +                        dismiss_on_select: true,
 +                        ..Default::default()
 +                    });
@@ -143574,10 +144697,10 @@ index 0000000000000000000000000000000000000000..01cc663fdfa0cba5d9c7aceff7f3ed1e
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3b93aaa9c4decf77f9e803aae432727dfa0c45e6
+index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609dc79ac89b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,695 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -144220,6 +145343,15 @@ index 0000000000000000000000000000000000000000..3b93aaa9c4decf77f9e803aae432727d
 +        (KeyCode::Char('N'), KeyModifiers::SHIFT | KeyModifiers::NONE) => DocumentKey::FindPrevious,
 +        (KeyCode::Esc, _) => DocumentKey::Escape,
 +        _ => return None,
++    })
++}
++
++/// Whether Up/Down would move past the document's first or last line.
++pub(crate) fn at_edge(id: &str, key: DocumentKey) -> bool {
++    documents().get(id).is_some_and(|document| match key {
++        DocumentKey::Up => document.view.cursor == 0,
++        DocumentKey::Down => document.view.cursor + 1 >= document.lines.len(),
++        _ => false,
 +    })
 +}
 +
@@ -148052,10 +149184,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7b6f23a48
+index 0000000000000000000000000000000000000000..ff92c714082f139dfc1e697c66e93d34684a4b9b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1565 @@
+@@ -0,0 +1,1580 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -148818,6 +149950,21 @@ index 0000000000000000000000000000000000000000..bc89c39e02c2734d568c2937fc7bbcf7
 +pub(crate) fn contract_documents()
 +-> Option<Vec<(codex_omd::ContractDocument, codex_omd::PolicyOwner)>> {
 +    with_host(|runtime, _| Some(runtime.contract_documents()))
++}
++
++pub(crate) fn reloaded() -> bool {
++    static SEEN: Mutex<Option<u64>> = Mutex::new(None);
++    let Ok(runtime) = shared_host() else {
++        return false;
++    };
++    let generation = {
++        let mut runtime = runtime.locked();
++        reload(&mut runtime);
++        runtime.generation()
++    };
++    SEEN.locked()
++        .replace(generation)
++        .is_some_and(|seen| seen != generation)
 +}
 +
 +fn reload(runtime: &mut ModHost) {
@@ -152354,10 +153501,10 @@ index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f87629d03
+index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf8099f9ee
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4644 @@
+@@ -0,0 +1,4843 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -153925,9 +155072,16 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +        .collect()
 +}
 +
-+fn native_cards(snapshot: &ModViewSnapshot) -> Option<ModComponent> {
++fn native_cards(snapshot: &ModViewSnapshot, width: u16) -> Option<ModComponent> {
 +    const LINES: usize = 4;
-+    let cards = native_panels(snapshot)
++    let panels = native_panels(snapshot);
++    let count = u16::try_from(panels.len()).unwrap_or(u16::MAX).max(1);
++    let text_width = usize::from(
++        (width.saturating_sub(count - 1) / count)
++            .saturating_sub(4)
++            .max(8),
++    );
++    let cards = panels
 +        .into_iter()
 +        .enumerate()
 +        .map(|(index, panel)| {
@@ -153937,6 +155091,20 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            if more > 0 {
 +                lines.push(format!("+{more} more"));
 +            }
++            let lines = lines
++                .iter()
++                .flat_map(|line| {
++                    let mut wrapped = textwrap::wrap(line, text_width)
++                        .into_iter()
++                        .map(std::borrow::Cow::into_owned)
++                        .collect::<Vec<_>>();
++                    if wrapped.len() > 6 {
++                        wrapped.truncate(6);
++                        wrapped[5].push('…');
++                    }
++                    wrapped
++                })
++                .collect();
 +            ModComponent::Box {
 +                id: format!("@native_card_{index}"),
 +                label: panel.title.clone(),
@@ -155452,8 +156620,22 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            .retain(|hitbox| dialog_ids.contains(&hitbox.id));
 +        interaction.dialog_area = Some(dialog_area);
 +        if interaction.dialog.as_ref() != Some(&key) {
++            // A shown dialog whose content changed keeps its focused control; a newly shown one starts at its
++            // autofocus control or its first.
++            let kept = interaction.dialog.is_some()
++                && interaction
++                    .focused
++                    .as_ref()
++                    .is_some_and(|focused| dialog_ids.contains(focused));
 +            interaction.dialog = Some(key);
-+            interaction.focused = interaction.order.first().cloned();
++            if !kept {
++                interaction.focused = interaction
++                    .autofocus
++                    .iter()
++                    .find(|id| dialog_ids.contains(*id))
++                    .or(interaction.order.first())
++                    .cloned();
++            }
 +        }
 +    }
 +}
@@ -156043,6 +157225,16 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +
 +fn handle_input(key: KeyEvent) -> Option<ModInput> {
 +    let mut interaction = INTERACTION.locked();
++    // Held keys repeat only inside a dialog or a focused control, and never fire hotkeys or bindings.
++    let repeated = repeats(key) && (interaction.focused.is_some() || modal(&interaction, key));
++    let key = if repeated {
++        KeyEvent {
++            kind: KeyEventKind::Press,
++            ..key
++        }
++    } else {
++        key
++    };
 +    if key.kind != KeyEventKind::Press {
 +        return modal(&interaction, key).then_some(ModInput::Consumed);
 +    }
@@ -156076,13 +157268,19 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            return Some(ModInput::Consumed);
 +        }
 +    }
-+    if matches!(
++    let arrow = matches!(
 +        (key.code, key.modifiers),
-+        (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
-+    ) && interaction.focused.is_none()
++        (KeyCode::Up | KeyCode::Down, KeyModifiers::NONE)
++    ) && modal(&interaction, key);
++    if (arrow
++        || matches!(
++            (key.code, key.modifiers),
++            (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
++        ))
++        && interaction.focused.is_none()
 +        && !interaction.order.is_empty()
 +    {
-+        interaction.focused = if key.code == KeyCode::BackTab {
++        interaction.focused = if matches!(key.code, KeyCode::BackTab | KeyCode::Up) {
 +            interaction.order.last().cloned()
 +        } else {
 +            interaction.order.first().cloned()
@@ -156138,6 +157336,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +        && let Some(ComponentTarget::Document(_)) = interaction.targets.get(&focused)
 +        && !matches!(key.code, KeyCode::Tab | KeyCode::BackTab | KeyCode::Enter)
 +        && let Some(document_key) = crate::mod_components::key(key.code, key.modifiers)
++        && !crate::mod_components::at_edge(&focused, document_key)
 +    {
 +        crate::mod_components::handle(&focused, document_key);
 +        return Some(ModInput::Consumed);
@@ -156180,9 +157379,18 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +                toggle(&mut interaction, &focused, &target);
 +                return Some(ModInput::Consumed);
 +            }
++            (KeyCode::Char(' '), KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Select { .. }) =>
++            {
++                step(&mut interaction, focused, &target, true);
++                return Some(ModInput::Consumed);
++            }
 +            (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char(' '), KeyModifiers::NONE)
 +                if key.code == KeyCode::Enter
-+                    || matches!(target, ComponentTarget::ListRow { .. }) =>
++                    || matches!(
++                        target,
++                        ComponentTarget::ListRow { .. } | ComponentTarget::Button(_)
++                    ) =>
 +            {
 +                let label = interaction
 +                    .hitboxes
@@ -156192,11 +157400,26 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +                    .unwrap_or_else(|| focused.clone());
 +                return activate_target(&focused, &label, &target, &mut interaction);
 +            }
-+            (KeyCode::Left | KeyCode::Up | KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => {
-+                let forward = matches!(key.code, KeyCode::Right | KeyCode::Down);
-+                if step(&mut interaction, focused, &target, forward) {
-+                    return Some(ModInput::Consumed);
-+                }
++            (KeyCode::Up | KeyCode::Down, KeyModifiers::NONE)
++                if within(
++                    &mut interaction,
++                    focused.clone(),
++                    &target,
++                    key.code == KeyCode::Down,
++                ) || move_focus(&mut interaction, &focused, key.code == KeyCode::Down) =>
++            {
++                return Some(ModInput::Consumed);
++            }
++            (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Select { .. }) =>
++            {
++                step(
++                    &mut interaction,
++                    focused,
++                    &target,
++                    key.code == KeyCode::Right,
++                );
++                return Some(ModInput::Consumed);
 +            }
 +            _ => {}
 +        }
@@ -156217,6 +157440,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            )
 +    };
 +    if !editing
++        && !repeated
 +        && let Some(name) = key_name(key).filter(|name| codex_omd::mod_key_name(name))
 +        && let Some((id, target)) = interaction
 +            .hotkeys
@@ -156235,11 +157459,133 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +            ModInput::Binding(name, action)
 +        });
 +    }
-+    with_cache(|cache| action_for(&cache.snapshot.view, key))
-+        .flatten()
-+        .filter(|(_, action)| !blocked(action))
-+        .map(|(name, action)| ModInput::Binding(name, action))
-+        .or(modal.then_some(ModInput::Consumed))
++    if !repeated
++        && let Some(binding) = with_cache(|cache| action_for(&cache.snapshot.view, key))
++            .flatten()
++            .filter(|(_, action)| !blocked(action))
++    {
++        return Some(ModInput::Binding(binding.0, binding.1));
++    }
++    // Unbound typing in a dialog goes to its autofocus text input, so a filter needs no focusing first.
++    let document = interaction.focused.as_ref().is_some_and(|focused| {
++        matches!(
++            interaction.targets.get(focused),
++            Some(ComponentTarget::Document(_))
++        )
++    });
++    if modal
++        && !editing
++        && !document
++        && let KeyCode::Char(character) = key.code
++        && character != ' '
++        && !key
++            .modifiers
++            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++        && let Some(id) = interaction
++            .autofocus
++            .iter()
++            .find(|id| {
++                interaction.order.contains(*id)
++                    && matches!(
++                        interaction.targets.get(*id),
++                        Some(ComponentTarget::Input(_))
++                    )
++            })
++            .cloned()
++    {
++        interaction.focused = Some(id.clone());
++        edit_input(&mut interaction, &id, key.code);
++    }
++    modal.then_some(ModInput::Consumed)
++}
++
++/// Held navigation and editing keys repeat; Enter, Space, Tab and Esc act once per press.
++fn repeats(key: KeyEvent) -> bool {
++    key.kind == KeyEventKind::Repeat
++        && match key.code {
++            KeyCode::Up
++            | KeyCode::Down
++            | KeyCode::Left
++            | KeyCode::Right
++            | KeyCode::PageUp
++            | KeyCode::PageDown
++            | KeyCode::Home
++            | KeyCode::End
++            | KeyCode::Backspace
++            | KeyCode::Delete => true,
++            KeyCode::Char(character) => {
++                character != ' '
++                    && !key
++                        .modifiers
++                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++            }
++            _ => false,
++        }
++}
++
++/// Moves within a list or scrolled pane; false at its edge or for a control without rows.
++fn within(
++    interaction: &mut Interaction,
++    id: String,
++    target: &ComponentTarget,
++    forward: bool,
++) -> bool {
++    match target {
++        ComponentTarget::ListRow { options, .. } | ComponentTarget::Multiselect { options, .. } => {
++            let selected = interaction.selected.entry(id).or_default();
++            match forward {
++                true if *selected + 1 < options.len() => *selected += 1,
++                false if *selected > 0 => *selected -= 1,
++                _ => return false,
++            }
++        }
++        ComponentTarget::Pane => {
++            let limit = interaction.scroll_limits.get(&id).copied().unwrap_or(0);
++            let scroll = interaction.scroll.entry(id).or_default();
++            match forward {
++                true if *scroll < limit => *scroll += 1,
++                false if *scroll > 0 => *scroll -= 1,
++                _ => return false,
++            }
++        }
++        _ => return false,
++    }
++    true
++}
++
++/// Up/Down past a control's edge focus the previous or next control, entering a list at its near end; key panes
++/// and terminals, which keep every key, are reached only with Tab or a click. False when no control lies that way.
++fn move_focus(interaction: &mut Interaction, focused: &str, forward: bool) -> bool {
++    let Some(index) = interaction.order.iter().position(|id| id == focused) else {
++        return false;
++    };
++    let reachable = |id: &&String| {
++        interaction
++            .targets
++            .get(*id)
++            .is_some_and(|target| !matches!(target, ComponentTarget::Terminal(_, _)))
++    };
++    let next = if forward {
++        interaction.order[index + 1..].iter().find(reachable)
++    } else {
++        interaction.order[..index].iter().rev().find(reachable)
++    };
++    let Some(id) = next.cloned() else {
++        return false;
++    };
++    if let Some(
++        ComponentTarget::ListRow { options, .. } | ComponentTarget::Multiselect { options, .. },
++    ) = interaction.targets.get(&id)
++    {
++        let row = if forward {
++            0
++        } else {
++            options.len().saturating_sub(1)
++        };
++        interaction.selected.insert(id.clone(), row);
++    }
++    interaction.focused = Some(id);
++    true
 +}
 +
 +fn toggle(interaction: &mut Interaction, id: &str, target: &ComponentTarget) {
@@ -157004,7 +158350,7 @@ index 0000000000000000000000000000000000000000..723c29865084d289e1ba37b16587686f
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui/footer.rs b/codex-rs/tui/src/mod_ui/footer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d0c425a8d
+index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056fa838348
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui/footer.rs
 @@ -0,0 +1,244 @@
@@ -157089,7 +158435,7 @@ index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d
 +                    .collect()
 +            };
 +            mod_rows = rows.len();
-+            if let Some(cards) = native_cards(&snapshot) {
++            if let Some(cards) = native_cards(&snapshot, width) {
 +                rows.extend(component_rows(&[cards], width, &mut interaction, look));
 +            }
 +            rows.extend(
@@ -157254,10 +158600,10 @@ index 0000000000000000000000000000000000000000..7a295af433cd91c86fe2da73af93998d
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f81fb43f2
+index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e85c36ed3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1966 @@
+@@ -0,0 +1,2050 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -157505,6 +158851,16 @@ index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f
 +            && notes.contains("+2 more"),
 +        "{notes}"
 +    );
++    snapshot.diagnostics = vec![
++        "Mods are off in /Users/someone/project: it is neither the launch project nor one of its worktrees".into(),
++    ];
++    preview(snapshot.clone());
++    let notes = footer_hyperlink_lines(66)
++        .iter()
++        .map(|line| line.line.to_string())
++        .collect::<Vec<_>>()
++        .join("\n");
++    assert!(notes.contains("worktrees"), "{notes}");
 +    snapshot.view.panels.clear();
 +    assert_eq!(sidebar(area, &snapshot), None);
 +    preview(ModViewSnapshot::default());
@@ -157639,6 +158995,80 @@ index 0000000000000000000000000000000000000000..db98ef5d7dc248d77e15282fd431065f
 +    assert!(!preserve_preview(&preview, &later));
 +    later.view.sites.clear();
 +    assert!(!preserve_preview(&preview, &later));
++}
++
++#[test]
++#[serial_test::serial]
++fn dialog_arrows_cross_controls_repeat_and_typing_reaches_a_leading_filter() {
++    let snapshot = snapshot(serde_json::json!({
++        "sites":{"dialog":{"components":[{
++            "type":"dialog","id":"picker","label":"Picker","title":"Picker","children":[
++                {"type":"input","id":"filter","label":"Filter","value":"","autofocus":true,"action":{"command":"m:c","args":"filter"}},
++                {"type":"list","id":"rows","label":"Rows","rows":[
++                    {"value":"a","label":"A","spans":[{"text":"A"}]},
++                    {"value":"b","label":"B","spans":[{"text":"B"}]},
++                    {"value":"c","label":"C","spans":[{"text":"C"}]}],"action":{"command":"m:c","args":"pick"}},
++                {"type":"select","id":"mode","label":"Mode","value":"x","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"action":{"command":"m:c","args":"mode"}},
++                {"type":"button","id":"go","label":"Go","text":"Go","action":{"command":"m:c","args":"go"}}
++            ]
++        }]}}
++    }));
++    sync_interaction(&snapshot.view);
++    let area = Rect::new(0, 0, 80, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let key = |code| input(KeyEvent::new(code, KeyModifiers::NONE));
++    let state = || {
++        let interaction = INTERACTION.locked();
++        (
++            interaction.focused.clone().unwrap_or_default(),
++            interaction.selected.get("rows").copied(),
++            interaction.selected.get("mode").copied(),
++        )
++    };
++    assert_eq!(state().0, "filter");
++    key(KeyCode::Down);
++    assert_eq!((state().0, state().1), ("rows".into(), Some(0)));
++    let mut held = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
++    held.kind = KeyEventKind::Repeat;
++    input(held);
++    input(held);
++    assert_eq!(state().1, Some(2), "a held arrow repeats");
++    key(KeyCode::Down);
++    assert_eq!(
++        state().0,
++        "mode",
++        "Down past a list's last row reaches the next control"
++    );
++    key(KeyCode::Up);
++    assert_eq!(
++        (state().0, state().1),
++        ("rows".into(), Some(2)),
++        "entering from below starts at the last row"
++    );
++    assert!(focus("mode"));
++    key(KeyCode::Right);
++    assert_eq!(state().2, Some(1));
++    key(KeyCode::Char(' '));
++    assert_eq!(state().2, Some(0), "Space steps a select");
++    key(KeyCode::Down);
++    assert_eq!(state().0, "go", "Up and Down never change a select");
++    assert!(matches!(
++        key(KeyCode::Char(' ')),
++        Some(ModInput::Interaction(_, ModKeyAction::Command { args, .. })) if args == "go"
++    ));
++    let mut held_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
++    held_enter.kind = KeyEventKind::Repeat;
++    assert!(
++        matches!(input(held_enter), Some(ModInput::Consumed)),
++        "a held Enter acts once"
++    );
++    assert!(focus("rows"));
++    key(KeyCode::Char('q'));
++    let interaction = INTERACTION.locked();
++    assert_eq!(interaction.focused.as_deref(), Some("filter"));
++    assert_eq!(interaction.input_values["filter"], "q");
++    drop(interaction);
++    preview(ModViewSnapshot::default());
 +}
 +
 +#[test]

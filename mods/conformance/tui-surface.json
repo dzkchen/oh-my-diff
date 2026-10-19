@@ -119,6 +119,7 @@
     "terminal.notify",
     "terminal.open",
     "terminal.pane",
+    "terminal.panel",
     "terminal.panes",
     "terminal.prompt",
     "terminal.pty",

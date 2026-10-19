@@ -189,7 +189,7 @@ Capabilities name authority classes. A call or registration outside the package'
 
 | Capability | Grants |
 | --- | --- |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
@@ -3265,12 +3265,13 @@ initial view; real disabled, broken or reloaded publications replace it.
 #### `welcome` site
 
 The reserved `welcome` site renders bounded generic components centered in the owned transcript's unused area.
-`welcome: {show_while_composing: true}` keeps the site visible with a draft; the default shows it only with an
-empty composer.
+`welcome: {show_while_composing: true}` keeps the site visible with a draft, including while the slash-command, file
+or mention popup is open; the default shows it only with an empty composer.
 
 - Accepted/running and resumed sessions, transcript selection/search, raw output and overlays suppress it.
-- Existing transcript, failures, approvals and input retain their space; if no blank space fits the components, the
-  site does not draw.
+- Any history beyond the startup header and notices (a command's output, a rejected submission) hides it until a new
+  thread, like Codex's own welcome.
+- Approvals and input retain their space; if no blank space fits the components, the site does not draw.
 - Inline output retains the native transcript without the centered decoration.
 - No welcome site preserves Codex's normal blossom policy.
 
@@ -3667,8 +3668,8 @@ draw no frame.
   `sidebar_style` sets one, which then carries the view `title`.
 - A split's `gap` (0–4) leaves cells between its children.
 - Render hook trees refuse `style` and `flex`.
-- The host's progress and mod diagnostics draw as cards above the prompt (four lines each, then `+N more`), so the
-  sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
+- The host's progress and mod diagnostics draw as cards above the prompt (four entries each, wrapped to
+  six lines, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 #### Terminal operations
 
@@ -3718,6 +3719,34 @@ caller's own panes, dialogs or controls; another mod's component is `terminal_pa
 
 `terminal.panes {}` (`ui_controls_v1`) returns the caller's own panes as `{panes: [{id, visible, collapsed,
 focused, scroll}]}`; a pane is `visible` while its header row was on screen in the last frame.
+
+##### `terminal.panel`
+
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
+bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
+tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
+unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
+
+| `kind` | `value` | Space or Enter |
+| --- | --- | --- |
+| `toggle` | boolean | Flips it. |
+| `choice` | one of `options`, 1–32 `{value, label}` with unique values without spaces | Moves to the next option. |
+| `text` | string up to 2,000 bytes | Opens Codex's single-line prompt; an empty answer is ignored. |
+| `action` | none | Runs the action. |
+
+Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
+(`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
+switch tabs, `/` searches labels, descriptions and tab titles across every tab when `search` is true, and Esc clears
+the search or closes the panel. A call with the title of the caller's open panel replaces it in place and keeps its
+tab (also across a tab-less panel such as a confirmation), selected item and search; another title opens a new panel
+over it, and Esc returns to the one below. Only the user's own commands and panel actions open panels
+(`host_operation_user_only` elsewhere). Returns `{shown: true}`.
+
+A package or settings change (`packages.apply`, `settings.write`) reloads mods, and the rest of that callback's
+panel calls fail with `callback_cancelled`. When a command that changed packages or settings finishes, every open
+panel's `action.command` runs again with its `args` alone, bottom panel first, so each mod redraws its panels from
+current state; keep anything the redraw needs, such as a result notice, in `api.uiState` or in `args`.
 
 ##### `terminal.notice`
 
@@ -3996,7 +4025,8 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
 ```
 
 - `reload` reloads the mods at once, refreshes the session's limits and contract and pushes the new view, or fails
-  with `recovery_unavailable_during_turn` while the lead thread's turn runs.
+  with `recovery_unavailable_during_turn` while the lead thread's turn runs. It needs no attached client: `/omd`'s
+  Reload mods sends it from the terminal.
 - `enable`, `disable` and `reset` change what runs or reset `host.json`/`mods.json`, so like `packages.apply` and
   `config.set` they need the terminal (`/omd`) or `omd-mod` and fail for a client with
   `client_surface_operation_unavailable`.
@@ -4335,11 +4365,18 @@ reports the composed view's diagnostics under `terminal`.
 
 #### Input and focus
 
-- A dialog focuses its first item when it opens.
+- A dialog focuses its first item when it opens, or the control it `autofocus`es.
+- Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
+  first or last row (or on any other control), focus the previous or next control; entering a list from above
+  starts at its first row, from below at its last; key panes and terminals are reached only with Tab or a click.
+  Left and Right change a `select`.
+- While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
+  repeat; Enter, Space, Tab and Esc act once per press, and a held key never fires a hotkey or view binding.
+- In a dialog, typing that no binding takes goes to its `autofocus` input.
 - Esc, Ctrl+] or a click outside releases focus and hides the dialog until a mod command runs, and Esc reaches the
   focused component's owner as `component_event {kind: 'input', events: [{key: 'Esc'}]}`.
 - A shown dialog is modal: keys it does not bind never reach the composer behind it (Ctrl+C still interrupts).
-- Space on a focused `list` row activates it like Enter.
+- Space on a focused `list` row or `button` activates it like Enter; on a `select` it steps to the next option.
 - On a focused `multiselect`, Space toggles the current option and Enter runs its action with the checked values as
   a JSON array argument.
 - A `hotkey` on a button, input, select, multiselect or list focuses it (a button runs its action) unless a text
