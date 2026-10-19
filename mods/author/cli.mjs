@@ -14,6 +14,14 @@ const stableSdkRoot = (() => {
   const current = match ? `${match[1]}/current${match[2]}` : null;
   return current && existsSync(current) && realpathSync(current) === realpathSync(sdkRoot) ? current : sdkRoot;
 })();
+// A managed (curl) install records its release, which publishes the SDK archive collaborators fetch without OMD.
+const releaseSpec = (() => {
+  try {
+    const record = JSON.parse(readFileSync(join(sdkRoot, '../../install.json'), 'utf8'));
+    return record.update && `https://github.com/dzkchen/oh-my-diff/releases/download/v${record.version}/mod-api.tgz`;
+  } catch { return null; }
+})();
+const sdkSpec = process.env.OMD_MOD_SDK_SPEC || releaseSpec || `file:${stableSdkRoot}`;
 const sdkPackage = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8'));
 const apiVersion = sdkPackage.version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
@@ -53,7 +61,7 @@ function packageJson(name) {
       watch: 'omd-mod-author watch .',
     },
     devDependencies: {
-      '@oh-my-diff/mod-api': process.env.OMD_MOD_SDK_SPEC || `file:${stableSdkRoot}`,
+      '@oh-my-diff/mod-api': sdkSpec,
       ...(process.env.OMD_MOD_TYPESCRIPT_SPEC ? { typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC } : {}),
     },
   };
@@ -108,10 +116,10 @@ async function writeProjectFiles(directory, name, scenarios) {
   for (const [file, scenario] of Object.entries(scenarios)) await writeJson(join(directory, file), scenario);
 }
 
-// The SDK is a local file dependency, so the scaffold and its lockfile install without the network.
+// A file: SDK installs without the network; any other spec needs it once to record the archive's integrity.
 function lock(directory) {
-  const result = spawnSync('pnpm', ['install', '--offline', '--silent'], { cwd: directory, encoding: 'utf8' });
-  if (result.status !== 0) process.stderr.write('pnpm install --offline did not complete; run pnpm install in the project to link the SDK\n');
+  const result = spawnSync('pnpm', ['install', ...sdkSpec.startsWith('file:') ? ['--offline'] : [], '--silent'], { cwd: directory, encoding: 'utf8' });
+  if (result.status !== 0) process.stderr.write('pnpm install did not complete; run pnpm install in the project to link the SDK\n');
 }
 
 async function createProject(directory, name) {

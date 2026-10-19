@@ -181,19 +181,42 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
         } else {
             format!(" --scope {scope}")
         };
-    let store = codex_omd::ModStore::open(store_root(root)?)?;
+    let root = store_root(root)?;
+    let store = codex_omd::ModStore::open(root.clone())?;
     let first = || positional.first().cloned().ok_or_else(usage);
     let done = |display: String| Ok(json!({"display": display}));
     match action {
         "list" => {
             let listed = package_controls::list(&store, None)?;
+            // The CLI has no runtime; the last session's status records its load rejections and faults.
+            let path = root.join("mod-status.json");
+            let status = std::fs::symlink_metadata(&path)
+                .ok()
+                .filter(|metadata| metadata.is_file() && metadata.len() <= 262_144)
+                .and_then(|_| std::fs::read(&path).ok())
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .unwrap_or_default();
+            let last_session = |package: &Value| {
+                let failed = |key: &str, field: &str, matches: &dyn Fn(&Value) -> bool| {
+                    status[key]
+                        .as_array()?
+                        .iter()
+                        .find(|item| matches(item))?[field]
+                        .as_str()
+                };
+                failed("mods", "error", &|item| {
+                    item["id"] == package["id"] && item["scope"] == package["scope"]
+                })
+                .or_else(|| failed("rejected", "reason", &|item| item["path"] == package["path"]))
+                .filter(|_| package["enabled"] == true)
+            };
             let rows = listed["packages"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .map(|package| {
                     format!(
-                        "{} {} {} {}{}",
+                        "{} {} {} {}{}{}",
                         package["id"].as_str().unwrap_or("?"),
                         package["version"].as_str().unwrap_or("-"),
                         package["scope"].as_str().unwrap_or("-"),
@@ -204,7 +227,13 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
                         },
                         package["source"]
                             .as_str()
-                            .map_or(String::new(), |source| format!(" ({source})"))
+                            .map_or(String::new(), |source| format!(" ({source})")),
+                        package["failed"]
+                            .as_str()
+                            .map(|failed| format!(" failed: {failed}"))
+                            .or_else(|| last_session(package)
+                                .map(|failed| format!(" failed in the last session: {failed}")))
+                            .unwrap_or_default()
                     )
                 })
                 .collect::<Vec<_>>();

@@ -741,8 +741,8 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
 Mods never run with the home directory or filesystem root as the session directory: the host stays off with a
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
-fails with `state_thread_unavailable`. A callback result, including its state, stays within 256
-KiB.
+fails with `state_thread_unavailable`; in the TUI, a slash command typed before the session's thread exists runs once
+it does. A callback result, including its state, stays within 256 KiB.
 
 #### `state_version` migration of thread and checkout state
 
@@ -4340,7 +4340,8 @@ off; any successful callback resets the count. These failures don't count: error
 `state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`, `host_receipt_limit`,
 `host_result_limit`, `host_call_limit` or `callback_execution_budget`, and failures of `service` and `component`
 events. The count lives in the process and is not persisted, so each `omd-mod command` starts at 0 and
-`omd-mod status` shows `faults: 0` afterwards. A mod turned off in a running host comes back with `/omd` > Reload mods.
+`omd-mod status` shows `faults: 0` afterwards. The TUI says once in the transcript when a mod is turned off, and
+`/omd` and `omd mods list` show why. A mod turned off in a running host comes back with `/omd` > Reload mods.
 
 ### Registration, view and callback rules
 

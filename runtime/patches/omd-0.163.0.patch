@@ -35342,7 +35342,7 @@ index 681fc9bcae31032ce05b769309dea30f53241701..c46b29bac576fd28c05dea6e4b2646d1
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 2f74f843d59d8578fe32a195de0c664bf049e4fe..a00ada946756a57de710e175cd1314b7c2d41ca4 100644
+index 2f74f843d59d8578fe32a195de0c664bf049e4fe..6eed20edb41ee04d871a1a860f13a8c55a440eed 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -310,6 +310,7 @@ mod interaction;
@@ -35391,25 +35391,33 @@ index 2f74f843d59d8578fe32a195de0c664bf049e4fe..a00ada946756a57de710e175cd1314b7
      available_rate_limit_reset_credits: Option<i64>,
      next_rate_limit_reset_request_id: u64,
      plan_type: Option<PlanType>,
-@@ -683,6 +689,9 @@ pub(crate) struct ChatWidget {
+@@ -683,6 +689,11 @@ pub(crate) struct ChatWidget {
      forked_from: Option<ThreadId>,
      interrupted_turn_notice_mode: InterruptedTurnNoticeMode,
      frame_requester: FrameRequester,
 +    mod_draft_change: Option<(serde_json::Value, std::time::Instant)>,
++    /// Mod commands started before the session thread existed; thread-scoped state needs its id.
++    held_mod_commands: Vec<(crate::mod_runtime::ModSlashCommand, String, bool)>,
 +    /// Client message id the next submission carries, set by a consented mod prompt.
 +    mod_client_id: Option<String>,
      // Whether to include the initial welcome banner on session configured
      show_welcome_banner: bool,
      // One-shot tooltip override for the primary startup session.
-@@ -1168,6 +1177,7 @@ impl ChatWidget {
+@@ -1168,6 +1179,13 @@ impl ChatWidget {
      }
 
      pub(crate) fn pre_draw_tick(&mut self) {
 +        self.mod_draft_tick();
++        for id in codex_omd::take_turned_off() {
++            self.add_info_message(
++                format!("{id} is now off after repeated failures; /omd shows why and reloads it"),
++                None,
++            );
++        }
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1311,6 +1321,11 @@ impl ChatWidget {
+@@ -1311,6 +1329,11 @@ impl ChatWidget {
          from_replay: bool,
          turn_id: &str,
      ) {
@@ -35499,7 +35507,7 @@ index e769319de7d8bb2e1dc4ab6cc9d71675c739bc48..85826fbf2d58d515fa7dbb340a3620d0
              std::mem::take(&mut previous.rate_limit_snapshots_by_limit_id);
          self.usage_notice_state = std::mem::take(&mut previous.usage_notice_state);
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..d92bdcad719075082e3cc8a9483b5ce7e8a89493 100644
+index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..2f16aa9782f97d950dff50c3cde23dc53f25a14d 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -39,7 +39,11 @@ impl ChatWidget {
@@ -35523,16 +35531,17 @@ index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..d92bdcad719075082e3cc8a9483b5ce7
          let effective_service_tier = crate::service_tier_resolution::effective_service_tier(
              &config,
              &local_settings.notices,
-@@ -101,6 +106,8 @@ impl ChatWidget {
+@@ -101,6 +106,9 @@ impl ChatWidget {
              daybreak_enabled: false,
              app_event_tx: app_event_tx.clone(),
              frame_requester: frame_requester.clone(),
 +            mod_draft_change: None,
++            held_mod_commands: Vec::new(),
 +            mod_client_id: None,
              codex_op_target,
              bottom_pane: BottomPane::new(BottomPaneParams {
                  frame_requester,
-@@ -125,6 +132,8 @@ impl ChatWidget {
+@@ -125,6 +133,8 @@ impl ChatWidget {
              active_collaboration_mask,
              has_chatgpt_account,
              requires_openai_auth,
@@ -35541,7 +35550,7 @@ index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..d92bdcad719075082e3cc8a9483b5ce7
              has_codex_backend_auth,
              model_catalog,
              model_popup_request_id: None,
-@@ -149,6 +158,7 @@ impl ChatWidget {
+@@ -149,6 +159,7 @@ impl ChatWidget {
              token_info: None,
              token_usage_pending: false,
              rate_limit_snapshots_by_limit_id: BTreeMap::new(),
@@ -36275,7 +36284,7 @@ index 1ebff8fcb314d5c8c2a867c18def36b1b2f7ea60..f6cdd9ee8868121a1cee795323665356
              ThreadItem::ImageGeneration(item) => {
                  self.on_image_generation_end(
 diff --git a/codex-rs/tui/src/chatwidget/session_flow.rs b/codex-rs/tui/src/chatwidget/session_flow.rs
-index 6077a0f9ef11faec6a95b69ddf9d50616c00a6c4..7df3b023ff5c7e661d0a1229dfda16dfc2dfbbae 100644
+index 6077a0f9ef11faec6a95b69ddf9d50616c00a6c4..82a47220b1fbb3f1a2b999da4e33772cf4fa89a9 100644
 --- a/codex-rs/tui/src/chatwidget/session_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/session_flow.rs
 @@ -115,7 +115,13 @@ impl ChatWidget {
@@ -36293,6 +36302,14 @@ index 6077a0f9ef11faec6a95b69ddf9d50616c00a6c4..7df3b023ff5c7e661d0a1229dfda16df
          self.set_daybreak_enabled(self.daybreak_enabled);
          if self.daybreak_enabled && previous_thread_id != self.thread_id {
              self.add_info_message("Daybreak is on for new turns.".into(), /*hint*/ None);
+@@ -244,6 +250,7 @@ impl ChatWidget {
+         {
+             self.maybe_send_next_queued_input();
+         }
++        self.run_held_mod_commands();
+         if display == SessionConfiguredDisplay::Normal
+             && let Some(forked_from_id) = forked_from_id
+         {
 diff --git a/codex-rs/tui/src/chatwidget/settings.rs b/codex-rs/tui/src/chatwidget/settings.rs
 index b0b9674c6ae5849dabb63bf873ec5ea082da6dbe..ac07fb1c6aed804965d8fecd7452fc00b24a4291 100644
 --- a/codex-rs/tui/src/chatwidget/settings.rs
@@ -36675,6 +36692,48 @@ index 8534d753f6c92a7a0fdc8254d970bb260a4b4faa..0e4700cb55661e5f4b2287e7f3846751
  pub(super) use helpers::*;
 
  #[path = "tests/questions_tests.rs"]
+diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
+index 8e83ad083ae63717492fe3d7d60bf29f7cf19e8e..f8e09a0a77ee03e5cc981bbbbdc35c4df19639ae 100644
+--- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
++++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
+@@ -69,6 +69,37 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+     }
+ }
+
++#[tokio::test]
++async fn mod_command_before_the_session_thread_runs_with_its_id() {
++    let (mut chat, mut events, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    let command = crate::mod_runtime::ModSlashCommand {
++        invocation: "probe".to_string(),
++        description: String::new(),
++        args_hint: None,
++        immediate: false,
++        target: crate::mod_runtime::ModSlashTarget {
++            id: "probe_fixture".to_string(),
++            command: "probe".to_string(),
++        },
++    };
++    chat.run_mod_command(command, String::new());
++    assert_eq!(chat.held_mod_commands.len(), 1);
++
++    let thread_id = ThreadId::new();
++    chat.handle_thread_session(configured_thread_session(thread_id));
++    assert!(chat.held_mod_commands.is_empty());
++    let token = tokio::time::timeout(std::time::Duration::from_secs(10), async {
++        loop {
++            if let Some(AppEvent::ModCommandFinished { token, .. }) = events.recv().await {
++                break token;
++            }
++        }
++    })
++    .await
++    .expect("held command runs");
++    assert_eq!(token.context.thread_id, Some(thread_id));
++}
++
+ #[tokio::test]
+ async fn session_header_uses_catalog_display_name_without_changing_model() {
+     let slug = "us.openai.gpt-5.6-luna";
 diff --git a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs b/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
 index 6ef2db01fb53431a6bf79562780057f340477f42..9b6cbeaaaba53a6a1b0c1756fac7ce1d88d5535a 100644
 --- a/codex-rs/tui/src/chatwidget/tests/composer_submission.rs
@@ -86888,10 +86947,10 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6820ef768d54b4c548ef3e51cf70684f13efd61b
+index 0000000000000000000000000000000000000000..4dfa068998f8c3d6c2d29bed31462260374659b0
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,712 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -87075,19 +87134,42 @@ index 0000000000000000000000000000000000000000..6820ef768d54b4c548ef3e51cf70684f
 +        } else {
 +            format!(" --scope {scope}")
 +        };
-+    let store = codex_omd::ModStore::open(store_root(root)?)?;
++    let root = store_root(root)?;
++    let store = codex_omd::ModStore::open(root.clone())?;
 +    let first = || positional.first().cloned().ok_or_else(usage);
 +    let done = |display: String| Ok(json!({"display": display}));
 +    match action {
 +        "list" => {
 +            let listed = package_controls::list(&store, None)?;
++            // The CLI has no runtime; the last session's status records its load rejections and faults.
++            let path = root.join("mod-status.json");
++            let status = std::fs::symlink_metadata(&path)
++                .ok()
++                .filter(|metadata| metadata.is_file() && metadata.len() <= 262_144)
++                .and_then(|_| std::fs::read(&path).ok())
++                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++                .unwrap_or_default();
++            let last_session = |package: &Value| {
++                let failed = |key: &str, field: &str, matches: &dyn Fn(&Value) -> bool| {
++                    status[key]
++                        .as_array()?
++                        .iter()
++                        .find(|item| matches(item))?[field]
++                        .as_str()
++                };
++                failed("mods", "error", &|item| {
++                    item["id"] == package["id"] && item["scope"] == package["scope"]
++                })
++                .or_else(|| failed("rejected", "reason", &|item| item["path"] == package["path"]))
++                .filter(|_| package["enabled"] == true)
++            };
 +            let rows = listed["packages"]
 +                .as_array()
 +                .into_iter()
 +                .flatten()
 +                .map(|package| {
 +                    format!(
-+                        "{} {} {} {}{}",
++                        "{} {} {} {}{}{}",
 +                        package["id"].as_str().unwrap_or("?"),
 +                        package["version"].as_str().unwrap_or("-"),
 +                        package["scope"].as_str().unwrap_or("-"),
@@ -87098,7 +87180,13 @@ index 0000000000000000000000000000000000000000..6820ef768d54b4c548ef3e51cf70684f
 +                        },
 +                        package["source"]
 +                            .as_str()
-+                            .map_or(String::new(), |source| format!(" ({source})"))
++                            .map_or(String::new(), |source| format!(" ({source})")),
++                        package["failed"]
++                            .as_str()
++                            .map(|failed| format!(" failed: {failed}"))
++                            .or_else(|| last_session(package)
++                                .map(|failed| format!(" failed in the last session: {failed}")))
++                            .unwrap_or_default()
 +                    )
 +                })
 +                .collect::<Vec<_>>();
@@ -97252,10 +97340,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5daca384e6b77c2528ecbee47aacb0b8f4e895b9
+index 0000000000000000000000000000000000000000..8ea7621f51fdc146fd4b1847292b2076b18ac1e0
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,248 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97495,6 +97583,7 @@ index 0000000000000000000000000000000000000000..5daca384e6b77c2528ecbee47aacb0b8
 +pub use mods::persist_cut;
 +pub use mods::persist_texts;
 +pub use mods::render_shared;
++pub use mods::take_turned_off;
 +pub use mods::valid_glyphs;
 +pub use mods::write_settings;
 +
@@ -99140,10 +99229,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..98aa5246c957166e0472e27c3b3d5dcc6685f5fb
+index 0000000000000000000000000000000000000000..d96923bdd34ce03854adb35100fdd33aa730687f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6127 @@
+@@ -0,0 +1,6144 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -101692,6 +101781,16 @@ index 0000000000000000000000000000000000000000..98aa5246c957166e0472e27c3b3d5dcc
 +static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
 +    Mutex::new(BTreeMap::new());
 +static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
++static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
++
++/// Mods any host in this process turned off for repeated faults since the last call.
++pub fn take_turned_off() -> Vec<String> {
++    std::mem::take(
++        &mut *TURNED_OFF
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner),
++    )
++}
 +
 +fn reset_ui_states(root: &Path, revision: u64) {
 +    if UI_RESETS.lock().map_or(true, |mut resets| {
@@ -101860,6 +101959,13 @@ index 0000000000000000000000000000000000000000..98aa5246c957166e0472e27c3b3d5dcc
 +        if self.telemetry.faults >= MOD_FAULT_LIMIT && self.error.is_none() {
 +            self.error = Some(error.clone());
 +            self.clear_ui();
++            let mut turned_off = TURNED_OFF
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            // Each host counts its own faults; one notice per mod, and processes that never drain stay bounded.
++            if !turned_off.contains(&self.package.id) {
++                turned_off.push(self.package.id.clone());
++            }
 +        }
 +        self.telemetry.last_error = Some(error);
 +    }
@@ -113224,10 +113330,10 @@ index 0000000000000000000000000000000000000000..262995594fc1c7ec9281bc3138c3e44d
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c55f7f7c3
+index 0000000000000000000000000000000000000000..9f7ef2890f750005f1bda5910975d036f4eac606
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,744 @@
+@@ -0,0 +1,755 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -113320,17 +113426,17 @@ index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c
 +
 +#[cfg(target_os = "macos")]
 +fn footprint(pid: u32) -> Option<u64> {
-+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
-+    // SAFETY: `info` is a writable `rusage_info_v0`, the size `RUSAGE_INFO_V0` asks for.
++    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
++    // SAFETY: `info` is a writable `rusage_info_v4`, the size `RUSAGE_INFO_V4` asks for.
 +    let status = unsafe {
 +        libc::proc_pid_rusage(
 +            pid as libc::c_int,
-+            libc::RUSAGE_INFO_V0,
++            libc::RUSAGE_INFO_V4,
 +            info.as_mut_ptr().cast(),
 +        )
 +    };
 +    // SAFETY: a zero status filled `info`.
-+    (status == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
++    (status == 0).then(|| unsafe { info.assume_init() }.ri_lifetime_max_phys_footprint)
 +}
 +
 +/// Runners exist only on macOS (`command`).
@@ -113339,7 +113445,13 @@ index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c
 +    None
 +}
 +
-+/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose physical footprint passes `MEMORY_LIMIT`.
++/// Whether a live runner's peak physical footprint has passed `MEMORY_LIMIT`; checked on every reply because a
++/// callback can allocate and answer between two watchdog polls.
++fn overran(child: &Child) -> bool {
++    footprint(child.id()).is_some_and(|bytes| bytes > MEMORY_LIMIT)
++}
++
++/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose peak physical footprint passes `MEMORY_LIMIT`.
 +fn track(child: &Child) {
 +    static WATCHDOG: std::sync::Once = std::sync::Once::new();
 +    TRACKED
@@ -113818,6 +113930,10 @@ index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c
 +    warm.kept = kept;
 +    let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
 +    let error = match output {
++        Ok(Some(_)) if overran(&warm.child) => {
++            warm.stop();
++            return Err(memory_failure());
++        }
 +        Ok(Some(value)) if value.get("error").is_none() => {
 +            pool(warm);
 +            return Ok(value);
@@ -113944,6 +114060,7 @@ index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c
 +        .ok_or_else(|| failure("missing_stdout"))?;
 +    let (lines, reader) = lines(stdout);
 +    let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
++    let overran = overran(&child);
 +    drop(stdin);
 +    if output.is_ok() {
 +        while !exited(&mut child) && Instant::now() < deadline {
@@ -113955,7 +114072,7 @@ index 0000000000000000000000000000000000000000..eb75e438098eb414ddbd36922c95049c
 +    let status = child.wait();
 +    let _ = reader.join();
 +    let errors = errors.join().unwrap_or_default();
-+    if exceeded {
++    if exceeded || overran {
 +        return Err(memory_failure());
 +    }
 +    let output = output?;
@@ -145669,10 +145786,10 @@ index 0000000000000000000000000000000000000000..d09c2e94aba8325cfa392be009e2d4fe
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9dff618f9fd8fb978338b619e500bd025892ac17
+index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982dcdee82f
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,664 @@
+@@ -0,0 +1,674 @@
 +use super::slash_dispatch::InterceptedCommand;
 +use super::slash_dispatch::PreparedSlashCommandArgs;
 +use super::slash_dispatch::SlashCommandDispatchSource;
@@ -145730,9 +145847,19 @@ index 0000000000000000000000000000000000000000..9dff618f9fd8fb978338b619e500bd02
 +    }
 +
 +    fn start_mod_command(&mut self, command: ModSlashCommand, args: String, quiet: bool) {
++        if self.thread_id.is_none() {
++            self.held_mod_commands.push((command, args, quiet));
++            return;
++        }
 +        crate::mod_ui::reopen_dialogs();
 +        let token = self.mod_token();
 +        self.spawn_mod_commands(vec![(command, args)], token, quiet, true);
++    }
++
++    pub(crate) fn run_held_mod_commands(&mut self) {
++        for (command, args, quiet) in std::mem::take(&mut self.held_mod_commands) {
++            self.start_mod_command(command, args, quiet);
++        }
 +    }
 +
 +    pub(crate) fn refresh_mod_panels(&mut self) {
@@ -152312,10 +152439,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7edbbd38be35a828647efdf0b93c7770053bc094
+index 0000000000000000000000000000000000000000..234f6dc93bbedcfe23ec554cbb294445ac3799e2
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1610 @@
+@@ -0,0 +1,1602 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -153697,7 +153824,6 @@ index 0000000000000000000000000000000000000000..7edbbd38be35a828647efdf0b93c7770
 +            Arc::new(move || current(&invocation))
 +        },
 +    };
-+    let failed_before = terminal_failures().contains_key(id);
 +    let value = codex_omd::invoke_shared(
 +        &runtime,
 +        id,
@@ -153718,14 +153844,7 @@ index 0000000000000000000000000000000000000000..7edbbd38be35a828647efdf0b93c7770
 +        },
 +        |_| {},
 +    )
-+    .map_err(|error| {
-+        let error = error.to_string();
-+        if !failed_before && terminal_failures().contains_key(id) {
-+            format!("{error}; {id} is now off after repeated failures, /omd reloads it")
-+        } else {
-+            error
-+        }
-+    })?;
++    .map_err(|error| error.to_string())?;
 +    if !active() {
 +        return Err("callback_cancelled".to_owned());
 +    }

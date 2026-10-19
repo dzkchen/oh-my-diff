@@ -90,17 +90,17 @@ fn memory_failure() -> std::io::Error {
 
 #[cfg(target_os = "macos")]
 fn footprint(pid: u32) -> Option<u64> {
-    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
-    // SAFETY: `info` is a writable `rusage_info_v0`, the size `RUSAGE_INFO_V0` asks for.
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+    // SAFETY: `info` is a writable `rusage_info_v4`, the size `RUSAGE_INFO_V4` asks for.
     let status = unsafe {
         libc::proc_pid_rusage(
             pid as libc::c_int,
-            libc::RUSAGE_INFO_V0,
+            libc::RUSAGE_INFO_V4,
             info.as_mut_ptr().cast(),
         )
     };
     // SAFETY: a zero status filled `info`.
-    (status == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
+    (status == 0).then(|| unsafe { info.assume_init() }.ri_lifetime_max_phys_footprint)
 }
 
 /// Runners exist only on macOS (`command`).
@@ -109,7 +109,13 @@ fn footprint(_pid: u32) -> Option<u64> {
     None
 }
 
-/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose physical footprint passes `MEMORY_LIMIT`.
+/// Whether a live runner's peak physical footprint has passed `MEMORY_LIMIT`; checked on every reply because a
+/// callback can allocate and answer between two watchdog polls.
+fn overran(child: &Child) -> bool {
+    footprint(child.id()).is_some_and(|bytes| bytes > MEMORY_LIMIT)
+}
+
+/// The V8 heap flag does not bound ArrayBuffers, so one shared thread kills any runner whose peak physical footprint passes `MEMORY_LIMIT`.
 fn track(child: &Child) {
     static WATCHDOG: std::sync::Once = std::sync::Once::new();
     TRACKED
@@ -588,6 +594,10 @@ where
     warm.kept = kept;
     let (output, _) = converse(&mut warm.stdin, &warm.lines, &bytes, budget, active, host);
     let error = match output {
+        Ok(Some(_)) if overran(&warm.child) => {
+            warm.stop();
+            return Err(memory_failure());
+        }
         Ok(Some(value)) if value.get("error").is_none() => {
             pool(warm);
             return Ok(value);
@@ -714,6 +724,7 @@ pub(super) fn evaluate(
         .ok_or_else(|| failure("missing_stdout"))?;
     let (lines, reader) = lines(stdout);
     let (output, deadline) = converse(&mut stdin, &lines, &bytes, budget, active, host);
+    let overran = overran(&child);
     drop(stdin);
     if output.is_ok() {
         while !exited(&mut child) && Instant::now() < deadline {
@@ -725,7 +736,7 @@ pub(super) fn evaluate(
     let status = child.wait();
     let _ = reader.join();
     let errors = errors.join().unwrap_or_default();
-    if exceeded {
+    if exceeded || overran {
         return Err(memory_failure());
     }
     let output = output?;

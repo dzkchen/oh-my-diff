@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "b44ebf3e90c0bc7a44c4c74b07338e275bec7f0345fc73cc1f308cd49564cf53"
+    "sha256": "a44f88a60ed1b445b79b510207ec289a43277b1532d0832ed76e48cb0b53b687"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1167,7 +1167,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "e316aab70870cdf4d2521cd16f073dd607c889cfd547dfa3cbca6689a87814ae"
+      "after": "7c3847e3b1372ff746a16bdcb33459cb1803c655644b1d5c5a925ed4fd7348c5"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1263,7 +1263,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "eb904ae2ab8f1ca0d5a4ee5c79a7cadf653fbc9b4e7e6ac8dcb270e7216614b6"
+      "after": "dc637348d3955b1364ebb5f0ade6bfe70269fc7766529236c23300bf2498139c"
     },
     "codex-rs/omd/src/mod_limits.rs": {
       "before": null,
@@ -1283,7 +1283,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "2a276546f5b44f79ba96a9b1b46cb8d76e59e913c99de75e6ae4d10b4bd574fb"
+      "after": "06c3ff84dd44f17d5e12a268dfa147fe14aacaef4f70961e6def224cade64600"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1327,7 +1327,7 @@
     },
     "codex-rs/omd/src/mods/process.rs": {
       "before": null,
-      "after": "162e9a1e0baae2b01242c3e756919d87b7e3bfabc82b5cefbc6a30c58be2d58c"
+      "after": "8b007627c5b26989768385e42c1bcffb1a4e0da13d267ad17c7cb5a10592d82a"
     },
     "codex-rs/omd/src/mods/process_tests.rs": {
       "before": null,
@@ -1879,7 +1879,7 @@
     },
     "codex-rs/tui/src/chatwidget.rs": {
       "before": "2df8ae05f0247fd587bd30d83f908fc72cb39e007d0d539360dfe3b006eece68",
-      "after": "0d03387ed9381a71d9d8268446763fcd59520dcd8d2b7997db3232505833a8e2"
+      "after": "bacf54fcb2837d88b0586f940d7978c7679f8285abd204811d54ee822bbba482"
     },
     "codex-rs/tui/src/chatwidget/activity_presentation.rs": {
       "before": "ad25f6544b8b48d949482793e61645aa9792bf54a130ef8b71d8682983899bd3",
@@ -1891,7 +1891,7 @@
     },
     "codex-rs/tui/src/chatwidget/constructor.rs": {
       "before": "9536a7369b9b14ce3d5fd1273a070a48f7bcc977b3680c710abe436797d7b8a4",
-      "after": "3849340f5a2d0f91283f2226d9e2c6a99b8d427953b325566957c93a41cc0e79"
+      "after": "3c7e8917f2e4d732b65a942f27b196d006bb257850b388d61311d415b614bf50"
     },
     "codex-rs/tui/src/chatwidget/empty_state_policy.rs": {
       "before": "ac07de6d08e7040d70bbeb499a386eb2e644bd3174074ef3010dc50dcb82b94d",
@@ -1911,7 +1911,7 @@
     },
     "codex-rs/tui/src/chatwidget/mod_commands.rs": {
       "before": null,
-      "after": "99d6a39a5449a6146b04a97a76092832b51b9e15d5d168248e3ef46da6408af6"
+      "after": "f8dc1b927f95e4d671b760ba0d9f0c7ee3c51b4d0c279a2da3651e54e228b61c"
     },
     "codex-rs/tui/src/chatwidget/model_popups.rs": {
       "before": "1a06ffda1da8e16304281aa4fdcc0815deead4ec264fb6dad025deec0105325e",
@@ -1951,7 +1951,7 @@
     },
     "codex-rs/tui/src/chatwidget/session_flow.rs": {
       "before": "4a90da1f25d382eee329d30f0ea013efd82b7b8855425ec899fede73df603efc",
-      "after": "63eb12a360253ed4c7a4c9a8073f663e5213c23b8c2242cf554cfa039cecc02e"
+      "after": "ba74a7348f1f6c37461a7e22e9eef184e007bde6d16b3538e63433c12a375928"
     },
     "codex-rs/tui/src/chatwidget/settings.rs": {
       "before": "09638c297a3e223f8936662f60918522ccca0439aa4070bfb867a77be66cada0",
@@ -1976,6 +1976,10 @@
     "codex-rs/tui/src/chatwidget/tests.rs": {
       "before": "59d7704b2310f1a02e4d13b530e4d58321bca9e9ed40f0e12f292055edd77094",
       "after": "bdd6509ac0057e73fa8fe6fc7cf82886cc874fdd604f9dc0b1a4b80643252e5e"
+    },
+    "codex-rs/tui/src/chatwidget/tests/app_server.rs": {
+      "before": "ca2fb78b5eb4b6e6acf4813ed22f4d5c0e8dfd3180036f0c947c286637fef6d7",
+      "after": "3e36a1efbb4889a56f7a56080816ae4d466aceea3718780d1aa6be0be810081a"
     },
     "codex-rs/tui/src/chatwidget/tests/composer_submission.rs": {
       "before": "3652c88e605866f1260699802338ad8d5475598ff4bf9412347dcf4e304db007",
@@ -2239,7 +2243,7 @@
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
-      "after": "1e49506dc5625bfa5c71cc5311ff6c6a9ede095cb1dea7e23ddad1f4202902fb"
+      "after": "c238e24d9f6f684f1046da2ad17ff3d409954b08fa5c49fe3ed659dfac1e15f8"
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -253,4 +253,28 @@ test('author usage prints without a stack and thread ids map on every step helpe
   assert.doesNotMatch(result.stderr, /\n\s+at /);
   assert.equal(state('m', { threadId: 't' }).thread_id, 't');
   assert.equal(invoke('m', 'command', 'c', null, { threadId: 't' }).thread_id, 't');
+});
+
+test('a managed release install scaffolds the SDK from its release asset and a dev install links its files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-sdk-spec-'));
+  try {
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'pnpm'), '#!/bin/sh\n');
+    chmodSync(join(bin, 'pnpm'), 0o700);
+    const scaffold = (prefix, record) => {
+      const sdk = join(prefix, 'author/package');
+      mkdirSync(sdk, { recursive: true });
+      cpSync(new URL('../mods/author', import.meta.url).pathname, join(sdk, 'author'), { recursive: true });
+      cpSync(new URL('../mods/package.json', import.meta.url).pathname, join(sdk, 'package.json'));
+      if (record) writeFileSync(join(prefix, 'install.json'), JSON.stringify(record));
+      const project = join(prefix, 'project');
+      const { OMD_MOD_SDK_SPEC, ...env } = process.env;
+      const result = spawnSync(process.execPath, [join(sdk, 'author/cli.mjs'), 'create', project, 'demo'], { encoding: 'utf8', env: { ...env, PATH: `${bin}:${process.env.PATH}` } });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(readFileSync(join(project, 'package.json'))).devDependencies['@oh-my-diff/mod-api'];
+    };
+    assert.equal(scaffold(join(root, 'managed'), { version: '1.2.3', update: {} }), 'https://github.com/dzkchen/oh-my-diff/releases/download/v1.2.3/mod-api.tgz');
+    assert.match(scaffold(join(root, 'dev'), { version: '1.2.3' }), /^file:/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

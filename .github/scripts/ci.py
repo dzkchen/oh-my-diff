@@ -249,6 +249,7 @@ def package(version=None):
     shutil.copy2(build.ROOT / "install.sh", output / "install.sh")
     support.output(["git", "archive", "--format=tar.gz", f"--prefix=oh-my-diff-{version}/",
                     "--output", output / f"oh-my-diff-{version}-source.tar.gz", "HEAD"], cwd=build.ROOT)
+    shutil.copy2(artifact_dir / "mod-api.tgz", output / "mod-api.tgz")
     checksums = [f"{support.digest(path)}  {path.name}" for path in sorted(output.iterdir()) if path.is_file()]
     (output / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
 

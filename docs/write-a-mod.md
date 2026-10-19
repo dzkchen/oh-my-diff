@@ -118,15 +118,10 @@ for a local `git+file:///path/repo#…` install the repository's absolute path `
 Anything else is refused with `repository_provenance_mismatch`
 ([details](../mods/reference/packaging.md#provenancesource-for-git-installs)).
 
-The scaffold links `@oh-my-diff/mod-api` from your OMD install, so `package.json` and `pnpm-lock.yaml` hold a
-`file:` path under your home directory. A collaborator who has OMD installed runs this in their clone, which replaces
-the path with their own:
-
-```sh
-pnpm add -D @oh-my-diff/mod-api@file:$HOME/.local/share/oh-my-diff/current/prefix/author/package
-```
-
-(Use the `--root` they installed with if it isn't the default.) The package published to npm doesn't include it.
+A release install of OMD scaffolds `@oh-my-diff/mod-api` as that release's `mod-api.tgz` GitHub asset, so
+collaborators run `pnpm install` without OMD. (Scaffolding needs the network once to lock it.)
+A dev build links the SDK from its install with a `file:` path under your home directory instead; set
+`OMD_MOD_SDK_SPEC` to use another spec.
 
 ## If something goes wrong
 
