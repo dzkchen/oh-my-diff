@@ -26,6 +26,7 @@ Second release candidate: a native mod settings panel, Claude subscription model
 - Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes.
 - Install: the installer ends with the next step, `hash -r` or a new terminal before `codex`, because a shell that already looked up `codex` keeps starting plain Codex.
 - Mods: a typed `/mods` action reports its own result while another change waits for `/mods apply`.
+- Clippy redundant closure and rollout item size lint (#254)
 
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
