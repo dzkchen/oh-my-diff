@@ -288,8 +288,14 @@ async function headless() {
   for (let index = 0; index < 20; index++) await time('read_ms', () => reconnected.session.read());
   for (let index = 0; index < 10; index++) {
     const start = performance.now();
-    const seen = reconnected.views.length;
-    await reconnected.session.action({ component: 'desk_note', value: `round ${index}` });
+    let seen = reconnected.views.length;
+    const note = () => reconnected.session.action({ component: 'desk_note', value: `round ${index}` });
+    // The restarted host's mods can still push a view between the token read and the action.
+    await note().catch(error => {
+      if (!String(error?.message).startsWith('action_stale')) throw error;
+      seen = reconnected.views.length;
+      return note();
+    });
     await until('pushed view', () => reconnected.views.length > seen);
     (timings.action_to_view_ms ??= []).push(performance.now() - start);
   }
