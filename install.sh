@@ -53,10 +53,54 @@ MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
+WEBSITE = "https://www.ohmydiff.me"
+DOCS = "https://github.com/dzkchen/oh-my-diff/blob/main/docs/install.md"
+MARK = ("╭─╮ ╭╮╭╮ ┌─╮", "│ │ │╰╯│ │ │", "╰─╯ ╵  ╵ └─╯")
+MARK_ASCII = (".-. |\\/| |-.", "| | |  | | |", "'-' |  | |-'")
+LIVE = sys.stderr.isatty() and os.environ.get("TERM") != "dumb"
+COLOR = LIVE and "NO_COLOR" not in os.environ
 
 
 def fail(message):
     raise ValueError(message)
+
+
+def paint(text, code):
+    return f"\033[{code}m{text}\033[0m" if COLOR and text else text
+
+
+def say(line=""):
+    print(("\r\033[K" if LIVE else "") + line, file=sys.stderr, flush=True)
+
+
+def step(label, detail="", mark="✓"):
+    say(f"  {paint(mark, {'✓': '32', '!': '33', '✗': '31'}[mark])} {label:<22}{paint(detail, '2')}".rstrip())
+
+
+def pending(label, detail=""):
+    if LIVE:
+        sys.stderr.write(f"\r\033[K  {paint('…', '2')} {label:<22}{paint(detail, '2')}")
+        sys.stderr.flush()
+
+
+def tilde(path):
+    path = Path(path)
+    return f"~/{path.relative_to(Path.home())}" if path.is_relative_to(Path.home()) else str(path)
+
+
+def megabytes(count):
+    return f"{count / 1_000_000:.0f}"
+
+
+def banner(manifest):
+    version = f" {manifest['version']}" if manifest else ""
+    minor = minor_of(manifest) if manifest else UPSTREAM_MINOR
+    side = (paint(f"oh my diff{version}", "1") + paint(" · beta", "2"),
+            paint(f"Codex {minor} with TypeScript mods", "2"), paint("Apple Silicon macOS", "2"))
+    say()
+    for mark, text in zip(MARK if LIVE else MARK_ASCII, side):
+        say(f"  {paint('+', '36')} {paint(mark, '1')}   {text}")
+    say()
 
 
 def digest(path):
@@ -196,20 +240,22 @@ def profile_choice(args):
         return args.profile
     try:
         with open("/dev/tty", "w") as output, open("/dev/tty") as terminal:
-            output.write("Oh My Diff\n"
-                         "OMD 1.0 is labeled beta: not every planned capability is included yet. It does not mean unstable.\n"
-                         "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
-                         "2) OMD+: also the first-party mod collection and bundled plugins.\n"
-                         "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
-                         "   Updates preserve selections and add newly bundled mods disabled.\n"
-                         "Choose 1 or 2: ")
-            output.flush()
-            choice = terminal.readline().strip()
+            output.write(f"  {paint('Pick a profile', '1')}\n\n"
+                         f"    {paint('1', '36')}  {paint('OMD+', '1')}       Core plus the first-party mod collection and bundled plugins.\n"
+                         "                  Default mods start on; turn on the rest in /mods.\n\n"
+                         f"    {paint('2', '36')}  {paint('OMD Core', '1')}   Patched Codex, mod manager, typed author tools,\n"
+                         "                  and the logo, /mods and update mods.\n\n")
+            while True:
+                output.write("  Profile [1/2]: ")
+                output.flush()
+                line = terminal.readline()
+                if not line:
+                    fail("No profile was chosen. Pass --profile full or --profile platform.")
+                if line.strip() in ("1", "2"):
+                    output.write("\n")
+                    return "full" if line.strip() == "1" else "platform"
     except OSError:
-        fail("No terminal is available. Choose --profile platform or --profile full.")
-    if choice not in ("1", "2"):
-        fail("Choose 1 or 2, or pass --profile platform|full.")
-    return "platform" if choice == "1" else "full"
+        fail("No terminal is available. Pass --profile full or --profile platform.")
 
 
 def opened(url, timeout):
@@ -225,18 +271,29 @@ def opened(url, timeout):
     return response
 
 
-def download(url, expected, destination):
+def download(url, expected, destination, progress=None):
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         fail("release asset needs a pinned lowercase SHA-256")
     copied = 0
     with opened(url, 60) as response, destination.open("xb") as output:
+        total = int(response.headers.get("Content-Length") or 0)
         while chunk := response.read(1024 * 1024):
             copied += len(chunk)
             if copied > 150_000_000:
                 fail("release asset exceeds the 150 MB download limit")
             output.write(chunk)
+            if progress:
+                progress(copied, total)
     if digest(destination) != expected:
         fail("release asset SHA-256 mismatch; no profile was activated")
+    return copied
+
+
+def download_progress(copied, total):
+    if not total:
+        return pending("Downloading", f"{megabytes(copied)} MB")
+    filled = min(20, copied * 20 // total)
+    pending("Downloading", f"{'█' * filled}{'░' * (20 - filled)}  {megabytes(copied)} / {megabytes(total)} MB")
 
 
 def fetch_bytes(url, limit):
@@ -306,7 +363,11 @@ def path_warning(bin_dir):
     if located and Path(located).parent.resolve() == bin_dir:
         return None
     return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
-            f"add this line to your shell profile and open a new shell: export PATH=\"{bin_dir}:$PATH\"")
+            f"add this line to your shell profile and open a new shell: {path_line(bin_dir)}")
+
+
+def path_line(bin_dir):
+    return f'export PATH="{bin_dir}:$PATH"'
 
 
 def restore_displaced(bin_dir):
@@ -341,6 +402,7 @@ def install(args, root, current):
     channel = args.channel or (policy(installation(root, current)[2])["channel"] if current else "stable")
     manifest = None
     if not url:
+        pending(f"Finding the {channel} release")
         candidates = [item for item in releases(release_source(args.releases_url or RELEASES_URL), channel=channel) if on_channel(channel, item)]
         if not candidates:
             fail(f"No Oh My Diff {channel} release is published yet; nothing was installed.")
@@ -348,20 +410,56 @@ def install(args, root, current):
         if manifest["target"] != TARGET:
             fail(f"release is built for {manifest['target']}")
         url, expected = manifest["url"], manifest["sha256"]
+    banner(manifest)
     profile = profile_choice(args)
+    if manifest:
+        step(f"Release {manifest['version']}", "signature verified")
     upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
+    step(f"Codex {upstream['version'].removeprefix('codex-cli ')}", tilde(upstream["path"]))
     node = node_binary(args, manifest["node"]) if manifest else node_binary(args)
+    step(f"Node {run([node, '--version']).strip().removeprefix('v')}", tilde(node))
     refuse_sessions(root, args.session)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
-        download(url, expected, archive)
+        size = download(url, expected, archive, download_progress)
+        step(f"Downloaded {megabytes(size)} MB", "checksum matches")
+        pending(f"Installing {PROFILE_LABELS[profile]}")
         result = transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest)
         _, record, store = installation(root, pointer(root, "current"))
         if policy(store)["channel"] != channel:
             set_policy(root, record, "channel", channel)
-        print(json.dumps(result, indent=2))
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            installed(result)
+
+
+def installed(result):
+    step(f"Installed {result['profile_label']}")
+    step("Linked commands", f"{tilde(result['bin_dir'])} (codex, omd, omd-package, …)")
+    for moved in result["moved_aside"]:
+        step("Moved aside", moved, "!")
+    for failure in result["prune_failures"]:
+        step("Old install kept", failure, "!")
+    if broker := result.get("authority_broker"):
+        step("Authority broker", broker, "!" if broker.startswith("failed") else "✓")
+    say()
+    headline = f"Oh My Diff {result['version']} ({result['profile_label']}) is installed."
+    say(f"  {paint('+', '36')} {paint(headline, '1')}")
+    say()
+    rows = [("Mods", "/mods and /omd inside codex"), ("Update", "omd update"), ("Website", WEBSITE), ("Docs", DOCS)]
+    if result.get("path_warning"):
+        say(f"  {paint('!', '33')} codex on your PATH is {shutil.which('codex') or 'missing'}, not OMD's.")
+        say("    Add this line to your shell profile, then open a new terminal and run codex:")
+        say()
+        say(f"      {path_line(result['bin_dir'])}")
+        say()
+    else:
         # A shell that already looked up codex keeps running the old one until its command cache is cleared.
-        print(result.get("path_warning") or "Installed. Run hash -r or open a new terminal, then codex.", file=sys.stderr)
+        rows.insert(0, ("Start", "open a new terminal and run codex, or hash -r && codex"))
+    for label, text in rows:
+        say(f"    {paint(f'{label:<9}', '2')}{text}")
+    say()
 
 
 class SessionsOpen(ValueError):
@@ -1139,6 +1237,7 @@ def main():
     parser.add_argument("--releases-url", help="release list to check for updates (GitHub releases API format)")
     parser.add_argument("--channel", choices=POLICY["channel"], help="release channel for installation (saved policy or stable)")
     parser.add_argument("--yes", action="store_true", help="update even when enabled mods do not support the new mod API")
+    parser.add_argument("--json", action="store_true", help="print the install result as JSON")
     parser.add_argument("--upstream", type=Path)
     parser.add_argument("--node", type=Path)
     parser.add_argument("--root", type=Path, default=Path.home() / ".local/share/oh-my-diff")
@@ -1196,6 +1295,6 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
-        print(f"omd installer: {error}", file=sys.stderr)
+        say(f"  {paint('✗', '31')} {error}")
         raise SystemExit(1) from error
 PY
