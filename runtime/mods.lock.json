@@ -309,14 +309,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "90443525b211accb44ae65b1ab0c4d6c1548d90bca44bdc495ba225bd2e2eb39",
+        "index.ts": "9001ec2136816721d10e74db63cd915f5233f9c8e6083364cbaf487dccc8410e",
         "mermaid.ts": "9bb9c854b9f442bf653aaf4c611921180627b69e14623661bcd2f03d35563436",
         "mod.json": "fb796ea70c7189c901df6b9480bbc3909c8a7fa9048506e65c435fa444900f3c",
         "render.mjs": "35016ca57c4723ffca511ee71b92dc5c3b37ea2edceee8760d1d8e38eb182a0e",
         "text.ts": "52427287bf0aae0ff12a25efd10e42887fae8e438f4ba74a8aee340435c474ee"
       },
       "id": "omd_preview",
-      "package_sha256": "af004e06dd53f25eaf5820ad29c8958e4b6542e0cfb35b02b633a85f23266422",
+      "package_sha256": "342ce0b1a7e02a7603b7f516bab953a24ee6da611bf29b7ba5077782e2c10ae5",
       "source": "mods/first-party/omd_preview",
       "version": "0.2.0-preview.1"
     },

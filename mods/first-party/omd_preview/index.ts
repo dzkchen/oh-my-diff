@@ -98,8 +98,14 @@ export default function activate(api: ModAPI) {
   };
 
   const responses = (limit: number): string[] => {
-    const page = api.host.call('app.request', { method: 'thread/turns/list', params: { threadId: api.session().thread_id, limit, itemsView: 'summary' } }) as { data?: Turn[] };
-    return (page.data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));
+    const session = api.host.tryCall('session.info', null);
+    if (!session.ok && session.error.includes('requires_a_session_thread')) return [];
+    const listed = session.ok ? api.host.tryCall('app.request', { method: 'thread/turns/list', params: { threadId: session.value.thread_id, limit, itemsView: 'summary' } }) : session;
+    if (!listed.ok) {
+      if (listed.error.includes('not materialized')) return [];
+      throw new Error(listed.error);
+    }
+    return ((listed.value as { data?: Turn[] }).data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));
   };
 
   const viewImage = (picture: Picture) => picture.image
