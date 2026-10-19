@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.png" alt="Oh My Diff. Keep Codex. Mod everything." width="100%">
+  <img src="docs/banner.gif" alt="Oh My Diff. Keep Codex. Mod everything." width="100%">
 </p>
 
 <h1 align="center">Oh My Diff</h1>
