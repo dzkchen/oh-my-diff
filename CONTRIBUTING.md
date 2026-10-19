@@ -68,8 +68,9 @@ python3 .github/scripts/build.py locks                                       # r
 ## Open a pull request
 
 1. Branch from `main`.
-2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix. Pull requests are
-   squash-merged, so the title becomes the commit and its changelog line.
+2. Title it with a [Conventional Commits](https://www.conventionalcommits.org) prefix. A squash merge makes the
+   title the commit and its changelog line; a merge commit or rebase merge keeps your commits, so give each one a
+   prefix too. Merged branches are kept.
 3. Say what changed and how you checked it.
 
 | Prefix | Changelog |

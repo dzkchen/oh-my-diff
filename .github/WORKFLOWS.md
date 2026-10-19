@@ -38,7 +38,7 @@ The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.m
    and prints the publish commands.
 3. If more pull requests merged to `main` since, run `mise run release -- 1.2.0` again: it merges `main` into the
    release branch and adds their lines to the entry. Edit and render again.
-4. Squash-merge, then run `mise run release -- 1.2.0` once more to tag `main`.
+4. Merge it, then run `mise run release -- 1.2.0` once more to tag `main`.
 5. The tag runs `release.yml`: it checks the tag is on `main` and that versions and changelog agree, validates,
    then publishes a draft release and makes it live (this is what the installer and `omd update` read). `-rc.N`
    tags are prereleases, offered on the prerelease channel.
