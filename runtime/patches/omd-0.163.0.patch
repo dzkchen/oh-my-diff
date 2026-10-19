@@ -30221,7 +30221,7 @@ index bd8eb7a267cf9c683ecc92c4209b705d4faa18d3..8f4db0a7a4f6c92886789b5ae365c00e
      #[serde(default, skip_serializing_if = "Option::is_none")]
      pub cyber_access_program: Option<CyberAccessProgram>,
 diff --git a/codex-rs/history/src/lib.rs b/codex-rs/history/src/lib.rs
-index 826669cc3335dc23102e6a5bdbf2d62c1cb22fa4..4000399209caf0fb74d046cd5949b7808f0f46ab 100644
+index 826669cc3335dc23102e6a5bdbf2d62c1cb22fa4..fe840c9ec945f4704645861de6ac8c59da12ea49 100644
 --- a/codex-rs/history/src/lib.rs
 +++ b/codex-rs/history/src/lib.rs
 @@ -136,6 +136,25 @@ pub struct CodexHarnessMetadata {
@@ -30250,6 +30250,14 @@ index 826669cc3335dc23102e6a5bdbf2d62c1cb22fa4..4000399209caf0fb74d046cd5949b780
  }
 
  fn deserialize_mcp_attribution_checkpoint<'de, D>(
+@@ -211,6 +230,7 @@ impl Borrow<ResponseItem> for ResponseItemEnvelope {
+ }
+
+ /// Persisted rollout item used by core history and rollout storage.
++#[allow(clippy::large_enum_variant)]
+ #[derive(Debug, Clone)]
+ pub enum RolloutItem {
+     SessionMeta(SessionMetaLine),
 diff --git a/codex-rs/memories/write/src/guard_tests.rs b/codex-rs/memories/write/src/guard_tests.rs
 index 5271070cc6241f7c4e440e59d8d638345fe47388..3954e71666071012d3bcb86b8285c9f2a474ca7e 100644
 --- a/codex-rs/memories/write/src/guard_tests.rs
@@ -144596,10 +144604,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1e198931f4904f1db2498c780d03b5834a40e0d
+index 0000000000000000000000000000000000000000..a5890093d57d345d49be40ec310cfc5ada83c4e2
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,634 @@
+@@ -0,0 +1,635 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -144613,6 +144621,7 @@ index 0000000000000000000000000000000000000000..f1e198931f4904f1db2498c780d03b58
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::key_hint::KeyBindingListExt;
++use crate::key_hint::ShortcutHint;
 +use crate::keymap::KeymapContext;
 +use crate::keymap::KeymapContextSet;
 +use crate::keymap::ListAction;
@@ -144990,7 +144999,7 @@ index 0000000000000000000000000000000000000000..f1e198931f4904f1db2498c780d03b58
 +}
 +
 +fn hint(keymap: &ListKeymap, tabs: bool, search: bool, accept: Option<&str>) -> Line<'static> {
-+    let key = |action| keymap.primary_hint(action).map(|hint| hint.display_label());
++    let key = |action| keymap.primary_hint(action).map(ShortcutHint::display_label);
 +    let mut items = Vec::new();
 +    if tabs {
 +        let keys = [ListAction::MoveLeft, ListAction::MoveRight]
