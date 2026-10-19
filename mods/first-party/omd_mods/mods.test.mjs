@@ -46,6 +46,12 @@ test('Apply sends the generation the change was reviewed at', () => {
   assert.equal(sent.expected_generation, 1);
 });
 
+test('a typed action while a change waits for review reports its own result and keeps the review', () => {
+  const reviewed = invoke('update omd_logo', { 'packages.preview': () => ({ action: 'update', id: 'omd_logo', changes: {}, grants_added: [] }) });
+  const typed = invoke('enable omd_gone', { ui_state: reviewed.ui });
+  assert.match(typed.value.display, /^No installed mod omd_gone\n[^]*Run \/mods apply or \/mods cancel$/);
+});
+
 test('a panel action after its UI state was cleared keeps the chosen scope and finds the directory again', () => {
   const index = () => ({ packages: [{ id: 'omd_preview', description: 'Previews', latest: '1.2.0', installed: null, versions: [{ version: '1.2.0', blocked: null }] }] });
   let previewed;
