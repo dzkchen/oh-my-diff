@@ -63,10 +63,7 @@ struct HostRequest {
 }
 
 pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "exec_command" | "write_stdin" | "web_search" | "webrun"
-    )
+    matches!(name, "exec_command" | "write_stdin" | "web_search")
 }
 
 fn lead_thread(thread: &ExtensionData) -> bool {

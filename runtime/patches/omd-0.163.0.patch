@@ -61998,10 +61998,10 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d4cf4941c2c7d140685a5a34038ec28434a9203d
+index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21960e4431
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2542 @@
+@@ -0,0 +1,2539 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -62067,10 +62067,7 @@ index 0000000000000000000000000000000000000000..d4cf4941c2c7d140685a5a34038ec284
 +}
 +
 +pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
-+    matches!(
-+        name,
-+        "exec_command" | "write_stdin" | "web_search" | "webrun"
-+    )
++    matches!(name, "exec_command" | "write_stdin" | "web_search")
 +}
 +
 +fn lead_thread(thread: &ExtensionData) -> bool {
@@ -71812,10 +71809,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2351e072734b13301ec042b12ccdc12f34d5a70e
+index 0000000000000000000000000000000000000000..98030473d1f071f100a2bf2f811bb3c913a7a8ff
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4170 @@
+@@ -0,0 +1,4171 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -74216,6 +74213,7 @@ index 0000000000000000000000000000000000000000..2351e072734b13301ec042b12ccdc12f
 +        "list_dir",
 +        "read",
 +        "web",
++        "webrun",
 +        "shell",
 +        "shell_command",
 +    ] {
@@ -87484,10 +87482,10 @@ index 0000000000000000000000000000000000000000..9200a94ef0fe7b7965aa10fcc21d2f53
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..34b10f9cbdb8fd51b179b3ceac4da6c1ec12e8f7
+index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8da841768
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store.rs
-@@ -0,0 +1,390 @@
+@@ -0,0 +1,392 @@
 +use crate::resource_data::{ResourceStore, hash};
 +use base64::Engine;
 +use base64::engine::general_purpose::STANDARD;
@@ -87659,7 +87657,9 @@ index 0000000000000000000000000000000000000000..34b10f9cbdb8fd51b179b3ceac4da6c1
 +            if fs::read(path)? == bytes {
 +                return Ok(());
 +            }
-+            let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
++            static REPAIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++            let serial = REPAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
 +            let mut file = fs::OpenOptions::new()
 +                .write(true)
 +                .create_new(true)

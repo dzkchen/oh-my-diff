@@ -2398,6 +2398,7 @@ async fn read_only_spawns_reject_tools_the_pinned_codex_lacks() {
         "list_dir",
         "read",
         "web",
+        "webrun",
         "shell",
         "shell_command",
     ] {
