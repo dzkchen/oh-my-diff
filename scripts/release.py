@@ -217,7 +217,7 @@ def rollback(version, dry_run=False):
         edits.append(("gh", "release", "edit", previous, "--repo", REPOSITORY, "--latest"))
     for edit in edits:
         print(" ".join(edit)) if dry_run else run(*edit)
-    fallback = "" if "-" in version else f"; {previous or 'no earlier stable release'} is the latest"
+    fallback = "" if "-" in version else (f"; {previous} is the latest" if previous else "; no earlier stable release exists")
     print(f"{tag} {'would be' if dry_run else 'is'} a draft again; installers and `omd update` no longer offer it{fallback}")
 
 

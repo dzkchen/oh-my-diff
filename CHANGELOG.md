@@ -8,7 +8,7 @@ First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the 
 
 ### New
 
-- Redesigned curl installer output: the OMD mark with the version and beta tag, OMD+ listed first, progress and summary on stderr, JSON only with `--json`
+- Redesigned curl installer output: the OMD mark with the version and beta tag, OMD+ listed first, progress and summary on stderr, JSON only with `--json` (#260)
 
 ### Changed
 

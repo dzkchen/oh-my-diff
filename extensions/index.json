@@ -20,7 +20,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0",
         "Claude CLI 2.1.302"
       ],
@@ -38,7 +38,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -55,7 +55,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -106,7 +106,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -123,7 +123,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -140,7 +140,7 @@
       "tested_versions": [
         "Codex 0.162.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -157,7 +157,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -174,7 +174,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -191,7 +191,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -208,7 +208,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -225,7 +225,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -242,7 +242,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -259,7 +259,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -276,7 +276,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -293,7 +293,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -330,7 +330,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
@@ -351,7 +351,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -368,7 +368,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -385,7 +385,7 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -402,14 +402,14 @@
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "burn_meter",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "extension_type": "mod",
       "capability": "Port of the Claude Code burn-meter mod: session spend as a burning fuse above the prompt, plan windows, comparisons, per-turn chart, lifetime total and threshold toasts",
       "source": "mods/ports/burn_meter",
@@ -420,14 +420,14 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "token_weather",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "extension_type": "mod",
       "capability": "Port of the Claude Code token-weather mod: a context-window forecast line above the prompt with a chart of recent turns",
       "source": "mods/ports/token_weather",
@@ -438,14 +438,14 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
     },
     {
       "id": "blast_radius",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "extension_type": "mod",
       "capability": "Port of the Claude Code blast-radius mod: measures what a risky shell command would delete, discard or drop and holds it for a Proceed or Cancel answer",
       "source": "mods/ports/blast_radius",
@@ -456,7 +456,7 @@
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 0.1.0",
-        "mod API 1.0.0",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
