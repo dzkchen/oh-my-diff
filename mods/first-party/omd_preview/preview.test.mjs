@@ -19,6 +19,7 @@ let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: []
 const stores = new Map();
 const watching = repository => stores.get(`${repository}\0watch`)?.value;
 let racing = null;
+let unborn = null;
 
 function invoke(repository, state, event, payload, name, settings = {}, modSource = source) {
   const calls = [];
@@ -26,7 +27,10 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     const { operation, arguments: args } = call;
     calls.push(call);
     const key = `${repository}\0${args?.key}`;
-    if (operation === 'session.info') return { thread_id: 'thread-1' };
+    if (operation === 'session.info') {
+      if (unborn === 'thread') throw new Error('model_call_requires_a_session_thread');
+      return { thread_id: 'thread-1' };
+    }
     if (operation === 'store.get') return stores.get(key) ?? null;
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
@@ -38,6 +42,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       return { revision: (revision ?? 0) + 1 };
     }
     if (operation === 'app.request') {
+      if (unborn === 'turns') throw new Error('thread/turns/list failed: thread thread-1 is not materialized yet; thread/turns/list is unavailable before first user message');
       assert.deepEqual(args, { method: 'thread/turns/list', params: { threadId: 'thread-1', limit: args.params.limit, itemsView: 'summary' } });
       return { data: responses.slice(0, args.params.limit).map(text => ({ items: [{ type: 'userMessage' }, { type: 'agentMessage', text }] })) };
     }
@@ -85,6 +90,11 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.ok(html.includes(`'sha256-${createHash('sha256').update(init).digest('base64')}'`));
     assert.doesNotMatch(html, /npm\/(katex|mermaid|@highlightjs)/);
     assert.equal(command('3').value.display, 'No response 3 in this session');
+    for (unborn of ['thread', 'turns']) {
+      assert.equal(command('').value.display, 'No response 1 in this session');
+      assert.equal(command('list').value.display, 'No responses in this session yet');
+    }
+    unborn = null;
     assert.equal(command('list').value.display, '1. Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))\n2. Earlier answer');
     assert.equal(command('missing.md').value.display, 'No file missing.md in the workspace');
 
