@@ -129,11 +129,11 @@ class UpdateSelection(unittest.TestCase):
         for channel, selected, saved in ((None, "nightly", []), ("stable", "stable", [("channel", "stable")])):
             with self.subTest(channel=channel):
                 args = types.SimpleNamespace(asset_url=None, asset_sha256=None, releases_url="https://localhost/releases",
-                                             channel=channel, session=None)
+                                             channel=channel, session=None, json=True)
                 with patch.object(self.module.platform, "system", return_value="Darwin"), \
                         patch.object(self.module.platform, "machine", return_value="arm64"), \
                         patch.object(self.module, "profile_choice", return_value="platform"), \
-                        patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download") as download, \
+                        patch.object(self.module, "refuse_sessions"), patch.object(self.module, "download", return_value=0) as download, \
                         patch.object(self.module, "transaction", return_value={}), patch.object(self.module, "set_policy") as policy, \
                         patch("builtins.print"):
                     self.module.install(args, self.root, self.current)
@@ -575,10 +575,10 @@ class ProfilePrompt(unittest.TestCase):
                     screen += os.read(leader, 4096)
                 except OSError:
                     break
-            if screen.endswith(b"Choose 1 or 2: "):
-                os.write(leader, b"2\n")
+            if screen.endswith(b"Profile [1/2]: "):
+                os.write(leader, b"1\n")
         os.waitpid(pid, 0)
-        self.assertIn(b"labeled beta", screen)
+        self.assertIn(b"OMD Core", screen)
         self.assertIn(b"result=full", screen)
 
 
