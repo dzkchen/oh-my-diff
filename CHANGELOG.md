@@ -24,8 +24,8 @@ Second release candidate: a native mod settings panel, Claude subscription model
 - Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.
 - Install: `omd-package activate direct` no longer exits right after launch on a machine where packaged Codex never ran.
 - Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes.
-- Installer says to clear the shell's command cache before codex (#251)
-- /mods reports a typed action's result while a change waits for review (#252)
+- Install: the installer ends with the next step, `hash -r` or a new terminal before `codex`, because a shell that already looked up `codex` keeps starting plain Codex.
+- Mods: a typed `/mods` action reports its own result while another change waits for `/mods apply`.
 
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
