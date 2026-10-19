@@ -25,7 +25,9 @@
         "items": [
           "Mods: `/mods` can't turn itself off or remove itself, an installed mod updates from its own panel instead of reinstalling, and `/omd`'s Reload mods works without an attached client.",
           "Terminal UI: the welcome logo stays while you type a command and hides after the first history line; mod diagnostics wrap and no longer fire for Codex's internal threads.",
-          "Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`."
+          "Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.",
+          "Direct mode runs Codex embedded like the other modes (#248)",
+          "Repair truncated blobs, current read-only tools and per-thread batch outcomes (#249)"
         ]
       }
     ],
@@ -42,7 +44,9 @@
       "01b39f5",
       "58e171c",
       "bd0aef8",
-      "0bf84bd"
+      "0bf84bd",
+      "6831325",
+      "70322dd"
     ]
   },
   {
