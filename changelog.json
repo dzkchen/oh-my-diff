@@ -27,7 +27,9 @@
           "Terminal UI: the welcome logo stays while you type a command and hides after the first history line; mod diagnostics wrap and no longer fire for Codex's internal threads.",
           "Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.",
           "Install: `omd-package activate direct` no longer exits right after launch on a machine where packaged Codex never ran.",
-          "Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes."
+          "Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes.",
+          "Installer says to clear the shell's command cache before codex (#251)",
+          "/mods reports a typed action's result while a change waits for review (#252)"
         ]
       }
     ],
@@ -47,7 +49,9 @@
       "0bf84bd",
       "6831325",
       "70322dd",
-      "2768db6"
+      "2768db6",
+      "b07ac92",
+      "ac9059c"
     ]
   },
   {
