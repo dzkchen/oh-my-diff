@@ -11,10 +11,9 @@
 ## Install
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.2/install.sh | sh -s -- --channel prerelease --profile full
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-- `--channel prerelease` installs the `1.0.0` release candidate.
 - `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
   with `/mods`.
 - `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
