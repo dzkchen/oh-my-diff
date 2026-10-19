@@ -378,10 +378,21 @@ impl Host {
     /// Accounts a lead's later requests under the provider its settings now select.
     fn switch_provider(&self, lead: &Lead, config: &Config) -> Result<(), String> {
         let thread = lead.thread.to_string();
-        let lock = || self.accounts.by_thread.lock().map_err(|_| "account lock poisoned");
+        let lock = || {
+            self.accounts
+                .by_thread
+                .lock()
+                .map_err(|_| "account lock poisoned")
+        };
         let previous = lock()?.remove(&thread).ok_or("thread_not_enrolled")?;
         let route = self.lead_route(config);
-        let enrolled = self.enroll(lead.thread, &lead.session, &lead.owner, route.as_ref(), Some(config));
+        let enrolled = self.enroll(
+            lead.thread,
+            &lead.session,
+            &lead.owner,
+            route.as_ref(),
+            Some(config),
+        );
         let mut accounts = lock()?;
         match (enrolled, accounts.get_mut(&thread)) {
             (Ok(()), Some(account)) => {

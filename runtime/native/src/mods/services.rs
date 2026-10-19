@@ -247,9 +247,11 @@ impl Services {
                     .default_effort
                     .as_ref()
                     .is_some_and(|effort| !model.efforts.contains(effort))
-                || models.iter().any(|known: &codex_protocol::openai_models::ModelInfo| {
-                    known.slug == model.slug
-                })
+                || models
+                    .iter()
+                    .any(|known: &codex_protocol::openai_models::ModelInfo| {
+                        known.slug == model.slug
+                    })
                 || codex_models_manager::runtime_models::find(&model.slug)
                     .is_some_and(|(owner, _)| owner != input.provider)
             {
@@ -266,10 +268,12 @@ impl Services {
             info.supported_reasoning_levels = model
                 .efforts
                 .into_iter()
-                .map(|effort| codex_protocol::openai_models::ReasoningEffortPreset {
-                    description: effort.to_string(),
-                    effort,
-                })
+                .map(
+                    |effort| codex_protocol::openai_models::ReasoningEffortPreset {
+                        description: effort.to_string(),
+                        effort,
+                    },
+                )
                 .collect();
             info.visibility = codex_protocol::openai_models::ModelVisibility::List;
             info.apply_patch_tool_type =
@@ -976,10 +980,12 @@ mod tests {
         let rates = json!({"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
             "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1,
             "input_token_ceiling": 1, "included_subscription": true});
-        let grant = |id: &str, url: &str| json!({"id": id, "mod_id": "m", "program": "/bin/sh",
+        let grant = |id: &str, url: &str| {
+            json!({"id": id, "mod_id": "m", "program": "/bin/sh",
             "program_sha256": "0", "secrets": {"TOKEN": "local"}, "route": {"name": id,
             "provider": format!("{id}_provider"), "model": "m1", "reasoning_effort": "high",
-            "responses_url": url, "rates": rates}});
+            "responses_url": url, "rates": rates}})
+        };
         let config: crate::config::HostConfig = serde_json::from_value(json!({
             "secret_refs": {"local": token},
             "services": [grant("loopback", "http://127.0.0.1:4321/v1/responses"),
@@ -987,9 +993,15 @@ mod tests {
         .unwrap();
         define_providers(&config, |_| true);
         let provider = codex_model_provider_info::runtime_provider("loopback_provider").unwrap();
-        assert_eq!(provider.base_url.as_deref(), Some("http://127.0.0.1:4321/v1"));
         assert_eq!(
-            provider.experimental_bearer_token.map(|token| token.into_inner()).as_deref(),
+            provider.base_url.as_deref(),
+            Some("http://127.0.0.1:4321/v1")
+        );
+        assert_eq!(
+            provider
+                .experimental_bearer_token
+                .map(|token| token.into_inner())
+                .as_deref(),
             Some("local-secret")
         );
         assert!(!provider.requires_openai_auth && !provider.supports_websockets);
