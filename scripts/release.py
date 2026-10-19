@@ -125,7 +125,9 @@ def check(version=None):
 
 def uncovered(entries):
     covered = {commit for entry in entries for commit in entry["commits"]}
-    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "origin/main").split() if commit[:7] not in covered]
+    # One line per change on main: a merge commit stands for its pull request, not the branch commits it brings in.
+    return [commit[:7] for commit in run("git", "rev-list", "--reverse", "--first-parent", "origin/main").split()
+            if commit[:7] not in covered]
 
 
 def changes(commits, existing=()):

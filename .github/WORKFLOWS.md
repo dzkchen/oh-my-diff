@@ -32,7 +32,7 @@ prerelease and never marked latest.
 The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`.
 
 1. `mise run release -- 1.2.0 --summary "One sentence."` opens a `chore(release): 1.2.0` pull request with the version
-   and a changelog entry built from commits since the last one. Edit the entry if needed, then run
+   and a changelog entry with one line per pull request or direct commit merged to `main` since the last one. Edit the entry if needed, then run
    `python3 scripts/release.py render`.
 2. Optional dry run: `gh workflow run release.yml --ref release/v1.2.0 -f version=1.2.0` validates, packages, signs
    and prints the publish commands.
