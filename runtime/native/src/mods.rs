@@ -65,15 +65,7 @@ struct HostRequest {
 pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
     matches!(
         name,
-        "shell"
-            | "shell_command"
-            | "exec_command"
-            | "write_stdin"
-            | "web"
-            | "web_search"
-            | "read"
-            | "grep_files"
-            | "list_dir"
+        "exec_command" | "write_stdin" | "web_search" | "webrun"
     )
 }
 
@@ -185,8 +177,8 @@ struct Mods {
     pending: Mutex<BTreeMap<String, PendingTool>>,
     answered: Mutex<BTreeMap<String, String>>,
     child_errors: Mutex<BTreeMap<String, Value>>,
-    /// Tool and outcome of each lead call until its batch settles or the next turn starts.
-    settled: Mutex<BTreeMap<String, (String, String)>>,
+    /// Tool and outcome of each lead call until its batch settles or its thread's next turn starts.
+    settled: Mutex<BTreeMap<(String, String), (String, String)>>,
     /// Secret fields of each pending elicitation, redacted from its result.
     elicitations: Mutex<std::collections::VecDeque<(String, Vec<String>)>>,
     provider_switches: Mutex<BTreeMap<String, Config>>,
@@ -1644,7 +1636,9 @@ impl TurnLifecycleContributor for Mods {
                     .map(|call_id| {
                         let (tool, outcome) = settled
                             .as_mut()
-                            .and_then(|settled| settled.remove(call_id))
+                            .and_then(|settled| {
+                                settled.remove(&(lead.thread.to_string(), call_id.clone()))
+                            })
                             .unwrap_or_default();
                         json!({"call_id": call_id, "tool": tool, "outcome": outcome})
                     })
@@ -1744,7 +1738,8 @@ impl TurnLifecycleContributor for Mods {
             }
             // Batches settle within their turn; calls an aborted turn left behind are dropped here.
             if let Ok(mut settled) = self.settled.lock() {
-                settled.clear();
+                let thread = lead.thread.to_string();
+                settled.retain(|(owner, _), _| *owner != thread);
             }
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
@@ -2472,7 +2467,7 @@ impl ToolLifecycleContributor for Mods {
                 && let Ok(mut settled) = self.settled.lock()
             {
                 settled.insert(
-                    input.call_id.to_owned(),
+                    (lead.thread.to_string(), input.call_id.to_owned()),
                     (
                         input.tool_name.to_string(),
                         tool_outcome(input.outcome).to_owned(),

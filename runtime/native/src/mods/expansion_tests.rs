@@ -2380,6 +2380,52 @@ async fn model_completions_use_only_configured_worker_routes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn read_only_spawns_reject_tools_the_pinned_codex_lacks() {
+    let Some(fixture) = fixture(&[Package {
+        id: "delegate",
+        capabilities: &["agents"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let grants = fixture.core.runtime.lock().unwrap().grants("delegate");
+    let cancelled = Arc::new(AtomicBool::new(false));
+    for tool in [
+        "grep_files",
+        "list_dir",
+        "read",
+        "web",
+        "shell",
+        "shell_command",
+    ] {
+        let error = operations::dispatch(
+            &fixture.core,
+            &fixture.lead,
+            Caller {
+                id: "delegate",
+                source: "",
+                grants: grants.clone(),
+                generation: 0,
+                origin: Origin::Event,
+                record_changes: false,
+            },
+            None,
+            ModHostCall {
+                operation: "agents.spawn".into(),
+                arguments: json!({"role": "r", "route": "missing", "prompt": "x", "tools": [tool]}),
+            },
+            &cancelled,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "read_only_tool_surface_invalid", "{tool}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
     let Some(fixture) = fixture(&[Package {
         id: "bridge",
@@ -3568,6 +3614,80 @@ async fn compaction_chains_answer_skip_replace_and_fail_closed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn another_leads_turn_start_keeps_pending_batch_outcomes() {
+    let Some(fixture) = fixture(&[Package {
+        id: "observer",
+        capabilities: &["lifecycle", "store"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.on('tool_batch_end', e => api.state.set([...(api.state.get() ?? []), e]));\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let session_store = ExtensionData::new("session".to_owned());
+    let (first, second) = (
+        ExtensionData::new(fixture.lead.thread.to_string()),
+        ExtensionData::new("thread-b".to_owned()),
+    );
+    first.insert(fixture.lead.clone());
+    second.insert(Lead {
+        thread: ThreadId::new(),
+        ..fixture.lead.clone()
+    });
+    let turn_store = ExtensionData::new("turn-1".to_owned());
+    let exec = ToolName::plain("exec_command");
+    mods.on_tool_finish(ToolFinishInput {
+        session_store: &session_store,
+        thread_store: &first,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        call_id: "c1",
+        tool_name: &exec,
+        source: codex_extension_api::ToolCallSource::Direct,
+        outcome: codex_extension_api::ToolCallOutcome::Completed { success: true },
+        call_sha256: None,
+        result_sha256: None,
+    })
+    .await;
+    mods.on_turn_start(TurnStartInput {
+        turn_id: "turn-2",
+        collaboration_mode: &codex_protocol::config_types::CollaborationMode {
+            mode: codex_protocol::config_types::ModeKind::Default,
+            settings: codex_protocol::config_types::Settings {
+                model: "gpt-5".into(),
+                reasoning_effort: None,
+                developer_instructions: None,
+            },
+        },
+        token_usage_at_turn_start: None,
+        session_store: &session_store,
+        thread_store: &second,
+        turn_store: &ExtensionData::new("turn-2".to_owned()),
+    })
+    .await;
+    mods.on_tool_batch_end(codex_extension_api::ToolBatchEndInput {
+        turn_id: "turn-1",
+        call_ids: &["c1".into()],
+        session_store: &session_store,
+        thread_store: &first,
+        turn_store: &turn_store,
+    })
+    .await;
+    let log = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .state("observer")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        log[0]["calls"],
+        json!([{"call_id": "c1", "tool": "exec_command", "outcome": "succeeded"}])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
     let Some(fixture) = fixture(&[Package {
         id: "observer",
@@ -3584,10 +3704,10 @@ async fn lifecycle_seams_report_batches_loads_failures_and_elicitations() {
         ExtensionData::new("turn-2".to_owned()),
     );
     thread_store.insert(fixture.lead.clone());
-    mods.settled
-        .lock()
-        .unwrap()
-        .insert("c1".into(), ("exec_command".into(), "failed".into()));
+    mods.settled.lock().unwrap().insert(
+        (fixture.lead.thread.to_string(), "c1".into()),
+        ("exec_command".into(), "failed".into()),
+    );
     mods.on_tool_batch_end(codex_extension_api::ToolBatchEndInput {
         turn_id: "turn-2",
         call_ids: &["c1".into(), "c2".into()],
