@@ -113,6 +113,15 @@ Callbacks receive explicit settings over the schema's `default` values.
 | `pty_panes_per_mod` | 4 | 8 |
 | `completion_items` | 200 | 1000 |
 
+### Fault limit
+
+Five consecutive failed callbacks (commands, tools, hooks and render hooks all count) in one host process turn a mod
+off; any successful callback resets the count. These failures don't count: errors starting `state_conflict`,
+`state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`, `host_receipt_limit`,
+`host_result_limit`, `host_call_limit` or `callback_execution_budget`, and failures of `service` and `component`
+events. The count lives in the process and is not persisted, so each `omd-mod command` starts at 0 and
+`omd-mod status` shows `faults: 0` afterwards. A mod turned off in a running host comes back with `/omd` > Reload mods.
+
 ## Registration, view and callback rules
 
 The host enforces these; `scripts/mod_host_check.py` (`mise run mods:host-check`) loads every first-party package

@@ -358,7 +358,9 @@ async function main() {
     case 'create': return createProject(directory, nameOrStore || basename(directory));
     case 'example': return copyExample(directory, nameOrStore);
     case 'examples': return copyExamples(directory);
-    case 'check': return checkProject(directory);
+    case 'check':
+      checkProject(directory);
+      return void process.stderr.write('check: ok\n');
     case 'test': return runTests(directory);
     case 'run': return runScenario(directory, 'mod.test.json');
     case 'debug': return runScenario(directory, 'debug.test.json');
@@ -368,7 +370,9 @@ async function main() {
     case 'events': return print(engineJson([action, directory]));
     case 'diagnostics': return print(engineJson(['diagnostics', directory, resolve(nameOrStore || 'omd-diagnostics.json')]));
     case 'explain': return print(engineJson(['explain', rawDirectory]));
-    default: fail('usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL');
+    default:
+      process.exitCode = 1;
+      return void process.stderr.write('usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n');
   }
 }
 

@@ -173,6 +173,14 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             _ => positional.push(argument.clone()),
         }
     }
+    let flags = root
+        .as_ref()
+        .map_or(String::new(), |root| format!(" --store {}", root.display()))
+        + &if scope == "user" {
+            String::new()
+        } else {
+            format!(" --scope {scope}")
+        };
     let store = codex_omd::ModStore::open(store_root(root)?)?;
     let first = || positional.first().cloned().ok_or_else(usage);
     let done = |display: String| Ok(json!({"display": display}));
@@ -260,7 +268,7 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             let id = first()?;
             store.package_unblock(&id)?;
             done(format!(
-                "Unblocked {id}. It stays off until `omd mods enable {id}`."
+                "Unblocked {id}. It stays off until `omd mods enable {id}{flags}`."
             ))
         }
         "revoke" => {
@@ -296,12 +304,22 @@ fn mods(action: &str, args: &[String]) -> io::Result<Value> {
             }
             package_controls::apply(&store, &preview.control)?;
             let id = &preview.control.id;
+            let enabled = package_controls::list(&store, None)?["packages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|package| {
+                    package["id"] == id.as_str()
+                        && package["scope"] == scope.as_str()
+                        && package["enabled"] == true
+                });
             done(match action {
                 "install" => format!(
-                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}` to turn it on."
+                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
                 ),
+                "update" if enabled => format!("Updated {id}."),
                 "update" => format!(
-                    "Updated {id}. A changed grant, authority or origin leaves it off until `omd mods enable {id}`."
+                    "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
                 ),
                 "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
                 "rollback" => format!("Rolled {id} back to its previous version."),

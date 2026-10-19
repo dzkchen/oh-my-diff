@@ -5,11 +5,12 @@ import { runScenarioObject } from './cli.mjs';
 const TERMINAL = { event: 'draw', ledger: null };
 
 /** @param {import('../testing.d.ts').Step} step @param {import('../testing.d.ts').StepOptions} options */
-const withOptions = (step, { expect, expectError, cancelled } = {}) => ({
+const withOptions = (step, { expect, expectError, cancelled, threadId } = {}) => ({
   ...step,
   ...(expect !== undefined && { expect }),
   ...(expectError !== undefined && { expect_error: expectError }),
   ...(cancelled && { cancelled }),
+  ...(threadId && { thread_id: threadId }),
 });
 
 /** @type {typeof import('../testing.d.ts').clock} */
@@ -72,7 +73,7 @@ export const waitUntil = (check, until, { everyMs, maxMs, ...options }) => withO
 /** @type {typeof import('../testing.d.ts').reload} */
 export const reload = options => withOptions({ type: 'reload' }, options);
 /** @type {typeof import('../testing.d.ts').state} */
-export const state = (mod, { value, threadId, ...options } = {}) => withOptions({ type: 'state', mod, ...(value !== undefined && { value }), ...(threadId && { thread_id: threadId }) }, options);
+export const state = (mod, { value, ...options } = {}) => withOptions({ type: 'state', mod, ...(value !== undefined && { value }) }, options);
 /** @type {typeof import('../testing.d.ts').mount} */
 export const mount = (mod, { payload = TERMINAL, ...options } = {}) => withOptions({ type: 'terminal_mount', mod, payload }, options);
 /** @type {typeof import('../testing.d.ts').component} */

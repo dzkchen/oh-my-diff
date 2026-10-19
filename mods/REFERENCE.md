@@ -2,8 +2,8 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`.
-Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` and Codex `0.163.0`.
+The `omd` value in `omd-mod status` is the host contract version, not the release. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -740,7 +740,8 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
 
 Mods never run with the home directory or filesystem root as the session directory: the host stays off with a
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
-given thread and the checkout of their working directory. A callback result, including its state, stays within 256
+given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
+fails with `state_thread_unavailable`. A callback result, including its state, stays within 256
 KiB.
 
 #### `state_version` migration of thread and checkout state
@@ -3527,7 +3528,7 @@ post in the same frame replaces it; 64 KiB).
   the current values at every step.
 - A throw, three consecutive steps over 8 ms after the mounting one (`component_overrun`) or an invalid tree
   unmounts the node, which then draws one dim error line (the error's first line) until the next view revision
-  mounts it again. A failed step never counts toward the mod's fault limit.
+  mounts it again. A failed step never counts toward the mod's [fault limit](#fault-limit).
 - Without `height` the region is as tall as its latest tree.
 
 ##### Component modules for external clients
@@ -3686,6 +3687,10 @@ draw no frame.
   six lines, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 #### Terminal operations
+
+Operations the TUI serves, such as `terminal.panel`, need a running TUI. From `omd-mod command` they fail with
+`host_operation_unavailable: requires a native task`. Call them with `api.host.tryCall` and fall back to returning
+text.
 
 ##### Notifications and commands
 
@@ -4328,6 +4333,15 @@ Callbacks receive explicit settings over the schema's `default` values.
 | `pty_panes_per_mod` | 4 | 8 |
 | `completion_items` | 200 | 1000 |
 
+#### Fault limit
+
+Five consecutive failed callbacks (commands, tools, hooks and render hooks all count) in one host process turn a mod
+off; any successful callback resets the count. These failures don't count: errors starting `state_conflict`,
+`state_thread_unavailable`, `state_checkout_unavailable`, `callback_cancelled`, `host_receipt_limit`,
+`host_result_limit`, `host_call_limit` or `callback_execution_budget`, and failures of `service` and `component`
+events. The count lives in the process and is not persisted, so each `omd-mod command` starts at 0 and
+`omd-mod status` shows `faults: 0` afterwards. A mod turned off in a running host comes back with `/omd` > Reload mods.
+
 ### Registration, view and callback rules
 
 The host enforces these; `scripts/mod_host_check.py` (`mise run mods:host-check`) loads every first-party package
@@ -4523,8 +4537,8 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed |
-| `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
+| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm test` | Engine-owned scenario execution with no provider requests, then (once TypeScript is installed) the `pnpm check` type check, which fails the run before the report prints, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |
@@ -5065,11 +5079,31 @@ A `mod.test.json` file uses schema 1 and runs a mod with no external work.
 | `environment` | Nonsecret names mapped to string values (see [Offline environment](#offline-environment)) |
 
 - Any unmocked call fails before external work, and every result records `paid_requests: 0`.
+- `expect` is deep equality of the step's whole value, not a subset (`offline_expectation_failed`). A render `intercept`
+  result includes `trace[].location` (`index.ts:75:7`), so an exact expectation breaks when lines move: test
+  interceptors in a `*.test.ts` file ([TypeScript tests](#typescript-tests)).
 - A store-level `omd-mod test STORE SCENARIO` uses the store's own settings instead of `settings`.
 - A mod that fails to activate reports its retained cause, so a missing service provider, denied capability or source
   error names itself instead of only asking for a reload.
 
 #### What steps can do
+
+Every step has a `type`:
+
+| `type` | Meaning |
+| --- | --- |
+| `invoke` | Calls one mod's tool, command or hook by `mod`, `event` and `name` with `payload` |
+| `event` | Dispatches `event` with `payload` to every mod that handles it |
+| `tool_outcome`, `agent` | Dispatches a `tool_result` or `agent` lifecycle event |
+| `advance_time` | Moves virtual time forward by `ms`, running due timers |
+| `wait_until` | Repeats a `check` step as time advances until it equals `until` |
+| `reload`, `status` | Reloads the mods at a safe boundary; returns the host's status |
+| `state` | Returns (or with `value`, first writes) a mod's persisted `api.state` |
+| `tool_exposure` | Returns the tool names the mods expose for a `payload` ledger |
+| `terminal_mount`, `terminal_interact` | Draws a mod's terminal view; sends it a `key` or a `component` interaction |
+| `component` | Steps one `api.component` module instance |
+| `client_attach`, `client_detach` | Adds or removes an external client |
+| `intercept` | Runs an interceptor chain for `surface`, answering `next` from `core` |
 
 Steps can:
 
@@ -5083,7 +5117,7 @@ Steps can:
 
 A step can carry `expect`, `expect_error`, or `cancelled`, and `thread_id` to run in that thread when its payload names
 none. Thread-scoped state, timers and component events follow it; the `THREAD` argument of `omd-mod test` binds every
-step and takes precedence.
+step and takes precedence. In a TypeScript test, pass `threadId` in a step's options.
 
 #### Offline environment
 
@@ -5141,7 +5175,7 @@ These steps run the mod's callbacks on fixture data; they are not terminal or cl
 
 #### Task-scoped tools and `tool_exposure`
 
-API `.8` adds `task_scoped: true` on `api.tool` and the `tool_exposure` event.
+`task_scoped: true` on `api.tool` and the `tool_exposure` event (host feature `task_tool_exposure_v1`) expose optional tools per task.
 
 - Before each sampling step, the event receives the host `ledger`, thread ID, and only the current mod's optional tool
   names. It returns `{enable: [...]}` for a subset of those names.

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { activate, clock, component, environment, find, intercept, packages, pointer, state, text } from '../mods/author/testing.mjs';
+import { activate, clock, component, environment, find, intercept, invoke, packages, pointer, state, text } from '../mods/author/testing.mjs';
 
 test('author packaging preserves custom entrypoints, assets and lifecycle scripts and inspects the output', () => {
   const root = mkdtempSync(join(tmpdir(), 'omd-author-package-'));
@@ -66,6 +66,7 @@ test('scaffold commands and mapped failures work for custom and example-named ID
       assert.match(tested.stdout, /Hello author/);
       const checked = author('check', project);
       assert.equal(checked.status, 0, checked.stderr);
+      assert.match(checked.stderr, /check: ok/);
       const scenario = author('run', project);
       assert.equal(scenario.status, 0, scenario.stderr);
       assert.match(scenario.stdout, /Hello author/);
@@ -244,3 +245,12 @@ const inventory = (parameters) => ({ thread_id: 'fixture', tools: [
   { name: 'apply_patch', kind: 'builtin', server: null, original: { description: 'Patch files', parameters: null, freeform: true }, effective: null },
   { name: 'mcp__docs__search', kind: 'mcp', server: 'docs', original: { description: 'Search docs', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer' } }, required: ['query'] }, freeform: false }, effective: { description: 'Search docs', parameters: null, deferred: true } },
 ] });
+
+test('author usage prints without a stack and thread ids map on every step helper', () => {
+  const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, '--help'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^usage: omd-mod-author /);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+  assert.equal(state('m', { threadId: 't' }).thread_id, 't');
+  assert.equal(invoke('m', 'command', 'c', null, { threadId: 't' }).thread_id, 't');
+});

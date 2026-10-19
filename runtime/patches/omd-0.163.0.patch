@@ -54218,10 +54218,10 @@ index 0000000000000000000000000000000000000000..f314421916682f4d54b7c56a3fc26b8a
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67aacf96923
+index 0000000000000000000000000000000000000000..f44df6d623954ef75be0fd081441864c870c58eb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,555 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -54240,8 +54240,22 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +use std::path::PathBuf;
 +use std::process::Command;
 +
++fn store(root: &str) -> io::Result<PathBuf> {
++    PathBuf::from(root).canonicalize().map_err(|error| {
++        let hint = if error.kind() == io::ErrorKind::NotFound {
++            "; create it with omd-mod init STORE NODE"
++        } else {
++            ""
++        };
++        io::Error::new(
++            error.kind(),
++            format!("store_unavailable: {root}: {error}{hint}"),
++        )
++    })
++}
++
 +fn open(root: &str) -> io::Result<ModStore> {
-+    ModStore::open(PathBuf::from(root).canonicalize()?)
++    ModStore::open(store(root)?)
 +}
 +
 +fn json(value: impl serde::Serialize) -> io::Result<Value> {
@@ -54635,9 +54649,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +            let mut value = String::new();
 +            io::Read::read_to_string(&mut io::stdin(), &mut value)?;
 +            let value = value.trim_end_matches(['\n', '\r']);
-+            let profiles = codex_omd::credentials::CredentialProfiles::open(
-+                &PathBuf::from(root).canonicalize()?,
-+            )?;
++            let profiles = codex_omd::credentials::CredentialProfiles::open(&store(root)?)?;
 +            let existing = profiles.visible(owner)?.into_iter().find(|profile| {
 +                profile["kind"] == "secret"
 +                    && profile["label"] == label.as_str()
@@ -54651,8 +54663,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +            profiles.public(&profiles.profile(&id)?)
 +        }
 +        [command, root] if command == "credentials" => Ok(Value::Array(
-+            codex_omd::credentials::CredentialProfiles::open(&PathBuf::from(root).canonicalize()?)?
-+                .visible("")?,
++            codex_omd::credentials::CredentialProfiles::open(&store(root)?)?.visible("")?,
 +        )),
 +        [command, root] if command == "reload" => {
 +            open(root)?.reload()?;
@@ -54666,7 +54677,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +        }
 +        [command, root] if command == "status" => {
 +            let mut host = ModHost::open_in(
-+                PathBuf::from(root).canonicalize()?,
++                store(root)?,
 +                validate_tool_schema,
 +                &std::env::current_dir()?,
 +            )?;
@@ -54693,9 +54704,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +            }
 +        }
 +        [command, root] if command == "report" => {
-+            let status =
-+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-+                    .status();
++            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
 +            Ok(
 +                serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
 +                .into_iter().flatten().map(|item| serde_json::json!({
@@ -54706,15 +54715,11 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +                })).collect::<Vec<_>>() }),
 +            )
 +        }
-+        [command, root] if command == "events" => Ok(ModHost::open_validated(
-+            PathBuf::from(root).canonicalize()?,
-+            validate_tool_schema,
-+        )?
-+        .author_inspection()),
++        [command, root] if command == "events" => {
++            Ok(ModHost::open_validated(store(root)?, validate_tool_schema)?.author_inspection())
++        }
 +        [command, root] if command == "declarations" => {
-+            let status =
-+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-+                    .status();
++            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
 +            Ok(
 +                serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
 +                "installed_contracts":status["installed_contract_types"],
@@ -54724,7 +54729,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +        [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
 +            let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
 +            let mut host = ModHost::open_in(
-+                PathBuf::from(root).canonicalize()?,
++                store(root)?,
 +                validate_tool_schema,
 +                &std::env::current_dir()?,
 +            )?;
@@ -54733,8 +54738,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +        }
 +        [command, root, output] if command == "diagnostics" => {
 +            let bundle =
-+                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-+                    .diagnostic_bundle();
++                ModHost::open_validated(store(root)?, validate_tool_schema)?.diagnostic_bundle();
 +            let output = PathBuf::from(output);
 +            std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
 +            Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -54744,7 +54748,7 @@ index 0000000000000000000000000000000000000000..48d421b6cdb692979067923f395dc67a
 +            if command == "command" && thread.len() <= 1 =>
 +        {
 +            let mut host = ModHost::open_in(
-+                PathBuf::from(root).canonicalize()?,
++                store(root)?,
 +                validate_tool_schema,
 +                &std::env::current_dir()?,
 +            )?;
@@ -86884,10 +86888,10 @@ index 0000000000000000000000000000000000000000..b6b05710ff01abb9a557e0d8b2d40727
 +}
 diff --git a/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9200a94ef0fe7b7965aa10fcc21d2f538dedcbbd
+index 0000000000000000000000000000000000000000..6820ef768d54b4c548ef3e51cf70684f13efd61b
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
-@@ -0,0 +1,665 @@
+@@ -0,0 +1,683 @@
 +use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -87063,6 +87067,14 @@ index 0000000000000000000000000000000000000000..9200a94ef0fe7b7965aa10fcc21d2f53
 +            _ => positional.push(argument.clone()),
 +        }
 +    }
++    let flags = root
++        .as_ref()
++        .map_or(String::new(), |root| format!(" --store {}", root.display()))
++        + &if scope == "user" {
++            String::new()
++        } else {
++            format!(" --scope {scope}")
++        };
 +    let store = codex_omd::ModStore::open(store_root(root)?)?;
 +    let first = || positional.first().cloned().ok_or_else(usage);
 +    let done = |display: String| Ok(json!({"display": display}));
@@ -87150,7 +87162,7 @@ index 0000000000000000000000000000000000000000..9200a94ef0fe7b7965aa10fcc21d2f53
 +            let id = first()?;
 +            store.package_unblock(&id)?;
 +            done(format!(
-+                "Unblocked {id}. It stays off until `omd mods enable {id}`."
++                "Unblocked {id}. It stays off until `omd mods enable {id}{flags}`."
 +            ))
 +        }
 +        "revoke" => {
@@ -87186,12 +87198,22 @@ index 0000000000000000000000000000000000000000..9200a94ef0fe7b7965aa10fcc21d2f53
 +            }
 +            package_controls::apply(&store, &preview.control)?;
 +            let id = &preview.control.id;
++            let enabled = package_controls::list(&store, None)?["packages"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .any(|package| {
++                    package["id"] == id.as_str()
++                        && package["scope"] == scope.as_str()
++                        && package["enabled"] == true
++                });
 +            done(match action {
 +                "install" => format!(
-+                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}` to turn it on."
++                    "Installed {id} ({scope}). It is off: run `omd mods enable {id}{flags}` to turn it on."
 +                ),
++                "update" if enabled => format!("Updated {id}."),
 +                "update" => format!(
-+                    "Updated {id}. A changed grant, authority or origin leaves it off until `omd mods enable {id}`."
++                    "Updated {id}. It is off: run `omd mods enable {id}{flags}` to turn it on."
 +                ),
 +                "remove" => format!("Removed {id}. Its cache, state and local sources are kept."),
 +                "rollback" => format!("Rolled {id} back to its previous version."),
@@ -99118,10 +99140,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542b3b59115
+index 0000000000000000000000000000000000000000..98aa5246c957166e0472e27c3b3d5dcc6685f5fb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6114 @@
+@@ -0,0 +1,6127 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -103082,6 +103104,7 @@ index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542
 +        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
 +        for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
 +            let administered = index < administered;
++            let mut inspected = None;
 +            let loaded = (|| {
 +                if !administered
 +                    && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
@@ -103101,6 +103124,7 @@ index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542
 +                    )));
 +                }
 +                let (package, source, hash) = inspect(&selection.path)?;
++                inspected = Some(package.id.clone());
 +                if hash != selection.sha256 {
 +                    return Err(failure(if administered {
 +                        format!(
@@ -103130,7 +103154,13 @@ index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542
 +            let (package, source) = match loaded {
 +                Ok(loaded) => loaded,
 +                Err(error) => {
-+                    reject(initial, rejected, selection, None, error.to_string())?;
++                    reject(
++                        initial,
++                        rejected,
++                        selection,
++                        inspected.as_deref(),
++                        error.to_string(),
++                    )?;
 +                    continue;
 +                }
 +            };
@@ -103862,14 +103892,19 @@ index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542
 +        if generation != self.generation {
 +            return Err(failure("stale_mod_generation: retry on the next turn"));
 +        }
-+        let mut loaded = self
-+            .loaded
-+            .get(id)
-+            .cloned()
-+            .ok_or_else(|| failure("mod_disabled"))?;
++        let mut loaded = self.loaded.get(id).cloned().ok_or_else(|| {
++            match self
++                .rejected
++                .iter()
++                .find(|rejection| rejection.id.as_deref() == Some(id))
++            {
++                Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
++                None => failure("mod_disabled"),
++            }
++        })?;
 +        if let Some(error) = &loaded.error {
 +            return Err(failure(format!(
-+                "mod_failed: {error}; explicitly reload to recover"
++                "mod_failed: {error}; reload it with /omd (Reload mods)"
 +            )));
 +        }
 +        self.check_callback_authority(&loaded)?;
@@ -105238,10 +105273,10 @@ index 0000000000000000000000000000000000000000..160b716f1a4ed99bc51b080592ee7542
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f17df0212259789bfe883815c7d5cdc6f36e8ea
+index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e707ddcff6e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1091 @@
+@@ -0,0 +1,1101 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -105542,6 +105577,16 @@ index 0000000000000000000000000000000000000000..6f17df0212259789bfe883815c7d5cdc
 +            (
 +                "The callback changed persistent state without the state capability.",
 +                "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
++            )
++        } else if code.starts_with("state_thread_unavailable") {
++            (
++                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
++                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
++            )
++        } else if code.starts_with("repository_provenance_mismatch") {
++            (
++                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
++                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
 +            )
 +        } else if code.starts_with("host_operation_unavailable") {
 +            (
@@ -109247,10 +109292,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..64b35784d76e6ce389ef4dac1c48317e4f2bd563
+index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c0e4900b8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2898 @@
+@@ -0,0 +1,2901 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -111510,7 +111555,10 @@ index 0000000000000000000000000000000000000000..64b35784d76e6ce389ef4dac1c48317e
 +    if let ModPackageSource::Repository { repository, .. } = source
 +        && provenance.source != *repository
 +    {
-+        return Err(failure("repository_provenance_mismatch"));
++        return Err(failure(format!(
++            "repository_provenance_mismatch: mod.json provenance.source is {:?}; this install needs {repository:?}",
++            provenance.source
++        )));
 +    }
 +    Ok(())
 +}
@@ -152264,10 +152312,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3f06ea7611f3619ca5c2215d3e996e4fe80b3e7d
+index 0000000000000000000000000000000000000000..7edbbd38be35a828647efdf0b93c7770053bc094
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1602 @@
+@@ -0,0 +1,1610 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -153649,6 +153697,7 @@ index 0000000000000000000000000000000000000000..3f06ea7611f3619ca5c2215d3e996e4f
 +            Arc::new(move || current(&invocation))
 +        },
 +    };
++    let failed_before = terminal_failures().contains_key(id);
 +    let value = codex_omd::invoke_shared(
 +        &runtime,
 +        id,
@@ -153669,7 +153718,14 @@ index 0000000000000000000000000000000000000000..3f06ea7611f3619ca5c2215d3e996e4f
 +        },
 +        |_| {},
 +    )
-+    .map_err(|e| e.to_string())?;
++    .map_err(|error| {
++        let error = error.to_string();
++        if !failed_before && terminal_failures().contains_key(id) {
++            format!("{error}; {id} is now off after repeated failures, /omd reloads it")
++        } else {
++            error
++        }
++    })?;
 +    if !active() {
 +        return Err("callback_cancelled".to_owned());
 +    }

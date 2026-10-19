@@ -379,7 +379,7 @@ post in the same frame replaces it; 64 KiB).
   the current values at every step.
 - A throw, three consecutive steps over 8 ms after the mounting one (`component_overrun`) or an invalid tree
   unmounts the node, which then draws one dim error line (the error's first line) until the next view revision
-  mounts it again. A failed step never counts toward the mod's fault limit.
+  mounts it again. A failed step never counts toward the mod's [fault limit](packages-and-limits.md#fault-limit).
 - Without `height` the region is as tall as its latest tree.
 
 #### Component modules for external clients
@@ -538,6 +538,10 @@ draw no frame.
   six lines, then `+N more`), so the sidebar opens only for a mod's `sidebar` components, `panels` or unplaced named sites.
 
 ### Terminal operations
+
+Operations the TUI serves, such as `terminal.panel`, need a running TUI. From `omd-mod command` they fail with
+`host_operation_unavailable: requires a native task`. Call them with `api.host.tryCall` and fall back to returning
+text.
 
 #### Notifications and commands
 

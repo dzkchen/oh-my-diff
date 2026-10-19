@@ -1108,10 +1108,23 @@ def launch(args, root, current):
     print(f"Oh My Diff {ready} is installed.", file=sys.stderr)
 
 
+def update_summary(status):
+    rules = status["policy"]
+    checks = f"{rules['cadence']} checks" if rules["checks"] == "on" else "update checks off"
+    found = status["available"]
+    latest = (f"{found['version']} is available: run omd update" if found else
+              f"the last check failed: {status['error']}" if status["error"] else
+              "up to date" if status["checked_at"] else "not checked yet")
+    pinned = f", pinned to {rules['pin']}" if rules["pin"] else ""
+    return (f"Oh My Diff {status['installed']} ({PROFILE_LABELS[status['profile']]}), {rules['channel']} channel, "
+            f"{checks}{pinned}: {latest}")
+
+
 def main():
     if sys.version_info < (3, 12):
         fail("Python 3.12 or newer is required for verified archive extraction")
     parser = argparse.ArgumentParser(
+        prog="install.sh",
         description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
                "omd update channel stable|prerelease|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
@@ -1161,7 +1174,10 @@ def main():
             if current:
                 launch(args, root, current)
         elif args.command == "update" and args.action != "rollback":
-            print(json.dumps(manual(args, root, current), indent=2))
+            result = manual(args, root, current)
+            print(json.dumps(result, indent=2))
+            if args.action == "status":
+                print(update_summary(result), file=sys.stderr)
         elif args.command == "install":
             install(args, root, current)
         elif args.command == "status":

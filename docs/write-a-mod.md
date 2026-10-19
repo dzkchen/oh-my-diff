@@ -32,13 +32,14 @@ pnpm test
 ```
 
 It runs offline and prints a long JSON report. Exit 0 means it passed; look for `"display": "Hello author"` near
-the top.
+the top. Once TypeScript is added (below), `pnpm test` also type-checks, after the scenario passes and before its
+report prints, so a type error fails the run.
 
 Tests never call a real model. For mocks and helpers, see
 [Offline scenarios](../mods/reference/packaging.md#offline-scenarios) and
 [TypeScript tests](../mods/reference/authoring.md#typescript-tests).
 
-To type-check too, add TypeScript once, then run `pnpm check`:
+To type-check too, add TypeScript once, then run `pnpm check` (it prints `check: ok` when it passes):
 
 ```sh
 pnpm add -D typescript@5.9.3
@@ -62,9 +63,14 @@ In a second terminal, start `codex` on that store:
 OMD_MODE=omd OMD_MOD_STORE=/tmp/my-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
 ```
 
-Type `/hello`. You should see `Hello world`.
+Type `/hello`. You should see `Hello world`. The popup also lists it as `/my_mod:hello`; that form always works,
+and you need it when another mod or a built-in uses the same name.
 
 Edit the message in `index.ts` and save. Send any message, then `/hello` again.
+
+`codex` asks you to sign in on a fresh home. A mod's commands and views need no model turn, so to try them without
+an account, point `codex` at a local address that never answers by adding
+`-c model_provider=offline -c 'model_providers.offline={name="offline",base_url="http://127.0.0.1:9/v1",wire_api="responses"}'`.
 
 ## 4. Install it for real
 
@@ -74,7 +80,10 @@ omd install ./my_mod
 omd mods enable my_mod
 ```
 
-Each command shows what the mod can do and asks first. After later code changes, run `omd mods update my_mod`.
+Each command shows what the mod can do and asks first. A folder install runs the folder itself, not `dist/`: after
+any edit, even whitespace, the mod stops until you review it again with `omd mods update my_mod` (`omd-mod status`
+lists it under `rejected` as `untrusted_source` meanwhile). To freeze a version, install a Git tag or a package
+instead.
 
 ## 5. Share it
 
@@ -103,7 +112,21 @@ Others install it with:
 omd install npm:@you/my-mod@0.1.0
 ```
 
-Git works too: `omd install 'git+https://github.com/you/repo#v0.1.0:my_mod'`.
+Git works too: commit the mod, tag it, and install `omd install 'git+https://github.com/you/repo#v0.1.0:my_mod'`.
+`provenance.source` in the committed `mod.json` must name that repository exactly: `https://github.com/you/repo`, or
+for a local `git+file:///path/repo#…` install the repository's absolute path `/path/repo` (symlinks resolved).
+Anything else is refused with `repository_provenance_mismatch`
+([details](../mods/reference/packaging.md#provenancesource-for-git-installs)).
+
+The scaffold links `@oh-my-diff/mod-api` from your OMD install, so `package.json` and `pnpm-lock.yaml` hold a
+`file:` path under your home directory. A collaborator who has OMD installed runs this in their clone, which replaces
+the path with their own:
+
+```sh
+pnpm add -D @oh-my-diff/mod-api@file:$HOME/.local/share/oh-my-diff/current/prefix/author/package
+```
+
+(Use the `--root` they installed with if it isn't the default.) The package published to npm doesn't include it.
 
 ## If something goes wrong
 

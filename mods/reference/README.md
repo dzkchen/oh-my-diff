@@ -1,7 +1,7 @@
 # Mod API reference
 
-This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.163.0`.
-Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `0.2.0-experimental.5` and Codex `0.163.0`.
+The `omd` value in `omd-mod status` is the host contract version, not the release. Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
 
 [`REFERENCE.md`](../REFERENCE.md) has every page below in one file, for agents and search.
 

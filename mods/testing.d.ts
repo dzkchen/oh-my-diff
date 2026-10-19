@@ -1,6 +1,7 @@
 import type { ComponentKey, ComponentPointer, HostOperations, InterceptTraceEntry, Json, KeyName, TerminalComponent, TerminalView } from './api.d.ts';
 
-export type StepOptions = { expect?: Json; expectError?: string; cancelled?: boolean };
+/** `threadId` runs the step in that thread when its payload names none. */
+export type StepOptions = { expect?: Json; expectError?: string; cancelled?: boolean; threadId?: string };
 export type Step = { expect?: Json; expect_error?: string; cancelled?: boolean; thread_id?: string } & (
   | { type: 'invoke'; mod: string; event: string; name: string; payload?: Json }
   | { type: 'event'; event: string; payload?: Json }
@@ -74,7 +75,7 @@ export function advance(ms: number, options?: StepOptions): Step;
 export function waitUntil(check: Step, until: Json, options: StepOptions & { everyMs?: number; maxMs: number }): Step;
 export function reload(options?: StepOptions): Step;
 /** Returns the mod's persisted `api.state`; with `value`, first writes it (the mod needs `store`). `threadId` selects a thread-scoped state. */
-export function state(mod: string, options?: StepOptions & { value?: Json; threadId?: string }): Step;
+export function state(mod: string, options?: StepOptions & { value?: Json }): Step;
 export function mount(mod: string, options?: InteractOptions): Step;
 /** Steps one instance of the mod's `api.component` module at the scenario's virtual time, delivering `events` and any due ticks, and returns a `ComponentFrame`. The instance mounts on its first step and keeps its state; `columns` default to 80 and `rows` to 0 (auto height). The module gets no host authority. */
 export function component(mod: string, module: string, options?: StepOptions & { instance?: string; props?: Json; columns?: number; rows?: number; events?: (ComponentKey | ComponentPointer)[] }): Step;

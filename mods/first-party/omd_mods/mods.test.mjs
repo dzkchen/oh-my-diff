@@ -28,6 +28,7 @@ const operations = reply => reply.calls.map(call => call.operation);
 test('a toggle leaves redrawing to the host after a change and corrects the panel when it is declined', () => {
   const opened = invoke('');
   assert.deepEqual(opened.panels[0].tabs.map(tab => tab.id), ['installed', 'settings', 'directory']);
+  assert.equal(invoke('', { packages: [mod('omd_claude_cli')] }).panels[0].items.find(item => item.id === 'user:omd_claude_cli').label, 'Claude CLI');
   assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_logo').value, true);
   const declined = invoke('panel user user:omd_logo false', { ui_state: opened.ui, 'packages.apply': () => ({ status: 'declined' }) });
   assert.deepEqual(operations(declined), ['packages.list', 'packages.apply', 'packages.list', 'terminal.panel']);
