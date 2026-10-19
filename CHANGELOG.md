@@ -16,7 +16,6 @@ Second release candidate: a native mod settings panel, Claude subscription model
 
 - Mod dialogs work from the keyboard: arrows move between controls, held keys repeat, Space toggles, and `/mods` filters as you type with fuzzy matching.
 - `/mods` opens faster in OMD+: mod status is shared and the package listing is cached.
-- Rustfmt the patched sources (#250)
 
 ### Fixed
 
