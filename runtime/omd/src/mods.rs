@@ -2546,6 +2546,16 @@ struct UiState {
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
+static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Mods any host in this process turned off for repeated faults since the last call.
+pub fn take_turned_off() -> Vec<String> {
+    std::mem::take(
+        &mut *TURNED_OFF
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+}
 
 fn reset_ui_states(root: &Path, revision: u64) {
     if UI_RESETS.lock().map_or(true, |mut resets| {
@@ -2714,6 +2724,13 @@ impl Loaded {
         if self.telemetry.faults >= MOD_FAULT_LIMIT && self.error.is_none() {
             self.error = Some(error.clone());
             self.clear_ui();
+            let mut turned_off = TURNED_OFF
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Each host counts its own faults; one notice per mod, and processes that never drain stay bounded.
+            if !turned_off.contains(&self.package.id) {
+                turned_off.push(self.package.id.clone());
+            }
         }
         self.telemetry.last_error = Some(error);
     }
