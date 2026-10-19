@@ -22,8 +22,8 @@ Second release candidate: a native mod settings panel, Claude subscription model
 - Mods: `/mods` can't turn itself off or remove itself, an installed mod updates from its own panel instead of reinstalling, and `/omd`'s Reload mods works without an attached client.
 - Terminal UI: the welcome logo stays while you type a command and hides after the first history line; mod diagnostics wrap and no longer fire for Codex's internal threads.
 - Status line: a ChatGPT plan shows `included` instead of `unpriced · cost unknown`.
-- Direct mode runs Codex embedded like the other modes (#248)
-- Repair truncated blobs, current read-only tools and per-thread batch outcomes (#249)
+- Install: `omd-package activate direct` no longer exits right after launch on a machine where packaged Codex never ran.
+- Mod runtime: a truncated evidence file is repaired instead of failing every later write; read-only agents accept only tools Codex has; one lead's new turn no longer drops another lead's tool outcomes.
 
 ## [1.0.0-rc.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0-rc.1) — 2026-10-17
 
