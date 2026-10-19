@@ -28,7 +28,7 @@ tools, context and screens. You still run `codex`, with your settings, sign-in a
 Needs an Apple Silicon Mac, Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.1/install.sh | sh -s -- --channel prerelease --profile full
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/download/v1.0.0-rc.2/install.sh | sh -s -- --channel prerelease --profile full
 ```
 
 This installs the `1.0.0` release candidate from the prerelease channel. `--profile full` is OMD+ (OMD plus the
