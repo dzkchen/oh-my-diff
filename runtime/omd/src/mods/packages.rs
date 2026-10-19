@@ -42,6 +42,9 @@ impl ModStore {
         let mut settings = selection.settings.clone();
         change(&mut settings);
         validate_settings(&package, &settings)?;
+        if settings == selection.settings {
+            return Ok(settings);
+        }
         selection.settings = settings.clone();
         config.revision = config
             .revision

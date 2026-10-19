@@ -5,7 +5,7 @@
 - Apple Silicon Mac (no Linux or Intel).
 - Codex `0.163.x` (`codex --version`). Install: `npm install -g @openai/codex@0.163`. Don't update Codex until OMD
   supports the new version.
-- Node 24.18+ (24.x): `mise use -g node@24` with [mise](https://mise.jdx.dev).
+- Node 24.18+ (24.x) from [mise](https://mise.jdx.dev) (`mise use -g node@24`) or on `PATH`.
 - Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
 
 ## Install
@@ -58,7 +58,7 @@ delete it to remove them.
 | `upstream Codex 0.163.x is required` | Install Codex `0.163.x`, or pass `--upstream /path/to/codex`. |
 | `move the upstream codex out of ~/.local/bin` | Move your Codex elsewhere and pass `--upstream`. |
 | `codex on PATH is ..., not the OMD launcher` | Add the printed `export PATH=...` line to your shell profile; open a new shell. |
-| `Node 24.18 or a later 24.x is required` | Install Node with mise, or pass `--node /path/to/node`. |
+| `Node 24.18 or a later 24.x is required` | Install Node 24 with mise or on `PATH`, or pass `--node /path/to/node`. |
 | `No terminal is available` | Add `--profile full` or `--profile platform`. |
 | A mod breaks `codex` | `omd mods disable ID` ([more](manage-mods.md#when-a-mod-misbehaves)). |
 

@@ -192,6 +192,7 @@
     "operations:prompts.revoke": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:prompts.status": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:prompts.submit": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "operations:providers.models": {"status":"experimental","reason":"Added after the launch freeze for in-session provider models; outside the launch-frozen subset."},
     "operations:providers.register": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.register'"},"decision":"coordination.providers"},
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
@@ -224,6 +225,7 @@
     "operations:terminal.open": {"status":"frozen","consumer":{"path":"mods/examples/image_preview/index.ts","snippet":"api.host.call('terminal.open'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pane": {"status":"frozen","consumer":{"path":"mods/examples/reactive_dashboard/index.ts","snippet":"api.host.call('terminal.pane'"},"decision":"terminal.interaction"},
     "operations:terminal.panes": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "operations:terminal.panel": {"status":"experimental","reason":"Added after the launch API freeze; ships experimental in 1.0.0."},
     "operations:terminal.prompt": {"status":"frozen","consumer":{"path":"mods/examples/confirm_note/index.ts","snippet":"api.host.call('terminal.prompt'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pty": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"api.host.call('terminal.pty'"},"decision":"terminal.pty"},
     "operations:terminal.selection": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"api.host.call('terminal.selection'"},"decision":"terminal.controls"},
@@ -461,6 +463,7 @@
         "events": [],
         "replacements": [],
         "operations": [
+          "providers.models",
           "providers.register",
           "providers.unregister"
         ]
@@ -1248,6 +1251,7 @@
         ],
         "operations": [
           "terminal.panes",
+          "terminal.panel",
           "terminal.notice",
           "terminal.selection",
           "terminal.copy"

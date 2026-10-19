@@ -12,7 +12,6 @@ import { runClaude } from './transport.mjs';
 // Every test drives a real Claude CLI; without OMD_TEST_CLAUDE a glob that picks this file up skips it.
 const test = process.env.OMD_TEST_CLAUDE ? nodeTest : nodeTest.skip;
 
-const pkg = fileURLToPath(new URL('./', import.meta.url));
 const opus = 'claude-opus-5-5';
 const opusEntry = { slug: opus, cli: opus, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], thinking: true, window: 1000000 };
 const opusRequest = { model: opus, stream: true, reasoning: { effort: 'max' }, input: [{ type: 'message', role: 'user',
@@ -143,7 +142,7 @@ test('cancellation stops the owned CLI request and the next request starts clean
   { timeout: 30000 }, async () => {
     const root = await mkdtemp(join(tmpdir(), 'omd-claude-host-'));
     await mkdir(join(root, 'codex-home'));
-    const catalog = join(pkg, 'models.json');
+    const catalog = fileURLToPath(new URL('../../../tests/fixtures/claude_models.json', import.meta.url));
     const calls = [];
     const server = createServer(async (request, response) => {
       let body = '';

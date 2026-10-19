@@ -4,22 +4,25 @@ Adds `/mods`, a screen to turn mods on or off, change their settings and install
 
 ## Turn it off
 
-It is on by default in OMD+ and OMD Core. Turn it off with `omd-package mod disable omd_mods`. `/omd` stays available if `/mods` breaks.
+It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remove itself; use `/omd` or `omd-package mod disable omd_mods`. `/omd` stays available if `/mods` breaks.
 
 ## Use it
 
 | Command or key | What it does |
 | --- | --- |
-| `/mods` | Open the screen. Mods are listed as Failed, On and Off. |
-| Up and Down | Move through the list. |
-| Space or Enter | Turn the highlighted mod on or off. |
-| Tab | Reach the filter, settings, Browse and Add from source. |
-| Esc | Close the screen. |
-| `/mods ACTION MOD` | Run an action without the screen. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |
-| `/mods reload` | Reload the list. |
+| `/mods` | Open the panel where `/config` lives. Installed lists your mods as switches, Settings opens one mod's own panel and Directory installs new ones. |
+| Up and Down | Move through the list; held keys repeat. |
+| Left and Right | Switch tabs. |
+| Space or Enter | Turn the highlighted mod on or off, change a setting or run an action. |
+| `/` | Search every tab as you type; Esc clears the search. |
+| Esc | Close the panel, or go back from a mod's own panel. |
+| `/mods MOD` | Open one mod's panel: its settings, Update, Roll back and Remove. |
+| `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |
+| `/mods reload` | Reload every mod. |
 | `/mods apply` or `/mods cancel` | Confirm or drop a pending action. |
 
-Browse searches the mod directory. Add from source takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute folder or a directory id.
+Add from source, in Directory, takes `npm:NAME[@VERSION]`, `git+URL[#REF]`, an absolute folder or a directory id; a
+directory entry installs its newest available version. A mod that is already installed is updated from its own panel instead. Install for picks your user store or this project.
 
 ## Needs and limits
 

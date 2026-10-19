@@ -1,12 +1,11 @@
-import type { Json, ModAPI, TerminalComponent, TerminalListRow, TerminalPatch, TerminalRenderSite } from '../../api.d.ts';
+import type { Json, ModAPI, TerminalComponent, TerminalPanel, TerminalPanelItem, TerminalPatch, TerminalRenderSite } from '../../api.d.ts';
 import { DEFAULTS, EMPTY, SEGMENTS, charge, githubKey, layout, render, scripts, settings, visible } from './segments.ts';
 import type { Charge, Data, Settings } from './segments.ts';
 import { GITHUB_ORIGIN, GITHUB_QUERY, GIT_SCRIPT, ansi, parseGit, parseGithub, payload } from './sources.ts';
 
-type Editor = { open: boolean; draft: Settings; selected: string | null; notice: string | null };
+type Editor = { draft: Settings; notice: string | null };
 type Seen = Data['seen'][string];
 
-const COMMAND = 'omd_statusline:edit';
 const BEAT_MS = 150_000;
 const PREVIEW_COLUMNS = 64;
 
@@ -146,6 +145,7 @@ export default function activate(api: ModAPI) {
     if (windows.length) data.limits = windows;
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
+    if (typeof snapshot.planType === 'string') data.subscription = snapshot.planType;
   };
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
@@ -179,10 +179,13 @@ export default function activate(api: ModAPI) {
     const summary = api.usage.summarize(response);
     const usage = object(response.usage);
     const reported = object(usage.omd_reported_cost);
-    const [kind, amount] = charge(response.cost.basis, response.cost.microusd, number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
     const tokens = summary.measured ? summary.tokens : null;
     const now = Date.now();
     update(data => {
+      // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
+      const plan = response.cost.basis === 'unpriced' && response.route === 'codex' && response.provider === 'openai' && data.subscription !== null;
+      const [kind, amount] = charge(plan ? 'included_subscription' : response.cost.basis, response.cost.microusd,
+        number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
       const key = `${response.request_id}#${response.attempt}`;
       const entry: Seen = [tokens?.input ?? 0, tokens?.output ?? 0, tokens?.reasoning ?? 0, tokens?.cached ?? 0, tokens?.cache_write ?? 0, kind as Charge, amount];
       if (data.seen[key]) apply(data, data.seen[key], -1);
@@ -225,7 +228,7 @@ export default function activate(api: ModAPI) {
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
-    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; });
+    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; data.subscription = null; });
     if (method === 'account/rateLimits/updated') return update(data => limits(data, update_));
     const thread = thread_id ?? update_.threadId ?? null;
     const current = saved().thread;
@@ -266,74 +269,67 @@ export default function activate(api: ModAPI) {
 
   const editor = (): Editor => {
     const stored = object(api.uiState.get());
-    return { open: stored.open === true, draft: settings(object(stored.draft)), selected: typeof stored.selected === 'string' ? stored.selected : null, notice: typeof stored.notice === 'string' ? stored.notice : null };
+    return { draft: 'draft' in stored ? settings(object(stored.draft)) : effective(saved()), notice: typeof stored.notice === 'string' ? stored.notice : null };
   };
   const ids = () => [...SEGMENTS, ...configured.scripts.map(script => `script:${script.id}`)];
   const flatten = (draft: Settings) => layout(draft, configured.scripts.map(script => script.id));
   const custom = (draft: Settings): [Settings, string[][]] => [{ ...draft, preset: 'custom', hidden: '' }, flatten(draft)];
   const joined = (lines: string[][]) => lines.filter(line => line.length).map(line => line.join(' ')).join('; ');
   const edit = (state: Editor, verb: string, rest: string[]): Editor => {
-    const [first = '', second = ''] = rest;
+    const [first = '', ...others] = rest;
+    const value = others.join(' ');
     if (verb === 'set') {
-      const value = rest.slice(1).join(' ');
       const raw: Record<string, Json> = { ...state.draft, [first]: typeof state.draft[first as keyof Settings] === 'boolean' && (value === 'true' || value === 'false') ? value === 'true' : first === 'refresh_s' ? Number(value) : value };
       return { ...state, draft: settings(raw, state.draft), notice: null };
     }
-    if (verb === 'pick') return { ...state, selected: ids().includes(first) ? first : state.selected };
+    if (verb === 'order') return { ...state, draft: settings({ ...custom(state.draft)[0], layout: rest.join(' ') }, state.draft), notice: null };
     if (verb === 'reset') {
       const { tones, github, refresh_s, scripts } = state.draft;
-      return { ...state, draft: { ...DEFAULTS, tones, github, refresh_s, scripts }, notice: 'Defaults restored in the preview' };
+      return { ...state, draft: { ...DEFAULTS, tones, github, refresh_s, scripts }, notice: 'Defaults restored in the preview; Save keeps them' };
     }
-    const direction = verb === 'move' && (first === 'up' || first === 'down') ? first : second;
-    const segment = (direction === first ? '' : first) || state.selected;
-    if (!segment || !ids().includes(segment)) return state;
+    if (verb !== 'put' || !ids().includes(first)) return state;
     const [draft, lines] = custom(state.draft);
-    const line = lines.findIndex(entry => entry.includes(segment));
-    if (verb === 'toggle') {
-      if (line >= 0) lines[line] = lines[line].filter(id => id !== segment);
-      else (lines.at(-1) ?? (lines[0] = [])).push(segment);
-    } else if (verb === 'move' && line >= 0) {
-      const index = lines[line].indexOf(segment);
-      const target = index + (direction === 'up' ? -1 : 1);
-      if (target >= 0 && target < lines[line].length) [lines[line][index], lines[line][target]] = [lines[line][target], lines[line][index]];
-    } else if (verb === 'line' && line >= 0) {
-      lines[line] = lines[line].filter(id => id !== segment);
-      const target = (line + 1) % Math.min(4, Math.max(lines.length, line + 2));
-      (lines[target] ??= []).push(segment);
-    } else return state;
-    return { ...state, draft: { ...draft, layout: joined(lines) }, selected: segment, notice: null };
+    const kept = lines.map(line => line.filter(id => id !== first));
+    const target = Number(value);
+    if (target >= 1 && target <= Math.min(4, kept.filter(line => line.length).length + 1)) (kept[target - 1] ??= []).push(first);
+    return { ...state, draft: { ...draft, layout: joined(kept) }, notice: null };
   };
-  const button = (verb: string, text: string): TerminalComponent => ({ type: 'button', id: `omd_statusline_${verb.replace(' ', '_')}`, label: text, text, action: { command: COMMAND, args: verb } });
-  const select = (key: keyof Settings, label: string, value: string, options: string[]): TerminalComponent =>
-    ({ type: 'select', id: `omd_statusline_${key}`, label, value, options: options.map(option => ({ value: option, label: option })), action: { command: COMMAND, args: `set ${key}` } });
-  const dialog = (state: Editor, data: Data, now: number, cwd: string | null): TerminalComponent => {
-    const preview = render(data, state.draft, { now, columns: PREVIEW_COLUMNS, cwd, settled: null });
-    const lines = flatten(state.draft);
-    const rows: TerminalListRow[] = ids().map(id => {
-      const at = lines.findIndex(line => line.includes(id));
-      return { value: id, label: id, spans: [{ text: at >= 0 ? '● ' : '○ ', tone: at >= 0 ? 'success' : 'muted' }, { text: id }, ...at >= 0 ? [{ text: `  line ${at + 1}`, tone: 'muted' as const }] : []] };
-    });
+  const encoder = new TextEncoder();
+  const field = (value: string) => value.slice(0, encoder.encodeInto(value, new Uint8Array(2000)).read);
+  const panel = (state: Editor): TerminalPanel => {
+    const data = saved();
+    const preview = render(data, state.draft, { now: Date.now(), columns: PREVIEW_COLUMNS, cwd: data.cwd, settled: null }).map(spans => spans.map(span => span.text).join(''));
     const problem = configured.error ?? state.notice;
-    return { type: 'dialog', id: 'omd_statusline_dialog', label: 'Status line', title: 'Status line', children: [
-      { type: 'text', id: 'omd_statusline_preview_label', label: 'Preview', text: `${problem ? `${visible(problem, 200)} · ` : ''}Preview (${state.draft.placement} the composer)`, tone: problem ? 'attention' : 'muted' },
-      // One document keeps the dialog's component ids, and so its keyboard focus, stable as the line count changes.
-      { type: 'document', id: 'omd_statusline_preview', label: 'Preview', height: Math.max(1, preview.length),
-        lines: preview.length ? preview.map(spans => spans.map(({ link: _link, ...span }) => span)) : [[{ text: 'Nothing to show yet: segments appear once their data arrives', tone: 'muted' }]] },
-      select('placement', 'Placement', state.draft.placement, ['below', 'above']),
-      select('preset', 'Preset', state.draft.preset, ['compact', 'detailed', 'custom']),
-      { type: 'list', id: 'omd_statusline_segments', label: 'Segments', rows, selected: state.selected ?? undefined, height: 8, action: { command: COMMAND, args: 'pick' } },
-      { type: 'box', id: 'omd_statusline_order', label: 'Order', style: { direction: 'row', gap: 1 }, children: [button('toggle', 'Show/hide'), button('move up', 'Earlier'), button('move down', 'Later'), button('line', 'Next line')] },
-      select('glyphs', 'Glyphs', state.draft.glyphs, ['unicode', 'ascii']),
-      select('bars', 'Progress bars', String(state.draft.bars), ['true', 'false']),
-      { type: 'input', id: 'omd_statusline_thresholds', label: 'Thresholds (warn,alert)', value: state.draft.thresholds, action: { command: COMMAND, args: 'set thresholds' } },
-      { type: 'box', id: 'omd_statusline_actions', label: 'Actions', style: { direction: 'row', gap: 1 }, children: [button('apply', 'Apply'), button('cancel', 'Cancel'), button('reset', 'Reset')] },
-    ] };
+    const lines = flatten(state.draft);
+    const choice = (id: 'placement' | 'preset' | 'glyphs', label: string, options: string[]): TerminalPanelItem =>
+      ({ id, tab: 'settings', label, kind: 'choice', value: state.draft[id], options: options.map(option => ({ value: option, label: option })) });
+    const segment = (id: string): TerminalPanelItem => {
+      const at = lines.findIndex(line => line.includes(id));
+      const others = lines.filter(line => line.some(other => other !== id)).length;
+      const slots = Array.from({ length: Math.min(4, others + 1) }, (_, index) => ({ value: String(index + 1), label: `Line ${index + 1}` }));
+      return { id: `segment:${id}`, tab: 'segments', label: id, kind: 'choice', value: at >= 0 ? String(at + 1) : 'off', options: [{ value: 'off', label: 'Hidden' }, ...slots] };
+    };
+    return {
+      title: 'Status line', search: true, action: { command: 'edit', args: 'panel' },
+      subtitle: [problem && visible(problem, 200), `Preview (${state.draft.placement} the composer):`, ...preview.length ? preview : ['Nothing to show yet: segments appear once their data arrives']].filter(Boolean).join('\n'),
+      tabs: [{ id: 'settings', title: 'Settings' }, { id: 'segments', title: 'Segments' }],
+      items: [
+        choice('placement', 'Placement', ['below', 'above']),
+        choice('preset', 'Preset', ['compact', 'detailed', 'custom']),
+        choice('glyphs', 'Glyphs', ['unicode', 'ascii']),
+        { id: 'bars', tab: 'settings', label: 'Progress bars', kind: 'toggle', value: state.draft.bars },
+        { id: 'thresholds', tab: 'settings', label: 'Thresholds', description: 'warn,alert per segment, such as context=70,90', kind: 'text', value: field(state.draft.thresholds) },
+        { id: 'apply', tab: 'settings', label: 'Save', description: 'Keep these settings', kind: 'action' },
+        { id: 'reset', tab: 'settings', label: 'Reset to defaults', description: 'In the preview until you save', kind: 'action' },
+        { id: 'order', tab: 'segments', label: 'Order', description: 'Segment names in order, lines separated by ;', kind: 'text', value: field(joined(lines)) },
+        ...ids().map(segment),
+      ],
+    };
   };
 
-  const HELP = 'usage: /statusline [apply|cancel|reset|github|refresh|toggle SEGMENT|move SEGMENT up|down|line SEGMENT|set KEY VALUE]';
+  const HELP = 'usage: /statusline [github|refresh]';
   api.command('edit', input => {
     const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
-    const state = editor();
     if (verb === 'github') {
       const listed = api.host.tryCall('credentials.list', null);
       const owned = listed.ok ? listed.value.find(item => item.kind === 'secret' && item.origin === GITHUB_ORIGIN) : undefined;
@@ -346,51 +342,40 @@ export default function activate(api: ModAPI) {
       const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
       return { display: asked.ok ? 'Status line refreshing' : `Status line refresh unavailable: ${asked.error}` };
     }
-    const show = (next: Editor, display?: string) => {
+    const show = (next: Editor) => {
       api.uiState.set(next as unknown as Json);
-      const data = saved();
-      return { ...display ? { display } : {}, terminal: contribution(data, next, data.viewport?.columns ?? 120, data.cwd, null) };
+      const shown = api.host.tryCall('terminal.panel', panel(next));
+      return shown.ok ? null : { display: `The status line editor is unavailable: ${shown.error}` };
     };
-    const closed: Editor = { ...state, open: false, notice: null };
-    if ((verb === 'cancel' || verb === 'apply') && !state.open) return { display: 'The status line editor is not open; run /statusline' };
-    if (verb === 'cancel') return show(closed);
-    if (verb === 'apply') {
-      const data = saved();
-      const current = effective(data);
-      const values = Object.fromEntries(Object.entries(state.draft).filter(([key, value]) => current[key as keyof Settings] !== value));
-      if (!Object.keys(values).length) return show(closed, 'Status line unchanged');
-      const superseded = (data.pending?.from ?? []).filter(item => item !== JSON.stringify(config));
-      // The session records the apply through this mod's own channel; writing this mod's settings reloads it, so no host call, durable state or command view may follow a successful write.
-      api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
-      const written = api.host.tryCall('settings.write', { values });
-      if (!written.ok) {
-        api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: data.pending } as unknown as Json });
-        return show({ ...state, notice: `Not saved: ${written.error}` });
-      }
-      api.uiState.set(closed as unknown as Json);
-      return { display: 'Status line saved' };
+    if (verb && verb !== 'panel') return { display: HELP };
+    if (!verb) return show({ draft: effective(saved()), notice: null });
+    const state = editor();
+    const [item = '', ...value] = rest;
+    if (!item) return show(state);
+    if (item !== 'apply') {
+      const next = item === 'reset' ? edit(state, 'reset', [])
+        : item === 'order' ? edit(state, 'order', value)
+          : item.startsWith('segment:') ? edit(state, 'put', [item.slice(8), ...value])
+            : edit(state, 'set', [item, ...value]);
+      return show(next);
     }
-    if (verb && !['open', 'set', 'pick', 'toggle', 'move', 'line', 'reset'].includes(verb)) return { display: HELP };
-    const base: Editor = state.open ? state : { open: true, draft: effective(saved()), selected: null, notice: null };
-    const next = verb && verb !== 'open' ? edit(base, verb, rest) : base;
-    // Returning a view reopens the dialog and moves focus to its first control, so an open editor only updates its state.
-    if (state.open) {
-      api.uiState.set(next as unknown as Json);
+    const data = saved();
+    const current = effective(data);
+    const values = Object.fromEntries(Object.entries(state.draft).filter(([key, entry]) => current[key as keyof Settings] !== entry));
+    if (!Object.keys(values).length) return show({ ...state, notice: 'Status line unchanged' });
+    const superseded = (data.pending?.from ?? []).filter(entry => entry !== JSON.stringify(config));
+    // The session records the apply through this mod's own channel; writing this mod's settings reloads it, so no host call, durable state or command view may follow a successful write.
+    api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: { from: [...superseded, JSON.stringify(config)].slice(-8), to: state.draft } } });
+    const written = api.host.tryCall('settings.write', { values });
+    if (written.ok) {
+      api.uiState.set({ ...state, notice: 'Status line saved' } as unknown as Json);
       return null;
     }
-    return show(next);
-  },{ description: 'Edit the status line: placement, preset, segments and order with a live preview', args_hint: '[apply|cancel|reset|github|refresh]' });
-  api.on('component_event', event => {
-    if (!event.component.startsWith('omd_statusline_')) return;
-    const state = editor();
-    if (!state.open) return;
-    if (event.kind === 'close') return api.uiState.set({ open: false });
-    if (event.kind !== 'change' || typeof event.value !== 'string') return;
-    const key = event.component.slice('omd_statusline_'.length);
-    if (['placement', 'preset', 'glyphs', 'bars', 'thresholds'].includes(key)) api.uiState.set(edit(state, 'set', [key, event.value]) as unknown as Json);
-  });
+    api.host.tryCall('events.publish', { channel: 'refresh', data: { pending: data.pending } as unknown as Json });
+    return show({ ...state, notice: `Not saved: ${written.error}` });
+  },{ description: 'Edit the status line: placement, preset, segments and order with a live preview', args_hint: '[github|refresh]' });
 
-  function contribution(data: Data, state: Editor, columns: number, cwd: string | null, settled: number | null): TerminalPatch {
+  function contribution(data: Data, columns: number, cwd: string | null, settled: number | null): TerminalPatch {
     const now = Date.now();
     const current = effective(data);
     const lines = render(data, current, { now, columns: columns - 4, cwd, settled }).map((spans, index): TerminalComponent =>
@@ -399,7 +384,6 @@ export default function activate(api: ModAPI) {
     const box: TerminalComponent[] = lines.length ? [{ type: 'box', id: 'omd_statusline', label: 'Status line', style: { border: 'none', padding: [0, 2] }, children: lines }] : [];
     const site: TerminalRenderSite = { mode: 'wrap', components: below ? [...box, { type: 'slot' }] : [{ type: 'slot' }, ...box] };
     const patch: TerminalPatch = { sites: below ? { below_composer: site } : { above_composer: site } };
-    if (state.open) patch.sites!.dialog = { mode: 'wrap', components: [{ type: 'slot' }, dialog(state, data, now, cwd)] };
     return patch;
   }
   api.on('terminal', input => {
@@ -413,6 +397,6 @@ export default function activate(api: ModAPI) {
     Object.assign(data, { viewport, mods });
     if (changed && input.ledger?.thread_id) api.state.set(data as unknown as Json);
     const settled = number(object(input.ledger?.cost).settled_task_charge_microusd);
-    return contribution(data, editor(), columns, input.ledger?.cwd ?? data.cwd, settled === null ? null : settled / 1e6);
+    return contribution(data, columns, input.ledger?.cwd ?? data.cwd, settled === null ? null : settled / 1e6);
   });
 }

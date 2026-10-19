@@ -49,6 +49,6 @@ Setup options:
 - Paid profiles bill per request against the allowance you set. ChatGPT profiles report no charge.
 - Chat Completions and Anthropic profiles get no hosted tools (web search, tool search).
 - A thread larger than a profile's context window is refused before the provider is called.
-- A thread cannot switch between providers. The Claude CLI route is separate: `omd-package claude`.
+- Claude models come from `omd_claude_cli` (`/claude login`), not from a profile.
 
 Credit: inspired by [Crush](https://github.com/charmbracelet/crush) provider setup and model switching; no code copied.

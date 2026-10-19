@@ -14,9 +14,9 @@ The native row and `/statusline` return, also if the mod fails. Your `tui.status
 
 ## Use it
 
-Run `/statusline` to open the editor. It previews your draft live: placement, preset, segment order, glyphs, bars and thresholds.
+Run `/statusline` to open the editor in the panel where `/config` lives. Its subtitle previews your draft live. The Settings tab holds placement, preset, glyphs, bars and thresholds, with Save and Reset to defaults; the Segments tab puts each segment on a line or hides it, and Order edits the whole layout as text. Up and Down move, Left and Right switch tabs, Space or Enter changes the highlighted item, `/` searches and Esc closes without saving.
 
-Apply saves. Cancel or `Esc` discards. Reset restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
+Save keeps the draft and `Esc` discards it. Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 
 You can also edit settings in `/mods`, or from a shell:
 

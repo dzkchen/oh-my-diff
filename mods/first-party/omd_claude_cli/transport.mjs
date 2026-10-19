@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-export const CLI_VERSION = '2.1.296 (Claude Code)';
+export const CLI_VERSION = '2.1.302 (Claude Code)';
 const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -30,10 +30,10 @@ export function checkCli(claude, billing = 'subscription', home = process.env.HO
   const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
   if (billing === 'api') {
     if (!signedIn || status.authMethod !== 'api_key' || status.apiKeySource !== '/login managed key') {
-      throw new Error('claude_console_api_key_login_required');
+      throw new Error('claude_console_api_key_login_required: run `/claude login api`');
     }
   } else if (!signedIn || status.authMethod !== 'claude.ai' || !PLANS[status.subscriptionType]) {
-    throw new Error('claude_ai_subscription_login_required');
+    throw new Error('claude_ai_subscription_login_required: run `/claude login`');
   }
   return status;
 }
@@ -136,13 +136,14 @@ export function upstreamFailure(status, headers, body, billing = 'subscription')
   if (billing === 'api' && status === 400 && /credit balance is too low/i.test(body)) {
     return { code: 'claude_api_credits_exhausted', message: 'Anthropic API credit balance is too low. OMD never falls back to your subscription; purchased credits and auto-reload are managed at console.anthropic.com/settings/billing.' };
   }
+  const login = billing === 'api' ? '`/claude login api`' : '`/claude login`';
   if (status === 401 || (status === 403 && /oauth|revoked|authentication/i.test(body))) {
     return { code: 'claude_login_expired', message: billing === 'api'
-      ? 'Anthropic API key was rejected; run `claude auth login --console` and retry'
-      : 'Claude login expired or was revoked; run `claude auth login` and retry' };
+      ? `Anthropic API key was rejected; run ${login} and retry`
+      : `Claude login expired or was revoked; run ${login} and retry` };
   }
   if ((status === 403 || status === 404) && /model/i.test(body)) {
-    return { code: 'claude_model_not_entitled', message: `Claude refused this model for your account (${status}); pick another model or check ${billing === 'api' ? 'your Console workspace at console.anthropic.com' : 'your plan at claude.ai/settings'}` };
+    return { code: 'claude_model_not_entitled', message: `Claude refused this model for your account (${status}); pick another model with /model, or run ${login} to sign in to an account that has it (${billing === 'api' ? 'Console workspace: console.anthropic.com' : 'plan: claude.ai/settings'})` };
   }
   return null;
 }
@@ -273,7 +274,7 @@ export class Relay {
       const api = this.policy.billing === 'api';
       if (api ? !request.headers['x-api-key'] || request.headers.authorization
         : !/^Bearer /.test(request.headers.authorization ?? '') || request.headers['x-api-key']) {
-        this.refusal = { code: 'claude_billing_route_mismatch', message: `The Claude CLI did not authenticate with the selected ${api ? 'Console API key' : 'claude.ai subscription'}; OMD sent nothing upstream. Check \`claude auth status\` or rerun setup.` };
+        this.refusal = { code: 'claude_billing_route_mismatch', message: `The Claude CLI did not authenticate with the selected ${api ? 'Console API key' : 'claude.ai subscription'}; OMD sent nothing upstream. Run \`/claude login\` (or \`/claude login api\`) to choose the billing source again.` };
       } else if (this.policy.model && body.model !== this.policy.model) {
         this.refusal = { code: 'claude_model_mismatch', message: `The Claude CLI asked for a model other than ${this.policy.model}; OMD sent nothing upstream.` };
       }
@@ -441,7 +442,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       throw Object.assign(new Error(`Claude served ${relay.capture.message.model} instead of ${entry.slug}`), { code: 'claude_model_mismatch' });
     }
     const served = results[0].modelUsage?.[entry.cli]?.contextWindow;
-    if (served !== entry.window) throw new Error(`claude_context_window_changed:${served}:rerun_claude_setup`);
+    if (served !== entry.window) throw new Error(`claude_context_window_changed:${served}:run_claude_login`);
     const admission = { upstream_requests: relay.used, blocked_requests: relay.denied,
       request_id: relay.requestId };
     return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd, billing);

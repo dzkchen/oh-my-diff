@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "id": "omd_claude_cli",
-  "version": "0.2.0-preview.3",
+  "version": "0.3.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "state_scope": "thread",
-  "description": "Claude models through your official Claude CLI subscription as a Codex provider, plus an ask_claude delegation tool",
+  "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session and an ask_claude delegation tool",
   "license": "MIT",
+  "subscriptions": { "channels": ["omd_claude_cli/login"] },
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"
@@ -16,21 +16,40 @@
     "lifecycle",
     "model",
     "exec",
+    "os",
+    "pty",
+    "terminal",
+    "events",
+    "packages",
+    "inventory",
     "tools",
     "agents",
     "sessions",
     "sessions_tools",
-    "config",
     "store"
   ],
+  "os_access": {
+    "programs": [
+      "claude",
+      "node"
+    ],
+    "network": true
+  },
   "assets": [
-    "models.json",
     "setup.mjs",
     "transport.mjs"
   ],
   "compatibility": {
     "required_features": [
-      "package_text_assets_v1"
+      "package_text_assets_v1",
+      "unrestricted_process_v1",
+      "terminal_pty_v1",
+      "terminal_surface_v1",
+      "pty_programs_v1",
+      "ui_controls_v1",
+      "events_v1",
+      "timers_v1",
+      "package_controls_v1"
     ]
   },
   "settings_schema": {

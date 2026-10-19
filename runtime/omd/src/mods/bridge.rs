@@ -33,7 +33,8 @@ impl ModHostCall {
             "sessions.list" | "sessions.read" | "sessions.snapshot" | "sessions.ports" => {
                 Ok("sessions")
             }
-            "routes.list" | "providers.register" | "providers.unregister" | "ledger.settle" => {
+            "routes.list" | "providers.register" | "providers.unregister" | "providers.models"
+            | "ledger.settle" => {
                 Ok("model")
             }
             "task.status" | "workspace.integrate" => Ok("agents"),
@@ -64,6 +65,7 @@ impl ModHostCall {
             | "terminal.prompt"
             | "terminal.pane"
             | "terminal.panes"
+            | "terminal.panel"
             | "terminal.notice"
             | "terminal.selection"
             | "terminal.copy"

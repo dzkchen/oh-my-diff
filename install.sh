@@ -181,24 +181,29 @@ def node_binary(args, required="24.18.0", recorded=None):
             fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
         return Path(run(["mise", "which", "node"]).strip()).resolve()
 
+    def on_path():
+        if not shutil.which("node"):
+            fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
+        return Path(shutil.which("node")).resolve()
+
     if args.node:
         return first_passing([lambda: Path(args.node).expanduser().resolve()], accept)
-    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered], accept)
+    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered, on_path], accept)
 
 
 def profile_choice(args):
     if args.profile:
         return args.profile
     try:
-        with open("/dev/tty", "r+") as terminal:
-            terminal.write("Oh My Diff\n"
-                           "OMD 1.0 is labeled beta: not every planned capability is included yet. It does not mean unstable.\n"
-                           "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
-                           "2) OMD+: also the first-party mod collection and bundled plugins.\n"
-                           "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
-                           "   Updates preserve selections and add newly bundled mods disabled.\n"
-                           "Choose 1 or 2: ")
-            terminal.flush()
+        with open("/dev/tty", "w") as output, open("/dev/tty") as terminal:
+            output.write("Oh My Diff\n"
+                         "OMD 1.0 is labeled beta: not every planned capability is included yet. It does not mean unstable.\n"
+                         "1) OMD Core: patched Codex, mod manager, typed author tools, and the logo, /mods and update mods.\n"
+                         "2) OMD+: also the first-party mod collection and bundled plugins.\n"
+                         "   Its default mods are active on a fresh install; the others stay off until you enable them.\n"
+                         "   Updates preserve selections and add newly bundled mods disabled.\n"
+                         "Choose 1 or 2: ")
+            output.flush()
             choice = terminal.readline().strip()
     except OSError:
         fail("No terminal is available. Choose --profile platform or --profile full.")
@@ -957,10 +962,10 @@ def confirmed(args, available):
     if args.yes:
         return True
     try:
-        with open("/dev/tty", "r+") as terminal:
-            terminal.write(f"These enabled mods do not support mod API {available['manifest']['mod_api']} and will stop loading: "
-                           f"{', '.join(available['user_mods'])}\nUpdate to {available['version']} anyway? [y/N] ")
-            terminal.flush()
+        with open("/dev/tty", "w") as output, open("/dev/tty") as terminal:
+            output.write(f"These enabled mods do not support mod API {available['manifest']['mod_api']} and will stop loading: "
+                         f"{', '.join(available['user_mods'])}\nUpdate to {available['version']} anyway? [y/N] ")
+            output.flush()
             return terminal.readline().strip().lower() in ("y", "yes")
     except OSError:
         fail("Incompatible mods are enabled; pass --yes to update anyway.")

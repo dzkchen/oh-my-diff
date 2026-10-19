@@ -1,11 +1,14 @@
 import json
 import os
 from pathlib import Path
+import pty
+import select
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import types
 import urllib.error
 import unittest
@@ -542,6 +545,41 @@ class UpdateSelection(unittest.TestCase):
         result = subprocess.run(["sh", ROOT / "install.sh", "--help"], cwd=self.root, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(planted.exists())
+
+
+class ProfilePrompt(unittest.TestCase):
+    def test_node_on_path_is_used_without_mise(self):
+        module = installer()
+        with tempfile.TemporaryDirectory(prefix="omd-node-", dir="/private/tmp") as temporary:
+            node = Path(temporary).resolve() / "node"
+            node.write_text("#!/bin/sh\necho v24.18.1\n")
+            node.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{temporary}:/usr/bin:/bin"}):
+                self.assertEqual(module.node_binary(types.SimpleNamespace(node=None)), node)
+                node.write_text("#!/bin/sh\necho v22.1.0\n")
+                with self.assertRaisesRegex(ValueError, "Node 24.18 or a later 24.x is required"):
+                    module.node_binary(types.SimpleNamespace(node=None))
+
+    def test_piped_install_reads_the_profile_from_the_terminal(self):
+        module = installer()
+        pid, leader = pty.fork()
+        if pid == 0:
+            try:
+                os.write(1, f"\nresult={module.profile_choice(types.SimpleNamespace(profile=None))}\n".encode())
+            finally:
+                os._exit(0)
+        screen, deadline = b"", time.monotonic() + 20
+        while b"result=" not in screen and time.monotonic() < deadline:
+            if select.select([leader], [], [], 0.5)[0]:
+                try:
+                    screen += os.read(leader, 4096)
+                except OSError:
+                    break
+            if screen.endswith(b"Choose 1 or 2: "):
+                os.write(leader, b"2\n")
+        os.waitpid(pid, 0)
+        self.assertIn(b"labeled beta", screen)
+        self.assertIn(b"result=full", screen)
 
 
 if __name__ == "__main__":

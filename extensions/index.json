@@ -10,19 +10,19 @@
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "0.2.0-preview.3",
+      "version": "0.3.0-preview.1",
       "extension_type": "mod",
-      "capability": "Opt-in official Claude CLI subscription provider with the CLI model catalog and ask_claude delegation",
+      "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model, plus ask_claude delegation",
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.296",
+      "compatibility": "Codex 0.163.0; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.302",
       "tested_versions": [
         "Codex 0.160.1",
         "OMD 0.1.0",
         "mod API 0.2.0-experimental.5",
         "Node 24.18.0",
-        "Claude CLI 2.1.296"
+        "Claude CLI 2.1.302"
       ],
       "support_status": "reviewed_candidate"
     },
