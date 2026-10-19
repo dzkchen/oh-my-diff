@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "e553f9d5cab64a9cf076eaa0cd9f0b4b47884a0c79f2ecf4d58a7566ac9f3492"
+    "sha256": "b44ebf3e90c0bc7a44c4c74b07338e275bec7f0345fc73cc1f308cd49564cf53"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -903,7 +903,7 @@
     },
     "codex-rs/ext/omd/src/bin/omd-mod.rs": {
       "before": null,
-      "after": "414c7d9307e9e3041808bb0e672b16bdd23e0bececf651e0bef83347dfec30f2"
+      "after": "3f53ba3ac8284af3ca15d6a51249e81bf6fd32cea521763585cf7f1a4d7f5332"
     },
     "codex-rs/ext/omd/src/clients.rs": {
       "before": null,
@@ -1167,7 +1167,7 @@
     },
     "codex-rs/omd/src/bin/omd.rs": {
       "before": null,
-      "after": "06c101dddb6615db81933174d50d137b386ed8873c236b9b5ee74b2c1bb287d7"
+      "after": "e316aab70870cdf4d2521cd16f073dd607c889cfd547dfa3cbca6689a87814ae"
     },
     "codex-rs/omd/src/blob_store.rs": {
       "before": null,
@@ -1283,11 +1283,11 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "9382597266146575a3d61b00d92a98e81021723bbe688554b536fcce169a7a7f"
+      "after": "2a276546f5b44f79ba96a9b1b46cb8d76e59e913c99de75e6ae4d10b4bd574fb"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
-      "after": "2ebb8e3c55160b643b0a2aadf50a84259ff2de72b56d1b991f7feb725c81c4af"
+      "after": "62418f89b5c3aeedb2b515713ca2842649320fb3e11f0d62b6c4e7906c730a94"
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
@@ -1311,7 +1311,7 @@
     },
     "codex-rs/omd/src/mods/package_manager.rs": {
       "before": null,
-      "after": "f30adef9c2718a0937777327b532e2a62bccb63b2f8a4fca21950906b9bf04d7"
+      "after": "4f26a5639e2e0a52e6d87e4467bbeb7ac52281c1205e4b1768c4bb47b5f49945"
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
@@ -2239,7 +2239,7 @@
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
-      "after": "85391d84aa3d0541b3d411d99fb094f892d207c0e426705adc443e59868e1b51"
+      "after": "1e49506dc5625bfa5c71cc5311ff6c6a9ede095cb1dea7e23ddad1f4202902fb"
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,

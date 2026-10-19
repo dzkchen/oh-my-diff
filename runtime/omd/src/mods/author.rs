@@ -299,6 +299,16 @@ impl ModHost {
                 "The callback changed persistent state without the state capability.",
                 "Declare state or keep the callback stateless, then re-inspect and re-approve the source digest.",
             )
+        } else if code.starts_with("state_thread_unavailable") {
+            (
+                "The mod keeps thread-scoped state and the call had no session thread to bind it to.",
+                "Pass a thread id as the last argument (omd-mod command STORE MOD NAME JSON THREAD, omd-mod test ROOT SCENARIO THREAD) or set thread_id on the scenario step; in codex, retry once the session has started.",
+            )
+        } else if code.starts_with("repository_provenance_mismatch") {
+            (
+                "A Git install requires mod.json provenance.source to name the repository it is installed from.",
+                "Set provenance.source to the repository URL without git+ and #REF:DIR, or for git+file the repository's absolute path with symlinks resolved; commit it at the tagged revision.",
+            )
         } else if code.starts_with("host_operation_unavailable") {
             (
                 "The callback ran without an active native task capable of servicing that host operation.",

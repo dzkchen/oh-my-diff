@@ -10,8 +10,8 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
-| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed |
-| `pnpm test` | Engine-owned scenario execution with no provider requests, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
+| `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
+| `pnpm test` | Engine-owned scenario execution with no provider requests, then (once TypeScript is installed) the `pnpm check` type check, which fails the run before the report prints, then every `*.test.ts` and `*.test.mjs` beside `mod.test.json` under `node --test` (see [TypeScript tests](#typescript-tests)) |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
 | `pnpm run package` | Produces a checked package directory, JavaScript debug build, source map, and digest report |

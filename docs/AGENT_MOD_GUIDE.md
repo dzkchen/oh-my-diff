@@ -163,10 +163,12 @@ Rules that trip agents up:
 - Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
   (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
-  there, and the source check refuses them.
+  there. The host scans the source when it loads the mod (`pnpm test`, `pnpm run`, activation in `codex`) and refuses
+  it with `undeclared_environment_use: process`; `omd mods update` and install don't scan.
 - Name host operations literally: `api.host.call('store.get', …)`, not a variable.
 - No `Date.now()` in host call arguments; the host replays callbacks.
-- Return refusals as values, such as `{ error: '…' }`. Five uncaught failures in a row turn the mod off.
+- Return refusals as values, such as `{ error: '…' }`. Five consecutive failures in one host process turn the mod off (any success resets the count);
+  [details](../mods/reference/packages-and-limits.md#fault-limit).
 
 ## 5. Test it offline
 
@@ -193,8 +195,8 @@ Replace `mod.test.json`:
 
 ```sh
 rm debug.test.json   # it calls the scaffold's /hello, which step 4 replaced
-pnpm check       # syntax and types
-pnpm test        # mod.test.json, plus any *.test.ts or *.test.mjs files
+pnpm check       # syntax and types; prints "check: ok"
+pnpm test        # mod.test.json, then the type check, then any *.test.ts or *.test.mjs files
 pnpm run run     # the same scenario, printing each step
 ```
 
@@ -224,7 +226,8 @@ omd-mod test /tmp/notes-store mod.test.json
 ```
 
 Against a store, `test` uses the store's settings and saved notes instead of the scenario's `settings`, hence the
-first two commands.
+first two commands. A mod with `state_scope: "thread"` needs a thread ID, or `omd-mod command` fails with
+`state_thread_unavailable`: `omd-mod command STORE MOD NAME JSON [THREAD]` (`test` takes `[THREAD]` too).
 
 Then the user starts `codex` on that store and tries it (from a source checkout, use the archive's `codex`):
 

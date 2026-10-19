@@ -3958,6 +3958,7 @@ impl ModHost {
         let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
         for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
             let administered = index < administered;
+            let mut inspected = None;
             let loaded = (|| {
                 if !administered
                     && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
@@ -3977,6 +3978,7 @@ impl ModHost {
                     )));
                 }
                 let (package, source, hash) = inspect(&selection.path)?;
+                inspected = Some(package.id.clone());
                 if hash != selection.sha256 {
                     return Err(failure(if administered {
                         format!(
@@ -4006,7 +4008,13 @@ impl ModHost {
             let (package, source) = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
-                    reject(initial, rejected, selection, None, error.to_string())?;
+                    reject(
+                        initial,
+                        rejected,
+                        selection,
+                        inspected.as_deref(),
+                        error.to_string(),
+                    )?;
                     continue;
                 }
             };
@@ -4738,14 +4746,19 @@ impl ModHost {
         if generation != self.generation {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
-        let mut loaded = self
-            .loaded
-            .get(id)
-            .cloned()
-            .ok_or_else(|| failure("mod_disabled"))?;
+        let mut loaded = self.loaded.get(id).cloned().ok_or_else(|| {
+            match self
+                .rejected
+                .iter()
+                .find(|rejection| rejection.id.as_deref() == Some(id))
+            {
+                Some(rejection) => failure(format!("mod_disabled: {}", rejection.reason)),
+                None => failure("mod_disabled"),
+            }
+        })?;
         if let Some(error) = &loaded.error {
             return Err(failure(format!(
-                "mod_failed: {error}; explicitly reload to recover"
+                "mod_failed: {error}; reload it with /omd (Reload mods)"
             )));
         }
         self.check_callback_authority(&loaded)?;

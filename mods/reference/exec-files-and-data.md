@@ -276,7 +276,8 @@ The location of `api.state` follows the manifest's `state_scope` (`state_scopes_
 
 Mods never run with the home directory or filesystem root as the session directory: the host stays off with a
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
-given thread and the checkout of their working directory. A callback result, including its state, stays within 256
+given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
+fails with `state_thread_unavailable`. A callback result, including its state, stays within 256
 KiB.
 
 ### `state_version` migration of thread and checkout state

@@ -16,8 +16,22 @@ use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn store(root: &str) -> io::Result<PathBuf> {
+    PathBuf::from(root).canonicalize().map_err(|error| {
+        let hint = if error.kind() == io::ErrorKind::NotFound {
+            "; create it with omd-mod init STORE NODE"
+        } else {
+            ""
+        };
+        io::Error::new(
+            error.kind(),
+            format!("store_unavailable: {root}: {error}{hint}"),
+        )
+    })
+}
+
 fn open(root: &str) -> io::Result<ModStore> {
-    ModStore::open(PathBuf::from(root).canonicalize()?)
+    ModStore::open(store(root)?)
 }
 
 fn json(value: impl serde::Serialize) -> io::Result<Value> {
@@ -411,9 +425,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             let mut value = String::new();
             io::Read::read_to_string(&mut io::stdin(), &mut value)?;
             let value = value.trim_end_matches(['\n', '\r']);
-            let profiles = codex_omd::credentials::CredentialProfiles::open(
-                &PathBuf::from(root).canonicalize()?,
-            )?;
+            let profiles = codex_omd::credentials::CredentialProfiles::open(&store(root)?)?;
             let existing = profiles.visible(owner)?.into_iter().find(|profile| {
                 profile["kind"] == "secret"
                     && profile["label"] == label.as_str()
@@ -427,8 +439,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             profiles.public(&profiles.profile(&id)?)
         }
         [command, root] if command == "credentials" => Ok(Value::Array(
-            codex_omd::credentials::CredentialProfiles::open(&PathBuf::from(root).canonicalize()?)?
-                .visible("")?,
+            codex_omd::credentials::CredentialProfiles::open(&store(root)?)?.visible("")?,
         )),
         [command, root] if command == "reload" => {
             open(root)?.reload()?;
@@ -442,7 +453,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root] if command == "status" => {
             let mut host = ModHost::open_in(
-                PathBuf::from(root).canonicalize()?,
+                store(root)?,
                 validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
@@ -469,9 +480,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             }
         }
         [command, root] if command == "report" => {
-            let status =
-                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-                    .status();
+            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
             Ok(
                 serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
                 .into_iter().flatten().map(|item| serde_json::json!({
@@ -482,15 +491,11 @@ fn run(args: &[String]) -> io::Result<Value> {
                 })).collect::<Vec<_>>() }),
             )
         }
-        [command, root] if command == "events" => Ok(ModHost::open_validated(
-            PathBuf::from(root).canonicalize()?,
-            validate_tool_schema,
-        )?
-        .author_inspection()),
+        [command, root] if command == "events" => {
+            Ok(ModHost::open_validated(store(root)?, validate_tool_schema)?.author_inspection())
+        }
         [command, root] if command == "declarations" => {
-            let status =
-                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-                    .status();
+            let status = ModHost::open_validated(store(root)?, validate_tool_schema)?.status();
             Ok(
                 serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
                 "installed_contracts":status["installed_contract_types"],
@@ -500,7 +505,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
             let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
             let mut host = ModHost::open_in(
-                PathBuf::from(root).canonicalize()?,
+                store(root)?,
                 validate_tool_schema,
                 &std::env::current_dir()?,
             )?;
@@ -509,8 +514,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root, output] if command == "diagnostics" => {
             let bundle =
-                ModHost::open_validated(PathBuf::from(root).canonicalize()?, validate_tool_schema)?
-                    .diagnostic_bundle();
+                ModHost::open_validated(store(root)?, validate_tool_schema)?.diagnostic_bundle();
             let output = PathBuf::from(output);
             std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
@@ -520,7 +524,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             if command == "command" && thread.len() <= 1 =>
         {
             let mut host = ModHost::open_in(
-                PathBuf::from(root).canonicalize()?,
+                store(root)?,
                 validate_tool_schema,
                 &std::env::current_dir()?,
             )?;

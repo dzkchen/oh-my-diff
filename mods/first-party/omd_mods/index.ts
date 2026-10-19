@@ -10,6 +10,7 @@ type Property = { type?: string; enum?: Json[] };
 const EMPTY: Saved = { generation: 0, packages: [], reloadError: null, review: null, notice: null, catalog: [], catalogError: null, scope: 'user' };
 const LIST = 'mods';
 const SELF = 'omd_mods';
+const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const KEPT = 'Mods stays on so you can always manage mods; /omd can turn it off';
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
@@ -24,7 +25,7 @@ export default function activate(api: ModAPI) {
   const visible = (value: string, limit = 400) => [...value.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, ' ')].slice(0, limit).join('');
   const clip = (value: string, bytes: number) => { const text = visible(value, bytes); return text.slice(0, encoder.encodeInto(text, new Uint8Array(bytes)).read); };
   const key = (item: Pick<PackageState, 'id' | 'scope'>) => `${item.scope}:${item.id}`;
-  const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ') || id;
+  const friendly = (id: string) => id.replace(/^omd_/, '').split('_').filter(Boolean).map(word => ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)).join(' ') || id;
   const properties = (item: Pick<PackageState, 'settings_schema'>) => Object.entries(((item.settings_schema as { properties?: Record<string, Property> } | null)?.properties) ?? {});
   const matches = (argument: string) => (item: Pick<PackageState, 'id' | 'scope' | 'installed'>) => item.installed && (key(item) === argument || item.id === argument);
   const describe = (argument: string): PackageState | null => {

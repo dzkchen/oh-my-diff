@@ -2257,7 +2257,10 @@ fn validate_provenance(source: &ModPackageSource, provenance: &ModProvenance) ->
     if let ModPackageSource::Repository { repository, .. } = source
         && provenance.source != *repository
     {
-        return Err(failure("repository_provenance_mismatch"));
+        return Err(failure(format!(
+            "repository_provenance_mismatch: mod.json provenance.source is {:?}; this install needs {repository:?}",
+            provenance.source
+        )));
     }
     Ok(())
 }
