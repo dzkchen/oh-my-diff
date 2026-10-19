@@ -192,6 +192,7 @@
     "operations:prompts.revoke": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:prompts.status": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
     "operations:prompts.submit": {"status":"experimental","reason":"No retained launch/example consumer with matched evidence; outside the launch-frozen subset."},
+    "operations:providers.models": {"status":"experimental","reason":"Added after the launch freeze for in-session provider models; outside the launch-frozen subset."},
     "operations:providers.register": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.register'"},"decision":"coordination.providers"},
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
@@ -462,6 +463,7 @@
         "events": [],
         "replacements": [],
         "operations": [
+          "providers.models",
           "providers.register",
           "providers.unregister"
         ]

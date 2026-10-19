@@ -4,25 +4,24 @@ Lets a session use Claude models through the official Claude CLI and your Claude
 
 ## Turn it on
 
-It comes with OMD+ but starts off. It needs Claude CLI `2.1.296`. Setup checks the CLI and its login, then turns the mod on:
+It comes with OMD+ but starts off. It needs Claude CLI `2.1.302` on your `PATH` and Node on your `PATH`.
 
-```sh
-omd-package claude --setup                 # your plan; needs `claude auth login`
-omd-package claude --setup --billing api   # Console API credits; needs `claude auth login --console`
-```
+1. Enable `omd_claude_cli` in `/mods` and approve its trust dialog. It asks to run `claude` and `node` outside the sandbox (`os`): `claude auth login` and the setup script need your real home directory and network.
+2. Run `/claude login` for your plan (Pro, Max, Team or Enterprise), or `/claude login api` for Console API credits. The official `claude auth login` (`--console` for API) opens in a pane: press Tab to focus it, finish signing in, and Ctrl+] leaves it.
+3. When the login exits, the mod rechecks `claude auth status`, discovers the models, registers the provider and adds them to `/model` beside the OpenAI models.
 
-OMD never switches between plan limits and API credits on its own. Rerunning setup without `--billing` keeps your choice.
+OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run `/claude login` or `/claude login api` again. Later sessions publish the models at start with no step from you; run `/claude login` again after upgrading the Claude CLI.
 
 ## Use it
 
 | Command | What it does |
 | --- | --- |
-| `omd-package claude` | Start an interactive session on the default model (Opus) |
-| `omd-package claude --model sonnet` | Start on a model family or an exact model name |
-| `omd-package claude --model haiku exec 'Your task'` | Run one task and exit |
-| `/claude_route` | Show how to set up and launch the route |
+| `/claude login` | Sign in with your Claude plan |
+| `/claude login api` | Sign in with Console API credits |
+| `/claude` | Show the CLI version, login, billing and whether models are published |
+| `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
-`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. Rerun setup after upgrading the Claude CLI.
+`/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. An expired login or a model your account lacks is refused with a message naming `/claude login`.
 
 ## Settings
 
@@ -35,11 +34,12 @@ Write mode needs `web_search = "disabled"` in the session. Claude sessions don't
 
 ## Needs and limits
 
-- Models are the ones your plan offers, read from the installed CLI.
+- Models are the ones your plan offers, read from the installed CLI at login; at most 16 are listed.
 - Plan usage shows no charge. Console usage is billed by Anthropic. Costs shown are the CLI's list-price estimate, not a bill.
 - A request for a model other than the selected one is refused.
 - Each request starts a fresh CLI process, adding a fraction of a second.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
+- After a switch to Claude, an OpenAI compaction summary is first rewritten as plain text by OpenAI (one OpenAI request; if it fails, Claude continues without that summary and a warning shows); OpenAI's encrypted reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).
 
 Credit: based on [pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) by Eli Dickinson (MIT); reimplemented over the OMD mod API. See [THIRD_PARTY_NOTICES.md](../../../THIRD_PARTY_NOTICES.md).

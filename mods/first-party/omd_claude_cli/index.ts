@@ -1,7 +1,14 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
 
 const service = 'claude_cli';
 const delegate = 'mod_omd_claude_cli_ask_claude';
+const provider = 'omd_claude_cli';
+const session = 'claude_login';
+const probe = `const { spawnSync } = await import('node:child_process');
+const run = argv => spawnSync('claude', argv, { encoding: 'utf8', timeout: 10000 });
+const version = run(['--version']);
+const auth = version.status === 0 ? run(['auth', 'status']) : null;
+console.log(JSON.stringify({ version: version.status === 0 ? version.stdout.trim() : null, auth: auth?.status === 0 ? auth.stdout : null }));`;
 
 type Row = Record<string, any>;
 type Tool = { namespace: string; name: string; kind: 'function' | 'custom' | 'search' };
@@ -125,6 +132,10 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       messages.push({ role: 'user', content: textual.has(item.call_id)
         ? [{ type: 'text', text: `[result of ${item.call_id}]` }, ...(typeof output === 'string' ? blocks(output) : output)]
         : [{ type: 'tool_result', tool_use_id: item.call_id, content: output, is_error: item.is_error === true }] });
+    } else if (item.type === 'web_search_call') {
+      assistant().push({ type: 'text', text: `[searched the web ${JSON.stringify(item.action ?? {})}]` });
+    } else if (item.type === 'image_generation_call') {
+      assistant().push({ type: 'text', text: `[generated an image${item.revised_prompt ? `: ${item.revised_prompt}` : ''}]` });
     } else {
       throw new Error(`unsupported_response_item:${item.type}`);
     }
@@ -223,25 +234,90 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
 }
 
 export default function activate(api: ModAPI): void {
-  const ensure = () => {
+  const saved = (): Row => plain(api.state.get()) ? api.state.get() as Row : {};
+  const ensure = (restart = false) => {
     const status = api.host.tryCall('sidecars.status', { id: service });
-    if (status.ok && (status.value as Row | null)?.running === true) return true;
+    if (!restart && status.ok && (status.value as Row | null)?.running === true) return true;
     if (status.ok) api.host.tryCall('providers.unregister', { id: service });
-    return api.host.tryCall('providers.register', { id: service }).ok;
+    const models = saved().models;
+    const published = Array.isArray(models) && api.host.tryCall('providers.register', { id: service }).ok &&
+      api.host.tryCall('providers.models', { provider, name: 'Claude', models: models as ProviderModel[] }).ok;
+    api.state.set({ ...saved(), published });
+    return published;
   };
-  // The provider is read once per thread at start or resume; each turn only restarts a stopped sidecar.
-  const detect = () => {
-    const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
-    const ours = config.ok && (config.value as Row).config?.model_provider === 'omd_claude_cli';
-    api.state.set(ours);
-    if (ours) ensure();
+  const cli = (): Row => {
+    const run = api.host.tryCall('exec.run', { program: 'node', argv: ['--input-type=module', '-'], stdin: probe, sandbox: 'none' });
+    try { return run.ok && run.value.exit_code === 0 ? JSON.parse(run.value.stdout) : {}; } catch { return {}; }
   };
-  api.on('start', detect);
-  api.on('resume', detect);
-  api.on('turn_start', () => {
-    if (api.state.get() === true) ensure();
+  const say = (text: string, error = false) =>
+    api.host.tryCall('terminal.notice', { text, kind: error ? 'error' : 'info', placement: 'transcript' });
+  const finish = (login: Row) => {
+    const installed = api.host.tryCall('packages.list', { fields: ['id', 'path'] });
+    const mod = installed.ok ? installed.value.packages.find(item => item.id === api.package.id)?.path : null;
+    if (!mod) return say('Claude setup could not find the installed mod; enable it in /mods and run /claude login again', true);
+    const setup = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, '', String(login.billing)],
+      sandbox: 'none', timeout_ms: 120_000 });
+    if (!setup.ok || setup.value.exit_code !== 0) return say(`Claude setup failed: ${setup.ok ? setup.value.stderr.trim() : setup.error}`, true);
+    let result: Row;
+    try { result = JSON.parse(setup.value.stdout); } catch { return say('Claude setup returned no result; run /claude login again', true); }
+    api.state.set({ ...saved(), billing: result.billing, models: result.models });
+    if (!ensure(true)) return say('Claude setup finished, but the provider did not start; restart OMD+ and run /claude', true);
+    say(`Claude is ready on ${result.billing === 'api' ? 'Console API credits' : 'your subscription'}; pick a Claude model with /model`);
+  };
+  const poll = api.time.every('login', 1000, () => {
+    const login = saved().login;
+    if (!plain(login)) return false;
+    const read = api.host.tryCall('terminal.pty', { action: 'read', session });
+    if (read.ok && (read.value as Row).running === true) return true;
+    api.host.tryCall('terminal.pty', { action: 'stop', session });
+    const exit = read.ok ? (read.value as Row).exit_code : null;
+    api.state.set({ ...saved(), login: null });
+    if (exit === 0) finish(login);
+    else say(`Claude login did not finish (exit ${exit ?? 'unknown'}); run /claude login again`, true);
+    return false;
   });
-  api.command('claude_route', () => ({ display: 'Claude CLI route: launch with `omd-package claude [--model family]` after `omd-package claude --setup [--billing api]`. /status shows the Claude 5h and weekly limits with their resets and the billing source.' }));
+  api.on('start', () => {
+    if (plain(saved().login)) api.state.set({ ...saved(), login: null });
+    ensure();
+  });
+  api.on('resume', () => { ensure(); });
+  api.on('turn_start', () => {
+    if (api.session().provider === provider) ensure();
+  });
+  api.on('channel', ({ channel, data }) => {
+    if (channel !== `${api.package.id}/login`) return;
+    api.state.set({ ...saved(), login: data });
+    poll.start();
+  });
+  api.on('terminal', () => plain(saved().login)
+    ? { sites: { 'omd_claude_cli/login': { components: [{ type: 'terminal', id: 'claude_login', label: 'Claude login', session, height: 16 }] } } }
+    : null);
+  api.command('claude', args => {
+    const [action, mode] = String(args).trim().split(/\s+/);
+    if (action === 'login' && [undefined, 'api'].includes(mode)) {
+      const billing = mode === 'api' ? 'api' : 'subscription';
+      const started = api.host.tryCall('terminal.pty', { action: 'start', session, program: 'claude',
+        argv: billing === 'api' ? ['auth', 'login', '--console'] : ['auth', 'login'], sandbox: 'none' });
+      if (!started.ok && started.error.startsWith('exec_program_unavailable')) return { display: 'Claude CLI not found on PATH; install Claude CLI 2.1.302 and retry' };
+      if (!started.ok || 'status' in started.value) return { display: `Claude login did not start: ${started.ok ? 'declined' : started.error}` };
+      const hop = api.host.tryCall('events.publish', { channel: 'login', data: { billing } });
+      if (!hop.ok || hop.value.delivered === 0) {
+        api.host.tryCall('terminal.pty', { action: 'stop', session });
+        return { display: 'Claude login could not be tracked; run /claude login again' };
+      }
+      return { display: `Claude login (${billing === 'api' ? 'Console API credits' : 'subscription'}) is open in the pane; Tab focuses it, Ctrl+] leaves it` };
+    }
+    if (action) return { display: 'Usage: /claude (status) | /claude login | /claude login api' };
+    const { version, auth } = cli();
+    let status: Row = {};
+    try { status = JSON.parse(auth ?? '{}'); } catch {}
+    const { billing, models, published } = saved();
+    return { display: [
+      `CLI: ${version ?? 'not found on PATH'}`,
+      `Login: ${status.loggedIn === true ? `${status.authMethod}${status.subscriptionType ? ` (${status.subscriptionType})` : ''}` : 'not signed in'}`,
+      `Billing: ${billing === 'api' ? 'Console API credits' : billing === 'subscription' ? 'subscription' : 'not chosen; run /claude login or /claude login api'}`,
+      `Models: ${published === true ? `${(models as Row[]).length} published to /model` : 'none published'}`].join('\n') };
+  }, { description: 'Sign in to Claude (login | login api) or show its status', args_hint: '[login [api]]' });
   if (api.settings.ask_claude !== true) return;
   api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
     parameters: { type: 'object', properties: {
@@ -252,7 +328,7 @@ export default function activate(api: ModAPI): void {
     const value = input as Row;
     if (!plain(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return { status: 'invalid', reason: 'prompt_required' };
     if (new TextEncoder().encode(value.prompt).length > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
-    if (!ensure()) return { status: 'unavailable', reason: 'claude_route_not_configured' };
+    if (!ensure()) return { status: 'unavailable', reason: 'claude_not_set_up; run /claude login' };
     const write = value.mode === 'write';
     const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,
       parent_history: value.isolated !== true,
