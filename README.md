@@ -14,6 +14,7 @@
 <p align="center"><b>Codex CLI, extended with TypeScript mods.</b></p>
 
 <p align="center">
+  <a href="https://www.ohmydiff.me">Website</a> ·
   <a href="docs/install.md">Install</a> ·
   <a href="docs/collection.md">Included mods</a> ·
   <a href="docs/write-a-mod.md">Write a mod</a> ·
