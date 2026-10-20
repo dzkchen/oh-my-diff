@@ -4450,7 +4450,8 @@ The `crypto` environment provides `getRandomValues`, `randomUUID` and the `crypt
 - Failures are plain `Error`s whose `name` is the Web Crypto error name.
 
 There is no `TextDecoder`, `Buffer` or `structuredClone`, and no code is compiled from strings (`eval`, `new
-Function`), in the mod's context or the runner process.
+Function`), in the mod's context or the runner process. The runner has no event loop, so `Atomics.waitAsync` is absent:
+wait with `Atomics.wait` or the `time.sleep` operation.
 
 #### Manifest `environment`
 

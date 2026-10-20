@@ -48,8 +48,7 @@ fn store(temp: &TempDir) -> ModStore {
 }
 
 fn store_with_node(temp: &TempDir) -> ModStore {
-    ModStore::create(temp.path().join("store"))
-    .unwrap()
+    ModStore::create(temp.path().join("store")).unwrap()
 }
 
 fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
@@ -859,10 +858,7 @@ fn stale_plans_and_interrupted_transactions_preserve_the_previous_lock() {
     .unwrap();
     std::fs::write(
         store_path.join("mods.json"),
-        serde_json::to_vec_pretty(
-            &json!({"schema":1,"revision":999,"mods":[]}),
-        )
-        .unwrap(),
+        serde_json::to_vec_pretty(&json!({"schema":1,"revision":999,"mods":[]})).unwrap(),
     )
     .unwrap();
     let recovered = store.package_lock().unwrap();

@@ -2390,7 +2390,6 @@ pub fn activation_failures(status: &Value) -> Vec<String> {
         .collect()
 }
 
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModTool {
@@ -2628,8 +2627,7 @@ mod reload_tests {
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
-        ModStore::create(root.clone())
-        .unwrap();
+        ModStore::create(root.clone()).unwrap();
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
@@ -2992,11 +2990,8 @@ fn invoke(
         let mut invocation =
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
         if invocation.migrate {
-            invocation.loaded.state = packages::migrate_state(
-                &invocation.loaded,
-                &invocation.location,
-                active,
-            )?;
+            invocation.loaded.state =
+                packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
         }
         let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
         bridge::run(
@@ -3451,7 +3446,7 @@ impl ModHost {
             .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
             .and_then(|config| match config.schema != 1 {
                 true => Err(failure("invalid_mod_configuration")),
-                false => process::runner_path().map(|_| config),
+                false => Ok(config),
             });
         let mut rejected = Vec::new();
         let config = match configured {

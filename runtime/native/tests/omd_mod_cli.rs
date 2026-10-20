@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
-
 fn omd_mod(cwd: &Path, args: &[&OsStr]) -> Result<Value, String> {
     let output = Command::new(env!("CARGO_BIN_EXE_omd-mod"))
         .args(args)

@@ -18,4 +18,5 @@ libc = "=0.2.186"
 serde_json = { version = "=1.0.149", features = ["preserve_order"] }
 swc_common = "=26.0.0"
 swc_ts_fast_strip = "=59.0.1"
+uuid = { workspace = true }
 v8 = { workspace = true, features = ["v8_enable_sandbox"] }

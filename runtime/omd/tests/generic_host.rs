@@ -1459,7 +1459,6 @@ fn builtin_controls_protect_recovery_commands() {
     }
 }
 
-
 fn package(
     root: &Path,
     id: &str,

@@ -22,7 +22,6 @@ const INPUT_LIMIT: usize = 1_048_576;
 const OUTPUT_LIMIT: usize = 262_144;
 const CACHE_LIMIT: usize = 1_048_576;
 const HEAP_LIMIT: usize = 64 << 20;
-const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 const FLAGS: &str = "--single-threaded --no-lazy --disallow-code-generation-from-strings --no-maglev --no-turbolev \
     --no-turbo-inline-array-builtins";
 
@@ -709,7 +708,8 @@ fn prepare(isolate: &mut v8::OwnedIsolate, generation: i32) -> Option<Prepared> 
     let into = function(scope, utf8_into);
     set(scope, utf8, "into", into);
     set(scope, global, "__utf8", utf8.into());
-    GRAPH.with_borrow_mut(|graph| graph.modules.clear());
+    GRAPH.with_borrow_mut(|graph| *graph = Graph::default());
+    crypto::forget();
     let bootstrap = compile(scope, BOOTSTRAP, "bootstrap", false)?;
     bootstrap.instantiate_module(scope, refuse_import)?;
     Some(Prepared {
@@ -923,12 +923,7 @@ fn run(
         let bridge = crypto::bridge(scope);
         set(scope, global, "__crypto", bridge.into());
     }
-    GRAPH.with_borrow_mut(|graph| {
-        graph.assets = request["assets"].clone();
-        graph.linked.clear();
-        graph.aliases.clear();
-        graph.json.clear();
-    });
+    GRAPH.with_borrow_mut(|graph| graph.assets = request["assets"].clone());
     match callback(scope, global, bootstrap, request, watchdog) {
         Ok(output) => Ok(output),
         Err(thrown) => {
@@ -982,7 +977,7 @@ fn main() {
     let watchdog = Watchdog::start(isolate.thread_safe_handle());
     let mut generation = 1;
     let mut spare = prepare(&mut isolate, generation);
-    let mut kept: Option<(Map<String, Value>, String)> = None;
+    let mut kept: Option<Map<String, Value>> = None;
     loop {
         let mut line = match read_line() {
             Ok(line) => line,
@@ -998,26 +993,19 @@ fn main() {
             eprintln!("SyntaxError: invalid runner request");
             std::process::exit(1);
         };
-        if request["kept"] == true {
-            let Some((fields, text)) = &kept else { break };
-            for (field, value) in fields {
-                request[field] = value.clone();
+        if let Some(names) = request["kept"].as_array().cloned() {
+            let Some(fields) = &mut kept else { break };
+            fields.retain(|field, _| names.iter().any(|name| name == field));
+            let mut text = String::new();
+            for name in names.iter().filter_map(Value::as_str) {
+                if let Some(value) = fields.get(name) {
+                    request[name] = value.clone();
+                    text += &format!(",{}:{value}", Value::from(name));
+                }
             }
             line = format!("{}{text}}}", &line[..line.len() - 1]);
         } else if request["reuse"] == true {
-            let fields: Map<String, Value> = KEPT_FIELDS
-                .into_iter()
-                .filter_map(|field| {
-                    request
-                        .get(field)
-                        .map(|value| (field.to_owned(), value.clone()))
-                })
-                .collect();
-            let text = fields
-                .iter()
-                .map(|(field, value)| format!(",{}:{value}", Value::from(field.as_str())))
-                .collect();
-            kept = Some((fields, text));
+            kept = request.as_object().cloned();
         }
         let Some(prepared) = spare.take() else {
             eprintln!("mod_runner_failed: context");

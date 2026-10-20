@@ -537,20 +537,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
 
 def restore_store(generation, upstream, bin_dir):
     if generation:
-        restore_node(generation)
         package(generation, upstream, bin_dir, "reconcile")
-
-
-def restore_node(generation):
-    record = read_json(generation / "prefix/install.json", {})
-    node = record.get("author", {}).get("node")
-    path = Path(record.get("store", "")) / "mods.json"
-    configuration = read_json(path, None) if node and "runner" not in record else None
-    if isinstance(configuration, dict) and "node" not in configuration:
-        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-        temporary.write_text(json.dumps(configuration | {"node": node}, indent=2))
-        temporary.chmod(0o600)
-        os.replace(temporary, path)
 
 
 def abandon(root, generation, upstream, bin_dir):

@@ -62,7 +62,6 @@ fn service_package(
     path
 }
 
-
 fn fixture(source: &str, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

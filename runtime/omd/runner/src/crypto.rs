@@ -7,6 +7,7 @@ use aws_lc_rs::encoding::AsDer;
 use aws_lc_rs::encoding::Curve25519SeedBin;
 use aws_lc_rs::encoding::EcPrivateKeyBin;
 use aws_lc_rs::encoding::Pkcs8V1Der;
+use aws_lc_rs::encoding::PublicKeyX509Der;
 use aws_lc_rs::hkdf;
 use aws_lc_rs::hmac;
 use aws_lc_rs::iv::FixedLength;
@@ -59,7 +60,6 @@ const USAGES: [&str; 8] = [
     "unwrapKey",
 ];
 const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
-const RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
 const ED25519_OID: &[u8] = &[0x2b, 0x65, 0x70];
 const X25519_OID: &[u8] = &[0x2b, 0x65, 0x6e];
 
@@ -128,7 +128,6 @@ fn data<T>(result: Result<T, impl Sized>) -> Outcome<T> {
 
 /// The `crypto` host object for one callback; keys it hands out are valid only within that callback.
 pub fn bridge<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Object> {
-    KEYS.with_borrow_mut(Vec::clear);
     let object = v8::Object::new(scope);
     let functions = [
         ("random", v8::Function::new(scope, random)),
@@ -142,6 +141,10 @@ pub fn bridge<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Object>
         }
     }
     object
+}
+
+pub fn forget() {
+    KEYS.with_borrow_mut(Vec::clear);
 }
 
 fn latin1(bytes: &[u8]) -> String {
@@ -171,17 +174,9 @@ fn uuid(
     if getrandom::fill(&mut bytes).is_err() {
         return;
     }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    let text = format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    );
+    let text = uuid::Builder::from_random_bytes(bytes)
+        .into_uuid()
+        .to_string();
     if let Some(text) = v8::String::new(scope, &text) {
         reply.set(text.into());
     }
@@ -859,17 +854,6 @@ fn oid(value: &[u8]) -> Vec<u8> {
     der(0x06, value)
 }
 
-fn rsa_public_der(n: &[u8], e: &[u8]) -> Vec<u8> {
-    der(0x30, &[integer(n), integer(e)].concat())
-}
-
-fn rsa_spki(n: &[u8], e: &[u8]) -> Vec<u8> {
-    spki(
-        &[oid(RSA_ENCRYPTION), vec![0x05, 0x00]].concat(),
-        &rsa_public_der(n, e),
-    )
-}
-
 /// The 32-byte private key inside an X25519 PKCS #8 document.
 fn x25519_private(pkcs8: &[u8]) -> Outcome<Vec<u8>> {
     let (0x30, body, _) = element(pkcs8)? else {
@@ -1505,7 +1489,11 @@ fn export(format: &str, key: &Key) -> Outcome<Value> {
             }
             Ok(jwk(fields(members)))
         }
-        (Material::Rsa { n, e, .. }, "spki") if key.kind == "public" => Ok(output(&rsa_spki(n, e))),
+        (Material::Rsa { n, e, .. }, "spki") if key.kind == "public" => {
+            let components = rsa::PublicKeyComponents { n, e };
+            let spki: PublicKeyX509Der = operation(components.as_der())?;
+            Ok(output(spki.as_ref()))
+        }
         (
             Material::Rsa {
                 private: Some(pkcs8),
@@ -1813,27 +1801,27 @@ fn apply(
         }
         "AES-CTR" => {
             let raw = secret(key)?;
-            let counter = block(&dictionary["counter"], "counter")?;
-            if !matches!(dictionary["length"].as_u64(), Some(1..=128)) {
+            let counter = u128::from_be_bytes(block(&dictionary["counter"], "counter")?);
+            let Some(length @ 1..=128) = dictionary["length"].as_u64() else {
                 return fail("OperationError", "AES-CTR length must be between 1 and 128");
+            };
+            let blocks = input.len().div_ceil(16) as u128;
+            if length < 128 && blocks > 1 << length {
+                return fail("OperationError", "The counter would wrap around");
             }
+            let mask = u128::MAX >> (128 - length);
+            let mut stream: Vec<u8> = (0..blocks)
+                .flat_map(|index| {
+                    ((counter & !mask) | (counter.wrapping_add(index) & mask)).to_be_bytes()
+                })
+                .collect();
             let unbound = operation(cipher::UnboundCipherKey::new(cipher_kind(raw.len()), raw))?;
-            let mut buffer = input.to_vec();
-            if encrypting {
-                let sealing = operation(cipher::EncryptingKey::ctr(unbound))?;
-                operation(sealing.less_safe_encrypt(
-                    &mut buffer,
-                    cipher::EncryptionContext::Iv128(FixedLength::from(counter)),
-                ))?;
-                Ok(buffer)
-            } else {
-                let opening = operation(cipher::DecryptingKey::ctr(unbound))?;
-                Ok(operation(opening.decrypt(
-                    &mut buffer,
-                    cipher::DecryptionContext::Iv128(FixedLength::from(counter)),
-                ))?
-                .to_vec())
-            }
+            operation(operation(cipher::EncryptingKey::ecb(unbound))?.encrypt(&mut stream))?;
+            Ok(input
+                .iter()
+                .zip(stream)
+                .map(|(byte, key)| byte ^ key)
+                .collect())
         }
         "RSA-OAEP" => {
             let Material::Rsa { private, n, e } = &key.material else {
@@ -1854,7 +1842,7 @@ fn apply(
                 value => Some(bytes(value)?),
             };
             if encrypting {
-                let public = operation(rsa::PublicEncryptingKey::from_der(&rsa_spki(n, e)))?;
+                let public = operation(rsa::PublicKeyComponents { n, e }.try_into())?;
                 let sealing = operation(rsa::OaepPublicEncryptingKey::new(public))?;
                 let mut out = vec![0; sealing.ciphertext_size()];
                 Ok(operation(sealing.encrypt(oaep, input, &mut out, label.as_deref()))?.to_vec())

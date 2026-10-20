@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd5e436835 100644
+index dfb17c17c723c6f70afbf2a9199a361465c768e2..2e6282df78a81998e071961bed5f7476e676f68c 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -254,7 +254,7 @@ version = "1.1.5"
@@ -141,7 +141,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4220,6 +4271,85 @@ dependencies = [
+@@ -4220,6 +4271,86 @@ dependencies = [
   "wiremock",
  ]
 
@@ -221,13 +221,14 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
 + "serde_json",
 + "swc_common",
 + "swc_ts_fast_strip",
++ "uuid",
 + "v8",
 +]
 +
  [[package]]
  name = "codex-otel"
  version = "0.163.0"
-@@ -4327,7 +4457,7 @@ dependencies = [
+@@ -4327,7 +4458,7 @@ dependencies = [
   "codex-utils-string",
   "derive_more 2.1.1",
   "encoding_rs",
@@ -236,7 +237,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "globset",
   "http 1.4.0",
   "icu_decimal",
-@@ -4754,6 +4884,7 @@ dependencies = [
+@@ -4754,6 +4885,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -244,7 +245,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4827,6 +4958,8 @@ dependencies = [
+@@ -4827,6 +4959,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -253,7 +254,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4848,6 +4981,7 @@ dependencies = [
+@@ -4848,6 +4982,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -261,7 +262,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5451,6 +5585,19 @@ dependencies = [
+@@ -5451,6 +5586,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -281,7 +282,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -6252,6 +6399,37 @@ version = "0.1.10"
+@@ -6252,6 +6400,37 @@ version = "0.1.10"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "26bf8fc351c5ed29b5c2f0cbbac1b209b74f60ecd62e675a998df72c49af5204"
 
@@ -319,7 +320,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "deltae"
  version = "0.3.2"
-@@ -6490,7 +6668,7 @@ dependencies = [
+@@ -6490,7 +6669,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users 0.5.2",
@@ -328,7 +329,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -6593,6 +6771,12 @@ version = "1.2.1"
+@@ -6593,6 +6772,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -341,7 +342,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -6847,7 +7031,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -6847,7 +7032,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -350,7 +351,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -7238,6 +7422,16 @@ dependencies = [
+@@ -7238,6 +7423,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -367,7 +368,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7263,6 +7457,12 @@ dependencies = [
+@@ -7263,6 +7458,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -380,7 +381,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -7499,14 +7699,14 @@ dependencies = [
+@@ -7499,14 +7700,14 @@ dependencies = [
   "gobject-sys",
   "libc",
   "system-deps",
@@ -398,7 +399,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-actor",
   "gix-archive",
-@@ -7531,7 +7731,7 @@ dependencies = [
+@@ -7531,7 +7732,7 @@ dependencies = [
   "gix-object",
   "gix-odb",
   "gix-pack",
@@ -407,7 +408,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-protocol",
   "gix-ref",
   "gix-refspec",
-@@ -7544,7 +7744,7 @@ dependencies = [
+@@ -7544,7 +7745,7 @@ dependencies = [
   "gix-tempfile",
   "gix-trace",
   "gix-traverse",
@@ -416,7 +417,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-utils",
   "gix-validate",
   "gix-worktree",
-@@ -7557,21 +7757,20 @@ dependencies = [
+@@ -7557,21 +7758,20 @@ dependencies = [
 
  [[package]]
  name = "gix-actor"
@@ -442,7 +443,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-date",
-@@ -7582,13 +7781,13 @@ dependencies = [
+@@ -7582,13 +7782,13 @@ dependencies = [
 
  [[package]]
  name = "gix-attributes"
@@ -459,7 +460,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-quote",
   "gix-trace",
   "kstring",
-@@ -7599,18 +7798,18 @@ dependencies = [
+@@ -7599,18 +7799,18 @@ dependencies = [
 
  [[package]]
  name = "gix-bitmap"
@@ -482,7 +483,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-commitgraph",
   "gix-date",
-@@ -7628,21 +7827,21 @@ dependencies = [
+@@ -7628,21 +7828,21 @@ dependencies = [
 
  [[package]]
  name = "gix-chunk"
@@ -509,7 +510,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-quote",
   "gix-trace",
   "shell-words",
-@@ -7650,9 +7849,9 @@ dependencies = [
+@@ -7650,9 +7850,9 @@ dependencies = [
 
  [[package]]
  name = "gix-commitgraph"
@@ -521,7 +522,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-chunk",
-@@ -7664,77 +7863,73 @@ dependencies = [
+@@ -7664,77 +7864,73 @@ dependencies = [
 
  [[package]]
  name = "gix-config"
@@ -613,7 +614,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-discover",
-@@ -7742,7 +7937,7 @@ dependencies = [
+@@ -7742,7 +7938,7 @@ dependencies = [
   "gix-ignore",
   "gix-index",
   "gix-object",
@@ -622,7 +623,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-pathspec",
   "gix-trace",
   "gix-utils",
-@@ -7752,14 +7947,14 @@ dependencies = [
+@@ -7752,14 +7948,14 @@ dependencies = [
 
  [[package]]
  name = "gix-discover"
@@ -640,7 +641,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-ref",
   "gix-sec",
   "thiserror 2.0.18",
-@@ -7767,22 +7962,22 @@ dependencies = [
+@@ -7767,22 +7963,22 @@ dependencies = [
 
  [[package]]
  name = "gix-error"
@@ -668,7 +669,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-trace",
   "gix-utils",
   "libc",
-@@ -7795,9 +7990,9 @@ dependencies = [
+@@ -7795,9 +7991,9 @@ dependencies = [
 
  [[package]]
  name = "gix-filter"
@@ -680,7 +681,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "encoding_rs",
-@@ -7806,7 +8001,7 @@ dependencies = [
+@@ -7806,7 +8002,7 @@ dependencies = [
   "gix-hash",
   "gix-object",
   "gix-packetline",
@@ -689,7 +690,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-quote",
   "gix-trace",
   "gix-utils",
-@@ -7816,35 +8011,35 @@ dependencies = [
+@@ -7816,35 +8012,35 @@ dependencies = [
 
  [[package]]
  name = "gix-fs"
@@ -733,7 +734,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "faster-hex",
   "gix-features",
-@@ -7854,33 +8049,43 @@ dependencies = [
+@@ -7854,33 +8050,43 @@ dependencies = [
 
  [[package]]
  name = "gix-hashtable"
@@ -785,7 +786,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bitflags 2.13.1",
   "bstr",
-@@ -7906,9 +8111,9 @@ dependencies = [
+@@ -7906,9 +8112,9 @@ dependencies = [
 
  [[package]]
  name = "gix-lock"
@@ -797,7 +798,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-tempfile",
   "gix-utils",
-@@ -7917,9 +8122,9 @@ dependencies = [
+@@ -7917,9 +8123,9 @@ dependencies = [
 
  [[package]]
  name = "gix-merge"
@@ -809,7 +810,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-command",
-@@ -7927,25 +8132,25 @@ dependencies = [
+@@ -7927,25 +8133,25 @@ dependencies = [
   "gix-filter",
   "gix-fs",
   "gix-hash",
@@ -839,7 +840,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bitflags 2.13.1",
   "gix-commitgraph",
-@@ -7957,9 +8162,9 @@ dependencies = [
+@@ -7957,9 +8163,9 @@ dependencies = [
 
  [[package]]
  name = "gix-object"
@@ -851,7 +852,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-actor",
-@@ -7967,20 +8172,18 @@ dependencies = [
+@@ -7967,20 +8173,18 @@ dependencies = [
   "gix-features",
   "gix-hash",
   "gix-hashtable",
@@ -874,7 +875,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "arc-swap",
   "gix-features",
-@@ -7989,8 +8192,9 @@ dependencies = [
+@@ -7989,8 +8193,9 @@ dependencies = [
   "gix-hashtable",
   "gix-object",
   "gix-pack",
@@ -885,7 +886,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "parking_lot",
   "tempfile",
   "thiserror 2.0.18",
-@@ -7998,9 +8202,9 @@ dependencies = [
+@@ -7998,9 +8203,9 @@ dependencies = [
 
  [[package]]
  name = "gix-pack"
@@ -897,7 +898,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "clru",
   "gix-chunk",
-@@ -8009,7 +8213,7 @@ dependencies = [
+@@ -8009,7 +8214,7 @@ dependencies = [
   "gix-hash",
   "gix-hashtable",
   "gix-object",
@@ -906,7 +907,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "memmap2",
   "smallvec",
   "thiserror 2.0.18",
-@@ -8017,9 +8221,9 @@ dependencies = [
+@@ -8017,9 +8222,9 @@ dependencies = [
 
  [[package]]
  name = "gix-packetline"
@@ -918,7 +919,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "faster-hex",
-@@ -8039,26 +8243,38 @@ dependencies = [
+@@ -8039,26 +8244,38 @@ dependencies = [
   "thiserror 2.0.18",
  ]
 
@@ -962,7 +963,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-date",
-@@ -8071,14 +8287,13 @@ dependencies = [
+@@ -8071,14 +8288,13 @@ dependencies = [
   "maybe-async",
   "nonempty",
   "thiserror 2.0.18",
@@ -979,7 +980,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-error",
-@@ -8087,9 +8302,9 @@ dependencies = [
+@@ -8087,9 +8303,9 @@ dependencies = [
 
  [[package]]
  name = "gix-ref"
@@ -991,7 +992,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-actor",
   "gix-features",
-@@ -8097,20 +8312,19 @@ dependencies = [
+@@ -8097,20 +8313,19 @@ dependencies = [
   "gix-hash",
   "gix-lock",
   "gix-object",
@@ -1015,7 +1016,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-error",
-@@ -8124,9 +8338,9 @@ dependencies = [
+@@ -8124,9 +8339,9 @@ dependencies = [
 
  [[package]]
  name = "gix-revision"
@@ -1027,7 +1028,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bitflags 2.13.1",
   "bstr",
-@@ -8142,9 +8356,9 @@ dependencies = [
+@@ -8142,9 +8357,9 @@ dependencies = [
 
  [[package]]
  name = "gix-revwalk"
@@ -1039,7 +1040,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-commitgraph",
   "gix-date",
-@@ -8158,21 +8372,21 @@ dependencies = [
+@@ -8158,21 +8373,21 @@ dependencies = [
 
  [[package]]
  name = "gix-sec"
@@ -1066,7 +1067,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-hash",
-@@ -8183,9 +8397,9 @@ dependencies = [
+@@ -8183,9 +8398,9 @@ dependencies = [
 
  [[package]]
  name = "gix-status"
@@ -1078,7 +1079,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "filetime",
-@@ -8197,7 +8411,7 @@ dependencies = [
+@@ -8197,7 +8412,7 @@ dependencies = [
   "gix-hash",
   "gix-index",
   "gix-object",
@@ -1087,7 +1088,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-pathspec",
   "gix-worktree",
   "portable-atomic",
-@@ -8206,24 +8420,24 @@ dependencies = [
+@@ -8206,24 +8421,24 @@ dependencies = [
 
  [[package]]
  name = "gix-submodule"
@@ -1118,7 +1119,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "dashmap",
   "gix-fs",
-@@ -8234,15 +8448,15 @@ dependencies = [
+@@ -8234,15 +8449,15 @@ dependencies = [
 
  [[package]]
  name = "gix-trace"
@@ -1138,7 +1139,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-command",
-@@ -8250,15 +8464,15 @@ dependencies = [
+@@ -8250,15 +8465,15 @@ dependencies = [
   "gix-packetline",
   "gix-quote",
   "gix-sec",
@@ -1157,7 +1158,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bitflags 2.13.1",
   "gix-commitgraph",
-@@ -8278,16 +8492,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -8278,16 +8493,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "d28e8af3d42581190da884f013caf254d2fd4d6ab102408f08d21bfa11de6c8d"
  dependencies = [
   "bstr",
@@ -1189,7 +1190,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "fastrand",
-@@ -8296,18 +8522,18 @@ dependencies = [
+@@ -8296,18 +8523,18 @@ dependencies = [
 
  [[package]]
  name = "gix-validate"
@@ -1212,7 +1213,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-attributes",
-@@ -8317,15 +8543,15 @@ dependencies = [
+@@ -8317,15 +8544,15 @@ dependencies = [
   "gix-ignore",
   "gix-index",
   "gix-object",
@@ -1231,7 +1232,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "bstr",
   "gix-features",
-@@ -8333,7 +8559,7 @@ dependencies = [
+@@ -8333,7 +8560,7 @@ dependencies = [
   "gix-fs",
   "gix-index",
   "gix-object",
@@ -1240,7 +1241,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-worktree",
   "io-close",
   "thiserror 2.0.18",
-@@ -8341,9 +8567,9 @@ dependencies = [
+@@ -8341,9 +8568,9 @@ dependencies = [
 
  [[package]]
  name = "gix-worktree-stream"
@@ -1252,7 +1253,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "gix-attributes",
   "gix-error",
-@@ -8352,7 +8578,7 @@ dependencies = [
+@@ -8352,7 +8579,7 @@ dependencies = [
   "gix-fs",
   "gix-hash",
   "gix-object",
@@ -1261,7 +1262,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "gix-traverse",
   "parking_lot",
  ]
-@@ -8657,6 +8883,10 @@ name = "hashbrown"
+@@ -8657,6 +8884,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -1272,7 +1273,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
 
  [[package]]
  name = "hashbrown"
-@@ -8877,6 +9107,20 @@ dependencies = [
+@@ -8877,6 +9108,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -1293,7 +1294,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9355,6 +9599,12 @@ dependencies = [
+@@ -9355,6 +9600,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -1306,7 +1307,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "ignore"
  version = "0.4.25"
-@@ -9400,25 +9650,6 @@ dependencies = [
+@@ -9400,25 +9651,6 @@ dependencies = [
   "quick-error",
  ]
 
@@ -1332,7 +1333,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "include_dir"
  version = "0.7.4"
-@@ -9603,6 +9834,18 @@ dependencies = [
+@@ -9603,6 +9835,18 @@ dependencies = [
   "serde",
  ]
 
@@ -1351,7 +1352,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -9611,7 +9854,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -9611,7 +9855,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -1360,7 +1361,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -9667,25 +9910,38 @@ checksum = "84de9d95a6d2547d9b77ee3f25fa0ee32e3c3a6484d47a55adebc0439c077992"
+@@ -9667,25 +9911,38 @@ checksum = "84de9d95a6d2547d9b77ee3f25fa0ee32e3c3a6484d47a55adebc0439c077992"
 
  [[package]]
  name = "jiff"
@@ -1404,7 +1405,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "proc-macro2",
   "quote",
   "syn 2.0.117",
-@@ -10472,6 +10728,12 @@ dependencies = [
+@@ -10472,6 +10729,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -1417,7 +1418,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -10595,7 +10857,7 @@ version = "0.50.3"
+@@ -10595,7 +10858,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -1426,7 +1427,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -11312,7 +11574,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -11312,7 +11575,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
  dependencies = [
   "libc",
@@ -1435,7 +1436,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -11426,6 +11688,15 @@ dependencies = [
+@@ -11426,6 +11689,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -1451,7 +1452,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -11610,7 +11881,7 @@ version = "0.11.3"
+@@ -11610,7 +11882,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -1460,7 +1461,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -12246,7 +12517,7 @@ dependencies = [
+@@ -12246,7 +12518,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -1469,7 +1470,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -12270,6 +12541,12 @@ version = "6.0.0"
+@@ -12270,6 +12542,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -1482,7 +1483,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -12736,7 +13013,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -12736,7 +13014,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -1491,7 +1492,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -13558,7 +13835,7 @@ dependencies = [
+@@ -13558,7 +13836,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.12.1",
@@ -1500,7 +1501,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -13617,7 +13894,7 @@ dependencies = [
+@@ -13617,7 +13895,7 @@ dependencies = [
   "security-framework 3.5.1",
   "security-framework-sys",
   "webpki-root-certs",
@@ -1509,7 +1510,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -13997,6 +14274,12 @@ dependencies = [
+@@ -13997,6 +14275,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -1522,7 +1523,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14387,6 +14670,12 @@ dependencies = [
+@@ -14387,6 +14671,12 @@ dependencies = [
   "time",
  ]
 
@@ -1535,7 +1536,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -14441,7 +14730,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -14441,7 +14731,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -1544,7 +1545,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -14885,6 +15174,17 @@ version = "0.1.9"
+@@ -14885,6 +15175,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -1562,7 +1563,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -15004,6 +15304,335 @@ dependencies = [
+@@ -15004,6 +15305,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -1898,7 +1899,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15245,11 +15874,17 @@ version = "0.2.2"
+@@ -15245,11 +15875,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -1918,7 +1919,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  dependencies = [
   "filetime",
   "libc",
-@@ -15271,7 +15906,7 @@ dependencies = [
+@@ -15271,7 +15907,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix 1.1.4",
@@ -1927,7 +1928,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -15327,7 +15962,7 @@ dependencies = [
+@@ -15327,7 +15963,7 @@ dependencies = [
   "parking_lot",
   "rustix 1.1.4",
   "signal-hook",
@@ -1936,7 +1937,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -15404,7 +16039,7 @@ dependencies = [
+@@ -15404,7 +16040,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -1945,7 +1946,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16369,6 +17004,12 @@ version = "1.1.0"
+@@ -16369,6 +17005,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -1958,7 +1959,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -17078,7 +17719,7 @@ version = "0.1.11"
+@@ -17078,7 +17720,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -1967,7 +1968,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..d657bddb21c1af8e0b7651037f407bdd
  ]
 
  [[package]]
-@@ -17727,6 +18368,15 @@ dependencies = [
+@@ -17727,6 +18369,15 @@ dependencies = [
   "winreg 0.55.0",
  ]
 
@@ -82705,10 +82706,10 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e51ad89ddb7948230a25ff231045d01fd1e85cea
+index 0000000000000000000000000000000000000000..4fc977c8d82739f9d9bbd649799fceb518692168
 --- /dev/null
 +++ b/codex-rs/ext/omd/tests/omd_mod_cli.rs
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,204 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModStore;
 +use serde_json::Value;
@@ -82718,7 +82719,6 @@ index 0000000000000000000000000000000000000000..e51ad89ddb7948230a25ff231045d01f
 +use std::path::PathBuf;
 +use std::process::Command;
 +use tempfile::TempDir;
-+
 +
 +fn omd_mod(cwd: &Path, args: &[&OsStr]) -> Result<Value, String> {
 +    let output = Command::new(env!("CARGO_BIN_EXE_omd-mod"))
@@ -83051,10 +83051,10 @@ index 0000000000000000000000000000000000000000..e60353e4c93c79280f009f9d5728cd61
 +)
 diff --git a/codex-rs/omd/runner/Cargo.toml b/codex-rs/omd/runner/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..818a745cec2ad79de5402c3510676132c5563104
+index 0000000000000000000000000000000000000000..d975ed33c67840f093ca77eac5b7dab0f1280e7b
 --- /dev/null
 +++ b/codex-rs/omd/runner/Cargo.toml
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,22 @@
 +[package]
 +name = "codex-omd-runner"
 +version = "1.0.0"
@@ -83075,13 +83075,14 @@ index 0000000000000000000000000000000000000000..818a745cec2ad79de5402c3510676132
 +serde_json = { version = "=1.0.149", features = ["preserve_order"] }
 +swc_common = "=26.0.0"
 +swc_ts_fast_strip = "=59.0.1"
++uuid = { workspace = true }
 +v8 = { workspace = true, features = ["v8_enable_sandbox"] }
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..353c26d45d8ef2577490b8423692bb9027f99516
+index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a25476557
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,886 @@
+@@ -0,0 +1,887 @@
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
@@ -83168,6 +83169,7 @@ index 0000000000000000000000000000000000000000..353c26d45d8ef2577490b8423692bb90
 +delete globalThis.__clock;
 +delete globalThis.__utf8;
 +delete globalThis.__crypto;
++delete Atomics.waitAsync;
 +// Host helpers take and return only primitives or this realm's arrays, and their failures are dropped unread,
 +// so no host-realm object reaches code that mods can patch; the intrinsics used here are captured before mod code runs.
 +const { apply } = Reflect;
@@ -83970,10 +83972,10 @@ index 0000000000000000000000000000000000000000..353c26d45d8ef2577490b8423692bb90
 +  }, suspension, serve, base, component: step };
 diff --git a/codex-rs/omd/runner/src/crypto.rs b/codex-rs/omd/runner/src/crypto.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd66aee9af
+index 0000000000000000000000000000000000000000..f971d5e25a97cbc15393678cecfd41dfbf93fe46
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/crypto.rs
-@@ -0,0 +1,2105 @@
+@@ -0,0 +1,2093 @@
 +use aws_lc_rs::aead;
 +use aws_lc_rs::agreement;
 +use aws_lc_rs::cipher;
@@ -83983,6 +83985,7 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +use aws_lc_rs::encoding::Curve25519SeedBin;
 +use aws_lc_rs::encoding::EcPrivateKeyBin;
 +use aws_lc_rs::encoding::Pkcs8V1Der;
++use aws_lc_rs::encoding::PublicKeyX509Der;
 +use aws_lc_rs::hkdf;
 +use aws_lc_rs::hmac;
 +use aws_lc_rs::iv::FixedLength;
@@ -84035,7 +84038,6 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +    "unwrapKey",
 +];
 +const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
-+const RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
 +const ED25519_OID: &[u8] = &[0x2b, 0x65, 0x70];
 +const X25519_OID: &[u8] = &[0x2b, 0x65, 0x6e];
 +
@@ -84104,7 +84106,6 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +
 +/// The `crypto` host object for one callback; keys it hands out are valid only within that callback.
 +pub fn bridge<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Object> {
-+    KEYS.with_borrow_mut(Vec::clear);
 +    let object = v8::Object::new(scope);
 +    let functions = [
 +        ("random", v8::Function::new(scope, random)),
@@ -84118,6 +84119,10 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +        }
 +    }
 +    object
++}
++
++pub fn forget() {
++    KEYS.with_borrow_mut(Vec::clear);
 +}
 +
 +fn latin1(bytes: &[u8]) -> String {
@@ -84147,17 +84152,9 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +    if getrandom::fill(&mut bytes).is_err() {
 +        return;
 +    }
-+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-+    let text = format!(
-+        "{}-{}-{}-{}-{}",
-+        &hex[..8],
-+        &hex[8..12],
-+        &hex[12..16],
-+        &hex[16..20],
-+        &hex[20..]
-+    );
++    let text = uuid::Builder::from_random_bytes(bytes)
++        .into_uuid()
++        .to_string();
 +    if let Some(text) = v8::String::new(scope, &text) {
 +        reply.set(text.into());
 +    }
@@ -84835,17 +84832,6 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +    der(0x06, value)
 +}
 +
-+fn rsa_public_der(n: &[u8], e: &[u8]) -> Vec<u8> {
-+    der(0x30, &[integer(n), integer(e)].concat())
-+}
-+
-+fn rsa_spki(n: &[u8], e: &[u8]) -> Vec<u8> {
-+    spki(
-+        &[oid(RSA_ENCRYPTION), vec![0x05, 0x00]].concat(),
-+        &rsa_public_der(n, e),
-+    )
-+}
-+
 +/// The 32-byte private key inside an X25519 PKCS #8 document.
 +fn x25519_private(pkcs8: &[u8]) -> Outcome<Vec<u8>> {
 +    let (0x30, body, _) = element(pkcs8)? else {
@@ -85481,7 +85467,11 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +            }
 +            Ok(jwk(fields(members)))
 +        }
-+        (Material::Rsa { n, e, .. }, "spki") if key.kind == "public" => Ok(output(&rsa_spki(n, e))),
++        (Material::Rsa { n, e, .. }, "spki") if key.kind == "public" => {
++            let components = rsa::PublicKeyComponents { n, e };
++            let spki: PublicKeyX509Der = operation(components.as_der())?;
++            Ok(output(spki.as_ref()))
++        }
 +        (
 +            Material::Rsa {
 +                private: Some(pkcs8),
@@ -85789,27 +85779,27 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +        }
 +        "AES-CTR" => {
 +            let raw = secret(key)?;
-+            let counter = block(&dictionary["counter"], "counter")?;
-+            if !matches!(dictionary["length"].as_u64(), Some(1..=128)) {
++            let counter = u128::from_be_bytes(block(&dictionary["counter"], "counter")?);
++            let Some(length @ 1..=128) = dictionary["length"].as_u64() else {
 +                return fail("OperationError", "AES-CTR length must be between 1 and 128");
++            };
++            let blocks = input.len().div_ceil(16) as u128;
++            if length < 128 && blocks > 1 << length {
++                return fail("OperationError", "The counter would wrap around");
 +            }
++            let mask = u128::MAX >> (128 - length);
++            let mut stream: Vec<u8> = (0..blocks)
++                .flat_map(|index| {
++                    ((counter & !mask) | (counter.wrapping_add(index) & mask)).to_be_bytes()
++                })
++                .collect();
 +            let unbound = operation(cipher::UnboundCipherKey::new(cipher_kind(raw.len()), raw))?;
-+            let mut buffer = input.to_vec();
-+            if encrypting {
-+                let sealing = operation(cipher::EncryptingKey::ctr(unbound))?;
-+                operation(sealing.less_safe_encrypt(
-+                    &mut buffer,
-+                    cipher::EncryptionContext::Iv128(FixedLength::from(counter)),
-+                ))?;
-+                Ok(buffer)
-+            } else {
-+                let opening = operation(cipher::DecryptingKey::ctr(unbound))?;
-+                Ok(operation(opening.decrypt(
-+                    &mut buffer,
-+                    cipher::DecryptionContext::Iv128(FixedLength::from(counter)),
-+                ))?
-+                .to_vec())
-+            }
++            operation(operation(cipher::EncryptingKey::ecb(unbound))?.encrypt(&mut stream))?;
++            Ok(input
++                .iter()
++                .zip(stream)
++                .map(|(byte, key)| byte ^ key)
++                .collect())
 +        }
 +        "RSA-OAEP" => {
 +            let Material::Rsa { private, n, e } = &key.material else {
@@ -85830,7 +85820,7 @@ index 0000000000000000000000000000000000000000..8abe84a57c8bf338fe3a4003221e89bd
 +                value => Some(bytes(value)?),
 +            };
 +            if encrypting {
-+                let public = operation(rsa::PublicEncryptingKey::from_der(&rsa_spki(n, e)))?;
++                let public = operation(rsa::PublicKeyComponents { n, e }.try_into())?;
 +                let sealing = operation(rsa::OaepPublicEncryptingKey::new(public))?;
 +                let mut out = vec![0; sealing.ciphertext_size()];
 +                Ok(operation(sealing.encrypt(oaep, input, &mut out, label.as_deref()))?.to_vec())
@@ -86113,10 +86103,10 @@ index 0000000000000000000000000000000000000000..782b9faae4eeff2303e7b46dda2dcfc0
 +  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1ace32934
+index 0000000000000000000000000000000000000000..133305af427b73dc011f6965f67c3f3cce0ab6a8
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1047 @@
+@@ -0,0 +1,1035 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -86141,7 +86131,6 @@ index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1
 +const OUTPUT_LIMIT: usize = 262_144;
 +const CACHE_LIMIT: usize = 1_048_576;
 +const HEAP_LIMIT: usize = 64 << 20;
-+const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 +const FLAGS: &str = "--single-threaded --no-lazy --disallow-code-generation-from-strings --no-maglev --no-turbolev \
 +    --no-turbo-inline-array-builtins";
 +
@@ -86828,7 +86817,8 @@ index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1
 +    let into = function(scope, utf8_into);
 +    set(scope, utf8, "into", into);
 +    set(scope, global, "__utf8", utf8.into());
-+    GRAPH.with_borrow_mut(|graph| graph.modules.clear());
++    GRAPH.with_borrow_mut(|graph| *graph = Graph::default());
++    crypto::forget();
 +    let bootstrap = compile(scope, BOOTSTRAP, "bootstrap", false)?;
 +    bootstrap.instantiate_module(scope, refuse_import)?;
 +    Some(Prepared {
@@ -87042,12 +87032,7 @@ index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1
 +        let bridge = crypto::bridge(scope);
 +        set(scope, global, "__crypto", bridge.into());
 +    }
-+    GRAPH.with_borrow_mut(|graph| {
-+        graph.assets = request["assets"].clone();
-+        graph.linked.clear();
-+        graph.aliases.clear();
-+        graph.json.clear();
-+    });
++    GRAPH.with_borrow_mut(|graph| graph.assets = request["assets"].clone());
 +    match callback(scope, global, bootstrap, request, watchdog) {
 +        Ok(output) => Ok(output),
 +        Err(thrown) => {
@@ -87101,7 +87086,7 @@ index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1
 +    let watchdog = Watchdog::start(isolate.thread_safe_handle());
 +    let mut generation = 1;
 +    let mut spare = prepare(&mut isolate, generation);
-+    let mut kept: Option<(Map<String, Value>, String)> = None;
++    let mut kept: Option<Map<String, Value>> = None;
 +    loop {
 +        let mut line = match read_line() {
 +            Ok(line) => line,
@@ -87117,26 +87102,19 @@ index 0000000000000000000000000000000000000000..bc9c732d513e25ec07b99c00b316cbb1
 +            eprintln!("SyntaxError: invalid runner request");
 +            std::process::exit(1);
 +        };
-+        if request["kept"] == true {
-+            let Some((fields, text)) = &kept else { break };
-+            for (field, value) in fields {
-+                request[field] = value.clone();
++        if let Some(names) = request["kept"].as_array().cloned() {
++            let Some(fields) = &mut kept else { break };
++            fields.retain(|field, _| names.iter().any(|name| name == field));
++            let mut text = String::new();
++            for name in names.iter().filter_map(Value::as_str) {
++                if let Some(value) = fields.get(name) {
++                    request[name] = value.clone();
++                    text += &format!(",{}:{value}", Value::from(name));
++                }
 +            }
 +            line = format!("{}{text}}}", &line[..line.len() - 1]);
 +        } else if request["reuse"] == true {
-+            let fields: Map<String, Value> = KEPT_FIELDS
-+                .into_iter()
-+                .filter_map(|field| {
-+                    request
-+                        .get(field)
-+                        .map(|value| (field.to_owned(), value.clone()))
-+                })
-+                .collect();
-+            let text = fields
-+                .iter()
-+                .map(|(field, value)| format!(",{}:{value}", Value::from(field.as_str())))
-+                .collect();
-+            kept = Some((fields, text));
++            kept = request.as_object().cloned();
 +        }
 +        let Some(prepared) = spare.take() else {
 +            eprintln!("mod_runner_failed: context");
@@ -104167,10 +104145,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5f69cc9da737485e0695c46d13556e5f5264abf7
+index 0000000000000000000000000000000000000000..109dabe0e08f75dc0c34128f7f34055fd9b570b0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6116 @@
+@@ -0,0 +1,6111 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -106563,7 +106541,6 @@ index 0000000000000000000000000000000000000000..5f69cc9da737485e0695c46d13556e5f
 +        .collect()
 +}
 +
-+
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
 +pub struct ModTool {
@@ -106801,8 +106778,7 @@ index 0000000000000000000000000000000000000000..5f69cc9da737485e0695c46d13556e5f
 +    fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap().join("store");
-+        ModStore::create(root.clone())
-+        .unwrap();
++        ModStore::create(root.clone()).unwrap();
 +        let mut host = ModHost::open(root.clone()).unwrap();
 +        let reads = store::READS.get();
 +        for _ in 0..100 {
@@ -107165,11 +107141,8 @@ index 0000000000000000000000000000000000000000..5f69cc9da737485e0695c46d13556e5f
 +        let mut invocation =
 +            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
 +        if invocation.migrate {
-+            invocation.loaded.state = packages::migrate_state(
-+                &invocation.loaded,
-+                &invocation.location,
-+                active,
-+            )?;
++            invocation.loaded.state =
++                packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
 +        }
 +        let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
 +        bridge::run(
@@ -107624,7 +107597,7 @@ index 0000000000000000000000000000000000000000..5f69cc9da737485e0695c46d13556e5f
 +            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
 +            .and_then(|config| match config.schema != 1 {
 +                true => Err(failure("invalid_mod_configuration")),
-+                false => process::runner_path().map(|_| config),
++                false => Ok(config),
 +            });
 +        let mut rejected = Vec::new();
 +        let config = match configured {
@@ -118223,10 +118196,10 @@ index 0000000000000000000000000000000000000000..262995594fc1c7ec9281bc3138c3e44d
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1366b6966b7cc431bf8f0caa6004bbcf1cc0d986
+index 0000000000000000000000000000000000000000..98a167c141df313f98b6b7453e5037dc3aa4cb0e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,748 @@
+@@ -0,0 +1,746 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -118477,7 +118450,7 @@ index 0000000000000000000000000000000000000000..1366b6966b7cc431bf8f0caa6004bbcf
 +        for field in KEPT_FIELDS {
 +            fields.remove(field);
 +        }
-+        fields.insert("kept".into(), Value::Bool(true));
++        fields.insert("kept".into(), serde_json::json!(KEPT_FIELDS));
 +    }
 +    request_line(&line)
 +}
@@ -118778,9 +118751,7 @@ index 0000000000000000000000000000000000000000..1366b6966b7cc431bf8f0caa6004bbcf
 +        }
 +    }
 +    let (mut warm, bytes) = match reused {
-+        Some(warm) if kept.is_some() && warm.kept == kept => {
-+            (warm, kept_line(request)?)
-+        }
++        Some(warm) if kept.is_some() && warm.kept == kept => (warm, kept_line(request)?),
 +        Some(warm) => {
 +            // The activation request differs from this one only in the serve fields.
 +            if warm.base + serve.len() > INPUT_LIMIT + 1 {
@@ -118977,13 +118948,13 @@ index 0000000000000000000000000000000000000000..1366b6966b7cc431bf8f0caa6004bbcf
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..052e2ed43bdec0400cf5ccb0deb27f14050f03e1
+index 0000000000000000000000000000000000000000..a3ca0d4663d9242e74f963208edfd242fb0b611f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,347 @@
 +use super::WARM;
-+use super::sandboxed;
 +use super::evaluate_warm;
++use super::sandboxed;
 +use serde_json::json;
 +use std::path::Path;
 +use std::process::Stdio;
@@ -119288,26 +119259,45 @@ index 0000000000000000000000000000000000000000..052e2ed43bdec0400cf5ccb0deb27f14
 +fn os_sandbox_denies_host_files_network_and_children() {
 +    let temp = tempfile::TempDir::new().unwrap();
 +    let secret = temp.path().join("fixture-secret");
-+    std::fs::write(&secret, "synthetic secret").unwrap();
++    std::fs::write(&secret, "synthetic secret\n").unwrap();
++    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++    let port = listener.local_addr().unwrap().port().to_string();
 +    let script = r#"
-+        read -r line < "$1" 2>/dev/null && echo read=allowed || echo read=denied
-+        printf bad 2>/dev/null > "$1" && echo write=allowed || echo write=denied
-+        true 2>/dev/null 3<>/dev/tcp/127.0.0.1/9 && echo network=allowed || echo network=denied
-+        /usr/bin/true 2>/dev/null && echo child=allowed
++        exec 2>&1
++        echo started
++        read -r line < "$1" && echo read=allowed
++        printf bad > "$1" && echo write=allowed
++        : 3<>"/dev/tcp/127.0.0.1/$2" && echo network=allowed
++        /usr/bin/true && echo child=allowed
 +    "#;
-+    let result = sandboxed(Path::new("/bin/bash"))
-+        .unwrap()
-+        .args(["-c", script, "probe"])
-+        .arg(&secret)
-+        .stdin(Stdio::null())
-+        .output()
-+        .unwrap();
-+    let output = String::from_utf8_lossy(&result.stdout);
-+    for name in ["read", "write", "network"] {
-+        assert!(output.contains(&format!("{name}=denied")), "{name}: {output}");
-+    }
-+    assert!(!output.contains("child=allowed"), "{output}");
-+    assert_eq!(std::fs::read_to_string(secret).unwrap(), "synthetic secret");
++    let probe = |mut command: std::process::Command| {
++        let result = command
++            .args(["-c", script, "probe"])
++            .arg(&secret)
++            .arg(&port)
++            .stdin(Stdio::null())
++            .output()
++            .unwrap();
++        String::from_utf8_lossy(&result.stdout).into_owned()
++    };
++    let output = probe(sandboxed(Path::new("/bin/bash")).unwrap());
++    let denied = format!("{}: Operation not permitted", secret.display());
++    assert!(output.starts_with("started\n"), "{output}");
++    assert_eq!(output.matches(&denied).count(), 2, "{output}");
++    assert!(
++        output.contains("connect: Operation not permitted"),
++        "{output}"
++    );
++    assert!(output.contains("fork: Operation not permitted"), "{output}");
++    assert!(!output.contains("allowed"), "{output}");
++    assert_eq!(
++        std::fs::read_to_string(&secret).unwrap(),
++        "synthetic secret\n"
++    );
++    assert_eq!(
++        probe(std::process::Command::new("/bin/bash")),
++        "started\nread=allowed\nwrite=allowed\nnetwork=allowed\nchild=allowed\n"
++    );
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
@@ -130823,10 +130813,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e1cb61be5fe722f56214af8f879e7f3377be45d
+index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796cc3e963e2
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2098 @@
+@@ -0,0 +1,2097 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -132288,7 +132278,6 @@ index 0000000000000000000000000000000000000000..0e1cb61be5fe722f56214af8f879e7f3
 +    }
 +}
 +
-+
 +fn package(
 +    root: &Path,
 +    id: &str,
@@ -132927,10 +132916,10 @@ index 0000000000000000000000000000000000000000..0e1cb61be5fe722f56214af8f879e7f3
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..883df0e1d6710b6718b938d778bf3fd0e03f2a5e
+index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3c9cff899
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,516 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::ModHost;
@@ -132940,7 +132929,6 @@ index 0000000000000000000000000000000000000000..883df0e1d6710b6718b938d778bf3fd0
 +use std::path::Path;
 +use std::path::PathBuf;
 +use tempfile::TempDir;
-+
 +
 +fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
 +    for _ in 0..200 {
@@ -133450,10 +133438,10 @@ index 0000000000000000000000000000000000000000..883df0e1d6710b6718b938d778bf3fd0
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8eb68f82228aa93307dee782fbc4b937bf2477eb
+index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae0f0127e8
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,954 @@
+@@ -0,0 +1,953 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
@@ -133486,7 +133474,6 @@ index 0000000000000000000000000000000000000000..8eb68f82228aa93307dee782fbc4b937
 +    policy: PathBuf,
 +    owner: u32,
 +}
-+
 +
 +impl Admin {
 +    fn new() -> Self {
@@ -134410,10 +134397,10 @@ index 0000000000000000000000000000000000000000..8eb68f82228aa93307dee782fbc4b937
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a69acf916678a326e8842e9962025e42b0d1e019
+index 0000000000000000000000000000000000000000..d62e3c2f42df6444e6077d633f6d20ab75747b0e
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4760 @@
+@@ -0,0 +1,4759 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -134477,7 +134464,6 @@ index 0000000000000000000000000000000000000000..a69acf916678a326e8842e9962025e42
 +    std::fs::write(path.join("index.ts"), source).unwrap();
 +    path
 +}
-+
 +
 +fn fixture(source: &str, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) {
 +    let temp = TempDir::new().unwrap();
@@ -139176,10 +139162,10 @@ index 0000000000000000000000000000000000000000..a69acf916678a326e8842e9962025e42
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ecad35b7532c1a184d27609d5252aa694892bbf
+index 0000000000000000000000000000000000000000..0808e973089a219d5bef0b2c36ed2434d4c10f95
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1578 @@
+@@ -0,0 +1,1574 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -139230,8 +139216,7 @@ index 0000000000000000000000000000000000000000..0ecad35b7532c1a184d27609d5252aa6
 +}
 +
 +fn store_with_node(temp: &TempDir) -> ModStore {
-+    ModStore::create(temp.path().join("store"))
-+    .unwrap()
++    ModStore::create(temp.path().join("store")).unwrap()
 +}
 +
 +fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
@@ -140041,10 +140026,7 @@ index 0000000000000000000000000000000000000000..0ecad35b7532c1a184d27609d5252aa6
 +    .unwrap();
 +    std::fs::write(
 +        store_path.join("mods.json"),
-+        serde_json::to_vec_pretty(
-+            &json!({"schema":1,"revision":999,"mods":[]}),
-+        )
-+        .unwrap(),
++        serde_json::to_vec_pretty(&json!({"schema":1,"revision":999,"mods":[]})).unwrap(),
 +    )
 +    .unwrap();
 +    let recovered = store.package_lock().unwrap();

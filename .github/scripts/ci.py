@@ -19,7 +19,7 @@ from scripts import authority_broker, install_support as support, package as rel
 
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
-CRATES = ["codex-omd", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
+CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
 

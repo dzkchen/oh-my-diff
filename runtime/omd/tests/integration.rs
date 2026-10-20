@@ -8,7 +8,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-
 fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
     for _ in 0..200 {
         match operation() {

@@ -39,13 +39,6 @@ def invoke(*arguments):
     return json.loads(support.output(arguments))
 
 
-def forget_node(store):
-    path = store / "mods.json"
-    configuration = json.loads(path.read_text())
-    if configuration.pop("node", None) is not None:
-        support.atomic_text(path, json.dumps(configuration, indent=2), 0o600)
-
-
 def profile_packages(profile):
     return PACKAGES if profile == "full" else PLATFORM_PACKAGES
 
@@ -451,11 +444,11 @@ def install(args):
         raise ValueError("no upstream Codex fallback resolves on PATH")
     fallback_id = identity(fallback)
     previous = load(support.resolved(args.previous)) if args.previous else None
+    attached = (store / "mods.json").read_bytes() if args.attach_store else None
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
     made_store = False
-    attached = (store / "mods.json").read_bytes() if args.attach_store else None
     made_launchers = []
     try:
         artifacts = prefix / "artifacts"
@@ -493,7 +486,6 @@ def install(args):
             invoke(installed_manager, "init", store)
             made_store = True
         else:
-            forget_node(store)
             invoke(installed_manager, "authorize-runner", store)
         host = invoke(installed_manager, "status", store)
         if host["api"] != locked["mod_api"]:

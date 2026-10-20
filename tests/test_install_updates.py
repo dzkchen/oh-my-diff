@@ -402,19 +402,6 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual(store.exists(), existing)
                 self.assertFalse((root / "update/journal.json").exists())
 
-    def test_rollback_to_a_node_generation_restores_its_recorded_node(self):
-        store = self.root / "stores/platform"
-        for runner, expected in ((None, {"node": "/opt/node"}), ({"installed_path": "/opt/omd-runner"}, {})):
-            with self.subTest(runner=runner):
-                generation = self.root / "releases" / ("1" * 32)
-                record = {"store": str(store), "author": {"node": "/opt/node"}} | ({"runner": runner} if runner else {})
-                (generation / "prefix").mkdir(parents=True, exist_ok=True)
-                (generation / "prefix/install.json").write_text(json.dumps(record))
-                (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 3, "mods": []}))
-                self.module.restore_node(generation)
-                configuration = json.loads((store / "mods.json").read_text())
-                self.assertEqual(configuration, {"schema": 1, "revision": 3, "mods": []} | expected)
-
     def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
         bin_dir = self.root / "bin"
         bin_dir.mkdir()

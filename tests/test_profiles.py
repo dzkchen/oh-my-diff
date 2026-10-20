@@ -206,15 +206,6 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
-    def test_an_attached_store_drops_the_node_a_previous_release_ran_mods_with(self):
-        with tempfile.TemporaryDirectory(prefix="omd-profile-store-", dir="/private/tmp") as temporary:
-            store = Path(temporary)
-            selection = {"path": "/mods/example", "sha256": "a" * 64, "enabled": True}
-            (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 3, "node": "/usr/bin/node", "mods": [selection]}))
-            profiles.forget_node(store)
-            self.assertEqual(json.loads((store / "mods.json").read_text()), {"schema": 1, "revision": 3, "mods": [selection]})
-            self.assertEqual((store / "mods.json").stat().st_mode & 0o777, 0o600)
-
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],

@@ -169,10 +169,29 @@ test('capability and imports fail visibly', () => {
   assert.match(run('import fs from "node:fs"; export default () => {}').error, /unsupported_import/);
   assert.match(run('export default api => api.unsupported("provider.register")').error, /unsupported_operation/);
 });
-test('no ambient process, fetch, or code generation', () => {
+test('no ambient process, fetch, code generation or event loop wait', () => {
   for (const expression of ['process.env', 'fetch("https://example.org")', 'Function("return process")()']) {
-    assert.ok(run(`export default () => { ${expression} }`).error);
+    assert.ok(run(`export default () => { ${expression} }`).error, expression);
   }
+  assert.match(run('export default () => { Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10) }').error,
+    /Atomics\.waitAsync is not a function/);
+});
+test('AES-CTR counts in the counter bits alone and refuses a counter that would wrap, like Node', async () => {
+  const cases = [[64, 48], [8, 4096], [8, 4097], [128, 0]];
+  const counter = [...Array(8).fill(7), ...Array(8).fill(255)];
+  const encrypt = `async (subtle, length, size) => {
+    const key = await subtle.importKey('raw', new Uint8Array(16).fill(1), 'AES-CTR', false, ['encrypt']);
+    try {
+      const bytes = new Uint8Array(await subtle.encrypt({ name: 'AES-CTR', counter: new Uint8Array(${JSON.stringify(counter)}), length }, key, new Uint8Array(size).fill(2)));
+      return Array.from(bytes.subarray(0, 64), byte => byte.toString(16).padStart(2, '0')).join('') + ':' + bytes.length;
+    } catch (error) { return error.name; }
+  }`;
+  const node = eval(encrypt);
+  const expected = await Promise.all(cases.map(([length, size]) => node(crypto.subtle, length, size)));
+  const source = `const encrypt = ${encrypt};
+  export default api => api.command('probe', () => Promise.all(${JSON.stringify(cases)}.map(([length, size]) => encrypt(crypto.subtle, length, size))))`;
+  const reply = run(source, { capabilities: ['commands'], environment: ['crypto'], event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, expected, reply.error);
 });
 test('errors, crypto results and JSON assets stay in the mod realm', () => {
   const source = `import data from './data.json';

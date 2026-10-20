@@ -248,7 +248,7 @@ fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
         for field in KEPT_FIELDS {
             fields.remove(field);
         }
-        fields.insert("kept".into(), Value::Bool(true));
+        fields.insert("kept".into(), serde_json::json!(KEPT_FIELDS));
     }
     request_line(&line)
 }
@@ -549,9 +549,7 @@ where
         }
     }
     let (mut warm, bytes) = match reused {
-        Some(warm) if kept.is_some() && warm.kept == kept => {
-            (warm, kept_line(request)?)
-        }
+        Some(warm) if kept.is_some() && warm.kept == kept => (warm, kept_line(request)?),
         Some(warm) => {
             // The activation request differs from this one only in the serve fields.
             if warm.base + serve.len() > INPUT_LIMIT + 1 {

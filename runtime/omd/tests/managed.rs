@@ -31,7 +31,6 @@ struct Admin {
     owner: u32,
 }
 
-
 impl Admin {
     fn new() -> Self {
         let temp = TempDir::new().unwrap();

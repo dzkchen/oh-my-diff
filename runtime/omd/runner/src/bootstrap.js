@@ -84,6 +84,7 @@ delete globalThis.__exchange;
 delete globalThis.__clock;
 delete globalThis.__utf8;
 delete globalThis.__crypto;
+delete Atomics.waitAsync;
 // Host helpers take and return only primitives or this realm's arrays, and their failures are dropped unread,
 // so no host-realm object reaches code that mods can patch; the intrinsics used here are captured before mod code runs.
 const { apply } = Reflect;

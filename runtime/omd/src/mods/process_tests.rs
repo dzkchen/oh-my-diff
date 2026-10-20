@@ -1,6 +1,6 @@
 use super::WARM;
-use super::sandboxed;
 use super::evaluate_warm;
+use super::sandboxed;
 use serde_json::json;
 use std::path::Path;
 use std::process::Stdio;
@@ -305,24 +305,43 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
 fn os_sandbox_denies_host_files_network_and_children() {
     let temp = tempfile::TempDir::new().unwrap();
     let secret = temp.path().join("fixture-secret");
-    std::fs::write(&secret, "synthetic secret").unwrap();
+    std::fs::write(&secret, "synthetic secret\n").unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
     let script = r#"
-        read -r line < "$1" 2>/dev/null && echo read=allowed || echo read=denied
-        printf bad 2>/dev/null > "$1" && echo write=allowed || echo write=denied
-        true 2>/dev/null 3<>/dev/tcp/127.0.0.1/9 && echo network=allowed || echo network=denied
-        /usr/bin/true 2>/dev/null && echo child=allowed
+        exec 2>&1
+        echo started
+        read -r line < "$1" && echo read=allowed
+        printf bad > "$1" && echo write=allowed
+        : 3<>"/dev/tcp/127.0.0.1/$2" && echo network=allowed
+        /usr/bin/true && echo child=allowed
     "#;
-    let result = sandboxed(Path::new("/bin/bash"))
-        .unwrap()
-        .args(["-c", script, "probe"])
-        .arg(&secret)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    let output = String::from_utf8_lossy(&result.stdout);
-    for name in ["read", "write", "network"] {
-        assert!(output.contains(&format!("{name}=denied")), "{name}: {output}");
-    }
-    assert!(!output.contains("child=allowed"), "{output}");
-    assert_eq!(std::fs::read_to_string(secret).unwrap(), "synthetic secret");
+    let probe = |mut command: std::process::Command| {
+        let result = command
+            .args(["-c", script, "probe"])
+            .arg(&secret)
+            .arg(&port)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&result.stdout).into_owned()
+    };
+    let output = probe(sandboxed(Path::new("/bin/bash")).unwrap());
+    let denied = format!("{}: Operation not permitted", secret.display());
+    assert!(output.starts_with("started\n"), "{output}");
+    assert_eq!(output.matches(&denied).count(), 2, "{output}");
+    assert!(
+        output.contains("connect: Operation not permitted"),
+        "{output}"
+    );
+    assert!(output.contains("fork: Operation not permitted"), "{output}");
+    assert!(!output.contains("allowed"), "{output}");
+    assert_eq!(
+        std::fs::read_to_string(&secret).unwrap(),
+        "synthetic secret\n"
+    );
+    assert_eq!(
+        probe(std::process::Command::new("/bin/bash")),
+        "started\nread=allowed\nwrite=allowed\nnetwork=allowed\nchild=allowed\n"
+    );
 }
