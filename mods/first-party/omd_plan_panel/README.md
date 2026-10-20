@@ -44,4 +44,4 @@ Both apply to the current thread and reset when OMD restarts. On macOS, `Alt+p` 
 - It shows only your session's own plan. Sub-agents don't show or overwrite it.
 - Plans survive compaction, `/resume` and restarts (the 16 most recent threads, 40 steps of up to 120 characters). A fork starts with no plan until its next update.
 
-Ported from [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) 2.11.0 (juicesharp, MIT; see `THIRD_PARTY_NOTICES.md`): the pinned panel, status glyphs, `done/total` heading, collapse key and completed-first overflow. This package reimplements that behavior over the OMD mod API and copies no code; the `todo` tool, dependencies and localization are not ported.
+Reimplemented from [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) 2.11.0 (juicesharp, MIT; see `THIRD_PARTY_NOTICES.md`): the pinned panel, status glyphs, `done/total` heading, collapse key and completed-first overflow. This package reimplements that behavior over the OMD mod API and copies no code; the `todo` tool, dependencies and localization are not ported.

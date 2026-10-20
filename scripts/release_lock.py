@@ -27,7 +27,8 @@ SOURCES = (
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "docs/install.md", "install.sh",
-    "LICENSE", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md",
+    "LICENSE", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md", "runtime/crate-notices.txt",
+    "runtime/v8-notices.txt",
     "scripts/mods_lock.py", "runtime/mods.lock.json",
 ) + mods_lock.sources()
 
@@ -127,7 +128,6 @@ def build(artifact_dir, package_mode=False, version=None):
                      "first_party_default_active": sorted(profiles.DEFAULT_ACTIVE),
                      "plugin_sources": plugins},
         },
-        "qualification": "development package; supported collection and default pending",
     }
 
 

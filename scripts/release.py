@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
+REFERENCE = ROOT / "mods/REFERENCE.md"
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
 LABELS = ("New", "Changed", "Fixed", "Decided")
@@ -86,6 +87,16 @@ def anchors(path):
             for line in re.sub(r"```.*?```", "", path.read_text(), flags=re.S).splitlines() if line.startswith("#")}
 
 
+def unsynced_reference():
+    def normalized(line):
+        return re.sub(r"^#+ ", "# ", re.sub(r"\]\([^)]*\)", "]", line))
+
+    combined = {normalized(line) for line in REFERENCE.read_text().splitlines()}
+    pages = sorted(page for page in (REFERENCE.parent / "reference").glob("*.md") if page.name != "README.md")
+    return [f"{page.name}: {line}" for page in pages for line in page.read_text().splitlines()[1:]
+            if line.strip() and normalized(line) not in combined]
+
+
 def check(version=None):
     entries = json.loads(CHANGELOG.read_text())
     problems, seen, versions = [], set(), set()
@@ -118,6 +129,7 @@ def check(version=None):
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
+    problems += [f"mods/REFERENCE.md lacks mods/reference/{item}" for item in unsynced_reference()]
     if problems:
         raise SystemExit("\n".join(problems))
     print(f"release metadata consistent{f' for {version}' if version else ''}")

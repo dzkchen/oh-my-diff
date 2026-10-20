@@ -406,7 +406,6 @@ fn config_keys(spec: &str, object: &serde_json::Map<String, Value>) -> io::Resul
     })
 }
 
-/// A value read back through the client surface carries the redaction marker in place of a secret.
 /// Whether a config value still holds a `<redacted>` mask from a read.
 pub fn redacted(value: &Value) -> bool {
     match value {
