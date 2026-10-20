@@ -45,8 +45,8 @@ def packages(names):
 
 
 class Host:
-    def __init__(self, omd_mod, node, work):
-        self.omd_mod, self.node, self.work = omd_mod, node, work
+    def __init__(self, omd_mod, work):
+        self.omd_mod, self.work = omd_mod, work
         self.repo = work / "repo"
         self.repo.mkdir()
         (self.repo / "src").mkdir()
@@ -72,7 +72,7 @@ class Host:
 
     def store(self, name, paths, providers):
         location = self.work / name
-        self.run("init", location, self.node)
+        self.run("init", location)
         refused = {}
         pending = list(paths)
         for path in pending:
@@ -315,7 +315,7 @@ def main():
         providers |= {service["name"]: path for path in every
                       for service in manifest(path).get("services", {}).get("exports", [])}
         with tempfile.TemporaryDirectory(prefix="omd-host-check-") as work:
-            report = check(Host(Path(args.omd_mod).resolve(), node(), Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
+            report = check(Host(Path(args.omd_mod).resolve(), Path(work)), packages(args.packages), providers, not args.no_commands, args.scenarios)
     for name, found in report.items():
         print(name)
         print("".join(f"  {line}\n" for line in found), end="")

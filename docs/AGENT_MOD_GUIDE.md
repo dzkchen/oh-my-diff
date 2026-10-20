@@ -28,7 +28,6 @@ See [Mods, plugins and hooks](../mods/REFERENCE.md#mods-plugins-and-hooks) for w
 command -v omd-mod-author omd-mod omd
 node --version                  # v24.18 or later 24.x
 pnpm --version                  # 11.14 or later
-NODE="$(mise which node 2>/dev/null || command -v node)"   # a real node binary, not a version-manager shim
 ```
 
 If `omd-mod-author` is missing, OMD isn't installed: see [Install](install.md).
@@ -215,7 +214,7 @@ one with `host_operations`, an ordered list of results per operation; see
 Use a scratch store so the user's real mods are untouched:
 
 ```sh
-omd-mod init /tmp/notes-store "$NODE"
+omd-mod init /tmp/notes-store
 pnpm watch /tmp/notes-store --once
 ```
 
@@ -269,7 +268,7 @@ omd mods disable notes       # off, data kept
 omd mods remove notes
 ```
 
-To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store "$NODE"` and
+To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store` and
 add `--store /tmp/install-store` to each command (use a different store from
 step 6, where `watch` already turned the mod on). In a non-interactive shell the prompt can't show, so the command
 stops with `package_approval_required`; show the user the permissions in `notes/mod.json`, and pass `--yes` only after

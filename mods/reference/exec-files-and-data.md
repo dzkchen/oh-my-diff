@@ -71,7 +71,8 @@ may connect to. It needs the `unix_sockets` capability.
 With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` without the session sandbox.
 
 - `cwd` may be absolute.
-- A bare `node` runs the mod runner's node, not the first `node` on `PATH`, which may be a version-manager shim.
+- A program reached through a symlink outside the repository runs as the link, so a version-manager shim such as
+  `node` from mise or Volta runs the version it manages.
 - The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale, a private
   `TMPDIR`, `TERM=dumb`, the declared `exec_environment` names and `env`. No host credential or Codex variable is
   passed and no secrets API exists.
@@ -404,7 +405,7 @@ scratch directory.
 - Sessions belong to one mod and generation; disable, reload, cancellation, and thread stop clean them up.
 - A process cannot write the repository through this API.
 - `process.which {names, sandbox: 'none'}` resolves as an unsandboxed `process.start` does (the `os` grant), so a
-  bare `node` returns the mod runner's node.
+  version-manager shim returns its link path, not the manager's binary.
 
 The first-party `omd_lsp_sync` mod owns Python, TypeScript/JavaScript, Rust and Java server choices and language
 protocol; it is off by default in OMD+ and can be installed in an OMD Core store. It never installs a language

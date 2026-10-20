@@ -167,7 +167,7 @@ Saving an entry point, asset or lifecycle file reloads again after 100 ms, and r
 stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
-**Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE NODE`) that holds
+**Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that holds
 no other trusted mods, and run it only on code you wrote or reviewed. To try the mod in a real store, review the
 digest and approve it there yourself with `/omd` or `omd-mod trust`. Code an agent wrote is never trusted
 automatically.

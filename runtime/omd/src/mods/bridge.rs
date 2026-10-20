@@ -216,13 +216,12 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
 }
 
 /// A component instance keeps one runner, and with it its module state, for as long as it stays mounted.
-pub(super) fn component_key(node: &Path, id: &str, component: &str, identity: &str) -> String {
-    format!("{}:component:{id}:{component}:{identity}", node.display())
+pub(super) fn component_key(id: &str, component: &str, identity: &str) -> String {
+    format!("runner:component:{id}:{component}:{identity}")
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
-    node: &Path,
     loaded: &Loaded,
     event: &str,
     name: &str,
@@ -255,10 +254,10 @@ pub(super) fn run(
         request.invocation["reuse"] = Value::Bool(!render && !component);
         if component {
             let instance = request["payload"]["instance"].as_str().unwrap_or(name);
-            return component_key(node, &loaded.package.id, instance, identity);
+            return component_key(&loaded.package.id, instance, identity);
         }
         if !render {
-            return format!("{}:{identity}", node.display());
+            return format!("runner:{identity}");
         }
         let mut key = Sha256::new();
         key.update(identity);
@@ -268,7 +267,7 @@ pub(super) fn run(
                 key.update(value.to_string());
             }
         }
-        format!("{}:{:x}", node.display(), key.finalize())
+        format!("runner:{:x}", key.finalize())
     });
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
@@ -321,8 +320,8 @@ pub(super) fn run(
         Ok(receipt)
     };
     let evaluated = match &warm {
-        Some(key) => process::evaluate_warm(node, key, &request, budget, active, &mut answer),
-        None => process::evaluate(node, &request, budget, active, &mut answer),
+        Some(key) => process::evaluate_warm(key, &request, budget, active, &mut answer),
+        None => process::evaluate(&request, budget, active, &mut answer),
     }?;
     let mut reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
         if let Some(key) = &warm {

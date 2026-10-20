@@ -29,7 +29,7 @@ Run only the checks for what you changed:
 
 | You changed | Run |
 | --- | --- |
-| A mod or the SDK | `mise run mods:check`, then a related test file: `mise exec -- node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)) |
+| A mod or the SDK | `mise run mods:check`, then a related test file: `mise exec -- node --test PATH` (tests live in `tests/` and beside the code; see [tests/README.md](tests/README.md)). Tests that run mods start the installed `omd-runner` beside `omd-mod`, or the one in `OMD_TEST_RUNNER` |
 | The patched Codex code (`runtime/`) | See [Change the patched Codex code](#change-the-patched-codex-code) |
 | A Python script or the installer | `python3 -m unittest tests.test_NAME` |
 | Docs or the changelog | `mise run release:check` |
@@ -51,15 +51,17 @@ python3 .github/scripts/build.py sync NAME                                   # w
 python3 .github/scripts/build.py locks                                       # regenerates the source locks
 ```
 
-- **Crates:** `runtime/omd` is `codex-omd` and `runtime/native` is `codex-omd-extension`. Rust tests sit beside the code
-  in `*_tests.rs` files. Always run cargo through `build.py cargo`: it sets the target and the Node the mod tests need.
+- **Crates:** `runtime/omd` is `codex-omd`, `runtime/omd/runner` is `codex-omd-runner` (the `omd-runner` binary that
+  runs mods on embedded V8) and `runtime/native` is `codex-omd-extension`. Rust tests sit beside the code in
+  `*_tests.rs` files. Always run cargo through `build.py cargo`: it sets the target, and for `test` it builds
+  `omd-runner` and links it beside the test binaries, where hosts look for it.
 - **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
   replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
   (`git -C TREE diff normalized1630 -- codex-rs/PATH`).
 - **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
   changing `mods/first-party/` or `plugins/` and commit the result.
-- **V8:** the OMD crates' tests don't need it. Building `codex-cli` links a V8 prebuilt: fetch it once with
-  `python3 .github/scripts/build.py v8 NAME`.
+- **V8:** `omd-runner` and `codex-cli` link a V8 prebuilt: fetch it once with `python3 .github/scripts/build.py v8 NAME`.
+  A host started from the target finds `omd-runner` beside itself, so build both (`-p codex-cli -p codex-omd-runner`).
 - **Check:** the regression test for your fix, the crate's tests (`-- --test-threads=1`),
   `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
   `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.

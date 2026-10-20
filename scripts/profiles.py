@@ -193,6 +193,7 @@ def check(record, bin_dir):
     for path, expected in ((binary, record["binary"]["sha256"]),
                            (Path(record["code_mode_host"]["installed_path"]), record["code_mode_host"]["sha256"]),
                            (Path(record["broker"]["installed_path"]), record["broker"]["sha256"]),
+                           (Path(record["runner"]["installed_path"]), record["runner"]["sha256"]),
                            (manager, record["manager"]["sha256"])):
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed artifact changed: {path}")
@@ -350,7 +351,10 @@ def route(prefix, bin_dir, name, args):
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
         extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance})
-        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra], stdout=subprocess.PIPE, text=True)
+        node = record["author"]["node"] or shutil.which("node")
+        if not node:
+            raise ValueError(f"{name} setup needs Node.js on PATH")
+        result = subprocess.run([node, str(setup), "setup", str(prefix / "install.json"), extra], stdout=subprocess.PIPE, text=True)
         if result.returncode:
             raise ValueError(f"{name} setup failed")
         details = json.loads(result.stdout)
@@ -422,8 +426,11 @@ def install(args):
     if (not broker_helper.is_file()
             or support.digest(broker_helper) != release["artifacts"]["omd-broker"]["sha256"]):
         raise ValueError("authority broker beside the Codex binary differs from the release lock")
+    runner = Path(binary["path"]).parent / "omd-runner"
+    if not runner.is_file() or support.digest(runner) != release["artifacts"]["omd-runner"]["sha256"]:
+        raise ValueError("mod runner beside the Codex binary differs from the release lock")
     manager = support.resolved(args.manager)
-    node = support.resolved(args.node)
+    node = support.resolved(args.node) if args.node else None
     if not manager.is_file() or not os.access(manager, os.X_OK):
         raise ValueError("mod manager executable is unavailable")
     if support.digest(manager) != release["artifacts"]["omd-mod"]["sha256"]:
@@ -432,13 +439,12 @@ def install(args):
     if (not author_archive.is_file()
             or support.digest(author_archive) != release["artifacts"]["mod-api.tgz"]["sha256"]):
         raise ValueError("mod author archive differs from the release lock")
-    if not support.compatible_node(support.output([str(node), "--version"]), locked["node"]):
-        raise ValueError(f"Node {locked['node']} or a later {locked['node'].split('.')[0]}.x is required")
     fallback = shutil.which("codex", path=support.path_without(bin_dir))
     if not fallback:
         raise ValueError("no upstream Codex fallback resolves on PATH")
     fallback_id = identity(fallback)
     previous = load(support.resolved(args.previous)) if args.previous else None
+    attached = (store / "mods.json").read_bytes() if args.attach_store else None
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
@@ -448,11 +454,12 @@ def install(args):
         artifacts = prefix / "artifacts"
         artifacts.mkdir()
         for source, name in ((Path(binary["path"]), "codex"), (code_mode_host, "codex-code-mode-host"),
-                             (broker_helper, "omd-broker"), (manager, "omd-mod")):
+                             (broker_helper, "omd-broker"), (runner, "omd-runner"), (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
         # macOS scans a new executable at its first run; pay that here instead of at the first launch.
-        for name, flag in (("codex", "--version"), ("codex-code-mode-host", "--help")):
-            subprocess.run([artifacts / name, flag], stdin=subprocess.DEVNULL, capture_output=True, timeout=60, check=True)
+        for command in (["codex", "--version"], ["codex-code-mode-host", "--help"], ["omd-runner"]):
+            subprocess.run([artifacts / command[0], *command[1:]], stdin=subprocess.DEVNULL, capture_output=True, timeout=60,
+                           check=True)
         author_root = prefix / "author"
         author_root.mkdir()
         with tarfile.open(author_archive, "r:gz") as archive:
@@ -476,10 +483,10 @@ def install(args):
                 *(support.resolved(getattr(args, name.replace("-", "_"))) for name in HOST_TOOLS)))])
         if not args.attach_store:
             store.parent.mkdir(parents=True, exist_ok=True)
-            invoke(installed_manager, "init", store, node)
+            invoke(installed_manager, "init", store)
             made_store = True
         else:
-            invoke(installed_manager, "set-node", store, node)
+            invoke(installed_manager, "authorize-runner", store)
         host = invoke(installed_manager, "status", store)
         if host["api"] != locked["mod_api"]:
             raise ValueError("mod store API does not match the source lock")
@@ -569,10 +576,12 @@ def install(args):
                                      "sha256": support.digest(artifacts / "codex-code-mode-host")},
                   "broker": {"installed_path": str(artifacts / "omd-broker"),
                              "sha256": support.digest(artifacts / "omd-broker")},
+                  "runner": {"installed_path": str(artifacts / "omd-runner"),
+                             "sha256": support.digest(artifacts / "omd-runner")},
                   "manager": {"installed_path": str(installed_manager),
                               "sha256": support.digest(installed_manager)},
                   "author": {"archive_sha256": support.digest(author_archive),
-                             "node": str(node), "files": author_files},
+                             "node": str(node) if node else None, "files": author_files},
                   "management": {"files": management_files},
                   "tools": tools,
                   "upstream_fallback": fallback_id,
@@ -595,7 +604,7 @@ def install(args):
         record["activation"]["sha256"] = support.digest(launcher)
         author_launcher = bin_dir / "omd-mod-author"
         support.atomic_text(author_launcher,
-                            f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(author_cli))} \"$@\"\n",
+                            f"#!/bin/sh\nexec {shlex.quote(str(node or 'node'))} {shlex.quote(str(author_cli))} \"$@\"\n",
                             0o755)
         made_launchers.append(author_launcher)
         record["author"]["launcher_sha256"] = support.digest(author_launcher)
@@ -635,6 +644,8 @@ def install(args):
         shutil.rmtree(prefix)
         if made_store:
             shutil.rmtree(store)
+        if attached is not None:
+            (store / "mods.json").write_bytes(attached)
         raise
 
 
@@ -731,6 +742,7 @@ def uninstall(prefix, bin_dir, keep_broker=False):
         raise ValueError("the authority broker is deployed; run omd-package broker uninstall first")
     managed = {prefix / "install.json", journal, Path(record["binary"]["installed_path"]),
                Path(record["code_mode_host"]["installed_path"]), Path(record["broker"]["installed_path"]),
+               Path(record["runner"]["installed_path"]),
                Path(record["manager"]["installed_path"])}
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
@@ -809,7 +821,7 @@ def main():
     for name in HOST_TOOLS:
         install_parser.add_argument(f"--{name}", type=Path, required=True)
     install_parser.add_argument("--author-archive", type=Path, required=True)
-    install_parser.add_argument("--node", type=Path, required=True)
+    install_parser.add_argument("--node", type=Path, help="Node.js for omd-mod-author and route setup (default: node on PATH)")
     install_parser.add_argument("--store", type=Path, required=True)
     install_parser.add_argument("--attach-store", action="store_true")
     install_parser.add_argument("--previous", type=Path, help="prefix of the installation this one replaces")

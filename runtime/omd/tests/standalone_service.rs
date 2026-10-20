@@ -1,7 +1,6 @@
 use codex_omd::{MOD_API_VERSION, ModStore};
 use serde_json::{Value, json};
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
@@ -10,9 +9,8 @@ fn standalone_service_uses_provider_scoped_host_access() {
     let root = temp.path().canonicalize().unwrap();
     let repository = root.join("repo");
     fs::create_dir(&repository).unwrap();
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let store_path = root.join("store");
-    let store = ModStore::create(store_path.clone(), node).unwrap();
+    let store = ModStore::create(store_path.clone()).unwrap();
     for (id, source, services, capabilities) in [
         (
             "provider",

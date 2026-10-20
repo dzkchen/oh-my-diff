@@ -15,7 +15,8 @@ GENERIC_LITERALS = {
     "profiles": "upstream Codex config profiles table",
     "profiles.json": "credential profile store",
 }
-NATIVE_SOURCES = ("runtime/omd/src", "runtime/native/src")
+NATIVE_SOURCES = ("runtime/omd/src", "runtime/omd/runner/src", "runtime/native/src")
+RUNNER_SCRIPTS = ("runtime/omd/runner/src/bootstrap.js", "runtime/omd/runner/src/dispatch.js", "runtime/omd/runner/src/step.js")
 PACKAGE_MANIFESTS = ("mods/first-party/*/mod.json", "plugins/**/mod.json")
 PLUGIN_MANIFESTS = "plugins/bundled/**/.codex-plugin/plugin.json"
 PATCH_DIRECTORY = "runtime/patches"
@@ -191,16 +192,16 @@ def literals(root, vocabulary):
 
 
 def runner(root, vocabulary):
-    path = root / "runtime/omd/src/mods/runner.mjs"
-    if not path.exists():
-        return []
-    text = path.read_text()
     findings = []
-    for token in re.finditer(r"'([^'\n]*)'|\"([^\"\n]*)\"|\b([A-Za-z_][A-Za-z0-9_]*)\b", text):
-        name = next(group for group in token.groups() if group is not None)
-        for identifier in feature(re.sub(r"([a-z])([A-Z])", r"\1_\2", name), vocabulary):
-            findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
-                             "surface": "runner", "name": name, "feature": identifier})
+    for path in (root / name for name in RUNNER_SCRIPTS):
+        if not path.exists():
+            continue
+        text = path.read_text()
+        for token in re.finditer(r"'([^'\n]*)'|\"([^\"\n]*)\"|\b([A-Za-z_][A-Za-z0-9_]*)\b", text):
+            name = next(group for group in token.groups() if group is not None)
+            for identifier in feature(re.sub(r"([a-z])([A-Z])", r"\1_\2", name), vocabulary):
+                findings.append({"path": str(path.relative_to(root)), "line": text.count("\n", 0, token.start()) + 1,
+                                 "surface": "runner", "name": name, "feature": identifier})
     return findings
 
 
@@ -246,7 +247,7 @@ def patched(root, identifiers):
 def first_party(root):
     identifiers = package_identifiers(root)
     findings = patched(root, identifiers) if identifiers else []
-    paths = list(native_files(root)) + [root / "runtime/omd/src/mods/runner.mjs"]
+    paths = list(native_files(root)) + [root / name for name in RUNNER_SCRIPTS]
     for path in paths:
         if not path.exists():
             continue

@@ -1459,10 +1459,6 @@ fn builtin_controls_protect_recovery_commands() {
     }
 }
 
-fn node() -> PathBuf {
-    PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("set OMD_TEST_NODE to Node 24.18.0"))
-}
-
 fn package(
     root: &Path,
     id: &str,
@@ -1544,7 +1540,7 @@ fn error_of(host: &ModHost, id: &str) -> String {
 fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let modern = package(
         &root,
         "modern",
@@ -1682,7 +1678,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
 fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let empty = ModHost::open(root.join("store")).unwrap();
     assert!(empty.builtin_controls().is_empty());
     assert!(empty.contract_documents().is_empty());
@@ -1821,7 +1817,6 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
     let access = |programs: &[&str]| codex_omd::ModOsAccess {
         programs: strings(programs),
         network: false,
-        node: None,
     };
     let resolve = |programs: &[&str], name: &str| {
         codex_omd::host::unrestricted_program(&access(programs), name, &repository)
@@ -1858,7 +1853,6 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let access = codex_omd::ModOsAccess {
         programs: strings(&["cat", "env"]),
         network: true,
-        node: None,
     };
     let granted = Caller {
         os_access: Some(&access),
@@ -1913,7 +1907,6 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let offline = codex_omd::ModOsAccess {
         programs: strings(&["*"]),
         network: false,
-        node: None,
     };
     let offline = Caller {
         os_access: Some(&offline),

@@ -2,8 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { callback, runnerSync, surface } from '../tests/mod_runner.mjs';
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
+import { callback, runner, runnerSync, surface } from '../tests/mod_runner.mjs';
 function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
@@ -75,7 +74,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
     event: 'intercept', name: '0', serve: true, payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } };
   const suspended = { ...request, payload: { ...request.payload, input: { ...input, replay: true } } };
   const receipt = { call: { operation: 'continuation.next', arguments: { input: { ...input, replay: true, value: 1 } } }, value: { result: { value: 1 }, trace: [] } };
-  const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const result = spawnSync(runner, [], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
   const replies = result.stdout.trim().split('\n').map(JSON.parse);
@@ -130,9 +129,9 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(source, { capabilities: ['commands'] }).error, /capability_denied: terminal/);
   const writer = 'export default api => api.component("w", { view: () => { api.state.set(1); return []; } })';
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
-  const slow = { source: 'export default api => api.component("s", { view: () => { for (let i = 0; i < 3e7; i += 1) {} return []; } })',
+  const slow = { source: 'export default api => api.component("s", { view: () => { let x = 0; for (let i = 0; i < 1e7; i += 1) x = (x * 31 + i) | 0; return x === 0.5 ? [x] : []; } })',
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const slowSteps = spawnSync(runner, [], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
@@ -141,7 +140,7 @@ test('a pinned component runner reads the state and UI state of the step it serv
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
     filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--disallow-code-generation-from-strings', '--input-type=module', '--eval', runner], {
+  const texts = spawnSync(runner, [], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
   }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
@@ -170,10 +169,29 @@ test('capability and imports fail visibly', () => {
   assert.match(run('import fs from "node:fs"; export default () => {}').error, /unsupported_import/);
   assert.match(run('export default api => api.unsupported("provider.register")').error, /unsupported_operation/);
 });
-test('no ambient process, fetch, or code generation', () => {
+test('no ambient process, fetch, code generation or event loop wait', () => {
   for (const expression of ['process.env', 'fetch("https://example.org")', 'Function("return process")()']) {
-    assert.ok(run(`export default () => { ${expression} }`).error);
+    assert.ok(run(`export default () => { ${expression} }`).error, expression);
   }
+  assert.match(run('export default () => { Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10) }').error,
+    /Atomics\.waitAsync is not a function/);
+});
+test('AES-CTR counts in the counter bits alone and refuses a counter that would wrap, like Node', async () => {
+  const cases = [[64, 48], [8, 4096], [8, 4097], [128, 0]];
+  const counter = [...Array(8).fill(7), ...Array(8).fill(255)];
+  const encrypt = `async (subtle, length, size) => {
+    const key = await subtle.importKey('raw', new Uint8Array(16).fill(1), 'AES-CTR', false, ['encrypt']);
+    try {
+      const bytes = new Uint8Array(await subtle.encrypt({ name: 'AES-CTR', counter: new Uint8Array(${JSON.stringify(counter)}), length }, key, new Uint8Array(size).fill(2)));
+      return Array.from(bytes.subarray(0, 64), byte => byte.toString(16).padStart(2, '0')).join('') + ':' + bytes.length;
+    } catch (error) { return error.name; }
+  }`;
+  const node = eval(encrypt);
+  const expected = await Promise.all(cases.map(([length, size]) => node(crypto.subtle, length, size)));
+  const source = `const encrypt = ${encrypt};
+  export default api => api.command('probe', () => Promise.all(${JSON.stringify(cases)}.map(([length, size]) => encrypt(crypto.subtle, length, size))))`;
+  const reply = run(source, { capabilities: ['commands'], environment: ['crypto'], event: 'command', name: 'probe' });
+  assert.deepEqual(reply.value, expected, reply.error);
 });
 test('errors, crypto results and JSON assets stay in the mod realm', () => {
   const source = `import data from './data.json';
@@ -255,6 +273,8 @@ test('host errors from stack overflow can neither compile code nor patch the hos
 });
 test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
+  const looping = 'const e = { toString() { for (;;) {} } }; Object.defineProperty(e, "stack", { get() { for (;;) {} } }); throw e;';
+  assert.match(run(`export default () => { ${looping} }`, { hook_budget_ms: 300 }).error, /timed out after 300ms/);
   assert.match(run('export default api => api.command("large", () => "x".repeat(270000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
 });
 test('lifecycle events and interceptors require their capabilities', () => {

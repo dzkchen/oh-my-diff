@@ -25,7 +25,7 @@ fn fixture_package(
 fn setup() -> (tempfile::TempDir, ModStore, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), std::env::current_exe().unwrap()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     (temp, store, root)
 }
 

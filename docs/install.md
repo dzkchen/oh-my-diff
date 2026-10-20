@@ -5,8 +5,8 @@
 - Apple Silicon Mac (no Linux or Intel).
 - Codex `0.163.x` (`codex --version`). Install: `npm install -g @openai/codex@0.163`. Don't update Codex until OMD
   supports the new version.
-- Node 24.18+ (24.x) from [mise](https://mise.jdx.dev) (`mise use -g node@24`) or on `PATH`.
 - Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
+- Only to write mods: Node 24.18+ (24.x) on `PATH` for `omd-mod-author`.
 
 ## Install
 
@@ -58,7 +58,6 @@ delete it to remove them.
 | `move the upstream codex out of ~/.local/bin` | Move your Codex elsewhere and pass `--upstream`. |
 | `codex on your PATH is ..., not OMD's` | Add the printed `export PATH=...` line to the end of `~/.zshrc` (bash: `~/.bash_profile`); open a new shell. In `~/.zshenv` it doesn't work: macOS and Homebrew reorder `PATH` after it. |
 | `codex` still starts plain Codex right after installing | Your shell cached the old `codex`: run `hash -r` or open a new terminal. |
-| `Node 24.18 or a later 24.x is required` | Install Node 24 with mise or on `PATH`, or pass `--node /path/to/node`. |
 | `No terminal is available` | Add `--profile full` or `--profile platform`. |
 | A mod breaks `codex` | `omd mods disable ID` ([more](manage-mods.md#when-a-mod-misbehaves)). |
 

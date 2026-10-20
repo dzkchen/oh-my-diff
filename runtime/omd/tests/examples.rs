@@ -39,12 +39,10 @@ const HOST_FEATURES: &[&str] = &[
 
 #[test]
 fn host_feature_examples_load_and_register_together() {
-    let node = std::env::var_os("OMD_TEST_NODE")
-        .expect("OMD_TEST_NODE required; sandbox tests must actually execute");
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples");
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node.into()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let mut covered = std::collections::BTreeSet::new();
     for entry in std::fs::read_dir(&examples).unwrap() {
         let path = entry.unwrap().path();

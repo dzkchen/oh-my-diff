@@ -47,11 +47,10 @@ pnpm add -D typescript@5.9.3
 
 ## 3. Try it in `codex`
 
-Use a practice mod store so experiments don't touch your real one. `omd-mod init` records the Node binary the store
-runs mods with; give it a real `node` path, not a version-manager shim:
+Use a practice mod store so experiments don't touch your real one:
 
 ```sh
-omd-mod init /tmp/my-store "$(mise which node 2>/dev/null || command -v node)"
+omd-mod init /tmp/my-store
 pnpm watch /tmp/my-store
 ```
 

@@ -135,9 +135,9 @@ impl ModStore {
             selection.clone(),
             previous["value"].clone(),
         );
-        self.verified_node(&config.node)?;
-        loaded.registrations = migration_registrations(&config.node, &loaded)?;
-        let state = run_migration(&config.node, &loaded, from, &|| true)?;
+        self.verified_runner()?;
+        loaded.registrations = migration_registrations(&loaded)?;
+        let state = run_migration(&loaded, from, &|| true)?;
         let backup = format!("{name}-backup-{}", digest(&serde_json::to_vec(&previous)?));
         self.write(&backup, &previous)?;
         self.write(
@@ -231,7 +231,6 @@ pub(super) fn migratable(
 }
 
 pub(super) fn migrate_state(
-    node: &Path,
     loaded: &Loaded,
     location: &store::StateLocation,
     active: &dyn Fn() -> bool,
@@ -248,8 +247,8 @@ pub(super) fn migrate_state(
         |from, value| {
             let mut previous = loaded.clone();
             previous.state = value;
-            previous.registrations = migration_registrations(node, &previous)?;
-            run_migration(node, &previous, from, active)
+            previous.registrations = migration_registrations(&previous)?;
+            run_migration(&previous, from, active)
         },
     )
 }
@@ -284,8 +283,8 @@ pub(super) fn detached(
     }
 }
 
-pub(super) fn migration_registrations(node: &Path, loaded: &Loaded) -> Result<Registrations> {
-    let inspected = ModHost::run(node, loaded, "inspect", "", Value::Null, &|| true)?;
+pub(super) fn migration_registrations(loaded: &Loaded) -> Result<Registrations> {
+    let inspected = ModHost::run(loaded, "inspect", "", Value::Null, &|| true)?;
     ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;
     if inspected.state != loaded.state
         || !inspected
@@ -299,21 +298,9 @@ pub(super) fn migration_registrations(node: &Path, loaded: &Loaded) -> Result<Re
     Ok(inspected.registrations)
 }
 
-fn run_migration(
-    node: &Path,
-    loaded: &Loaded,
-    from: u64,
-    active: &dyn Fn() -> bool,
-) -> Result<Value> {
+fn run_migration(loaded: &Loaded, from: u64, active: &dyn Fn() -> bool) -> Result<Value> {
     let to = loaded.package.state_version;
-    let reply = ModHost::run(
-        node,
-        loaded,
-        "migrate",
-        "",
-        json!({"from":from,"to":to}),
-        active,
-    )?;
+    let reply = ModHost::run(loaded, "migrate", "", json!({"from":from,"to":to}), active)?;
     if reply.registrations != loaded.registrations {
         return Err(failure("migration_changed_registration"));
     }

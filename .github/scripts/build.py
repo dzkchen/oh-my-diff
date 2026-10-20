@@ -18,7 +18,7 @@ TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-         "-p", "codex-omd-extension", "--bins"]
+         "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
 SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
@@ -100,7 +100,6 @@ def cargo_env(work):
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
         "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": os.environ.get("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "16"),
         "CARGO_PROFILE_RELEASE_DEBUG": os.environ.get("CARGO_PROFILE_RELEASE_DEBUG", "0"),
-        "OMD_TEST_NODE": env.get("OMD_TEST_NODE") or node(),
         "RUST_MIN_STACK": "16777216",
     })
     target = run("rustc", "-vV").decode().split("host: ", 1)[1].splitlines()[0]
@@ -109,12 +108,30 @@ def cargo_env(work):
     return env
 
 
+def test_runner(work, cargo_args, env, output):
+    """Mod hosts start the runner beside their executable; test binaries run from the target's deps directory."""
+    if not cargo_args or cargo_args[0] != "test":
+        return 0
+    release = "--release" in cargo_args or "-r" in cargo_args
+    profile = "release" if release else "debug"
+    flags = ["--locked"] * ("--locked" in cargo_args) + ["--release"] * release
+    status = subprocess.run(["cargo", "build", *flags, "-p", "codex-omd-runner"], cwd=work / "codex/codex-rs", env=env,
+                            stdout=output, stderr=subprocess.STDOUT).returncode
+    link = work / "target" / profile / "deps/omd-runner"
+    if status == 0 and not link.exists():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.unlink(missing_ok=True)
+        link.symlink_to("../omd-runner")
+    return status
+
+
 def cargo_run(work, log, cargo_args):
     log = Path(log)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as output:
-        status = subprocess.run(["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=cargo_env(work),
-                                stdout=output, stderr=subprocess.STDOUT).returncode
+        env = cargo_env(work)
+        status = test_runner(work, cargo_args, env, output) or subprocess.run(
+            ["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=env, stdout=output, stderr=subprocess.STDOUT).returncode
         output.write(f"exit={status}\n")
     text = log.read_text(errors="replace").splitlines()
     # A panic's assertion message follows on the next lines.

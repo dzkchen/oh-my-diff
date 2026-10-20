@@ -127,12 +127,6 @@ def compatible_upstream(version, pinned):
     return re.fullmatch(rf"codex-cli {re.escape(major)}\.{re.escape(minor)}\.\d+", version) is not None
 
 
-def compatible_node(version, pinned):
-    found = re.fullmatch(r"v(\d+)\.(\d+)\.\d+", version)
-    major, minor, _ = pinned.split(".")
-    return found is not None and found[1] == major and int(found[2]) >= int(minor)
-
-
 def binary_identity(path):
     path = resolved(path)
     if not path.is_file() or not os.access(path, os.X_OK):

@@ -94,7 +94,7 @@ test('watch updates an installed local package without changing its grants, scop
     manifest.settings_schema = { type: 'object', properties: { label: { type: 'string', default: 'Initial' } } };
     manifest.capabilities = ['commands', 'fs.read', 'fs.external'];
     manifest.fs_access = { roots: [{ path: project }] };
-    engine('init', store, process.execPath);
+    engine('init', store);
     const dependency = join(root, 'dependency');
     mkdirSync(dependency);
     writeFileSync(join(dependency, 'mod.json'), JSON.stringify({ ...manifest, id: 'dependency', capabilities: [], fs_access: undefined }));
@@ -185,7 +185,7 @@ test('watch refuses to move a shared dependency from project to user scope', { s
     const index = join(root, 'index.json');
     writeFileSync(index, JSON.stringify({ schema: 1, packages: { dependency: [{ version: '0.1.0', source: { kind: 'local', path: dependency }, integrity: inspected.sha256 }] } }));
     writeFileSync(join(project, 'mod.json'), JSON.stringify({ ...manifest, dependencies: [{ id: 'dependency', version: '^0.1.0' }] }));
-    engine('init', store, process.execPath);
+    engine('init', store);
     const trust = { packages: { fixture: { capabilities: manifest.capabilities, dependencies: true }, dependency: { capabilities: [] } } };
     install({ source: { kind: 'local', path: project }, scope: 'user', index, trust });
     // Seed inconsistent dependency scopes directly: installing a second scope fails before watch runs.

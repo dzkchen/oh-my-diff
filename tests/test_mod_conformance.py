@@ -28,7 +28,7 @@ class ContractTests(unittest.TestCase):
         published = set(re.findall(r"^  (?:readonly )?(\w+)[(<:]", interface.group(1), re.M))
         rust = "\n".join(
             path.read_text()
-            for path in list((ROOT / "runtime").rglob("*.rs")) + [ROOT / "runtime/omd/src/mods/runner.mjs"]
+            for path in list((ROOT / "runtime").rglob("*.rs")) + list((ROOT / "runtime/omd/runner/src").glob("*.js"))
         )
         packages = sorted(path for path in (ROOT / "mods/first-party").iterdir() if path.is_dir())
         self.assertTrue(packages)

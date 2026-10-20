@@ -1,14 +1,13 @@
 use super::WARM;
-use super::command;
 use super::evaluate_warm;
+use super::sandboxed;
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
 #[test]
 fn reused_process_resets_callback_globals_and_reloads_source() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"let count = 0; export default api => api.command('count', () => { globalThis.marker = (globalThis.marker ?? 0) + 1; Array.prototype.marker = (Array.prototype.marker ?? 0) + 1; return { count: ++count, marker: globalThis.marker, intrinsic: [].marker, state: api.state.get() }; });",
         "filename":"/fixture/fresh/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands", "store"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
@@ -16,7 +15,6 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     for state in 0..1000 {
         request["state"] = json!({"current":state});
         let reply = super::evaluate_warm(
-            &node,
             "fresh-context",
             &request,
             Duration::from_secs(2),
@@ -33,7 +31,6 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
         json!("export default api => api.command('count', () => { while (true) {} });");
     let started = std::time::Instant::now();
     let error = super::evaluate_warm(
-        &node,
         "fresh-context",
         &request,
         Duration::from_secs(2),
@@ -52,7 +49,6 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     request["source"] =
         json!("export default api => api.command('count', () => ({ changed: true }));");
     let reply = super::evaluate_warm(
-        &node,
         "fresh-context",
         &request,
         Duration::from_secs(2),
@@ -63,7 +59,6 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
     assert_eq!(reply["value"], json!({"changed":true}));
     request["reuse"] = json!(false);
     let once = super::evaluate(
-        &node,
         &request,
         Duration::from_secs(2),
         &|| true,
@@ -76,14 +71,12 @@ fn reused_process_resets_callback_globals_and_reloads_source() {
 
 #[test]
 fn reused_process_resends_changed_package_fields_and_replaces_a_runner_that_died_idle() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"export default api => api.command('v', () => 1);",
         "filename":"/fixture/kept/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
         "state":null,"settings":{},"event":"command","name":"v","interactive":true,"reuse":true,"hook_budget_ms":1000,"payload":null});
     let run = |request: &serde_json::Value| {
         evaluate_warm(
-            &node,
             "kept-fields",
             request,
             Duration::from_secs(2),
@@ -129,7 +122,6 @@ fn watchdog_kill(key: &str) {
 
 #[test]
 fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let input = json!({"component":"tool_call"});
     let request = json!({"source":"export default api => api.intercept('render', () => ({ ok: true }));",
         "filename":"/fixture/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["terminal"],
@@ -138,7 +130,6 @@ fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
         "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
     let run = || {
         evaluate_warm(
-            &node,
             "idle-watchdog",
             &request,
             Duration::from_secs(2),
@@ -156,7 +147,6 @@ fn a_render_runner_killed_idle_by_the_watchdog_fails_the_next_render_once() {
 
 #[test]
 fn reused_process_keeps_each_packages_authority_and_host_identity() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"export default api => { if (globalThis.activated) throw new Error('activation_leaked'); globalThis.activated = true; api.command('identity', () => { let writable = true; try { api.state.set(1); } catch { writable = false; } return {settings:api.settings, package:api.package.id, writable, caller:api.host.call('identity')}; }); };",
         "filename":"/fixture/a/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands","store"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
@@ -173,7 +163,6 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
         for event in ["inspect", "command", "inspect"] {
             request["event"] = json!(event);
             let reply = evaluate_warm(
-                &node,
                 "cross-package",
                 &request,
                 Duration::from_secs(2),
@@ -204,14 +193,12 @@ fn reused_process_keeps_each_packages_authority_and_host_identity() {
 
 #[test]
 fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     let mut request = json!({"source":"export default api => api.command('fill', () => { const buffers = []; for (let i = 0; i < 1024; i++) buffers.push(new Uint8Array(1 << 20).fill(1)); return buffers.length; });",
         "filename":"/fixture/memory/index.ts", "api":crate::MOD_API_VERSION, "capabilities":["commands"],
         "surface":{"events":{},"replacements":[],"middleware":[],"state":"store","contracts":"contracts"},
         "state":null,"settings":{},"event":"command","name":"fill","interactive":true,"reuse":true,"hook_budget_ms":5000,"payload":null});
     let run = |request: &serde_json::Value| {
         evaluate_warm(
-            &node,
             "memory-limit",
             request,
             Duration::from_secs(5),
@@ -223,7 +210,6 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
     assert!(error.starts_with("mod_out_of_memory:"), "{error}");
     request["reuse"] = json!(false);
     let error = super::evaluate(
-        &node,
         &request,
         Duration::from_secs(5),
         &|| true,
@@ -239,7 +225,6 @@ fn array_buffers_past_the_memory_limit_kill_the_runner_with_a_memory_failure() {
 
 #[test]
 fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
     for mutation in [
         "api.on('terminal', () => {})",
         "api.middleware('approval', () => {})",
@@ -254,7 +239,6 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
             "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
             "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
         let error = evaluate_warm(
-            &node,
             "registration-mutation",
             &request,
             Duration::from_secs(2),
@@ -283,7 +267,6 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
         "state":null,"settings":{},"event":"intercept","name":"0","interactive":true,"serve":true,"hook_budget_ms":1000,
         "payload":{"surface":"render","input":input,"original":input,"origin":{"caller":"engine"}}});
     let reply = evaluate_warm(
-        &node,
         "registration-input",
         &request,
         Duration::from_secs(2),
@@ -301,7 +284,6 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
             .any(|runner| runner.key == "registration-input")
     );
     let error = evaluate_warm(
-        &node,
         "cancelled-render",
         &request,
         Duration::from_secs(2),
@@ -320,41 +302,46 @@ fn render_registration_mutations_are_refused_and_invalidation_retires_runner() {
 }
 
 #[test]
-fn os_sandbox_denies_host_files_network_and_children_even_outside_vm() {
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("OMD_TEST_NODE required"));
+fn os_sandbox_denies_host_files_network_and_children() {
     let temp = tempfile::TempDir::new().unwrap();
     let secret = temp.path().join("fixture-secret");
-    std::fs::write(&secret, "synthetic secret").unwrap();
-    let script = format!(
-        r#"
-        const fs = require('node:fs');
-        const cp = require('node:child_process');
-        const net = require('node:net');
-        const result = {{}};
-        try {{ fs.readFileSync({}); result.read = 'allowed'; }} catch(e) {{ result.read = e.code; }}
-        try {{ fs.writeFileSync({}, 'bad'); result.write = 'allowed'; }} catch(e) {{ result.write = e.code; }}
-        result.child = cp.spawnSync('/bin/sh', ['-c', 'exit 0']).error?.code ?? 'allowed';
-        const socket = net.connect(9, '127.0.0.1');
-        socket.on('error', error => {{ result.network = error.code; console.log(JSON.stringify(result)); }});
-        socket.on('connect', () => {{ result.network = 'allowed'; socket.destroy(); console.log(JSON.stringify(result)); }});
-        setTimeout(() => process.exit(2), 2000).unref();
-    "#,
-        serde_json::to_string(&secret).unwrap(),
-        serde_json::to_string(&secret).unwrap()
+    std::fs::write(&secret, "synthetic secret\n").unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port().to_string();
+    let script = r#"
+        exec 2>&1
+        echo started
+        read -r line < "$1" && echo read=allowed
+        printf bad > "$1" && echo write=allowed
+        : 3<>"/dev/tcp/127.0.0.1/$2" && echo network=allowed
+        /usr/bin/true && echo child=allowed
+    "#;
+    let probe = |mut command: std::process::Command| {
+        let result = command
+            .args(["-c", script, "probe"])
+            .arg(&secret)
+            .arg(&port)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&result.stdout).into_owned()
+    };
+    let output = probe(sandboxed(Path::new("/bin/bash")).unwrap());
+    let denied = format!("{}: Operation not permitted", secret.display());
+    assert!(output.starts_with("started\n"), "{output}");
+    assert_eq!(output.matches(&denied).count(), 2, "{output}");
+    assert!(
+        output.contains("connect: Operation not permitted"),
+        "{output}"
     );
-    let result = command(&node)
-        .unwrap()
-        .args(["--eval", &script])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(result.status.success(), "{:?}", result);
-    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    for name in ["read", "write", "child", "network"] {
-        assert!(
-            matches!(value[name].as_str(), Some("EPERM" | "EACCES")),
-            "{name}: {value}"
-        );
-    }
-    assert_eq!(std::fs::read_to_string(secret).unwrap(), "synthetic secret");
+    assert!(output.contains("fork: Operation not permitted"), "{output}");
+    assert!(!output.contains("allowed"), "{output}");
+    assert_eq!(
+        std::fs::read_to_string(&secret).unwrap(),
+        "synthetic secret\n"
+    );
+    assert_eq!(
+        probe(std::process::Command::new("/bin/bash")),
+        "started\nread=allowed\nwrite=allowed\nnetwork=allowed\nchild=allowed\n"
+    );
 }

@@ -31,13 +31,6 @@ struct Admin {
     owner: u32,
 }
 
-fn node() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("OMD_TEST_NODE")
-            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
-    )
-}
-
 impl Admin {
     fn new() -> Self {
         let temp = TempDir::new().unwrap();
@@ -102,7 +95,7 @@ impl Admin {
         let root = self.root.join(format!("store-{user}"));
         let mut store = match root.exists() {
             true => ModStore::open(root.canonicalize().unwrap()).unwrap(),
-            false => ModStore::create(root, node()).unwrap(),
+            false => ModStore::create(root).unwrap(),
         };
         store.set_managed_policy(self.policy.clone(), self.owner, user);
         store

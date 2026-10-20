@@ -882,13 +882,15 @@ impl ManagedProcesses {
                             codex_omd::host::unrestricted_program(access, &input.name, repository)?
                                 != input.path
                         }
-                        None => program(&input.name, repository).as_ref() != Some(&input.path),
+                        None => {
+                            program(&input.name, repository).as_ref() != Some(&input.path)
+                                || input
+                                    .path
+                                    .canonicalize()
+                                    .map_err(|error| error.to_string())?
+                                    != input.path
+                        }
                     }
-                    || input
-                        .path
-                        .canonicalize()
-                        .map_err(|error| error.to_string())?
-                        != input.path
                 {
                     return Err("process_program_or_arguments_invalid".into());
                 }
@@ -1964,7 +1966,6 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
-            node: None,
         };
         let drawn = Arc::new(Mutex::new(Vec::new()));
         let sink: BlitSink = {
@@ -2094,7 +2095,6 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: true,
-            node: None,
         };
         let owner = ProcessOwner {
             thread: None,
@@ -2331,7 +2331,6 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
-            node: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let owner = ProcessOwner {
@@ -2371,20 +2370,20 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
     }
 
     #[test]
-    fn unsandboxed_which_resolves_the_runner_node() {
+    fn unsandboxed_which_keeps_a_shim_link_name() {
         let directory = tempfile::tempdir().unwrap();
-        let repository = directory.path().canonicalize().unwrap();
-        let runner = repository.parent().unwrap().join(format!(
-            "{}-runner-node",
-            repository.file_name().unwrap().to_string_lossy()
-        ));
-        std::fs::write(&runner, "#!/bin/sh\n").unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let repository = root.join("repository");
+        let shim = root.join("multicall");
+        let link = root.join("node");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(&shim, "#!/bin/sh\n").unwrap();
+        std::os::unix::fs::symlink(&shim, &link).unwrap();
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
         let access = codex_omd::ModOsAccess {
-            programs: vec!["node".into()],
+            programs: vec![link.to_string_lossy().into_owned()],
             network: false,
-            node: Some(runner.clone()),
         };
         let owner = ProcessOwner {
             thread: None,
@@ -2401,12 +2400,11 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             .call(
                 owner,
                 "process.which",
-                json!({"names":["node"],"sandbox":"none"}),
+                json!({"names":[link],"sandbox":"none"}),
                 || true,
             )
             .unwrap();
-        std::fs::remove_file(&runner).unwrap();
-        assert_eq!(found["found"][0]["path"], json!(runner));
+        assert_eq!(found["found"][0]["path"], json!(link));
     }
 
     #[test]

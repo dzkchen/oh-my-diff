@@ -1607,7 +1607,8 @@
           "packages.preview",
           "packages.apply",
           "packages.reload",
-          "settings.write"
+          "settings.write",
+          "routes.add"
         ]
       },
       "replace_note": null

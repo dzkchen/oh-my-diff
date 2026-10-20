@@ -62,17 +62,10 @@ fn service_package(
     path
 }
 
-fn node() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("OMD_TEST_NODE")
-            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
-    )
-}
-
 fn fixture(source: &str, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let path = package(&root, "fixture", source, capabilities);
     trust(&store, &path, capabilities);
     (temp, store, path)
@@ -151,7 +144,7 @@ fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : key === 'os' ? api.host.tryCall('exec.run', { program: '/bin/echo', argv: [`${value}`], sandbox: 'none' }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); api.state.set(value + 100); return read.ok; }); }";
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let capabilities = ["commands", "store", "exec", "os"];
     let path = package(&root, "fixture", source, &capabilities);
     let mut manifest: Value =
@@ -260,8 +253,8 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
         scoped("shared", "checkout"),
         scoped("invalid", "global"),
     );
-    let first = ModStore::create(root.join("first"), node()).unwrap();
-    let second = ModStore::create(root.join("second"), node()).unwrap();
+    let first = ModStore::create(root.join("first")).unwrap();
+    let second = ModStore::create(root.join("second")).unwrap();
     for path in [&threaded, &shared] {
         trust(&first, path, &["commands", "store"]);
     }
@@ -392,20 +385,6 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
 }
 
 #[test]
-fn a_missing_runner_fails_closed_without_a_path_fallback() {
-    let (temp, store, _) = fixture(COUNTER, &["store"]);
-    let root = temp.path().canonicalize().unwrap();
-    let path = root.join("store/mods.json");
-    let mut config: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    config["node"] = json!(root.join("upgraded/node"));
-    std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-    let error = ModHost::open(root.join("store")).err().unwrap().to_string();
-    assert!(error.starts_with("node_unavailable"), "{error}");
-    store.set_node(&node()).unwrap();
-    host(&temp);
-}
-
-#[test]
 fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
     let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
@@ -533,7 +512,7 @@ fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
 fn late_host_calls_fail_their_own_callback_and_never_reach_another_mod() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let leaving = package(
         &root,
         "leaving",
@@ -1243,7 +1222,7 @@ fn startup_terminal_preview_rejects_native_task_operations_at_host_boundary() {
 fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let workspace = packaged(
         &root,
         "workspace",
@@ -1334,7 +1313,7 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
 fn ui_state_invalidates_render_hooks_without_durable_reads() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let frame = package(
         &root,
         "frame",
@@ -1387,7 +1366,7 @@ fn ui_state_invalidates_render_hooks_without_durable_reads() {
 fn render_hooks_compose_rewrite_props_and_rerender_only_when_read_keys_change() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let frame = package(
         &root,
         "frame",
@@ -1834,7 +1813,7 @@ fn ui_state_command_views_validate_ownership_and_preserve_other_contributions() 
 fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let contract = json!({"name":"example.echo","version":"1.1.0",
         "methods":{"echo":{"input":"string","output":"string"}}});
     let provider = service_package(
@@ -1877,7 +1856,7 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
 fn service_host_operations_keep_provider_identity_and_grants() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let contract = json!({"name":"example.owned","version":"1.0.0",
         "methods":{"read":{"input":"null","output":"object"}}});
     let provider = service_package(
@@ -1956,7 +1935,7 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
     };
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let first = service_package(
         &root,
         "first",
@@ -2060,7 +2039,7 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
 
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let a = service_package(
         &root,
         "a",
@@ -2521,7 +2500,7 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
 fn codex_config_is_allowlisted_and_reported_for_active_mods() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let write = |directory: &str, extra: Value| {
         let path = packaged(
             &root,
@@ -2610,7 +2589,7 @@ fn context_mod(id: &str) -> String {
 
 fn composed(temp: &TempDir, packages: &[(&str, &[&str])]) -> ModStore {
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, requires) in packages {
         let path = packaged(&root, id, id, &context_mod(id), &["context"], requires);
         trust(&store, &path, &["context"]);
@@ -2685,7 +2664,7 @@ fn an_unavailable_dependency_disables_only_the_dependent_chain() {
 fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let counter = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
     let user = packaged(
         &root,
@@ -2732,7 +2711,7 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
 fn a_shadowed_request_policy_is_enforced_by_its_project_copy() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let source =
         "export default api => api.intercept('model_send', {required: true}, (e, next) => next(e))";
     let capabilities = ["middleware", "request_policy"];
@@ -2755,7 +2734,7 @@ fn a_shadowed_request_policy_is_enforced_by_its_project_copy() {
 fn two_selections_of_one_id_in_the_same_scope_both_fail_closed() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for directory in ["first-copy", "second-copy"] {
         let path = packaged(
             &root,
@@ -2795,7 +2774,7 @@ fn two_selections_of_one_id_in_the_same_scope_both_fail_closed() {
 fn contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for id in ["first", "second"] {
         let path = packaged(
             &root,
@@ -2959,7 +2938,7 @@ fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_o
 fn sdk_helpers_run_offline_on_virtual_time_and_mocked_host_views() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let capabilities = ["commands", "events", "store", "fs.read", "agents"];
     let sdk = package(
         &root,
@@ -3237,7 +3216,7 @@ fn rich_lines_and_boxes_are_bounded() {
 fn secret_like_exec_environment_needs_explicit_trust_by_name() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let path = package(&root, "fixture", "export default () => {}", &["exec"]);
     let manifest = path.join("mod.json");
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
@@ -3272,7 +3251,7 @@ fn secret_like_exec_environment_needs_explicit_trust_by_name() {
 fn settings_write_merges_schema_checked_values_over_defaults() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let path = package(
         &root,
         "fixture",
@@ -3327,7 +3306,7 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
 fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let active = package(
         &root,
         "active",
@@ -3363,7 +3342,7 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
 fn interceptors(packages: &[(&str, &str, &[&str])]) -> (TempDir, std::sync::Mutex<ModHost>) {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, source, capabilities) in packages {
         let path = package(&root, id, source, capabilities);
         trust(&store, &path, capabilities);
@@ -3571,7 +3550,7 @@ fn continuation_failures_skip_keep_catch_or_fail_closed() {
 fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let guard = package(
         &root,
         "guard",
@@ -3652,7 +3631,7 @@ fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
 fn host_operation_events_mask_store_credential_and_exec_payloads() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let watcher = package(
         &root,
         "watcher",
@@ -3719,7 +3698,7 @@ fn host_operation_events_mask_store_credential_and_exec_payloads() {
 fn command_and_config_interceptors_compose_transform_and_keep_floors() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, source, capabilities) in [
         (
             "curator",
@@ -3848,7 +3827,7 @@ fn command_and_config_interceptors_compose_transform_and_keep_floors() {
 fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let write_guard = |source: &str| {
         let path = root.join("guard");
         let _ = std::fs::create_dir(&path);
@@ -4003,7 +3982,7 @@ fn admission_policy_refuses_withholds_rejudges_and_fails_closed() {
 fn continuation_order_cancellation_and_reload_are_explicit() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, other) in [("a", "b"), ("b", "a")] {
         let source = format!(
             "export default api => api.intercept('tool', {{before: ['{other}']}}, (e, next) => next(e))"
@@ -4014,7 +3993,7 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
     assert!(activation_error(&temp, "a").contains("interceptor_order_conflict: a, b"));
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, order) in [
         ("c", "{before: ['d'], after: ['e']}"),
         ("d", "{before: ['e']}"),
@@ -4218,7 +4197,7 @@ fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
 fn authority_grants_are_declared_scoped_expiring_and_revocable() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let write = |id: &str, extra: Value, capabilities: &[&str]| {
         let path = root.join(id);
         std::fs::create_dir(&path).unwrap();
@@ -4412,7 +4391,7 @@ fn authority_grants_are_declared_scoped_expiring_and_revocable() {
 fn history_persist_interceptors_rewrite_only_entry_text() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let plain = package(
         &root,
         "plain",
@@ -4482,7 +4461,7 @@ fn history_persist_interceptors_rewrite_only_entry_text() {
 fn component_change_interceptors_answer_only_for_the_components_owner() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, source) in [
         (
             "wizard",
@@ -4705,7 +4684,7 @@ fn component_runners_belong_to_their_owner_and_cannot_sleep() {
 fn refused_component_host_calls_never_reach_host_operation_interceptors() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let guard = package(
         &root,
         "guard",
@@ -4738,7 +4717,7 @@ fn refused_component_host_calls_never_reach_host_operation_interceptors() {
 fn entrypoints_import_assets_whose_code_counts_toward_source_use() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let path = root.join("fixture");
     std::fs::create_dir_all(path.join("lib")).unwrap();
     std::fs::write(

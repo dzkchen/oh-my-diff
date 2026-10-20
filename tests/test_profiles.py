@@ -23,7 +23,7 @@ def installed_fixture(base):
     for name in profiles.LAUNCHERS:
         (bin_dir / name).write_text(f"launcher {name}")
         digests[name] = profiles.support.digest(bin_dir / name)
-    record = {key: {"installed_path": str(prefix / key)} for key in ("binary", "code_mode_host", "broker", "manager")}
+    record = {key: {"installed_path": str(prefix / key)} for key in ("binary", "code_mode_host", "broker", "runner", "manager")}
     record.update(author={"files": [], "launcher_sha256": digests["omd-mod-author"]},
                   management={"files": [], "launcher_sha256": digests["omd-package"]},
                   activation={"sha256": digests["codex"]},
@@ -32,7 +32,7 @@ def installed_fixture(base):
                   packages={"example": {"files": ["index.ts"]}},
                   sources={"example": ["index.ts"], "inactive": ["index.ts"]},
                   shared_state={"codex_home": str(base / "home")}, store=str(base / "store"))
-    for name in ("install.json", "binary", "code_mode_host", "broker", "manager"):
+    for name in ("install.json", "binary", "code_mode_host", "broker", "runner", "manager"):
         (prefix / name).touch()
     for identifier in record["sources"]:
         source = prefix / "sources" / identifier
@@ -236,11 +236,10 @@ enabled = true
     @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "set OMD_TEST_MOD_BIN for native offline coverage")
     def test_service_import_enable_requires_its_provider_in_isolated_store(self):
         manager = Path(os.environ["OMD_TEST_MOD_BIN"]).resolve()
-        node = subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()
         with tempfile.TemporaryDirectory(prefix="omd-profile-selection-", dir="/private/tmp") as temporary:
             base = Path(temporary)
             store = base / "store"
-            profiles.invoke(manager, "init", store, node)
+            profiles.invoke(manager, "init", store)
             sources = store / "sources"
             sources.mkdir()
             for identifier in ("omd_lsp_view", "omd_lsp_sync"):

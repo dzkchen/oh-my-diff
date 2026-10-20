@@ -221,12 +221,21 @@ Every context has the standard `TextEncoder`. Host limits count UTF-8 bytes:
 
 The `crypto` environment provides `getRandomValues`, `randomUUID` and the `crypto.subtle` methods.
 
+- `crypto.subtle` implements the Web Cryptography API's standard algorithms: SHA-1/256/384/512, HMAC, AES-GCM,
+  AES-CBC, AES-CTR, AES-KW, PBKDF2, HKDF, ECDSA and ECDH (P-256, P-384, P-521), Ed25519, X25519,
+  RSASSA-PKCS1-v1_5, RSA-PSS and RSA-OAEP, with `raw`, `spki`, `pkcs8` and `jwk` keys as each algorithm allows.
+- Limits: AES-GCM takes a 96-bit `iv` and a 128-bit tag; AES-KW keys are 128 or 256 bits; ECDSA signs P-256 with
+  SHA-256, P-384 with SHA-384 and P-521 with SHA-256, SHA-384 or SHA-512; RSA keys are 2048–8192 bits with exponent
+  65537, and RSA-PSS `saltLength` equals the hash length. Anything else fails with `NotSupportedError`. Generated
+  HMAC keys and derived bits are at most 8,388,608 bits (1 MiB) and PBKDF2 `iterations` at most 4,294,967,295;
+  larger values fail with `OperationError`.
 - Their results are copied into the mod's context.
 - A `CryptoKey` is a frozen handle with `type`, `extractable`, `algorithm` and `usages`.
 - Failures are plain `Error`s whose `name` is the Web Crypto error name.
 
 There is no `TextDecoder`, `Buffer` or `structuredClone`, and no code is compiled from strings (`eval`, `new
-Function`), in the mod's context or the runner process.
+Function`), in the mod's context or the runner process. The runner has no event loop, so `Atomics.waitAsync` is absent:
+wait with `Atomics.wait` or the `time.sleep` operation.
 
 ### Manifest `environment`
 

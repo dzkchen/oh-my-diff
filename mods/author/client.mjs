@@ -25,6 +25,7 @@ async function unixSocket(path, onText, onClose) {
   return new Promise((resolve, reject) => {
     const socket = connect(path);
     let head = Buffer.alloc(0);
+    /** @type {((chunk: Buffer) => void) | null} */
     let read = null;
     socket.on('error', reject);
     socket.on('close', () => (read ? onClose() : reject(new Error('client_connect_failed: closed during handshake'))));
@@ -224,7 +225,8 @@ class Session {
           break;
         }
         if (this.attached) {
-          await fatal(() => this.attach(this.attached));
+          const attached = this.attached;
+          await fatal(() => this.attach(attached));
           if (Object.keys(this.updated).length) await tolerate(() => this.call('omd/client/update', this.updated), () => { this.updated = {}; });
         }
         for (const [thread, params] of this.resumed) await tolerate(() => this.call('thread/resume', params), () => this.resumed.delete(thread));

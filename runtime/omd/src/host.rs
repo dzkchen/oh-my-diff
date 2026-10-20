@@ -480,27 +480,34 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
 
 /// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
 /// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
+/// Checks use the canonical target, but a link outside the repository runs as the link (directory
+/// canonical) so a multicall shim, such as a version manager's `node`, dispatches by its name.
 pub fn unrestricted_program(
     access: &crate::ModOsAccess,
     name: &str,
     repository: &Path,
 ) -> Result<PathBuf, String> {
     let path = Path::new(name);
-    let resolved = if let Some(node) = access.node.as_ref().filter(|_| name == "node") {
-        node.canonicalize().ok()
-    } else if path.is_absolute() {
-        path.canonicalize().ok()
+    let link = |found: &Path| {
+        let launch = found
+            .parent()?
+            .canonicalize()
+            .ok()?
+            .join(found.file_name()?);
+        Some((launch, found.canonicalize().ok()?))
+    };
+    let (launch, resolved) = if path.is_absolute() {
+        link(path)
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {
             std::env::split_paths(&paths).find_map(|directory| {
-                let candidate = directory.join(name).canonicalize().ok()?;
-                (!candidate.starts_with(repository)).then_some(candidate)
+                link(&directory.join(name)).filter(|(_, target)| !target.starts_with(repository))
             })
         })
     } else {
         None
     }
-    .filter(|path| path.is_file())
+    .filter(|(_, target)| target.is_file())
     .ok_or("exec_program_unavailable")?;
     let listed = access
         .programs
@@ -511,7 +518,11 @@ pub fn unrestricted_program(
     {
         return Err(format!("os_access_denied: {name}"));
     }
-    Ok(resolved)
+    Ok(if launch.starts_with(repository) {
+        resolved
+    } else {
+        launch
+    })
 }
 
 /// The command for an unsandboxed program: no Seatbelt with network, otherwise a macOS Seatbelt denying only IP networking.

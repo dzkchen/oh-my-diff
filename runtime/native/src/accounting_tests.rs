@@ -105,8 +105,7 @@ fn install_package(
     source: &str,
     capabilities: &[&str],
 ) -> (ModStore, std::path::PathBuf, Arc<Mutex<ModHost>>) {
-    let node = std::path::PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
-    let store = ModStore::create(root.join("mod-store"), node).unwrap();
+    let store = ModStore::create(root.join("mod-store")).unwrap();
     let package = root.join("request_router");
     std::fs::create_dir(&package).unwrap();
     std::fs::write(
@@ -1228,13 +1227,13 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
         model: "gpt-6.1-sol".into(),
         reasoning_effort: "high".into(),
         context_window: 272_000,
-        mod_id: "omd_advisor".into(),
+        mod_id: "fixture_helper".into(),
     };
     let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
     assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
     let config = crate::config::HostConfig::load(&store, &repository).unwrap();
     let route = config
-        .route(&name, crate::config::RouteRole::Worker, Some("omd_advisor"))
+        .route(&name, crate::config::RouteRole::Worker, Some("fixture_helper"))
         .unwrap();
     let grant = route.grant.as_ref().unwrap();
     let allowed = |repository: &std::path::Path| {

@@ -8,11 +8,13 @@
   needs its exact path and a reason under `optional` in `suites.json`; it is reported as not executed.
 - Assigns, but does not run: `tests/test_*.py` (Python unittest), Rust test files under `runtime/omd` and
   `runtime/native` (Cargo), and `mods/{examples,first-party}/<package>/mod.test.json` (mod-host scenarios).
+- Runs mods through `tests/mod_runner.mjs`, which starts the `omd-runner` in `OMD_TEST_RUNNER`, else the one beside
+  `omd-mod` (`OMD_MOD_BIN`, or the installed `omd-mod` on `PATH`).
 
 The nightly runs the rest: `python3 -m unittest discover -s tests`, Cargo in the patched scratch tree and
 `python3 scripts/mod_host_check.py --scenarios`.
 
-`mise run mods:check` type-checks `mods/tsconfig.json` (declarations, examples, first-party mods, ports and bundled
+`mise run mods:check` type-checks, with TypeScript 7 (`typescript7`), `mods/tsconfig.json` (declarations, examples, first-party mods, ports and bundled
 plugins) and `mods/tsconfig.author.json` (the public `mods/author/*.mjs` files), then checks that every shipped
 source is covered. `node scripts/mod_typecheck_inventory.mjs --list` prints each source and how it is checked;
 hooks, sidecars, browser examples and the Bun execution kernel are syntax-checked only.

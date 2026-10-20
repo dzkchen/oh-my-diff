@@ -4,7 +4,6 @@ use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
 use codex_omd::ModStore;
 use std::path::Path;
-use std::path::PathBuf;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -66,16 +65,12 @@ fn fixture_with_registry(
     packages: &[Package<'_>],
     registry: Option<&mut ExtensionRegistryBuilder<Config>>,
 ) -> Option<Fixture> {
-    let node = PathBuf::from(
-        std::env::var_os("OMD_TEST_NODE")
-            .expect("OMD_TEST_NODE required; sandbox tests must actually execute"),
-    );
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();
     let repository = base.join("repo");
     std::fs::create_dir(&repository).unwrap();
     std::fs::create_dir(repository.join(".git")).unwrap();
-    let store = ModStore::create(base.join("store"), node).unwrap();
+    let store = ModStore::create(base.join("store")).unwrap();
     let sources = base.join("packages");
     std::fs::create_dir(&sources).unwrap();
     for package in packages {

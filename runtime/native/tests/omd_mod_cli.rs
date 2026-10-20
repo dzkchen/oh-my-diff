@@ -8,13 +8,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
-fn node() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("OMD_TEST_NODE")
-            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
-    )
-}
-
 fn omd_mod(cwd: &Path, args: &[&OsStr]) -> Result<Value, String> {
     let output = Command::new(env!("CARGO_BIN_EXE_omd-mod"))
         .args(args)
@@ -116,7 +109,7 @@ fn credentials_cli_stores_and_replaces_a_mod_owned_secret_from_stdin() {
 fn omd_mod_reset_moves_only_resettable_store_files_aside() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap().join("store");
-    ModStore::create(root.clone(), node()).unwrap();
+    ModStore::create(root.clone()).unwrap();
     std::fs::write(root.join("host.json"), b"{broken").unwrap();
     let reset = |name: &str| {
         omd_mod(
@@ -146,7 +139,7 @@ fn command_cli_scopes_state_to_the_thread_or_the_checkout_of_its_cwd() {
     let checkout = root.join("checkout");
     std::fs::create_dir_all(checkout.join(".git")).unwrap();
     std::fs::create_dir_all(checkout.join("sub")).unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     for (id, scope) in [("threaded", "thread"), ("shared", "checkout")] {
         let path = package(&root, id, source, &["commands", "store"], Some(scope));
         trust(&store, &path, &["commands", "store"]);
@@ -179,42 +172,6 @@ fn command_cli_scopes_state_to_the_thread_or_the_checkout_of_its_cwd() {
 }
 
 #[test]
-fn set_node_canonicalizes_bumps_the_revision_once_and_refuses_a_directory() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = root.join("store");
-    ModStore::create(store.clone(), node()).unwrap();
-    let replacement = root.join("replacement-node");
-    std::fs::write(&replacement, b"#!/bin/sh\n").unwrap();
-    let link = root.join("replacement-link");
-    std::os::unix::fs::symlink(&replacement, &link).unwrap();
-    let configuration = || -> Value {
-        serde_json::from_slice(&std::fs::read(store.join("mods.json")).unwrap()).unwrap()
-    };
-    let before = configuration();
-    let revision = before["revision"].as_u64().unwrap();
-    assert_ne!(before["node"], json!(replacement));
-
-    let set = |node: &Path| {
-        omd_mod(
-            &root,
-            &[OsStr::new("set-node"), store.as_os_str(), node.as_os_str()],
-        )
-    };
-    assert_eq!(set(&link), Ok(json!("updated")));
-    let updated = configuration();
-    assert_eq!(updated["node"], json!(replacement));
-    assert_eq!(updated["revision"], json!(revision + 1));
-
-    assert_eq!(set(&replacement), Ok(json!("updated")));
-    assert_eq!(configuration(), updated);
-
-    let refused = set(&root).unwrap_err();
-    assert!(refused.contains("node_unavailable"), "{refused}");
-    assert_eq!(configuration(), updated);
-}
-
-#[test]
 fn omd_mod_rejects_a_tool_schema_the_host_validator_refuses() {
     let status = |parameters: &str| {
         let source = format!(
@@ -223,7 +180,7 @@ fn omd_mod_rejects_a_tool_schema_the_host_validator_refuses() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let store_path = root.join("store");
-        let store = ModStore::create(store_path.clone(), node()).unwrap();
+        let store = ModStore::create(store_path.clone()).unwrap();
         let path = package(&root, "fixture", &source, &["tools"], None);
         trust(&store, &path, &["tools"]);
         let status = omd_mod(&root, &[OsStr::new("status"), store_path.as_os_str()]).unwrap();
