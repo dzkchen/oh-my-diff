@@ -47,6 +47,9 @@ for (const language of ['python', 'javascript']) {
       { ok: true, output: python ? '[2, 4, 3]\n' : '[2,4,3]\n', bridge_failed: false });
     assert.deepEqual(await cell(python ? 'print(sum(values))' : 'console.log(values.reduce((a, b) => a + b, 0))'),
       { ok: true, output: '9\n', bridge_failed: false });
+    const noisy = await cell(python ? 'import sys, os\nprint("e", file=sys.stderr)\nos.system("echo y")\nprint("CODE_KERNEL_RESULT:{}")' : 'console.error("e"); process.stdout.write("y\\n"); process.stderr.write("z\\n"); console.log("CODE_KERNEL_RESULT:{}")');
+    assert.equal(noisy.ok, true);
+    assert.deepEqual(noisy.output.split('\n').sort(), python ? ['', 'CODE_KERNEL_RESULT:{}', 'e', 'y'] : ['', 'CODE_KERNEL_RESULT:{}', 'e', 'y', 'z']);
     const started = await cell(python ? `import threading, contextvars
 release = threading.Event()
 def late_call():

@@ -35,6 +35,12 @@ def digest(value):
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def fingerprint(value, kind):
+    if kind == "commits":
+        return {"sha": value.get("sha"), "files": value.get("files")}
+    return {"number": value.get("number"), "state": value.get("state"), "title": value.get("title"), "body": value.get("body"), "updated_at": value.get("updated_at"), "head": (value.get("head") or {}).get("sha"), "base": (value.get("base") or {}).get("sha")}
+
+
 def parse(uri):
     match = PATTERN.fullmatch(uri) if isinstance(uri, str) else None
     if match is None:
@@ -160,11 +166,11 @@ def read(request, client=None):
             anchors.append(anchor)
         current, _ = client.get(path + ("?per_page=1&page=1" if kind == "commits" else ""))
         identity(current, kind, number, base)
-        if digest(current) != digest(parent):
+        if fingerprint(current, kind) != fingerprint(parent, kind):
             raise Unavailable("github_parent_changed_retry_from_first_page")
     else:
         records = [{"title": clean(parent.get("title"), 1024), "body": clean(parent.get("body")), "state": parent.get("state"), "updated_at": parent.get("updated_at"), "commit": clean(parent.get("commit", {}).get("message"))}]
-    revision = digest({"uri": uri, "parent": parent, "page": raw})
+    revision = digest({"uri": uri, "parent": fingerprint(parent, kind), "page": raw if part else None})
     expected = request.get("expected_revision")
     cursor = request.get("cursor")
     offset = 0

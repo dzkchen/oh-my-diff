@@ -91,3 +91,12 @@ test('installing never replaces an installed mod or the mods mod itself', () => 
   assert.ok(!operations(source).includes('packages.apply'));
   assert.match(source.panels[0].subtitle, /Mods is already running/);
 });
+
+test('a large directory index stays inside the UI state limit', () => {
+  const versions = Array.from({ length: 4 }, (_, index) => ({ version: `1.${index}.0`, blocked: null }));
+  const packages = Array.from({ length: 150 }, (_, index) => ({ id: `omd_package_${index}`, description: 'd'.repeat(300), latest: '1.3.0', installed: null, versions }));
+  assert.ok(Buffer.byteLength(JSON.stringify(packages)) > 65_536);
+  const opened = invoke('', { 'packages.index': () => ({ packages }) });
+  assert.ok(Buffer.byteLength(JSON.stringify(opened.ui)) <= 65_536);
+  assert.equal(opened.ui.catalog.length, 120, opened.ui.catalogError);
+});

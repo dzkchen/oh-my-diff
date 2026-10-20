@@ -194,11 +194,16 @@ Replace `mod.test.json`:
 ```
 
 ```sh
+pnpm debug       # before the next line: a deliberate failure, mapped to its index.ts line
 rm debug.test.json   # it calls the scaffold's /hello, which step 4 replaced
 pnpm check       # syntax and types; prints "check: ok"
 pnpm test        # mod.test.json, then the type check, then any *.test.ts or *.test.mjs files
 pnpm run run     # the same scenario, printing each step
 ```
+
+`pnpm test` and `pnpm run run` print the scenario's trace as JSON; exit status 0 means it passed. A failing step
+prints its error with the `index.ts` line, so read that rather than `pnpm debug`, which only replays
+`debug.test.json`.
 
 `settings` sets each mod's settings for the scenario. A host call the scenario doesn't mock fails the test. Mock
 one with `host_operations`, an ordered list of results per operation; see
@@ -235,13 +240,21 @@ Then the user starts `codex` on that store and tries it (from a source checkout,
 OMD_MODE=omd OMD_MOD_STORE=/tmp/notes-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
 ```
 
+A fresh home asks to sign in; to try commands and views without an account, add the offline provider flags from
+[Write a mod](write-a-mod.md#3-try-it-in-codex). The model finds mod tools through tool search, named
+`mod_<id>_<tool>` (here `mod_notes_add` and `mod_notes_list`).
+
 To see what the host did:
 
 ```sh
 omd-mod status /tmp/notes-store        # each mod's state and negotiated features
-omd-mod-author report /tmp/notes-store # recent callbacks, failures and denials
+omd mods list --store /tmp/notes-store # also why a mod failed in the last session
+omd-mod-author report /tmp/notes-store # declared versus used permissions
 omd-mod-author explain 'capability_denied: exec'
 ```
+
+Inside `codex`, a mod that fails shows in the Mod errors panel and in `/omd`. An activation error
+`conflict: NAME` means `activate` registered the same command, handler, timer or component name twice.
 
 ## 7. Install, update and remove
 
@@ -249,8 +262,7 @@ Ask the user before installing into their real store. Install, enable, update an
 permissions and ask `Proceed? [y/N]`; disable doesn't ask. Run from the folder that contains `notes/`:
 
 ```sh
-pnpm --dir notes run package # writes notes/dist/notes-0.1.0/; delete dist/ to rebuild
-omd install ./notes          # installs it, still off
+omd install ./notes          # installs the source folder (dist/ is ignored), still off
 omd mods enable notes        # turns it on from the next message
 omd mods update notes        # after changing the code
 omd mods disable notes       # off, data kept
@@ -259,15 +271,29 @@ omd mods remove notes
 
 To rehearse on a scratch store first, create one with `omd-mod init /tmp/install-store "$NODE"` and
 add `--store /tmp/install-store` to each command (use a different store from
-step 6, where `watch` already turned the mod on). In a non-interactive shell, `--yes` answers the prompt; pass it
-only after the user agrees. `omd install --scope project ./notes` installs it for the current project only; it
-overrides the same mod installed for the user.
+step 6, where `watch` already turned the mod on). In a non-interactive shell the prompt can't show, so the command
+stops with `package_approval_required`; show the user the permissions in `notes/mod.json`, and pass `--yes` only after
+they agree. `omd install --scope project ./notes` installs it for the current project only; it overrides the same mod
+installed for the user.
+
+An update that changes `state_version` keeps the mod off with `state_migration_required` until its saved data is
+converted. Register a handler that rewrites the state, then run `omd-mod migrate STORE notes` and enable it again:
+
+```ts
+api.on('migrate', ({ from }) => {
+  if (from === 1) api.state.set({ notes: Array.isArray(api.state.get()) ? api.state.get() : [] });
+});
+```
+
+`pnpm --dir notes run package` writes a checked `notes/dist/notes-0.1.0/` with a digest report, for sharing (step
+10); it isn't needed to install.
 
 ## 8. Recover
 
 | Problem | Fix |
 | --- | --- |
-| The mod breaks `codex` | `omd mods disable notes` from any shell, or `/omd` inside `codex` |
+| The mod breaks `codex` | `omd mods disable notes` from any shell, or `/omd` inside `codex`; `omd mods list` says why it failed |
+| An update broke it | `omd mods disable notes`, `omd mods rollback notes`, then `omd mods enable notes` |
 | `codex` won't start with mods | `omd-package activate direct`, then `omd-package activate full` once fixed |
 | Bad state after a change | Bump `state_version` and add a `migrate` handler ([compatibility](../mods/COMPATIBILITY.md#state-changes)) |
 | A denial you don't understand | `omd-mod-author explain 'DENIAL TEXT'` |
@@ -293,10 +319,11 @@ Installing the plugin doesn't run its mod. The user turns the mod on separately:
 ```sh
 omd-package plugins
 codex plugin add omd-anchored-edit@oh-my-diff
-omd-mod plugin-component PLUGIN_ROOT              # prints the component path
-omd-mod inspect COMPONENT_PATH                    # prints its sha256
-omd-mod trust STORE COMPONENT_PATH SHA256 tools,fs.read,fs.write,exec
-omd-mod enable STORE COMPONENT_PATH
+ROOT=$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/oh-my-diff/omd-anchored-edit/* | tail -1)
+COMPONENT=$(omd-mod plugin-component "$ROOT" | jq -r .component)
+SHA256=$(omd-mod inspect "$COMPONENT" | jq -r .sha256)
+omd-mod trust STORE "$COMPONENT" "$SHA256" tools,fs.read,fs.write,exec
+omd-mod enable STORE "$COMPONENT"
 ```
 
 See [Plugin components](../mods/REFERENCE.md#plugin-components-and-shell-commands).

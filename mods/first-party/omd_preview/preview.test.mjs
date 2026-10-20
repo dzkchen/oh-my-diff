@@ -20,6 +20,7 @@ const stores = new Map();
 const watching = repository => stores.get(`${repository}\0watch`)?.value;
 let racing = null;
 let unborn = null;
+let watchIds = 0;
 
 function invoke(repository, state, event, payload, name, settings = {}, modSource = source) {
   const calls = [];
@@ -32,6 +33,12 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       return { thread_id: 'thread-1' };
     }
     if (operation === 'store.get') return stores.get(key) ?? null;
+    if (operation === 'store.delete') {
+      assert.equal(stores.get(key)?.revision, args.expected_revision);
+      return { deleted: stores.delete(key) };
+    }
+    if (operation === 'workspace.watch') return { watch_id: `w${++watchIds}` };
+    if (operation === 'workspace.unwatch') return { stopped: true };
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
       racing?.(key);
@@ -104,24 +111,30 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.ok(watched.calls.findIndex(call => call.operation === 'events.publish') > watched.calls.findIndex(call => call.operation === 'terminal.open'));
     assert.equal(watching(repository).hashes['docs/a.md'], createHash('sha256').update(readFileSync(join(repository, 'docs/a.md'))).digest('hex'));
     const early = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
-    assert.deepEqual(early.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
+    assert.deepEqual(early.calls.filter(call => call.operation.startsWith('workspace.') && call.operation !== 'workspace.stat').map(call => [call.operation, call.arguments]),
+      [['workspace.watch', { paths: ['docs/a.md'], include_ignored: true }]]);
+    assert.equal(early.calls.some(call => call.operation === 'events.schedule'), false);
     const page = readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8');
     assert.match(page, /data-watch="1"/);
     assert.match(page, /src="\.\.\/\.\.\/\.\.\/\.\.\/docs\/pic\.png"/);
     assert.match(page, /<span class="math">\\\(x\^2\\\)<\/span>/);
     assert.match(page, /mermaid@12\.0\.0\/dist\/mermaid\.min\.js" integrity="sha384-/);
 
-    writeFileSync(join(repository, 'docs/a.md'), '# First change before polling\n');
-    const synced = invoke(repository, watched.state, 'timer', { key: 'poll' });
-    assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /First change before polling/);
-    assert.deepEqual(synced.calls.at(-1).arguments, { key: 'poll', delay_ms: 2000 });
+    const change = path => ({ repository, source: 'external', call_id: null, watch_id: 'w1', changes: [{ path, before: null, after: null }], status: 'observed' });
+    writeFileSync(join(repository, 'docs/a.md'), '# First change\n');
+    assert.deepEqual(invoke(repository, watched.state, 'workspace_change', change('docs/other.md')).calls.map(call => call.operation), ['store.get']);
+    const synced = invoke(repository, watched.state, 'workspace_change', change('docs/a.md'));
+    assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /First change/);
+    assert.equal(synced.calls.some(call => ['events.schedule', 'workspace.watch'].includes(call.operation)), false);
     writeFileSync(join(repository, 'docs/a.md'), '# Changed [[Other note|see]]\n');
-    const polled = invoke(repository, synced.state, 'timer', { key: 'poll' });
+    const polled = invoke(repository, synced.state, 'workspace_change', change('docs/a.md'));
     assert.equal(polled.calls.filter(call => call.operation === 'exec.run').length, 1);
     assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /<h1 id="[^"]*">Changed <a href="\.\.\/\.\.\/\.\.\/\.\.\/docs\/Other%20note\.md">see<\/a><\/h1>/);
     command('unwatch');
     assert.deepEqual(watching(repository).watch, []);
-    assert.deepEqual(invoke(repository, null, 'timer', { key: 'poll' }).calls.map(call => call.operation), ['store.get']);
+    const stopped = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
+    assert.deepEqual(stopped.calls.map(call => call.operation), ['store.get', 'events.schedule', 'store.get', 'workspace.unwatch', 'store.delete']);
+    assert.deepEqual(invoke(repository, null, 'timer', { key: 'poll' }).calls.map(call => call.operation), ['store.get', 'store.get']);
 
     const inline = command('docs/a.md --inline');
     const view = invoke(repository, inline.state, 'terminal', { event: 'redraw', ledger: null }).value;

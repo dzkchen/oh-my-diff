@@ -17,10 +17,11 @@ PARENT = {"number": 12, "html_url": BASE + "/pull/12", "title": "Untrusted title
 
 
 class Fixture:
-    def __init__(self, parent=None, rows=None, changed=False, next_page=False):
+    def __init__(self, parent=None, rows=None, changed=False, next_page=False, volatile=False):
         self.parent = copy.deepcopy(parent or PARENT)
         self.rows = rows
         self.changed = changed
+        self.volatile = volatile
         self.next_page = next_page
         self.calls = []
 
@@ -31,6 +32,8 @@ class Fixture:
         result = copy.deepcopy(self.parent)
         if len(self.calls) == 3 and self.changed:
             result["updated_at"] = "changed"
+        if len(self.calls) == 3 and self.volatile:
+            result["mergeable_state"] = "blocked"
         return result, False
 
 
@@ -80,6 +83,7 @@ class GithubVirtualReadTests(unittest.TestCase):
             self.assertTrue(result["truncated"])
         with self.assertRaisesRegex(github.Unavailable, "parent_changed"):
             github.read({"uri": URI + "/comments"}, Fixture(rows=[], changed=True))
+        self.assertIn("revision", github.read({"uri": URI + "/comments"}, Fixture(rows=[], volatile=True)))
 
     def test_bounds_and_remote_identity_changes_fail_closed(self):
         for changes in [{"max_bytes": True}, {"max_bytes": 20000}, {"cursor": "../secret"}, {"expected_revision": "old"}, {"extra": "field"}]:

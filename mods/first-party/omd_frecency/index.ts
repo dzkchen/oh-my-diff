@@ -11,6 +11,7 @@ const STAT_BATCHES = 4;
 const BUDGET = 122_880;
 const STORED = 32_000;
 const STATUS_BYTES = 16_000;
+const STATUS_TTL_MS = 30_000;
 
 const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
@@ -54,10 +55,16 @@ export default function activate(api: ModAPI) {
     return entry ? Math.min(30, 10 * Math.log2(1 + entry[0])) * 0.5 ** ((files.tick - entry[1]) / HALF_LIFE) : 0;
   };
 
+  // Git status walks the worktree, so one result serves every query typed within STATUS_TTL_MS.
   const git = (): [Map<string, number>, number] => {
+    const cached = api.host.tryCall('store.get', { key: 'status', scope: 'repository' });
+    const entry = cached.ok && cached.value ? cached.value.value as unknown as { at: number; boosts: [string, number][] } : null;
+    let spent = entry ? serializedBytes(entry) : 0;
+    const age = entry ? Date.now() - entry.at : -1;
+    if (entry && age >= 0 && age < STATUS_TTL_MS) return [new Map(entry.boosts), spent];
     const boosts = new Map<string, number>();
     const run = api.host.tryCall('exec.run', { program: 'git', argv: ['-c', 'core.quotePath=false', 'status', '--short', '--untracked-files=all'], timeout_ms: 3000, max_output_bytes: STATUS_BYTES });
-    const spent = run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
+    spent += run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
     if (!run.ok || run.value.exit_code !== 0) return [boosts, spent];
     const lines = run.value.stdout.split('\n');
     if (run.value.stdout_truncated) lines.pop();
@@ -66,7 +73,9 @@ export default function activate(api: ModAPI) {
       const path = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(.)/g, '$1') : raw;
       if (path && !line.slice(0, 2).includes('D') && !path.startsWith('../')) boosts.set(path, line.startsWith('??') ? 10 : 20);
     }
-    return [boosts, spent];
+    const value = { at: Date.now(), boosts: [...boosts] };
+    api.host.tryCall('store.put', { key: 'status', value, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
+    return [boosts, spent + serializedBytes(value)];
   };
 
   const rank = (query: string, upstream: string[]) => {

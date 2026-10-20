@@ -127,7 +127,7 @@ A dev build links the SDK from its install with a `file:` path under your home d
 
 | Problem | Fix |
 | --- | --- |
-| A test or command fails | Run `pnpm debug`. Stack traces point at your own lines. |
+| A test or command fails | The error names your `index.ts` line. `omd mods list` shows why a mod failed in the last session. |
 | `capability_denied` | The mod used something it didn't ask for. Add the permission to `mod.json`, or run `omd-mod-author explain 'capability_denied: exec'`. |
 | The mod breaks `codex` | Run `omd mods disable my_mod` from any shell. |
 

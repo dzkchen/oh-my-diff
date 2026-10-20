@@ -16,21 +16,26 @@ function run(event, payload, host, name = '', state = null) {
 
 function repository(files, status) {
   const writes = [];
+  const store = {};
+  let execs = 0;
   const host = ({ operation, arguments: args }) => {
+    if (operation === 'store.get' && args.key === 'status') return store.status ?? null;
     if (operation === 'store.get') return files && { value: files, revision: 3, provenance: {} };
     if (operation === 'store.put') {
       assert.ok(Buffer.byteLength(JSON.stringify(args.value)) <= 65_536, 'store_value_limit');
+      if (args.key === 'status') return store.status = { value: args.value, revision: (store.status?.revision ?? 0) + 1, provenance: {} }, { revision: store.status.revision };
       assert.equal(args.expected_revision, files ? 3 : null);
       return writes.push(args.value), { revision: 4 };
     }
     if (operation === 'exec.run') {
+      execs++;
       const limit = args.max_output_bytes ?? Infinity;
       return { exit_code: 0, stdout: Buffer.from(status).subarray(0, limit).toString(), stdout_truncated: Buffer.byteLength(status) > limit, stderr: '' };
     }
     if (operation === 'workspace.stat') return { files: Object.fromEntries(args.paths.map(path => [path, path.startsWith('old/') ? null : { kind: 'file', size: 1, mtime_ms: 0 }])) };
     throw new Error(operation);
   };
-  return { host, writes };
+  return { host, writes, execs: () => execs };
 }
 
 test('a failed existence check keeps history entries instead of hiding them', () => {
@@ -49,11 +54,24 @@ test('ranking a full history beside a large Git status keeps every host call ins
   assert.ok(Buffer.byteLength(JSON.stringify(files)) <= 32_000);
   const status = Array.from({ length: 3000 }, (_, index) => `?? untracked/file${index}.ts\n`).join('');
   const { host, writes } = repository(files, status);
-  const { value, receipts } = run('completion', { kind: 'mention', query: '', candidates: [] }, host);
-  assert.deepEqual(receipts.filter(receipt => 'error' in receipt), []);
-  assert.equal(value.items.length, 50);
-  assert.equal(writes.length, 1);
-  assert.deepEqual(Object.keys(writes[0].files).filter(path => path.startsWith('old/')), []);
+  for (const refresh of [true, false]) {
+    const { value, receipts } = run('completion', { kind: 'mention', query: '', candidates: [] }, host);
+    assert.deepEqual(receipts.filter(receipt => 'error' in receipt), []);
+    assert.equal(receipts.some(receipt => receipt.call.operation === 'exec.run'), refresh);
+    assert.equal(value.items.length, 50);
+  }
+  assert.deepEqual(Object.keys(writes.at(-1).files).filter(path => path.startsWith('old/')), []);
+});
+
+test('mention queries typed within the cache window reuse one Git status', () => {
+  const { host, execs } = repository(null, ' M src/parser.ts\n');
+  const query = (now, text) => callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {},
+    event: 'completion', name: '', payload: { kind: 'mention', query: text, candidates: [{ path: 'src/lexer.ts' }] }, hook_budget_ms: 2000, virtual_time_ms: now }, host).value.items;
+  assert.deepEqual(query(1_000, 'p'), [{ path: 'src/parser.ts' }, { path: 'src/lexer.ts' }]);
+  assert.deepEqual(query(2_000, 'pa'), [{ path: 'src/parser.ts' }, { path: 'src/lexer.ts' }]);
+  assert.equal(execs(), 1);
+  query(40_000, 'par');
+  assert.equal(execs(), 2);
 });
 
 for (const [label, component, count] of [['Unicode', '雪'.repeat(60), 100], ['JSON escaping', '\\'.repeat(120), 64]]) {

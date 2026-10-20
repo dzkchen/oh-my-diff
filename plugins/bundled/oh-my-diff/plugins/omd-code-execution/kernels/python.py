@@ -2,8 +2,10 @@ import contextlib
 import contextvars
 import io
 import json
+import os
 import socket
 import sys
+import tempfile
 
 
 class LimitedOutput(io.StringIO):
@@ -59,24 +61,43 @@ def tool(name, arguments=None):
 
 
 state["tool"] = tool
+protocol = os.fdopen(os.dup(1), "w")
+captured = tempfile.TemporaryFile()
 for line in sys.stdin:
     output = LimitedOutput()
     bridge_failed = False
+    saved = None
     try:
         request = json.loads(line)
         if request.get("shutdown") is True:
             break
         active = {"active": True}
         context_token = bridge_context.set((request["port"], request["token"], active))
-        with contextlib.redirect_stdout(output):
+        captured.seek(0)
+        captured.truncate()
+        saved = (os.dup(1), os.dup(2))
+        os.dup2(captured.fileno(), 1)
+        os.dup2(captured.fileno(), 2)
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             exec(compile(request["code"], "<omd-python-cell>", "exec"), state)
-        response = {"ok": True, "output": output.getvalue(), "bridge_failed": bridge_failed}
+        response = {"ok": True}
     except Exception as error:
-        response = {"ok": False, "output": output.getvalue(), "error": f"{type(error).__name__}: {error}", "bridge_failed": bridge_failed}
+        response = {"ok": False, "error": f"{type(error).__name__}: {error}"}
     finally:
+        if saved:
+            for target, descriptor in enumerate(saved, 1):
+                os.dup2(descriptor, target)
+                os.close(descriptor)
         if "active" in locals():
             active["active"] = False
             bridge_context.reset(context_token)
             del active
-    sys.stdout.write("CODE_KERNEL_RESULT:" + json.dumps(response, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    captured.seek(0)
+    extra = captured.read(65536 - output.bytes + 1)
+    if len(extra) > 65536 - output.bytes:
+        extra = extra[: 65536 - output.bytes]
+        response = {"ok": False, "error": "ValueError: kernel output limit exceeded"}
+    response["output"] = output.getvalue() + extra.decode("utf-8", "replace")
+    response["bridge_failed"] = bridge_failed
+    protocol.write("CODE_KERNEL_RESULT:" + json.dumps(response, separators=(",", ":")) + "\n")
+    protocol.flush()

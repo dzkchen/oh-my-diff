@@ -20,7 +20,7 @@ Type `@` and a few letters in the prompt. There is no command to run and nothing
 | A query with a capital letter matches case exactly. | Otherwise case is ignored. |
 | A small typo still finds the file. | `parsre` finds `parser.ts` once the query has four or more characters. |
 | Files you mention often, and recently, rank higher. | A file path in a submitted prompt counts as a use. |
-| Staged and modified files rank higher, then untracked ones. | It runs `git status`. |
+| Staged and modified files rank higher, then untracked ones. | It runs `git status` at most every 30 seconds. |
 
 ## Needs and limits
 

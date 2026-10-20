@@ -39,13 +39,19 @@ globalThis.tool = async (name, args = {}) => {
   });
 };
 
-const capture = (...values) => {
-  const text = values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ");
-  const size = Buffer.byteLength(text) + 1;
+const record = (text) => {
+  const size = Buffer.byteLength(text);
   if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
   outputBytes += size;
-  output.push(text + "\n");
+  output.push(text);
 };
+const capture = (...values) => record(values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ") + "\n");
+const captureWrite = (chunk, encoding, callback) => {
+  record(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+  (typeof encoding === "function" ? encoding : callback)?.();
+  return true;
+};
+const hooks = [...["log", "error", "warn", "info", "debug"].map((name) => [console, name, capture]), [process.stdout, "write", captureWrite], [process.stderr, "write", captureWrite]];
 
 for await (const line of readline.createInterface({ input: process.stdin })) {
   output = [];
@@ -57,14 +63,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     const request = JSON.parse(line);
     if (request.shutdown === true) process.exit(0);
     bridge = { port: request.port, token: request.token, active: true };
-    const priorLog = console.log;
-    console.log = capture;
+    const prior = hooks.map(([target, name]) => target[name]);
+    for (const [target, name, replacement] of hooks) target[name] = replacement;
     try {
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
       await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
       response = { ok: true, output: output.join(""), bridge_failed: bridgeFailed };
     } finally {
-      console.log = priorLog;
+      hooks.forEach(([target, name], index) => { target[name] = prior[index]; });
     }
   } catch (error) {
     response = { ok: false, output: output.join(""), error: String(error), bridge_failed: bridgeFailed };
