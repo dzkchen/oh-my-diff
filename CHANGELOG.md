@@ -2,6 +2,23 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.1) — 2026-10-20
+
+Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.
+
+### New
+
+- Run mods on an embedded V8 runner instead of Node (#266)
+
+### Changed
+
+- Stable latest-release install command (#262)
+
+### Fixed
+
+- Mod regressions, author guide defects and catalog records (#264)
+- Kernel output isolation, package index paging and install UX (#265)
+
 ## [1.0.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0) — 2026-10-19
 
 First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the stable mod API 1.0.0.

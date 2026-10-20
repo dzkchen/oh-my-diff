@@ -1,5 +1,40 @@
 [
   {
+    "version": "1.0.1",
+    "date": "2026-10-20",
+    "title": "Oh My Diff 1.0.1",
+    "summary": "Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.",
+    "sections": [
+      {
+        "label": "New",
+        "items": [
+          "Run mods on an embedded V8 runner instead of Node (#266)"
+        ]
+      },
+      {
+        "label": "Changed",
+        "items": [
+          "Stable latest-release install command (#262)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Mod regressions, author guide defects and catalog records (#264)",
+          "Kernel output isolation, package index paging and install UX (#265)"
+        ]
+      }
+    ],
+    "commits": [
+      "aebaa02",
+      "c8945c4",
+      "44f4ae2",
+      "2511e06",
+      "c188fdc",
+      "ff04f0b"
+    ]
+  },
+  {
     "version": "1.0.0",
     "date": "2026-10-19",
     "title": "Oh My Diff 1.0.0",
