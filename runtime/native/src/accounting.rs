@@ -757,7 +757,7 @@ impl Accounts {
     }
 }
 
-pub const SUBSCRIPTION_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+use codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
 
 pub fn worker_authorized(
     path: &std::path::Path,
@@ -793,7 +793,10 @@ pub fn worker_authorized(
             grant["paid_api_key"] == true && grant["included_subscription"] != true
         }
         && grant["revocable"] == true
-        && grant["repository"] == repository
+        && (grant["repository"] == repository
+            || grant["repositories"]
+                .as_array()
+                .is_some_and(|repositories| repositories.iter().any(|item| item == repository)))
         && grant["provider"] == provider
         && grant["model"] == model
         && grant["responses_url"] == url

@@ -17,7 +17,7 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "timeout_seconds": {"type": "number", "default": 120}
+      "timeout_seconds": {"type": "number", "default": 120, "title": "Wait before answering", "description": "Seconds to wait before declining an unanswered approval or answering a question (1 to 86,400); 0 turns the timer off"}
     },
     "additionalProperties": false
   }

@@ -71,7 +71,7 @@ export default function activate(api: ModAPI) {
   const unrouted = () => {
     const routes = api.host.tryCall('routes.list', null);
     const workers = routes.ok ? routes.value.filter(item => item.roles.includes('worker') && item.available).map(item => item.name) : [];
-    return `set the omd_advisor route setting to a worker route${workers.length ? ` (${workers.join(', ')})` : '; host.json lists none this mod may use'}`;
+    return `pick an Advisor model in /mods (Settings, Advisor)${workers.length ? `: ${workers.join(', ')}` : ', or add a helper model there'}`;
   };
   const read = (reference: ResourceRef) => {
     let text = '';

@@ -1821,6 +1821,7 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
     let access = |programs: &[&str]| codex_omd::ModOsAccess {
         programs: strings(programs),
         network: false,
+        node: None,
     };
     let resolve = |programs: &[&str], name: &str| {
         codex_omd::host::unrestricted_program(&access(programs), name, &repository)
@@ -1857,6 +1858,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let access = codex_omd::ModOsAccess {
         programs: strings(&["cat", "env"]),
         network: true,
+        node: None,
     };
     let granted = Caller {
         os_access: Some(&access),
@@ -1911,6 +1913,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let offline = codex_omd::ModOsAccess {
         programs: strings(&["*"]),
         network: false,
+        node: None,
     };
     let offline = Caller {
         os_access: Some(&offline),

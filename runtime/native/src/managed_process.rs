@@ -741,17 +741,25 @@ impl ManagedProcesses {
                 #[serde(deny_unknown_fields)]
                 struct Input {
                     names: Vec<String>,
+                    sandbox: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 if input.names.is_empty() || input.names.len() > 8 {
                     return Err("process_candidate_limit".into());
                 }
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 let found = input
                     .names
                     .iter()
                     .filter_map(|name| {
-                        let path = program(name, repository)?;
+                        let path = match unrestricted {
+                            Some(access) => {
+                                codex_omd::host::unrestricted_program(access, name, repository)
+                                    .ok()?
+                            }
+                            None => program(name, repository)?,
+                        };
                         let metadata = fs::metadata(&path).ok()?;
                         if metadata.len() > 128 * 1024 * 1024 {
                             return None;
@@ -819,14 +827,10 @@ impl ManagedProcesses {
                     }
                     _ => return Err("process_raster_invalid".into()),
                 };
-                let unrestricted = match input.sandbox.as_deref() {
-                    None => None,
-                    Some("none") if input.network.is_some() => {
-                        return Err("process_unrestricted_network_comes_from_os_access".into());
-                    }
-                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-                    Some(_) => return Err("process_sandbox_invalid".into()),
-                };
+                if input.sandbox.as_deref() == Some("none") && input.network.is_some() {
+                    return Err("process_unrestricted_network_comes_from_os_access".into());
+                }
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 if input.notify.len() > 2
                     || input
                         .notify
@@ -1373,6 +1377,17 @@ impl ManagedProcesses {
             }
             _ => Err("unsupported_process_operation".into()),
         }
+    }
+}
+
+fn unrestricted_access<'a>(
+    sandbox: Option<&str>,
+    os_access: Option<&'a codex_omd::ModOsAccess>,
+) -> Result<Option<&'a codex_omd::ModOsAccess>, &'static str> {
+    match sandbox {
+        None => Ok(None),
+        Some("none") => os_access.map(Some).ok_or("capability_denied: os"),
+        Some(_) => Err("process_sandbox_invalid"),
     }
 }
 
@@ -1949,6 +1964,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
+            node: None,
         };
         let drawn = Arc::new(Mutex::new(Vec::new()));
         let sink: BlitSink = {
@@ -2078,6 +2094,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: true,
+            node: None,
         };
         let owner = ProcessOwner {
             thread: None,
@@ -2314,6 +2331,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
+            node: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let owner = ProcessOwner {
@@ -2350,6 +2368,45 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 .call(owner, "process.status", json!({"session":"slow"}), || true)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn unsandboxed_which_resolves_the_runner_node() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let runner = repository.parent().unwrap().join(format!(
+            "{}-runner-node",
+            repository.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::write(&runner, "#!/bin/sh\n").unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["node".into()],
+            network: false,
+            node: Some(runner.clone()),
+        };
+        let owner = ProcessOwner {
+            thread: None,
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            environment: None,
+            os_access: Some(&access),
+            blit: None,
+        };
+        let found = processes
+            .call(
+                owner,
+                "process.which",
+                json!({"names":["node"],"sandbox":"none"}),
+                || true,
+            )
+            .unwrap();
+        std::fs::remove_file(&runner).unwrap();
+        assert_eq!(found["found"][0]["path"], json!(runner));
     }
 
     #[test]

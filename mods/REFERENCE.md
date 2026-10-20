@@ -535,6 +535,7 @@ may connect to. It needs the `unix_sockets` capability.
 With the `os` grant, `sandbox: "none"` runs a program listed in `os_access` without the session sandbox.
 
 - `cwd` may be absolute.
+- A bare `node` runs the mod runner's node, not the first `node` on `PATH`, which may be a version-manager shim.
 - The environment is cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`, locale, a private
   `TMPDIR`, `TERM=dumb`, the declared `exec_environment` names and `env`. No host credential or Codex variable is
   passed and no secrets API exists.
@@ -866,6 +867,8 @@ scratch directory.
 - The framed JSON exchange has bounded message size, wait, output, and session count.
 - Sessions belong to one mod and generation; disable, reload, cancellation, and thread stop clean them up.
 - A process cannot write the repository through this API.
+- `process.which {names, sandbox: 'none'}` resolves as an unsandboxed `process.start` does (the `os` grant), so a
+  bare `node` returns the mod runner's node.
 
 The first-party `omd_lsp_sync` mod owns Python, TypeScript/JavaScript, Rust and Java server choices and language
 protocol; it is off by default in OMD+ and can be installed in an OMD Core store. It never installs a language
@@ -925,8 +928,12 @@ A route entry, with every field the host accepts:
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
 - `agents.spawn.route` names a worker route or a registered provider.
-- Worker routes require a grant file whose hash, repository, provider, model and URL are rechecked on every
-  request.
+- Worker routes require a grant file whose hash, repository (or one of its `repositories`), provider, model and URL
+  are rechecked on every request.
+- `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`
+  for the conversation's model and effort on the user's ChatGPT plan, open only to `mod`, and adds this repository
+  to its grant. It returns `{route}`, or `{status: 'declined'}`. It refuses `routes_add_needs_chatgpt` without a
+  ChatGPT sign-in or when the conversation's provider doesn't use it.
 
 #### Route reload (`route_reload_v1`)
 
@@ -4277,16 +4284,20 @@ or with a `reference` string and an optional `version`.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports each mod's `settings` and `settings_schema`.
+- `required` marks a selection the installer keeps on: `/mods` and `/omd` don't turn it off, `omd mods disable`
+  still does.
 
 #### `packages.index`
 
-`packages.index {index?, query?}` is read-only and returns:
+`packages.index {index?, query?, cursor?, limit?}` is read-only and returns:
 
 ```ts
-{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}]}
+{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}], total, cursor}
 ```
 
-It reads the named index (the store's `package-index.json` by default), filtered by `query`. It fails with
+It reads the named index (the store's `package-index.json` by default), filtered by `query`, one page of `limit`
+entries (1-200, default 200) in id order. `total` counts every match; pass the returned `cursor` to read the next
+page, and it is `null` on the last one. Paging requires `package_index_paging_v1`. It fails with
 `package_index_unavailable` when no index exists.
 
 #### Package state fields
@@ -4520,6 +4531,10 @@ Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snap
 
 Callbacks receive explicit settings over each `settings_schema` property's `default`; give every property a
 default.
+
+A property may also carry a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
+instead of the raw name, and `choices: "routes"` on a string property without `enum`: `packages.list` then fills its
+`enum` with the names of the `host.json` worker routes open to that mod.
 
 #### Runner memory limits
 

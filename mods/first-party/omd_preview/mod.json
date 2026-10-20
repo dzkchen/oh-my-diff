@@ -15,8 +15,8 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "thumbnails": {"type": "boolean", "default": true},
-      "diagrams": {"type": "string", "enum": ["unicode", "ascii", "off"], "default": "unicode"}
+      "thumbnails": {"type": "boolean", "default": true, "title": "Image thumbnails", "description": "Show your draft's images in a row above the prompt, each with a Preview button"},
+      "diagrams": {"type": "string", "enum": ["unicode", "ascii", "off"], "default": "unicode", "title": "Diagram drawing", "description": "How Mermaid diagrams are drawn: unicode box-drawing, plain ascii, or off to leave the source"}
     },
     "additionalProperties": false
   }

@@ -486,7 +486,9 @@ pub fn unrestricted_program(
     repository: &Path,
 ) -> Result<PathBuf, String> {
     let path = Path::new(name);
-    let resolved = if path.is_absolute() {
+    let resolved = if let Some(node) = access.node.as_ref().filter(|_| name == "node") {
+        node.canonicalize().ok()
+    } else if path.is_absolute() {
         path.canonicalize().ok()
     } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
         std::env::var_os("PATH").and_then(|paths| {

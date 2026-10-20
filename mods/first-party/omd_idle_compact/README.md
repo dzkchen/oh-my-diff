@@ -21,18 +21,18 @@ omd-package mod disable omd_idle_compact
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `cache_ttl_minutes` | `0` | Cache lifetime. `0` means detect it (see below). |
+| `cache_ttl_minutes` | `auto` | Cache lifetime in minutes: `auto`, `5`, `10`, `30`, `60` or `120`. `auto` uses the provider's own lifetime (see below). |
 | `min_tokens` | `100000` | Smaller contexts are never compacted. |
 
 ```sh
-omd-mod settings STORE omd_idle_compact '{"cache_ttl_minutes": 10, "min_tokens": 50000}'
+omd-mod settings STORE omd_idle_compact '{"cache_ttl_minutes": "10", "min_tokens": 50000}'
 ```
 
 ## Cache lifetime
 
 The mod uses the first that applies:
 
-1. `cache_ttl_minutes`, when above 0.
+1. `cache_ttl_minutes`, when not `auto`.
 2. A lifetime the provider reports (the Claude route reports its 5-minute and 1-hour caches).
 3. 30 minutes. Codex sends no retention setting, so OpenAI defaults apply: at least 30 minutes for GPT-5.6 and later, typically about 30 minutes (up to 24 hours) for earlier models.
 

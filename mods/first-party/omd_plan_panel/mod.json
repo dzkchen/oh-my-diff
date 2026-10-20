@@ -14,7 +14,7 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "rows": {"type": "number", "default": 8}
+      "rows": {"type": "number", "default": 8, "title": "Visible steps", "description": "Most plan steps shown (2 to 40); longer plans drop completed steps first"}
     },
     "additionalProperties": false
   }

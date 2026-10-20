@@ -5,7 +5,9 @@ import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { callback } from '../../../tests/mod_runner.mjs';
 import { translateRequest, responseEvents } from './index.ts';
 import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
 
@@ -293,4 +295,49 @@ test('the transport shows a foreign holder of its port neither the local token n
     squatter.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+
+function modEvent(event, payload, state, answer, name) {
+  const calls = [];
+  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id }, state, event, payload, name }, call => {
+    calls.push(call);
+    return answer(call);
+  });
+  assert.equal(output.error, undefined, output.error);
+  return { state: output.state, calls, value: output.value };
+}
+const notices = calls => calls.filter(call => call.operation === 'terminal.notice').map(call => call.arguments.text);
+
+test('login runs as a background process that says the sign-in link once and reports through setup', () => {
+  const started = modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'api' } }, null, call => ({
+    'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] }, 'process.start': { session: 'claude_login', running: true } })[call.operation]);
+  assert.deepEqual(started.calls[0].arguments, { names: ['node'], sandbox: 'none' });
+  const { arguments: argv, ...start } = started.calls[1].arguments;
+  assert.deepEqual(start, { session: 'claude_login', name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
+  assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3])], ['--input-type=module', '-e', ['auth', 'login', '--console']]);
+  const link = 'https://claude.ai/oauth/authorize?code=true&state=x';
+  const process = (kind, data) => {
+    let reads = 0;
+    return state => modEvent('process_event', { session: 'claude_login', kind, bytes: 1 }, state, call => call.operation === 'process.exchange'
+      ? { messages: reads++ || !data ? [] : [{ stream: 'stdout', data }], running: true }
+      : call.operation === 'packages.list' ? { packages: [] } : {});
+  };
+  const output = process('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`)(started.state);
+  assert.deepEqual(notices(output.calls), ['Your browser should open; if not, open this link:', link, 'If the page shows a code, run /claude code CODE']);
+  const code = state => modEvent('channel', { channel: 'omd_claude_cli/code', data: { code: 'abc' } }, state, () => ({ messages: [], running: true }));
+  assert.ok(manifest.subscriptions.channels.includes('omd_claude_cli/code'));
+  assert.deepEqual(code(output.state).calls[0].arguments, { session: 'claude_login', wait_ms: 0, send: ['abc\n'] });
+  assert.deepEqual(notices(code(null).calls), ['No Claude login is waiting for a code; run /claude login']);
+  const exited = process('exit', 'Login failed\n')(output.state);
+  assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login again']);
+  assert.equal(exited.state.login, null);
+});
+
+test('the status probe names a host error instead of reporting a missing CLI', () => {
+  const status = answer => modEvent('command', '', null, answer, 'claude').value.display;
+  assert.match(status(() => { throw new Error('exec_program_too_large'); }), /^CLI: check failed: exec_program_too_large/);
+  assert.match(status(() => ({ exit_code: 0, stdout: '{"version":null,"auth":null}', stderr: '' })), /^CLI: not found on PATH/);
 });

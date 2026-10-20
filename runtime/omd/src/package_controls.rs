@@ -59,6 +59,10 @@ struct IndexArguments {
     index: Option<PathBuf>,
     #[serde(default)]
     query: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
@@ -70,7 +74,17 @@ pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
         .ok_or_else(|| {
             failure("package_index_unavailable: install from npm:, git+ or a folder instead")
         })?;
-    store.package_index_entries(&path, &arguments.query)
+    let start = arguments
+        .cursor
+        .map(|cursor| cursor.parse::<usize>())
+        .transpose()
+        .map_err(|_| failure("package_arguments_invalid: cursor"))?
+        .unwrap_or(0);
+    let limit = arguments.limit.unwrap_or(200);
+    if !(1..=200).contains(&limit) {
+        return Err(failure("package_arguments_invalid: limit must be 1-200"));
+    }
+    store.package_index_entries(&path, &arguments.query, start, limit)
 }
 
 fn user() -> String {
@@ -166,6 +180,7 @@ pub fn list_fields(
     store: &ModStore,
     runtime: Option<&Value>,
     arguments: Value,
+    repository: Option<&Path>,
 ) -> io::Result<Value> {
     let fields = match arguments {
         Value::Null => None,
@@ -176,6 +191,12 @@ pub fn list_fields(
         ),
     };
     let mut listed = list(store, runtime)?;
+    if fields
+        .as_ref()
+        .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
+    {
+        listed = with_route_choices(store.root(), listed, repository);
+    }
     if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
         for package in packages.iter_mut().filter_map(Value::as_object_mut) {
             package.retain(|key, _| fields.iter().any(|field| field == key));
@@ -201,6 +222,71 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
         *cache = Some((read, listed.clone()));
     }
     Ok(listed)
+}
+
+/// Read on every call because `host.json` and plan grants change outside the listing cache. Without a repository,
+/// plan routes are offered regardless of their grant.
+fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
+    let here = repository.map(|repository| {
+        Value::from(crate::resource_data::hash(
+            repository.as_os_str().as_encoded_bytes(),
+        ))
+    });
+    let mut routes: Option<Vec<Value>> = None;
+    for package in listed["packages"].as_array_mut().into_iter().flatten() {
+        let id = package["id"].clone();
+        let mut choices = package
+            .get_mut("settings_schema")
+            .and_then(|schema| schema.get_mut("properties"))
+            .and_then(Value::as_object_mut)
+            .into_iter()
+            .flat_map(|properties| properties.values_mut())
+            .filter(|property| property["choices"] == "routes")
+            .peekable();
+        if choices.peek().is_none() {
+            continue;
+        }
+        let routes = routes.get_or_insert_with(|| {
+            std::fs::read(root.join("host.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|config| config["routes"].as_array().cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|route| here.as_ref().is_none_or(|here| granted(route, here)))
+                .collect()
+        });
+        let names: Vec<Value> = routes
+            .iter()
+            .filter(|route| {
+                route["roles"]
+                    .as_array()
+                    .is_some_and(|roles| roles.contains(&json!("worker")))
+                    && route["mods"]
+                        .as_array()
+                        .is_none_or(|mods| mods.is_empty() || mods.contains(&id))
+            })
+            .filter_map(|route| route["name"].as_str().map(Value::from))
+            .collect();
+        for property in choices {
+            property["enum"] = Value::from(names.clone());
+        }
+    }
+    listed
+}
+
+fn granted(route: &Value, repository: &Value) -> bool {
+    let Some(path) = route["grant"]["path"].as_str() else {
+        return true;
+    };
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_none_or(|grant| {
+            grant["repositories"]
+                .as_array()
+                .is_none_or(|repositories| repositories.contains(repository))
+        })
 }
 
 pub fn listing_key(runtime: Option<&Value>) -> Value {
@@ -297,6 +383,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "blocked": locked.and_then(|package| lock.blocked_reason(&package.id, &package.version, &package.integrity)),
                 "installed": true,
                 "enabled": enabled,
+                "required": selection["required"],
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
                 "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
                 "failed": failed,

@@ -68,8 +68,11 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         (Some("sample_mod"), Some(false), Some(true))
     );
     let generation = listed["generation"].as_u64().unwrap();
-    assert_eq!(list_fields(&store, None, Value::Null).unwrap(), listed);
-    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]})).unwrap();
+    assert_eq!(
+        list_fields(&store, None, Value::Null, None).unwrap(),
+        listed
+    );
+    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]}), None).unwrap();
     assert_eq!(
         (narrow["packages"].clone(), narrow["generation"].as_u64()),
         (
@@ -82,7 +85,7 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         json!({"fields": "id"}),
         json!({"fields": [], "page": 1}),
     ] {
-        assert!(list_fields(&store, None, invalid).is_err());
+        assert!(list_fields(&store, None, invalid, None).is_err());
     }
 
     let enable = preview(
@@ -277,5 +280,105 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
     assert_eq!(
         list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
         "reload"
+    );
+}
+
+#[test]
+fn listing_offers_host_routes_and_marks_required_selections() {
+    let (_temp, store, root) = setup();
+    let path = fixture_package(&root, "routed_mod", &["commands"], json!([]));
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    let setting = json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes"});
+    manifest["settings_schema"] = json!({"type": "object", "properties": {"route": setting}});
+    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(path.clone(), &sha256, vec!["commands".into()], "user")
+        .unwrap();
+    store.require(&path).unwrap();
+    let repository = root.join("repo");
+    let grant = |name: &str, listed: &Path| {
+        let path = root.join(format!("{name}.json"));
+        let hash = crate::resource_data::hash(listed.as_os_str().as_encoded_bytes());
+        std::fs::write(&path, json!({"repositories": [hash]}).to_string()).unwrap();
+        json!({"name": name, "roles": ["worker"], "mods": ["routed_mod"], "grant": {"path": path}})
+    };
+    std::fs::write(
+        store.root().join("host.json"),
+        json!({"routes": [{"name": "open", "roles": ["worker"]}, {"name": "lead", "roles": ["lead"]},
+            {"name": "scoped", "roles": ["worker"], "mods": ["routed_mod"]},
+            {"name": "other", "roles": ["worker"], "mods": ["another_mod"]},
+            grant("plan-here", &repository), grant("plan-elsewhere", &root.join("elsewhere"))]})
+        .to_string(),
+    )
+    .unwrap();
+    let listed = list_fields(&store, None, Value::Null, Some(&repository)).unwrap();
+    let package = &listed["packages"][0];
+    assert_eq!(package["required"], true);
+    assert_eq!(
+        package["settings_schema"]["properties"]["route"],
+        json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes",
+            "enum": ["open", "scoped", "plan-here"]})
+    );
+
+    manifest["settings_schema"]["properties"]["route"] =
+        json!({"type": "number", "choices": "routes"});
+    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+    assert!(
+        ModStore::inspect_package(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_setting_choices")
+    );
+}
+
+#[test]
+fn index_pages_follow_the_cursor_to_the_last_entry() {
+    let (_temp, store, root) = setup();
+    let library = fixture_package(&root, "library_mod", &["store"], json!([]));
+    let index = root.join("index.json");
+    let packages = (0..5)
+        .map(|n| {
+            (
+                format!("mod_{n}"),
+                json!([{"version": "1.0.0", "source": {"kind": "local", "path": library}, "integrity": "0".repeat(64)}]),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    std::fs::write(
+        &index,
+        serde_json::to_vec(&json!({"schema": 1, "packages": packages})).unwrap(),
+    )
+    .unwrap();
+    let mut ids = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = super::index(
+            &store,
+            json!({"index": index, "limit": 2, "cursor": cursor}),
+        )
+        .unwrap();
+        assert_eq!(page["total"], 5);
+        ids.extend(
+            page["packages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].clone()),
+        );
+        cursor = page["cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(ids, ["mod_0", "mod_1", "mod_2", "mod_3", "mod_4"]);
+    let error = super::index(&store, json!({"index": index, "limit": 0})).unwrap_err();
+    assert!(
+        error.to_string().contains("package_arguments_invalid"),
+        "{error}"
     );
 }

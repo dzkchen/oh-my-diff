@@ -1216,3 +1216,38 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
         vec![(true, Some(500)), (true, Some(700))]
     );
 }
+
+#[test]
+fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().canonicalize().unwrap();
+    let (repository, other) = (store.join("repo"), store.join("other"));
+    std::fs::create_dir(&repository).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let plan = codex_omd::plan_routes::PlanRoute {
+        model: "gpt-6.1-sol".into(),
+        reasoning_effort: "high".into(),
+        context_window: 272_000,
+        mod_id: "omd_advisor".into(),
+    };
+    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
+    assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
+    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
+    let route = config
+        .route(&name, crate::config::RouteRole::Worker, Some("omd_advisor"))
+        .unwrap();
+    let grant = route.grant.as_ref().unwrap();
+    let allowed = |repository: &std::path::Path| {
+        worker_authorized(
+            &grant.path,
+            &grant.sha256,
+            &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
+            &route.provider,
+            &route.model,
+            &route.responses_url,
+            route.rates.included_subscription,
+        )
+    };
+    assert!(allowed(&repository) && allowed(&other));
+    assert!(!allowed(&store.join("unlisted")));
+}

@@ -408,6 +408,7 @@ impl Managed {
             secret_environment: package.secret_environment.clone(),
             expires_at: None,
             tier: package.tier,
+            required: false,
         };
         let targets = self.targets(user, project);
         let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();

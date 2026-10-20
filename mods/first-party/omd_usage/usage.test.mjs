@@ -24,7 +24,7 @@ function call({ source, capabilities }, input, answer = () => ({ delivered: 1, d
 const hud = { categories: true };
 const response = (id, patch = {}) => ({
   request_id: id, attempt: 1, ledger_request: Number(id.replace(/\D/g, '')) || null, scope: { thread_id: 'lead', agent_id: null, kind: 'main' },
-  route: 'codex', provider: 'openai', credential: 'chatgpt', requested_model: 'gpt-6.1-sol', served_model: 'gpt-6.1-sol', status: 'completed', stop_reason: 'end_turn',
+  route: 'session', provider: 'openai', credential: 'chatgpt', requested_model: 'gpt-6.1-sol', served_model: 'gpt-6.1-sol', status: 'completed', stop_reason: 'end_turn',
   output: { text: '', tool_calls: [] }, usage: { input_tokens: 10_000, input_tokens_details: { cached_tokens: 8_000 }, output_tokens: 500 },
   cache: { read_tokens: 8_000, write_tokens: null }, cost: { microusd: 0, basis: 'included_subscription' }, context_window: 272_000,
   timing: { started_at_ms: NOW - 60_000, first_event_ms: 200, duration_ms: 1_000 }, synthetic: null, error: null, ...patch,
@@ -39,6 +39,12 @@ const start = (session = { thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'o
   operation === 'session.info' ? { root: '/repo', cwd: '/repo', codex_version: '0.162.0', route: null, turns_started: 0, ...session }
     : operation === 'app.request' && args.method === 'config/read' ? { config: { model_context_window: 272_000, model_auto_compact_token_limit: 240_000 } }
       : operation === 'app.request' ? (limits ? { rateLimits: limits } : new Error('unavailable')) : { delivered: 1, dropped: 0 }).state;
+
+test('an unpriced native ChatGPT-plan response is included, an unpriced key is unknown', () => {
+  const unpriced = patch => response('u1', { cost: { microusd: null, basis: 'unpriced' }, ...patch });
+  assert.match(dialog(feed(start(), [['model_response', unpriced({})]])).text, /1 included/);
+  assert.match(dialog(feed(start(), [['model_response', unpriced({ route: 'api', credential: 'key' })]])).text, /1 unknown cost/);
+});
 
 test('usage ledger is request-idempotent, keeps lead context apart from workers and orders by observation time', () => {
   let state = start();
