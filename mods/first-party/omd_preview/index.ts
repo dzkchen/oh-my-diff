@@ -6,7 +6,7 @@ const DIR = '.omd/preview';
 const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
 const MAX_WATCHES = 8;
-const POLL_MS = 2_000;
+const RETRY_MS = 2_000;
 const MAX_IMAGES = 16;
 const TILE_ROWS = [2, 8];
 const TILE_MIN = 7;
@@ -124,6 +124,7 @@ export default function activate(api: ModAPI) {
     if (target === 'unwatch') {
       const stored = api.host.call('store.get', { key: 'watch' });
       if (stored) api.host.call('store.put', { key: 'watch', value: { watch: [], hashes: {} }, expected_revision: stored.revision });
+      api.host.tryCall('events.publish', { channel: 'watch', data: null });
       return { display: 'Stopped watching preview files' };
     }
     if (words[0] === 'server') {
@@ -189,15 +190,13 @@ export default function activate(api: ModAPI) {
     return result;
   };
 
-  const poll = (retry = false) => {
+  // Watches are per process and thread, so this thread's watch id lives in thread scope; `rewatch` replaces it with one over the current list.
+  const poll = (rewatch = false, retry = false) => {
     const stored = api.host.tryCall('store.get', { key: 'watch' });
     const { revision, watch, hashes } = watches(stored.ok ? stored.value : null);
-    if (!watch.length) {
-      if (retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
-      return;
-    }
-    const stat = api.host.tryCall('workspace.stat', { paths: watch, hash: true });
-    if (stat.ok) {
+    if (!watch.length && retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: RETRY_MS });
+    const stat = watch.length ? api.host.tryCall('workspace.stat', { paths: watch, hash: true }) : null;
+    if (stat?.ok) {
       const next = { ...hashes };
       for (const path of watch) {
         const hash = stat.value.files[path]?.sha256;
@@ -207,7 +206,14 @@ export default function activate(api: ModAPI) {
       }
       if (watch.some(path => next[path] !== hashes[path])) keep(revision, { watch, hashes: next });
     }
-    api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
+    if (!rewatch) return;
+    const own = api.host.tryCall('store.get', { key: 'watch_id', scope: 'thread' });
+    const previous = own.ok ? own.value : null;
+    if (previous) api.host.tryCall('workspace.unwatch', { watch_id: String(previous.value) });
+    const present = stat?.ok ? watch.filter(path => stat.value.files[path]) : [];
+    const started = present.length ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true }) : null;
+    if (started?.ok) api.host.tryCall('store.put', { key: 'watch_id', value: started.value.watch_id, expected_revision: previous?.revision ?? null, scope: 'thread' });
+    else if (previous) api.host.tryCall('store.delete', { key: 'watch_id', expected_revision: previous.revision, scope: 'thread' });
   };
 
   const refresh = (attachments?: number) => {
@@ -226,11 +232,16 @@ export default function activate(api: ModAPI) {
     }
   }, { description: 'Render a response or file as HTML (--inline shows it here), inspect Mermaid diagrams or preview draft images' });
 
-  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
-  api.on('timer', () => poll());
+  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true, true); });
+  api.on('timer', () => poll(true));
+  api.on('workspace_change', event => {
+    const stored = api.host.tryCall('store.get', { key: 'watch' });
+    const { watch } = watches(stored.ok ? stored.value : null);
+    if (event.changes.some(change => watch.includes(change.path))) poll();
+  });
   for (const event of ['start', 'resume'] as const) api.on(event, () => {
     if (event === 'resume' && load().inline) save({ inline: null });
-    poll();
+    poll(true);
     if (thumbnails) refresh();
   });
   if (thumbnails) {

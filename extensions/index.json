@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "as_of": "2026-10-19",
+  "as_of": "2026-10-20",
   "release_pin": {
     "codex": "0.163.0",
     "omd": "1.0.0",
@@ -18,9 +18,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.302",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0",
         "Claude CLI 2.1.302"
       ],
@@ -36,9 +36,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; approval_v1, final_request_policy_v1, store_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -53,9 +53,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1, store_v1, store_thread_v1, state_scopes_v1, events_v1, app_v1, model_turn_interception_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -68,11 +68,11 @@
       "source": "mods/first-party/omd_logo",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.157.0",
-        "OMD 0.1.0",
-        "mod API 0.1.0-experimental.8",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -87,9 +87,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.157.0",
-        "OMD 0.1.0",
-        "mod API 0.1.0-experimental.8",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -105,8 +105,8 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -122,8 +122,8 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; turn_activity_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -138,9 +138,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; render_hooks_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.162.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -156,8 +156,8 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_respond_v1; timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -173,8 +173,8 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1; timers_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -190,8 +190,8 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; builtins_v1; structured_access_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -206,9 +206,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; builtins_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -223,9 +223,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -240,9 +240,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -255,11 +255,11 @@
       "source": "mods/first-party/omd_frecency",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; completion_v1, exec_v1, store_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -274,9 +274,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; package_controls_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -291,9 +291,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; exec_v1, store_v1, terminal_render_sites_v1, terminal_welcome_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -306,7 +306,7 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.162.0 and OMD 1.0.0; mod API 1.0.0; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.163.0 and OMD 1.0.0; mod API 1.0.0; virtual_reads_v1, service_requests_v1, plugin_dispatch_v1; PDF rendering requires an installed Ghostscript; the optional mod component needs explicit trust and grants",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -328,9 +328,9 @@
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
@@ -349,9 +349,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; exec_v1, workspace_fs_v1, framed_process_v1, store_v1, tool_feedback_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -366,9 +366,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; turn_evidence_v1, turn_activity_v1, workspace_snapshots_v1, workspace_fingerprint_v1, contracts_v2, tool_feedback_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -383,9 +383,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; terminal_lists_v1, store_v1, events_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"
@@ -400,9 +400,9 @@
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.160.1",
-        "OMD 0.1.0",
-        "mod API 0.2.0-experimental.5",
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate"

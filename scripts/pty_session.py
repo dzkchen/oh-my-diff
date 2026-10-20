@@ -142,17 +142,18 @@ class Session:
 
     def wait(self, phrase, seconds=20, offset=0):
         deadline = time.monotonic() + seconds
-        expected = "".join(phrase.split())
+        expected = ["".join(item.split()) for item in ((phrase,) if isinstance(phrase, str) else phrase)]
         while time.monotonic() < deadline:
             self.pump()
-            if expected in "".join(self.text(offset).split()):
+            screen = "".join(self.text(offset).split())
+            if any(item in screen for item in expected):
                 return True
             if self.process.poll() is not None:
                 return False
         return False
 
     def ready(self, seconds=90):
-        return self.wait("mods on", seconds)
+        return self.wait(("mods on", "mod on"), seconds)
 
     def type(self, text, delay=0.03):
         for char in text:
