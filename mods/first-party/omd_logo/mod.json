@@ -20,6 +20,8 @@
     "type": "object",
     "properties": {
       "icons": {
+        "title": "Logo style",
+        "description": "unicode draws the full mark; ascii uses plain characters",
         "type": "string",
         "enum": ["unicode", "ascii"],
         "default": "unicode"

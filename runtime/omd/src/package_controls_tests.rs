@@ -279,3 +279,48 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
         "reload"
     );
 }
+
+#[test]
+fn listing_offers_host_routes_and_marks_required_selections() {
+    let (_temp, store, root) = setup();
+    let path = fixture_package(&root, "routed_mod", &["commands"], json!([]));
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    let setting = json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes"});
+    manifest["settings_schema"] = json!({"type": "object", "properties": {"route": setting}});
+    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(path.clone(), &sha256, vec!["commands".into()], "user")
+        .unwrap();
+    store.set_required(&path, true).unwrap();
+    std::fs::write(
+        store.root().join("host.json"),
+        json!({"routes": [{"name": "open", "roles": ["worker"]}, {"name": "lead", "roles": ["lead"]},
+            {"name": "scoped", "roles": ["worker"], "mods": ["routed_mod"]},
+            {"name": "other", "roles": ["worker"], "mods": ["another_mod"]}]})
+        .to_string(),
+    )
+    .unwrap();
+    let listed = list(&store, None).unwrap();
+    let package = &listed["packages"][0];
+    assert_eq!(package["required"], true);
+    assert_eq!(
+        package["settings_schema"]["properties"]["route"],
+        json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes",
+            "enum": ["open", "scoped"]})
+    );
+
+    manifest["settings_schema"]["properties"]["route"] =
+        json!({"type": "number", "choices": "routes"});
+    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
+    assert!(
+        ModStore::inspect_package(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_setting_choices")
+    );
+}

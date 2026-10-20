@@ -100,3 +100,38 @@ test('a large directory index stays inside the UI state limit', () => {
   assert.ok(Buffer.byteLength(JSON.stringify(opened.ui)) <= 65_536);
   assert.equal(opened.ui.catalog.length, 120, opened.ui.catalogError);
 });
+
+test('a required mod stays on and the directory offers installed mods only as updates', () => {
+  const packages = [logo, mod('omd_update', { required: true }), mod('omd_preview')];
+  const index = () => ({ packages: [
+    { id: 'omd_update', description: 'Updates', latest: '1.0.0', installed: '1.0.0', versions: [{ version: '1.0.0', blocked: null }] },
+    { id: 'omd_preview', description: 'Previews', latest: '1.2.0', installed: '1.0.0', versions: [{ version: '1.2.0', blocked: null }] },
+    { id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
+  const opened = invoke('', { packages, 'packages.index': index });
+  const items = opened.panels[0].items;
+  assert.equal(items.find(item => item.id === 'user:omd_update').kind, 'action');
+  assert.deepEqual(items.filter(item => item.tab === 'directory' && /^(get|open):/.test(item.id)).map(item => [item.id, item.label]),
+    [['open:user:omd_preview', 'Preview 1.0.0 → 1.2.0'], ['get:omd_frecency', 'Frecency 1.0.0']]);
+  const typed = invoke('disable omd_update', { packages });
+  assert.deepEqual(operations(typed), ['packages.list']);
+  assert.match(typed.value.display, /Update stays on because Oh My Diff needs it/);
+});
+
+test('a route setting offers a helper model and saves the route the host added', () => {
+  const advisor = mod('omd_advisor', { settings: { route: '' }, settings_schema: { properties: { route: { type: 'string', title: 'Advisor model', choices: 'routes', enum: [] } } } });
+  const opened = invoke('omd_advisor', { packages: [advisor] });
+  const items = opened.panels[0].items;
+  assert.deepEqual(items.find(item => item.id === 'setting:route').options, [{ value: '-', label: 'Not set' }]);
+  assert.equal(items.find(item => item.id === 'route:route').label, 'Add a helper model for Advisor model');
+  let written;
+  const added = invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui,
+    'routes.add': args => { assert.deepEqual(args, { mod: 'omd_advisor' }); return { route: 'plan-gpt-6-1-sol-omd_advisor' }; },
+    'settings.write': args => { written = args; return {}; } });
+  assert.deepEqual(written, { id: 'omd_advisor', values: { route: 'plan-gpt-6-1-sol-omd_advisor' } });
+  assert.equal(added.ui.notice, 'Advisor model saved');
+  const declined = invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui, 'routes.add': () => ({ status: 'declined' }) });
+  assert.match(declined.panels[0].subtitle, /No helper model was added/);
+  const routed = { ...advisor, settings: { route: 'plan-gpt-6-1-sol-omd_advisor' } };
+  const again = invoke('mod user:omd_advisor route:route', { packages: [routed], ui_state: opened.ui, 'routes.add': () => ({ route: 'plan-gpt-6-1-sol-omd_advisor' }) });
+  assert.match(again.panels[0].subtitle, /Advisor model already uses plan-gpt-6-1-sol-omd_advisor/);
+});

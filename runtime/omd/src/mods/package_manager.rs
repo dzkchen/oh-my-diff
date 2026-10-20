@@ -711,6 +711,7 @@ impl ModStore {
                 secret_environment: package.trust.secret_environment.clone(),
                 expires_at: None,
                 tier: None,
+                required: selection.is_some_and(|selection| config.mods[selection].required),
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -1143,6 +1144,7 @@ impl ModStore {
             secret_environment: previous.trust.secret_environment,
             expires_at: None,
             tier: None,
+            required: selection.required,
         };
         config.revision = config
             .revision
@@ -2769,6 +2771,7 @@ fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -
             secret_environment: Vec::new(),
             expires_at: None,
             tier: None,
+            required: false,
         };
         let loaded = packages::detached(package, source, assets, selection, Value::Null);
         packages::migration_registrations(node, &loaded).map_err(|error| {

@@ -317,7 +317,7 @@ pub struct Broker {
     state: Mutex<()>,
 }
 
-fn write_private(path: &Path, value: &Value) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
     let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
         .write(true)

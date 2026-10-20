@@ -175,6 +175,8 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
             .to_string()
             .contains("source_changed")
     );
+    let selected = store.configuration().unwrap().mods[0].path.clone();
+    store.set_required(&selected, true).unwrap();
     let mut update = request(&package, &["commands", "store"]);
     update.settings.clear();
     let plan = store.package_plan(update.clone()).unwrap();
@@ -190,6 +192,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
     );
     let lock = store.package_apply(update, &plan.confirmation).unwrap();
     assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
+    assert!(store.configuration().unwrap().mods[0].required);
     assert!(
         store
             .package_enable("fixture")
@@ -210,6 +213,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
         .unwrap();
     assert_eq!(lock.packages["fixture"].version, "1.0.0");
     assert!(!lock.packages["fixture"].enabled);
+    assert!(store.configuration().unwrap().mods[0].required);
     assert_ne!(lock.packages["fixture"].path, package);
     assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
 

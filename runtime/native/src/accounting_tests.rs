@@ -1216,3 +1216,55 @@ fn provider_billed_requests_skip_reservations_record_provider_cost_and_settle_la
         vec![(true, Some(500)), (true, Some(700))]
     );
 }
+
+#[test]
+fn plan_grants_authorize_each_listed_repository() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("plan.json");
+    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repositories":["repo-a","repo-b"],
+        "provider":"openai","model":"model-a","responses_url":SUBSCRIPTION_RESPONSES_URL});
+    std::fs::write(&path, grant.to_string()).unwrap();
+    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let allowed = |repository: &str| {
+        worker_authorized(
+            &path,
+            &sha,
+            repository,
+            "openai",
+            "model-a",
+            SUBSCRIPTION_RESPONSES_URL,
+            true,
+        )
+    };
+    assert!(allowed("repo-a") && allowed("repo-b"));
+    assert!(!allowed("repo-c"));
+}
+
+#[test]
+fn an_added_plan_route_loads_and_is_authorized_in_its_repository() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().canonicalize().unwrap();
+    let repository = store.join("repo");
+    std::fs::create_dir(&repository).unwrap();
+    let plan = codex_omd::plan_routes::PlanRoute {
+        model: "gpt-6.1-sol".into(),
+        reasoning_effort: "high".into(),
+        context_window: 272_000,
+        mod_id: "omd_advisor".into(),
+    };
+    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
+    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
+    let route = config
+        .route(&name, crate::config::RouteRole::Worker, Some("omd_advisor"))
+        .unwrap();
+    let grant = route.grant.as_ref().unwrap();
+    assert!(worker_authorized(
+        &grant.path,
+        &grant.sha256,
+        &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
+        &route.provider,
+        &route.model,
+        &route.responses_url,
+        route.rates.included_subscription,
+    ));
+}

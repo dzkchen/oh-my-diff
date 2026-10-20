@@ -187,20 +187,62 @@ pub fn list_fields(
 pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let selections = selections(store)?;
     let Some(cache) = &selections.listing else {
-        return Ok(listing(&selections, runtime)?.0);
+        return Ok(with_route_choices(
+            store.root(),
+            listing(&selections, runtime)?.0,
+        ));
     };
     let read = listing_key(runtime);
     let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((key, listed)) = &*cache
         && *key == read
     {
-        return Ok(listed.clone());
+        return Ok(with_route_choices(store.root(), listed.clone()));
     }
     let (listed, cacheable) = listing(&selections, runtime)?;
     if cacheable {
         *cache = Some((read, listed.clone()));
     }
-    Ok(listed)
+    Ok(with_route_choices(store.root(), listed))
+}
+
+/// Lists the `host.json` worker routes open to each mod as the `enum` of its `"choices": "routes"` settings; read on
+/// every call because `host.json` changes outside the listing cache.
+fn with_route_choices(root: &Path, mut listed: Value) -> Value {
+    let config = std::fs::read(root.join("host.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or_default();
+    let routes = config["routes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for package in listed["packages"].as_array_mut().into_iter().flatten() {
+        let id = package["id"].clone();
+        let names: Vec<Value> = routes
+            .iter()
+            .filter(|route| {
+                route["roles"]
+                    .as_array()
+                    .is_some_and(|roles| roles.contains(&json!("worker")))
+                    && route["mods"]
+                        .as_array()
+                        .is_none_or(|mods| mods.is_empty() || mods.contains(&id))
+            })
+            .filter_map(|route| route["name"].as_str().map(Value::from))
+            .collect();
+        for property in package
+            .get_mut("settings_schema")
+            .and_then(|schema| schema.get_mut("properties"))
+            .and_then(Value::as_object_mut)
+            .into_iter()
+            .flat_map(|properties| properties.values_mut())
+            .filter(|property| property["choices"] == "routes")
+        {
+            property["enum"] = Value::from(names.clone());
+        }
+    }
+    listed
 }
 
 pub fn listing_key(runtime: Option<&Value>) -> Value {
@@ -297,6 +339,7 @@ fn listing(selections: &Selections, runtime: Option<&Value>) -> io::Result<(Valu
                 "blocked": locked.and_then(|package| lock.blocked_reason(&package.id, &package.version, &package.integrity)),
                 "installed": true,
                 "enabled": enabled,
+                "required": selection["required"],
                 "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
                 "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
                 "failed": failed,

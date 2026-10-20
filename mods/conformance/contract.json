@@ -196,6 +196,7 @@
     "operations:providers.register": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.register'"},"decision":"coordination.providers"},
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
+    "operations:routes.add": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('routes.add'"},"decision":"coordination.packages"},
     "operations:routes.list": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
     "operations:routes.select": {"status":"frozen","consumer":{"path":"mods/examples/profile_switcher/index.ts","snippet":"api.host.tryCall('routes.select'"},"decision":"coordination.credentials"},
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},

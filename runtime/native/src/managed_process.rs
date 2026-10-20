@@ -741,17 +741,30 @@ impl ManagedProcesses {
                 #[serde(deny_unknown_fields)]
                 struct Input {
                     names: Vec<String>,
+                    sandbox: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 if input.names.is_empty() || input.names.len() > 8 {
                     return Err("process_candidate_limit".into());
                 }
+                // Resolves as `process.start` will for the same `sandbox`, so its identity check matches.
+                let unrestricted = match input.sandbox.as_deref() {
+                    None => None,
+                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
+                    Some(_) => return Err("process_sandbox_invalid".into()),
+                };
                 let found = input
                     .names
                     .iter()
                     .filter_map(|name| {
-                        let path = program(name, repository)?;
+                        let path = match unrestricted {
+                            Some(access) => {
+                                codex_omd::host::unrestricted_program(access, name, repository)
+                                    .ok()?
+                            }
+                            None => program(name, repository)?,
+                        };
                         let metadata = fs::metadata(&path).ok()?;
                         if metadata.len() > 128 * 1024 * 1024 {
                             return None;
@@ -1949,6 +1962,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
+            node: None,
         };
         let drawn = Arc::new(Mutex::new(Vec::new()));
         let sink: BlitSink = {
@@ -2078,6 +2092,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: true,
+            node: None,
         };
         let owner = ProcessOwner {
             thread: None,
@@ -2314,6 +2329,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
         let access = codex_omd::ModOsAccess {
             programs: vec!["sh".into()],
             network: false,
+            node: None,
         };
         let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
         let owner = ProcessOwner {
@@ -2350,6 +2366,45 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 .call(owner, "process.status", json!({"session":"slow"}), || true)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn unsandboxed_which_resolves_the_runner_node() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let runner = repository.parent().unwrap().join(format!(
+            "{}-runner-node",
+            repository.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::write(&runner, "#!/bin/sh\n").unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["node".into()],
+            network: false,
+            node: Some(runner.clone()),
+        };
+        let owner = ProcessOwner {
+            thread: None,
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            environment: None,
+            os_access: Some(&access),
+            blit: None,
+        };
+        let found = processes
+            .call(
+                owner,
+                "process.which",
+                json!({"names":["node"],"sandbox":"none"}),
+                || true,
+            )
+            .unwrap();
+        std::fs::remove_file(&runner).unwrap();
+        assert_eq!(found["found"][0]["path"], json!(runner));
     }
 
     #[test]

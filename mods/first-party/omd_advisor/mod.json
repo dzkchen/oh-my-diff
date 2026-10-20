@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "An independent advisor reviews plans, stalls and claimed completion with cited findings, and can flag output you should know",
+  "description": "Asks a second model to review your plans, stuck attempts and finished work, with cited findings, and can flag output you should know about",
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_advisor" },
   "capabilities": [
@@ -45,14 +45,21 @@
     "type": "object",
     "properties": {
       "every_turn": {
+        "title": "Review every turn",
+        "description": "Ask the advisor after every finished turn, not only on triggers or /advisor",
         "type": "boolean",
         "default": false
       },
       "route": {
+        "title": "Advisor model",
+        "description": "The model route the advisor runs on; it needs its own model access",
+        "choices": "routes",
         "type": "string",
         "default": ""
       },
       "mode": {
+        "title": "Mode",
+        "description": "advisory: the lead model weighs the advice. blocking: also needs a workflow contract with an advisor review gate",
         "type": "string",
         "enum": [
           "advisory",
@@ -61,10 +68,14 @@
         "default": "advisory"
       },
       "triggers": {
+        "title": "Automatic triggers",
+        "description": "When to ask without /advisor: failure (same call failed twice), loop (same output three times), completion (turns that changed files)",
         "type": "array",
         "default": []
       },
       "share": {
+        "title": "What it sees",
+        "description": "What the advisor may read: conversation, diff and files",
         "type": "array",
         "default": [
           "conversation",
@@ -73,10 +84,14 @@
         ]
       },
       "observe": {
+        "title": "Flag things to know",
+        "description": "Watch the lead's output and flag behavior changes, unresolved failures and decisions you need to make",
         "type": "boolean",
         "default": false
       },
       "skip_same_model": {
+        "title": "Skip same model",
+        "description": "Don't ask when the advisor would run on the same model as the lead",
         "type": "boolean",
         "default": true
       }

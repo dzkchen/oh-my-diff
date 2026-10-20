@@ -363,6 +363,9 @@ export default function activate(api: ModAPI) {
     hud(state => { state.tick += 1; });
     return (expiry() ?? 0) > Date.now();
   });
+  // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
+  const plan = (state: Hud, response: { cost: { basis: CostBasis }; route: string; provider: string; credential: string | null }) =>
+    response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && (response.credential === 'chatgpt' || state.samples.length > 0);
   api.on('model_response', response => {
     const usage = object(response.usage);
     const summary = api.usage.summarize(response);
@@ -372,7 +375,7 @@ export default function activate(api: ModAPI) {
       thread: response.scope.thread_id, agent: response.scope.agent_id, kind: response.scope.kind, turn: response.scope.kind === 'main' ? state.turn : null,
       provider: response.provider, credential: response.credential, route: response.route, requested: response.requested_model, served: response.served_model, status: response.status,
       tokens: summary.measured ? { input: summary.tokens.input, cached: summary.tokens.cached, write: summary.tokens.cache_write, output: summary.tokens.output, reasoning: summary.tokens.reasoning } : null,
-      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: response.cost.basis },
+      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: plan(state, response) ? 'included_subscription' : response.cost.basis },
       reported: number(reported.usd) !== null && (reported.basis === 'provider_billed' || reported.basis === 'client_list_estimate') ? { usd: reported.usd, basis: reported.basis } : null,
       overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds),
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,

@@ -24,20 +24,24 @@
     "additionalProperties": false,
     "properties": {
       "secrets": {
+        "title": "Secret checks",
+        "description": "Which secret patterns to catch, such as private keys, cloud and API keys, tokens and passwords in URLs",
         "type": "array",
         "default": ["private_key", "aws_access_key", "github_token", "gitlab_token", "slack_token", "stripe_key", "ai_api_key",
           "google_api_key", "npm_token", "jwt", "bearer_token", "url_credentials", "assigned_secret"]
       },
-      "pii": {"type": "array", "default": []},
-      "scopes": {"type": "array", "default": ["prompt", "context", "tools", "replies"]},
-      "paths": {"type": "string", "enum": ["ask", "deny", "off"], "default": "ask"},
+      "pii": {"type": "array", "default": [], "title": "Personal data checks", "description": "Personal data to catch: email, phone, ipv4, ipv6, card, us_ssn; none by default"},
+      "scopes": {"type": "array", "default": ["prompt", "context", "tools", "replies"], "title": "Text to scan", "description": "Where to look: your prompts, instructions and context, tool calls and output, earlier replies"},
+      "paths": {"type": "string", "enum": ["ask", "deny", "off"], "default": "ask", "title": "Sensitive paths", "description": "When a shell command names a sensitive file: ask first, deny it, or off"},
       "sensitive_paths": {
+        "title": "Sensitive path patterns",
+        "description": "File patterns that count as sensitive, such as .env, keys and SSH or cloud credentials",
         "type": "array",
         "default": [".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".ssh/",
           ".gnupg/", ".aws/credentials", ".docker/config.json", ".kube/config", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials"]
       },
-      "exempt": {"type": "array", "default": ["path:.env.example", "path:.env.sample", "path:.env.template", "path:*.pub"]},
-      "unscanned": {"type": "string", "enum": ["allow", "deny"], "default": "allow"}
+      "exempt": {"type": "array", "default": ["path:.env.example", "path:.env.sample", "path:.env.template", "path:*.pub"], "title": "Exemptions", "description": "Allowed exceptions: sha256:HEX, domain:NAME or path:PATTERN, such as .env.example"},
+      "unscanned": {"type": "string", "enum": ["allow", "deny"], "default": "allow", "title": "Unscanned attachments", "description": "Images, audio and files can't be scanned: allow sends them, deny refuses the request"}
     }
   },
   "compatibility": {

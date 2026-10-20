@@ -36570,7 +36570,7 @@ index 5327f805cf5d3e78d283cd558be3a40e8c569966..6f69b48f50375344375390d9c407b677
              | SlashCommand::Goal
              | SlashCommand::Side
 diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
-index 692eba105a92c446fd4ffb8a3440c08b7b88134c..2e6fe567b4862c7fa30ed3979386725942b731e6 100644
+index 692eba105a92c446fd4ffb8a3440c08b7b88134c..08c46d9d2b954aac5416b0cc808a75989bac9da6 100644
 --- a/codex-rs/tui/src/chatwidget/status_controls.rs
 +++ b/codex-rs/tui/src/chatwidget/status_controls.rs
 @@ -7,6 +7,16 @@
@@ -36627,6 +36627,15 @@ index 692eba105a92c446fd4ffb8a3440c08b7b88134c..2e6fe567b4862c7fa30ed39793867259
          let now = Local::now();
          let mut remaining = Vec::with_capacity(self.refreshing_status_outputs.len());
          let mut updated_any = false;
+@@ -405,7 +409,7 @@ impl ChatWidget {
+         preview_data
+     }
+
+-    pub(super) fn status_line_context_window_size(&self) -> Option<i64> {
++    pub(crate) fn status_line_context_window_size(&self) -> Option<i64> {
+         self.token_info
+             .as_ref()
+             .and_then(|info| info.model_context_window)
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..8af4669574966e9835ad4bbdb67fff4f329e70f7 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
@@ -50736,10 +50745,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161ec1230daf
+index 0000000000000000000000000000000000000000..db9a2a454b067e747ec50f964b336674881ebf6b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2311 @@
+@@ -0,0 +1,2314 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -51499,7 +51508,7 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +    }
 +}
 +
-+pub const SUBSCRIPTION_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
++pub const SUBSCRIPTION_RESPONSES_URL: &str = codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
 +
 +pub fn worker_authorized(
 +    path: &std::path::Path,
@@ -51535,7 +51544,10 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +            grant["paid_api_key"] == true && grant["included_subscription"] != true
 +        }
 +        && grant["revocable"] == true
-+        && grant["repository"] == repository
++        && (grant["repository"] == repository
++            || grant["repositories"]
++                .as_array()
++                .is_some_and(|repositories| repositories.iter().any(|item| item == repository)))
 +        && grant["provider"] == provider
 +        && grant["model"] == model
 +        && grant["responses_url"] == url
@@ -53053,10 +53065,10 @@ index 0000000000000000000000000000000000000000..ef9df41e0157590be4f88410dd0a161e
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f314421916682f4d54b7c56a3fc26b8ae8837e26
+index 0000000000000000000000000000000000000000..e9d81040ead5da21f03cf5e24d9e32c7a7890e65
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1218 @@
+@@ -0,0 +1,1270 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -54275,12 +54287,64 @@ index 0000000000000000000000000000000000000000..f314421916682f4d54b7c56a3fc26b8a
 +        vec![(true, Some(500)), (true, Some(700))]
 +    );
 +}
++
++#[test]
++fn plan_grants_authorize_each_listed_repository() {
++    let root = tempfile::tempdir().unwrap();
++    let path = root.path().join("plan.json");
++    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repositories":["repo-a","repo-b"],
++        "provider":"openai","model":"model-a","responses_url":SUBSCRIPTION_RESPONSES_URL});
++    std::fs::write(&path, grant.to_string()).unwrap();
++    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
++    let allowed = |repository: &str| {
++        worker_authorized(
++            &path,
++            &sha,
++            repository,
++            "openai",
++            "model-a",
++            SUBSCRIPTION_RESPONSES_URL,
++            true,
++        )
++    };
++    assert!(allowed("repo-a") && allowed("repo-b"));
++    assert!(!allowed("repo-c"));
++}
++
++#[test]
++fn an_added_plan_route_loads_and_is_authorized_in_its_repository() {
++    let root = tempfile::tempdir().unwrap();
++    let store = root.path().canonicalize().unwrap();
++    let repository = store.join("repo");
++    std::fs::create_dir(&repository).unwrap();
++    let plan = codex_omd::plan_routes::PlanRoute {
++        model: "gpt-6.1-sol".into(),
++        reasoning_effort: "high".into(),
++        context_window: 272_000,
++        mod_id: "omd_advisor".into(),
++    };
++    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
++    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
++    let route = config
++        .route(&name, crate::config::RouteRole::Worker, Some("omd_advisor"))
++        .unwrap();
++    let grant = route.grant.as_ref().unwrap();
++    assert!(worker_authorized(
++        &grant.path,
++        &grant.sha256,
++        &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
++        &route.provider,
++        &route.model,
++        &route.responses_url,
++        route.rates.included_subscription,
++    ));
++}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f44df6d623954ef75be0fd081441864c870c58eb
+index 0000000000000000000000000000000000000000..efb47d11f4eafb75f3a784d4dd859ab710dc6ea8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,562 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -54515,7 +54579,7 @@ index 0000000000000000000000000000000000000000..f44df6d623954ef75be0fd081441864c
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(concat!(
-+            "usage: omd-mod init STORE NODE | set-node STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | set-node STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +            " | broker-grants-import STORE [SNAPSHOT_JSON]"
 +        ))
 +    };
@@ -54694,6 +54758,13 @@ index 0000000000000000000000000000000000000000..f44df6d623954ef75be0fd081441864c
 +                    .map(|snapshot| serde_json::from_str(snapshot))
 +                    .transpose()?,
 +            )
++        }
++        [command, root, path] if command == "require" => {
++            let path = PathBuf::from(path);
++            open(root)?.set_required(&path.canonicalize().unwrap_or(path), true)?;
++            Ok(Value::String(
++                "selection required; in-app mod screens keep it on".into(),
++            ))
 +        }
 +        [command, root, path] if command == "enable" || command == "disable" => {
 +            let path = PathBuf::from(path);
@@ -59626,10 +59697,10 @@ index 0000000000000000000000000000000000000000..baebd6a3da2faf75180ae10c68892582
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e4de76b71
+index 0000000000000000000000000000000000000000..08e1d0b4a873a4c4cfb5609d4f02437501c3e9c8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2490 @@
+@@ -0,0 +1,2545 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -60373,17 +60444,30 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +                #[serde(deny_unknown_fields)]
 +                struct Input {
 +                    names: Vec<String>,
++                    sandbox: Option<String>,
 +                }
 +                let input: Input =
 +                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
 +                if input.names.is_empty() || input.names.len() > 8 {
 +                    return Err("process_candidate_limit".into());
 +                }
++                // Resolves as `process.start` will for the same `sandbox`, so its identity check matches.
++                let unrestricted = match input.sandbox.as_deref() {
++                    None => None,
++                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
++                    Some(_) => return Err("process_sandbox_invalid".into()),
++                };
 +                let found = input
 +                    .names
 +                    .iter()
 +                    .filter_map(|name| {
-+                        let path = program(name, repository)?;
++                        let path = match unrestricted {
++                            Some(access) => {
++                                codex_omd::host::unrestricted_program(access, name, repository)
++                                    .ok()?
++                            }
++                            None => program(name, repository)?,
++                        };
 +                        let metadata = fs::metadata(&path).ok()?;
 +                        if metadata.len() > 128 * 1024 * 1024 {
 +                            return None;
@@ -61581,6 +61665,7 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +        let access = codex_omd::ModOsAccess {
 +            programs: vec!["sh".into()],
 +            network: false,
++            node: None,
 +        };
 +        let drawn = Arc::new(Mutex::new(Vec::new()));
 +        let sink: BlitSink = {
@@ -61710,6 +61795,7 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +        let access = codex_omd::ModOsAccess {
 +            programs: vec!["sh".into()],
 +            network: true,
++            node: None,
 +        };
 +        let owner = ProcessOwner {
 +            thread: None,
@@ -61946,6 +62032,7 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +        let access = codex_omd::ModOsAccess {
 +            programs: vec!["sh".into()],
 +            network: false,
++            node: None,
 +        };
 +        let sh = codex_omd::host::unrestricted_program(&access, "sh", &repository).unwrap();
 +        let owner = ProcessOwner {
@@ -61982,6 +62069,45 @@ index 0000000000000000000000000000000000000000..1a9f671366df70fe94a954c2839a627e
 +                .call(owner, "process.status", json!({"session":"slow"}), || true)
 +                .is_ok()
 +        );
++    }
++
++    #[test]
++    fn unsandboxed_which_resolves_the_runner_node() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let runner = repository.parent().unwrap().join(format!(
++            "{}-runner-node",
++            repository.file_name().unwrap().to_string_lossy()
++        ));
++        std::fs::write(&runner, "#!/bin/sh\n").unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let access = codex_omd::ModOsAccess {
++            programs: vec!["node".into()],
++            network: false,
++            node: Some(runner.clone()),
++        };
++        let owner = ProcessOwner {
++            thread: None,
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++            protected: &[],
++            environment: None,
++            os_access: Some(&access),
++            blit: None,
++        };
++        let found = processes
++            .call(
++                owner,
++                "process.which",
++                json!({"names":["node"],"sandbox":"none"}),
++                || true,
++            )
++            .unwrap();
++        std::fs::remove_file(&runner).unwrap();
++        assert_eq!(found["found"][0]["path"], json!(runner));
 +    }
 +
 +    #[test]
@@ -88282,7 +88408,7 @@ index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..64062b7a1d0198064dcac7864eb3e87c920d9ae0
+index 0000000000000000000000000000000000000000..7c274293ad7b3f1313c56b50658df26d991dc5ed
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,1004 @@
@@ -88605,7 +88731,7 @@ index 0000000000000000000000000000000000000000..64062b7a1d0198064dcac7864eb3e87c
 +    state: Mutex<()>,
 +}
 +
-+fn write_private(path: &Path, value: &Value) -> io::Result<()> {
++pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
 +    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
 +    let mut file = fs::OpenOptions::new()
 +        .write(true)
@@ -89994,10 +90120,10 @@ index 0000000000000000000000000000000000000000..320c013e6b46dccc8f0ffa8d360bafd5
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a225e968e114208135b1b15d5c3ec2417049dcd
+index 0000000000000000000000000000000000000000..8817eff241b6ce880ff9edf9d2b581fecf21b31e
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1521 @@
+@@ -0,0 +1,1523 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -90069,6 +90195,7 @@ index 0000000000000000000000000000000000000000..1a225e968e114208135b1b15d5c3ec24
 +    "prompts.revoke",
 +    "builtins.invoke",
 +    "packages.apply",
++    "routes.add",
 +    "contract.select",
 +    "terminal.open",
 +    "terminal.prompt",
@@ -90092,6 +90219,7 @@ index 0000000000000000000000000000000000000000..1a225e968e114208135b1b15d5c3ec24
 +    "commands.invoke",
 +    "config.set",
 +    "packages.apply",
++    "routes.add",
 +    "contract.select",
 +];
 +
@@ -95418,10 +95546,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c83a99e5d2ee18281faf78273b374072f0c539ad
+index 0000000000000000000000000000000000000000..fd3ed288669abf25af313758b9b043135783eeac
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1782 @@
+@@ -0,0 +1,1784 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -95910,7 +96038,9 @@ index 0000000000000000000000000000000000000000..c83a99e5d2ee18281faf78273b374072
 +    repository: &Path,
 +) -> Result<PathBuf, String> {
 +    let path = Path::new(name);
-+    let resolved = if path.is_absolute() {
++    let resolved = if let Some(node) = access.node.as_ref().filter(|_| name == "node") {
++        node.canonicalize().ok()
++    } else if path.is_absolute() {
 +        path.canonicalize().ok()
 +    } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
 +        std::env::var_os("PATH").and_then(|paths| {
@@ -97339,10 +97469,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8ea7621f51fdc146fd4b1847292b2076b18ac1e0
+index 0000000000000000000000000000000000000000..93c2ae4f4939ebd1b1cb65b3578adae1103d3825
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,250 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -97366,6 +97496,7 @@ index 0000000000000000000000000000000000000000..8ea7621f51fdc146fd4b1847292b2076
 +mod owner;
 +pub mod package_controls;
 +pub mod peers;
++pub mod plan_routes;
 +pub mod process_raster;
 +pub mod resource_data;
 +pub mod scoped_data;
@@ -97581,6 +97712,7 @@ index 0000000000000000000000000000000000000000..8ea7621f51fdc146fd4b1847292b2076
 +pub use mods::persist_chunks;
 +pub use mods::persist_cut;
 +pub use mods::persist_texts;
++pub use mods::read_only_call;
 +pub use mods::render_shared;
 +pub use mods::take_turned_off;
 +pub use mods::valid_glyphs;
@@ -99228,10 +99360,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfed8884f08
+index 0000000000000000000000000000000000000000..1194cddc677f9eec1fa4edc7ea273149f35175a6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6143 @@
+@@ -0,0 +1,6214 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99362,6 +99494,7 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +pub use package_manager::ModPackageSource;
 +pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
++pub(crate) use store::lock as store_lock;
 +pub use store::Trust;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
@@ -99697,6 +99830,7 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +    "packages.preview",
 +    "packages.apply",
 +    "packages.reload",
++    "routes.add",
 +    "settings.write",
 +    "terminal.open",
 +    "terminal.prompt",
@@ -100605,6 +100739,9 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +    pub programs: Vec<String>,
 +    #[serde(default)]
 +    pub network: bool,
++    /// The mod runner's node, which a bare `node` resolves to: version-manager shims on PATH resolve to other programs.
++    #[serde(skip)]
++    pub node: Option<PathBuf>,
 +}
 +
 +impl ModOsAccess {
@@ -101355,10 +101492,9 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +        let definition = definition
 +            .as_object()
 +            .ok_or_else(|| failure("invalid_setting_schema"))?;
-+        if definition
-+            .keys()
-+            .any(|key| !["type", "enum", "default"].contains(&key.as_str()))
-+        {
++        if definition.keys().any(|key| {
++            !["type", "enum", "default", "title", "description", "choices"].contains(&key.as_str())
++        }) {
 +            return Err(failure("unsupported_setting_schema"));
 +        }
 +        let kind = definition
@@ -101367,6 +101503,23 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +            .ok_or_else(|| failure("setting_type_required"))?;
 +        if !["boolean", "number", "string", "array", "object", "null"].contains(&kind) {
 +            return Err(failure("unsupported_setting_type"));
++        }
++        let text = |key: &str, limit: usize| {
++            definition.get(key).is_none_or(|value| {
++                value
++                    .as_str()
++                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= limit)
++            })
++        };
++        if !text("title", 64) || !text("description", 300) {
++            return Err(failure("invalid_setting_text"));
++        }
++        if definition.get("choices").is_some_and(|choices| {
++            choices != "routes" || kind != "string" || definition.contains_key("enum")
++        }) {
++            return Err(failure(
++                "invalid_setting_choices: \"routes\" on a string setting without enum",
++            ));
 +        }
 +        if let Some(values) = definition.get("enum") {
 +            let values = values
@@ -101518,6 +101671,9 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +    pub expires_at: Option<u64>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub tier: Option<ManagedTier>,
++    /// Set by the installer: in-app mod screens keep the mod on, while `omd mods disable` still turns it off.
++    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++    pub required: bool,
 +}
 +
 +impl ModSelection {
@@ -101894,6 +102050,31 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +        std::fs::rename(&path, &moved).unwrap();
 +        std::os::unix::fs::symlink(&moved, &path).unwrap();
 +        assert!(host.refresh_authority().is_err());
++    }
++
++    #[test]
++    fn renders_rejected_by_a_pending_reload_keep_the_last_view_without_a_diagnostic() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap().join("store");
++        ModStore::create(
++            root.clone(),
++            std::env::var_os("OMD_TEST_NODE").unwrap().into(),
++        )
++        .unwrap();
++        let mut host = ModHost::open(root).unwrap();
++        let view = json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}});
++        let first = host.compose_terminal(vec![("a".into(), Ok(view))], "terminal", None);
++        assert_eq!(first.diagnostics, Vec::<String>::new());
++        let composed = host.compose_terminal(
++            vec![
++                ("a".into(), Err(failure("callback_authority_changed"))),
++                ("b".into(), Err(failure("broken"))),
++            ],
++            "terminal",
++            None,
++        );
++        assert_eq!(composed.contributors, ["a"]);
++        assert_eq!(composed.diagnostics, ["b: broken"]);
 +    }
 +
 +    #[test]
@@ -102364,6 +102545,11 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +            result => return result,
 +        }
 +    }
++}
++
++/// Whether a host call only reads, so a callback that made no other call can run again.
++pub fn read_only_call(call: &ModHostCall) -> bool {
++    read_only_receipt(&json!({"call": {"operation": call.operation, "arguments": call.arguments}}))
 +}
 +
 +fn read_only_receipt(receipt: &Value) -> bool {
@@ -104752,8 +104938,17 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +                Err(error) => Err(error),
 +            };
 +            let parsed = parsed.or_else(|error| {
-+                // An interrupted turn cancels in-flight renders; the last view stands without a fault.
-+                if !error.to_string().contains("callback_cancelled") {
++                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
++                // reloads; the last view stands without a fault.
++                let error_text = error.to_string();
++                if ![
++                    "callback_cancelled",
++                    "callback_authority_changed",
++                    "stale_mod_generation",
++                ]
++                .iter()
++                .any(|transient| error_text.contains(transient))
++                {
 +                    diagnostics.push(format!("{id}: {error}"));
 +                }
 +                ModViewPatch::parse(self.valid_views.get(&id).cloned().ok_or(error)?)
@@ -105057,7 +105252,15 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +                    .cloned()
 +                    .collect(),
 +                exec_environment: m.package.exec_environment.clone(),
-+                os_access: m.package.os_access.clone().filter(|_| current),
++                os_access: m
++                    .package
++                    .os_access
++                    .clone()
++                    .filter(|_| current)
++                    .map(|access| ModOsAccess {
++                        node: Some(self.node.clone()),
++                        ..access
++                    }),
 +                approves: m.package.approves.clone().filter(|_| current),
 +                http_access: m.package.http_access.clone().filter(|_| current),
 +                fs_access: m.package.fs_access.clone().filter(|_| current),
@@ -106484,7 +106687,7 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..471d283a7a27a6597e41ebfa5e3d1cf921705168
+index 0000000000000000000000000000000000000000..093340c74dd734870a01217fc85b70b7d01af569
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,436 @@
@@ -106573,7 +106776,7 @@ index 0000000000000000000000000000000000000000..471d283a7a27a6597e41ebfa5e3d1cf9
 +            "config.describe" => Ok("config"),
 +            "config.set" => Ok("config.write"),
 +            "packages.list" | "packages.index" | "packages.preview" | "packages.apply"
-+            | "packages.reload" => Ok("packages"),
++            | "packages.reload" | "routes.add" => Ok("packages"),
 +            "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
 +            "settings.write" => Ok("commands"),
 +            "http.request" | "http.open" | "http.read" | "http.close" => Ok("http"),
@@ -108882,7 +109085,7 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943ebe03881c9
+index 0000000000000000000000000000000000000000..ea17b88838c88838dd0509ce9ccf99d30bedb5da
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,218 @@
@@ -108903,108 +109106,109 @@ index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943eb
 +    "http.close": {"arguments":{"$ref":"#/$defs/15"},"result":{"type":"object","properties":{"closed":{"const":true}},"required":["closed"]}},
 +    "mcp.connect": {"arguments":{"$ref":"#/$defs/16"},"result":{"type":"object","properties":{"server":{"type":"string"},"connected":{"const":true},"tool_prefix":{"type":"string"}},"required":["server","connected","tool_prefix"]}},
 +    "mcp.disconnect": {"arguments":{"$ref":"#/$defs/16"},"result":{"type":"object","properties":{"server":{"type":"string"},"connected":{"const":false},"tool_prefix":{"type":"string"}},"required":["server","connected","tool_prefix"]}},
-+    "environment.read": {"arguments":{"$ref":"#/$defs/17"},"result":{"type":"object","properties":{"values":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"set":{"type":"boolean"},"value":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["set"]}}},"required":["values"]}},
++    "environment.read": {"arguments":{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"]},"result":{"type":"object","properties":{"values":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"set":{"type":"boolean"},"value":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["set"]}}},"required":["values"]}},
 +    "environment.set": {"arguments":{"type":"object","properties":{"name":{"type":"string"},"value":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["name","value"]},"result":{"type":"object","properties":{"name":{"type":"string"},"set":{"type":"boolean"}},"required":["name","set"]}},
 +    "workspace.backup": {"arguments":{"type":"object","properties":{"expected":{"$ref":"#/$defs/8"}},"required":["expected"]},"result":{"type":"object","properties":{"backup":{"$ref":"#/$defs/1"}},"required":["backup"]}},
 +    "workspace.restore": {"arguments":{"type":"object","properties":{"backup":{"$ref":"#/$defs/1"},"expected":{"$ref":"#/$defs/8"}},"required":["backup","expected"]},"result":{"type":"object","properties":{"files":{"$ref":"#/$defs/10"}},"required":["files"]}},
 +    "workspace.request_rename": {"arguments":{"$ref":"#/$defs/9"},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"renamed"},"files":{"$ref":"#/$defs/10"}},"required":["status","files"]},{"type":"object","properties":{"status":{"const":"fallback"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
-+    "workspace.integrate": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["handle"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"integrated"},"candidate_sha256":{"type":"string"},"parent_candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/3"},"receipt_error":{"type":"string"}},"required":["status","candidate_sha256","parent_candidate_sha256","changed_paths","evidence"]},{"type":"object","properties":{"status":{"const":"refused"},"candidate_sha256":{"type":"string"},"missing":{"$ref":"#/$defs/21"}},"required":["status","candidate_sha256","missing"]}]}},
-+    "store.get": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":["key"]},"result":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/24"}]}},
++    "workspace.integrate": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["handle"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"integrated"},"candidate_sha256":{"type":"string"},"parent_candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/3"},"receipt_error":{"type":"string"}},"required":["status","candidate_sha256","parent_candidate_sha256","changed_paths","evidence"]},{"type":"object","properties":{"status":{"const":"refused"},"candidate_sha256":{"type":"string"},"missing":{"$ref":"#/$defs/20"}},"required":["status","candidate_sha256","missing"]}]}},
++    "store.get": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":["key"]},"result":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/23"}]}},
 +    "store.put": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{"anyOf":[{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}}]},"expected_revision":{"anyOf":[{"type":"null"},{"type":"number"}]},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":["key","value","expected_revision"]},"result":{"type":"object","properties":{"revision":{"type":"number"}},"required":["revision"]}},
 +    "store.delete": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"expected_revision":{"type":"number"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":["key","expected_revision"]},"result":{"type":"object","properties":{"deleted":{"type":"boolean"}},"required":["deleted"]}},
-+    "store.list": {"arguments":{"type":"object","properties":{"prefix":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":[]},"result":{"type":"object","properties":{"keys":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"revision":{"type":"number"},"bytes":{"type":"number"},"provenance":{"$ref":"#/$defs/23"}},"required":["key","revision","bytes","provenance"]}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]},"generation":{"type":"number"}},"required":["keys","cursor","generation"]}},
-+    "store.export": {"arguments":{"type":"object","properties":{"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]},"cursor":{"type":"string"}},"required":[]},"result":{"type":"object","properties":{"schema":{"const":1},"owner":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]},"generation":{"type":"number"},"entries":{"type":"object","properties":{},"required":[],"additionalProperties":{"$ref":"#/$defs/24"}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["schema","owner","scope","generation","entries","cursor"]}},
++    "store.list": {"arguments":{"type":"object","properties":{"prefix":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":[]},"result":{"type":"object","properties":{"keys":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"revision":{"type":"number"},"bytes":{"type":"number"},"provenance":{"$ref":"#/$defs/22"}},"required":["key","revision","bytes","provenance"]}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]},"generation":{"type":"number"}},"required":["keys","cursor","generation"]}},
++    "store.export": {"arguments":{"type":"object","properties":{"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]},"cursor":{"type":"string"}},"required":[]},"result":{"type":"object","properties":{"schema":{"const":1},"owner":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]},"generation":{"type":"number"},"entries":{"type":"object","properties":{},"required":[],"additionalProperties":{"$ref":"#/$defs/23"}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["schema","owner","scope","generation","entries","cursor"]}},
 +    "store.reset": {"arguments":{"type":"object","properties":{"expected_generation":{"type":"number"},"scope":{"anyOf":[{"const":"user"},{"const":"repository"},{"const":"thread"}]}},"required":["expected_generation"]},"result":{"type":"object","properties":{"generation":{"type":"number"}},"required":["generation"]}},
 +    "evidence.write": {"arguments":{"anyOf":[{"type":"object","properties":{"media_type":{"anyOf":[{"const":"application/json"},{"const":"text/plain"}]},"content":{},"label":{"type":"string"}},"required":["media_type","content"]},{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/svg+xml"},{"const":"image/png"},{"const":"image/jpeg"},{"const":"application/octet-stream"}]},"base64":{"type":"string"},"label":{"type":"string"}},"required":["media_type","base64"]}]},"result":{"$ref":"#/$defs/1"}},
 +    "evidence.read": {"arguments":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"cursor":{"type":"number"},"max_bytes":{"type":"number"}},"required":["reference"]},"result":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"text":{"type":"string"},"cursor":{"anyOf":[{"type":"null"},{"type":"number"}]},"bytes":{"type":"number"}},"required":["reference","text","cursor","bytes"]}},
-+    "sessions.list": {"arguments":{"type":"object","properties":{"since":{"type":"string"},"until":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"sessions":{"type":"array","items":{"$ref":"#/$defs/25"}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]},"revision":{"type":"string"},"scan_truncated":{"type":"boolean"},"unavailable":{"type":"number"},"projection":{"type":"string"}},"required":["sessions","cursor","revision","scan_truncated","unavailable","projection"]}},
-+    "sessions.read": {"arguments":{"type":"object","properties":{"session_id":{"type":"string"},"revision":{"type":"string"},"handle":{"type":"string"},"cursor":{"type":"number"},"max_bytes":{"type":"number"}},"required":["session_id","revision","handle"]},"result":{"type":"object","properties":{"session":{"$ref":"#/$defs/25"},"records":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/26"},{"type":"object","properties":{"kind":{"const":"message"},"role":{"anyOf":[{"const":"user"},{"const":"assistant"}]},"text":{"type":"string"},"truncated":{"type":"boolean"},"redacted":{"type":"boolean"}},"required":["kind","role","text","truncated","redacted"]}]},{"allOf":[{"$ref":"#/$defs/26"},{"$ref":"#/$defs/27"},{"$ref":"#/$defs/28"}]},{"allOf":[{"$ref":"#/$defs/26"},{"$ref":"#/$defs/27"},{"type":"object","properties":{"arguments":{"type":"string"}},"required":["arguments"]},{"$ref":"#/$defs/29"}]},{"allOf":[{"$ref":"#/$defs/26"},{"$ref":"#/$defs/30"},{"$ref":"#/$defs/28"}]},{"allOf":[{"$ref":"#/$defs/26"},{"$ref":"#/$defs/30"},{"type":"object","properties":{"output":{"type":"string"}},"required":["output"]},{"$ref":"#/$defs/29"}]}]}},"cursor":{"anyOf":[{"type":"null"},{"type":"number"}]},"bytes":{"type":"number"},"projection":{"type":"string"},"projection_truncated":{"type":"boolean"}},"required":["session","records","cursor","bytes","projection","projection_truncated"]}},
-+    "sessions.snapshot": {"arguments":{"type":"object","properties":{"call_ids":{"type":"array","items":{"type":"string"}}},"required":[]},"result":{"type":"object","properties":{"evidence":{"$ref":"#/$defs/1"},"provenance":{"$ref":"#/$defs/31"}},"required":["evidence","provenance"]}},
-+    "routes.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/33"}}},
++    "sessions.list": {"arguments":{"type":"object","properties":{"since":{"type":"string"},"until":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"sessions":{"type":"array","items":{"$ref":"#/$defs/24"}},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]},"revision":{"type":"string"},"scan_truncated":{"type":"boolean"},"unavailable":{"type":"number"},"projection":{"type":"string"}},"required":["sessions","cursor","revision","scan_truncated","unavailable","projection"]}},
++    "sessions.read": {"arguments":{"type":"object","properties":{"session_id":{"type":"string"},"revision":{"type":"string"},"handle":{"type":"string"},"cursor":{"type":"number"},"max_bytes":{"type":"number"}},"required":["session_id","revision","handle"]},"result":{"type":"object","properties":{"session":{"$ref":"#/$defs/24"},"records":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/25"},{"type":"object","properties":{"kind":{"const":"message"},"role":{"anyOf":[{"const":"user"},{"const":"assistant"}]},"text":{"type":"string"},"truncated":{"type":"boolean"},"redacted":{"type":"boolean"}},"required":["kind","role","text","truncated","redacted"]}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/26"},{"$ref":"#/$defs/27"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/26"},{"type":"object","properties":{"arguments":{"type":"string"}},"required":["arguments"]},{"$ref":"#/$defs/28"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/29"},{"$ref":"#/$defs/27"}]},{"allOf":[{"$ref":"#/$defs/25"},{"$ref":"#/$defs/29"},{"type":"object","properties":{"output":{"type":"string"}},"required":["output"]},{"$ref":"#/$defs/28"}]}]}},"cursor":{"anyOf":[{"type":"null"},{"type":"number"}]},"bytes":{"type":"number"},"projection":{"type":"string"},"projection_truncated":{"type":"boolean"}},"required":["session","records","cursor","bytes","projection","projection_truncated"]}},
++    "sessions.snapshot": {"arguments":{"type":"object","properties":{"call_ids":{"type":"array","items":{"type":"string"}}},"required":[]},"result":{"type":"object","properties":{"evidence":{"$ref":"#/$defs/1"},"provenance":{"$ref":"#/$defs/30"}},"required":["evidence","provenance"]}},
++    "routes.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/32"}}},
++    "routes.add": {"arguments":{"type":"object","properties":{"mod":{"type":"string"}},"required":["mod"]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]}},
 +    "task.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ledger":{"type":"object","properties":{"thread_id":{"type":"string"},"cwd":{"type":"string"},"cost":{}},"required":["thread_id","cwd","cost"]},"limits":{},"worker_limits":{}},"required":["ledger","limits","worker_limits"]}},
-+    "task.complete": {"arguments":{"type":"object","properties":{"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["candidate_sha256"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"completed"},"receipts":{"$ref":"#/$defs/39"}},"required":["status","receipts"]},{"type":"object","properties":{"status":{"const":"refused"},"missing":{"$ref":"#/$defs/21"}},"required":["status","missing"]},{"type":"object","properties":{"status":{"const":"refused"},"reason":{"const":"unresolved_blocking_findings"},"outstanding_findings":{"type":"array","items":{"type":"string"}}},"required":["status","reason","outstanding_findings"]}]}},
++    "task.complete": {"arguments":{"type":"object","properties":{"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["candidate_sha256"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"completed"},"receipts":{"$ref":"#/$defs/39"}},"required":["status","receipts"]},{"type":"object","properties":{"status":{"const":"refused"},"missing":{"$ref":"#/$defs/20"}},"required":["status","missing"]},{"type":"object","properties":{"status":{"const":"refused"},"reason":{"const":"unresolved_blocking_findings"},"outstanding_findings":{"type":"array","items":{"type":"string"}}},"required":["status","reason","outstanding_findings"]}]}},
 +    "receipts.submit": {"arguments":{"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"agent":{"type":"string"},"execution":{"anyOf":[{"const":false},{"const":true}]},"findings":{"$ref":"#/$defs/37"},"resolves":{"type":"array","items":{"type":"string"}}},"required":["kind","candidate_sha256","outcome","evidence"]},"result":{"$ref":"#/$defs/38"}},
-+    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/21"},"integrate":{"$ref":"#/$defs/21"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/39"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/36"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/35"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/35"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/43"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
++    "contract.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"none"},{"const":"active"},{"const":"unavailable"}]},"active":{"anyOf":[{"type":"null"},{"type":"object","properties":{"schema":{"const":2},"id":{"type":"string"},"version":{"type":"number"},"description":{"type":"string"},"assurance":{"type":"string"},"gates":{"type":"object","properties":{"complete":{"$ref":"#/$defs/20"},"integrate":{"$ref":"#/$defs/20"}},"required":[]},"restrict":{"type":"array","items":{"type":"string"}}},"required":["schema","id","version","description","assurance","gates"]}]},"provenance":{},"receipts":{"$ref":"#/$defs/39"},"finding_ledger":{"type":"object","properties":{},"required":[],"additionalProperties":{"type":"object","properties":{"finding":{"$ref":"#/$defs/36"},"reported_candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"reported_producer":{"$ref":"#/$defs/35"},"report_receipt_index":{"type":"number"},"resolution":{"anyOf":[{"type":"null"},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"producer":{"$ref":"#/$defs/35"},"receipt_index":{"type":"number"}},"required":["candidate_sha256","producer","receipt_index"]}]}},"required":["finding","reported_candidate_sha256","acceptance_sha256","reported_producer","report_receipt_index","resolution"]}},"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/43"}},"required":["status","active","provenance","receipts","finding_ledger","restrictions","scoped_restrictions"]}},
 +    "contract.restrict": {"arguments":{"type":"object","properties":{"operations":{"type":"array","items":{"type":"string"}},"scoped":{"$ref":"#/$defs/43"},"reason":{"type":"string"}},"required":["reason"]},"result":{"type":"object","properties":{"restrictions":{"type":"array","items":{"type":"string"}},"scoped_restrictions":{"$ref":"#/$defs/43"}},"required":["restrictions","scoped_restrictions"]}},
-+    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
-+    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/31"}]}},"required":["handle","route","permissions"]}},
++    "contract.select": {"arguments":{"type":"object","properties":{"contract":{"type":"string"}},"required":["contract"]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"selected":{},"applies":{"const":"next_session"}},"required":["selected","applies"]}]}},
++    "agents.spawn": {"arguments":{"type":"object","properties":{"role":{"type":"string"},"route":{"type":"string"},"prompt":{"type":"string"},"definition":{"type":"string"},"workspace":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"tools":{"type":"array","items":{"type":"string"}},"evidence":{"$ref":"#/$defs/1"},"snapshot":{"$ref":"#/$defs/1"},"parent_history":{"anyOf":[{"const":false},{"const":true}]},"resolution_context":{"type":"object","properties":{"acceptance_sha256":{"type":"string"},"findings":{"type":"array","items":{"type":"string"}}},"required":["acceptance_sha256","findings"]}},"required":["prompt"]},"result":{"type":"object","properties":{"handle":{"type":"string"},"route":{"type":"string"},"permissions":{"anyOf":[{"const":"read_only"},{"const":"isolated_worktree"}]},"parent_history":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/30"}]}},"required":["handle","route","permissions"]}},
 +    "agents.message": {"arguments":{"type":"object","properties":{"handle":{"type":"string"},"message":{"type":"string"}},"required":["handle","message"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"}},"required":["delivered"]}},
-+    "agents.cancel": {"arguments":{"type":"object","properties":{"handle":{"type":"string"}},"required":["handle"]},"result":{"$ref":"#/$defs/45"}},
-+    "agents.result": {"arguments":{"$ref":"#/$defs/46"},"result":{"$ref":"#/$defs/53"}},
-+    "agents.wait": {"arguments":{"$ref":"#/$defs/46"},"result":{"$ref":"#/$defs/53"}},
++    "agents.cancel": {"arguments":{"type":"object","properties":{"handle":{"type":"string"}},"required":["handle"]},"result":{"$ref":"#/$defs/44"}},
++    "agents.result": {"arguments":{"$ref":"#/$defs/45"},"result":{"$ref":"#/$defs/52"}},
++    "agents.wait": {"arguments":{"$ref":"#/$defs/45"},"result":{"$ref":"#/$defs/52"}},
 +    "agents.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"handle":{"type":"string"},"finished":{"type":"boolean"},"consumed":{"type":"boolean"}},"required":["handle","finished","consumed"]}}},
-+    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/50"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
++    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/49"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
 +    "turns.queue": {"arguments":{"type":"object","properties":{"prompt":{"type":"string"},"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"deadline_ms":{"type":"number"}},"required":["prompt","key"]},"result":{"type":"object","properties":{"key":{"type":"string"},"status":{"anyOf":[{"const":"queued"},{"const":"duplicate"}]},"paused":{"anyOf":[{"const":false},{"const":true}]}},"required":["key","status"]}},
 +    "turns.queued": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"paused":{"type":"boolean"},"started":{"type":"number"},"spent_microusd":{"type":"number"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"event":{"type":"string"},"queued_at_ms":{"type":"number"},"deadline_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["key","priority","event","queued_at_ms","deadline_ms"]}}},"required":["paused","started","spent_microusd","entries"]}},
-+    "turns.dequeue": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/54"}},
-+    "process.which": {"arguments":{"$ref":"#/$defs/17"},"result":{"type":"object","properties":{"found":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"}},"required":["name","path","sha256"]}}},"required":["found"]}},
-+    "process.start": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"environment":{"$ref":"#/$defs/10"},"framing":{"anyOf":[{"const":"raw"},{"const":"content-length"},{"const":"ndjson"}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"notify":{"type":"array","items":{"anyOf":[{"const":"output"},{"const":"exit"}]}},"sandbox":{"const":"none"},"raster":{"type":"string"},"keys":{"type":"string"},"pixels":{"anyOf":[{"const":false},{"const":true}]},"stdin":{"const":"null"}},"required":["session","name","path","sha256"]},"result":{"$ref":"#/$defs/55"}},
++    "turns.dequeue": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/53"}},
++    "process.which": {"arguments":{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"sandbox":{"const":"none"}},"required":["names"]},"result":{"type":"object","properties":{"found":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"}},"required":["name","path","sha256"]}}},"required":["found"]}},
++    "process.start": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"environment":{"$ref":"#/$defs/10"},"framing":{"anyOf":[{"const":"raw"},{"const":"content-length"},{"const":"ndjson"}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"notify":{"type":"array","items":{"anyOf":[{"const":"output"},{"const":"exit"}]}},"sandbox":{"const":"none"},"raster":{"type":"string"},"keys":{"type":"string"},"pixels":{"anyOf":[{"const":false},{"const":true}]},"stdin":{"const":"null"}},"required":["session","name","path","sha256"]},"result":{"$ref":"#/$defs/54"}},
 +    "process.exchange": {"arguments":{"type":"object","properties":{"session":{"type":"string"},"send":{"type":"array","items":{}},"wait_ms":{"type":"number"}},"required":["session"]},"result":{"type":"object","properties":{"session":{"type":"string"},"messages":{"type":"array","items":{}},"running":{"const":true}},"required":["session","messages","running"]}},
-+    "process.status": {"arguments":{"$ref":"#/$defs/56"},"result":{"type":"object","properties":{"session":{"type":"string"},"running":{"const":true},"idle_ms":{"type":"number"}},"required":["session","running","idle_ms"]}},
-+    "process.stop": {"arguments":{"$ref":"#/$defs/56"},"result":{"$ref":"#/$defs/57"}},
-+    "providers.register": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
++    "process.status": {"arguments":{"$ref":"#/$defs/55"},"result":{"type":"object","properties":{"session":{"type":"string"},"running":{"const":true},"idle_ms":{"type":"number"}},"required":["session","running","idle_ms"]}},
++    "process.stop": {"arguments":{"$ref":"#/$defs/55"},"result":{"$ref":"#/$defs/56"}},
++    "providers.register": {"arguments":{"$ref":"#/$defs/57"},"result":{}},
 +    "providers.models": {"arguments":{"type":"object","properties":{"provider":{"type":"string"},"name":{"type":"string"},"models":{"type":"array","items":{"type":"object","properties":{"slug":{"type":"string"},"display":{"type":"string"},"context_window":{"type":"number"},"efforts":{"type":"array","items":{"type":"string"}},"default_effort":{"type":"string"}},"required":["slug","display","context_window","efforts"]}}},"required":["provider","models"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"models":{"type":"number"}},"required":["provider","models"]}},
 +    "providers.unregister": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "sidecars.invoke": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"input":{}},"required":["id","input"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"program_sha256":{"type":"string"},"source_hashes":{"$ref":"#/$defs/0"},"result":{},"untrusted":{"const":true}},"required":["provider","program_sha256","source_hashes","result","untrusted"]}},
-+    "sidecars.start": {"arguments":{"$ref":"#/$defs/58"},"result":{}},
++    "sidecars.start": {"arguments":{"$ref":"#/$defs/57"},"result":{}},
 +    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
-+    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/44"}]}},
++    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/33"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/59"}},
-+    "workspace.unwatch": {"arguments":{"$ref":"#/$defs/59"},"result":{"$ref":"#/$defs/57"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/58"}},
++    "workspace.unwatch": {"arguments":{"$ref":"#/$defs/58"},"result":{"$ref":"#/$defs/56"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
-+    "events.schedule": {"arguments":{"$ref":"#/$defs/60"},"result":{"$ref":"#/$defs/60"}},
-+    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/45"}},
++    "events.schedule": {"arguments":{"$ref":"#/$defs/59"},"result":{"$ref":"#/$defs/59"}},
++    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/44"}},
 +    "tools.define": {"arguments":{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"parameters":{},"label":{"type":"string"}},"required":["name","description","parameters"]},"result":{"type":"object","properties":{"name":{"type":"string"},"effective_at":{"const":"next_request"}},"required":["name","effective_at"]}},
-+    "tools.undefine": {"arguments":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"result":{"$ref":"#/$defs/54"}},
++    "tools.undefine": {"arguments":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"result":{"$ref":"#/$defs/53"}},
 +    "tools.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"tools":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"kind":{"anyOf":[{"const":"mcp"},{"const":"builtin"},{"const":"extension"},{"const":"dynamic"}]},"server":{"anyOf":[{"type":"null"},{"type":"string"}]},"original":{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"freeform":{"type":"boolean"}},"required":["description","parameters","freeform"]},"effective":{"anyOf":[{"type":"null"},{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"deferred":{"type":"boolean"}},"required":["description","parameters","deferred"]}]}},"required":["name","kind","server","original","effective"]}}},"required":["thread_id","tools"]}},
-+    "tools.invoke": {"arguments":{"$ref":"#/$defs/61"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
-+    "tools.check": {"arguments":{"$ref":"#/$defs/61"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
-+    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/63"}}},
-+    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/63"}]}},"required":["status","profile"]}},
-+    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"const":"next_request"}},"required":["route","effective_at"]}},
-+    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/50"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
++    "tools.invoke": {"arguments":{"$ref":"#/$defs/60"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
++    "tools.check": {"arguments":{"$ref":"#/$defs/60"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
++    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/62"}}},
++    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/62"}]}},"required":["status","profile"]}},
++    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/32"},"effective_at":{"const":"next_request"}},"required":["route","effective_at"]}},
++    "turns.activity": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"thread_id":{"type":"string"},"turn_id":{"type":"string"},"last":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"turns":{"type":"array","items":{"type":"object","properties":{"turn_id":{"type":"string"},"started_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"ended_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"const":"error"},{"const":"unknown"},{"const":"completed"},{"const":"interrupted"},{"const":"running"},{"const":"aborted"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/49"},"unrecorded_end":{"type":"boolean"},"tool_calls":{"type":"array","items":{"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"started_at":{"type":"string"},"finished_at":{"anyOf":[{"type":"null"},{"type":"string"}]},"outcome":{"anyOf":[{"type":"null"},{"type":"string"}]},"output_replaced":{"type":"object","properties":{"mod":{"type":"string"},"original_sha256":{"type":"string"},"replacement_sha256":{"type":"string"}},"required":["mod","original_sha256","replacement_sha256"]}},"required":["call_id","tool","started_at","finished_at","outcome"]}},"processes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"anyOf":[{"const":"exec"},{"const":"managed"}]},"command":{"type":"string"},"running":{"anyOf":[{"type":"null"},{"const":false},{"const":true}]},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["id","kind","command","running","exit_code"]}},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"before":{"anyOf":[{"type":"null"},{"type":"string"}]},"after":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"external"},{"const":"exec"},{"const":"tool"},{"const":"transaction"},{"const":"rescan"}]}},"required":["path","before","after","source"]}},"truncated":{"type":"boolean"}},"required":["turn_id","started_at","ended_at","outcome","reason","error","unrecorded_end","tool_calls","processes","files","truncated"]}},"recording":{"type":"boolean"}},"required":["turns","recording"]}},
 +    "turns.abort": {"arguments":{"type":"object","properties":{"turn_id":{"type":"string"}},"required":["turn_id"]},"result":{"type":"object","properties":{"accepted":{"type":"boolean"}},"required":["accepted"]}},
 +    "terminal.selection": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"text":{"anyOf":[{"type":"null"},{"type":"string"}]},"truncated":{"type":"boolean"}},"required":["text","truncated"]}},
 +    "terminal.copy": {"arguments":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"pending"},{"const":"confirmed"},{"const":"unconfirmed"},{"const":"busy"}]}},"required":["status"]}},
 +    "terminal.notify": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title"]},"result":{"type":"object","properties":{"delivered":{"type":"boolean"},"method":{"anyOf":[{"const":"none"},{"const":"osc9"},{"const":"osc99"},{"const":"osc777"},{"const":"bel"}]},"reason":{"type":"string"}},"required":["delivered","method"]}},
 +    "terminal.show_thread": {"arguments":{"type":"object","properties":{"thread_id":{"type":"string"}},"required":["thread_id"]},"result":{"type":"object","properties":{"shown":{"type":"boolean"}},"required":["shown"]}},
-+    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/64"}}},"required":["commands"]}},
-+    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/64"}},
-+    "commands.invoke": {"arguments":{"$ref":"#/$defs/65"},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
++    "commands.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"commands":{"type":"array","items":{"$ref":"#/$defs/63"}}},"required":["commands"]}},
++    "commands.describe": {"arguments":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]},"result":{"$ref":"#/$defs/63"}},
++    "commands.invoke": {"arguments":{"$ref":"#/$defs/64"},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"command":{"type":"string"},"result":{}},"required":["command","result"]}]}},
 +    "config.describe": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"rows":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"label":{"type":"string"},"value":{},"source":{"type":"string"},"version":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"mod"},{"const":"codex"}]},"editable":{"type":"boolean"},"managed":{"type":"boolean"},"secret":{"type":"boolean"},"hidden":{"type":"boolean"},"type":{"type":"string"},"enum":{"anyOf":[{"type":"null"},{"type":"array","items":{}}]}},"required":["key","label","value","source","version","scope","editable","managed","secret","hidden"]}}},"required":["rows"]}},
-+    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}}]}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
++    "config.set": {"arguments":{"type":"object","properties":{"key":{"type":"string"},"value":{},"expected":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}}]}},"required":["key","value"]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"key":{"type":"string"},"effective":{}},"required":["key","effective"]}]}},
 +    "sessions.ports": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ports":{"type":"array","items":{"type":"object","properties":{"port":{"type":"number"},"pid":{"type":"number"},"address":{"type":"string"}},"required":["port","pid","address"]}}},"required":["ports"]}},
-+    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/44"}]}},
++    "terminal.import_file": {"arguments":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"number"},"lifetime":{"anyOf":[{"const":"thread"},{"const":"package"}]}},"required":["path"]},"result":{"anyOf":[{"$ref":"#/$defs/1"},{"$ref":"#/$defs/33"}]}},
 +    "terminal.image_sample": {"arguments":{"type":"object","properties":{"resource":{"$ref":"#/$defs/1"},"columns":{"type":"number"},"rows":{"type":"number"}},"required":["resource","columns","rows"]},"result":{"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"},"rgba":{"type":"array","items":{"type":"number"}}},"required":["width","height","rgba"]}},
-+    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/66"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
-+    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/66"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
++    "composer.read": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"selection":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]},"revision":{"type":"number"},"attachments":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"image"},"label":{"type":"string"},"owner":{"type":"string"},"resource":{"$ref":"#/$defs/2"},"width":{"type":"number"},"height":{"type":"number"}},"required":["id","kind","label","owner","resource"]}},"suggestion":{"anyOf":[{"type":"null"},{"type":"object","properties":{"owner":{"type":"string"},"id":{"type":"string"}},"required":["owner","id"]}]}},"required":["text","cursor","selection","revision","attachments","suggestion"]}},
++    "composer.write": {"arguments":{"type":"object","properties":{"revision":{"type":"number"},"edit":{"anyOf":[{"type":"object","properties":{"kind":{"anyOf":[{"const":"fill"},{"const":"append"},{"const":"insert"}]},"text":{"type":"string"}},"required":["kind","text"]},{"type":"object","properties":{"kind":{"const":"splice"},"text":{"type":"string"},"start":{"type":"number"},"end":{"type":"number"}},"required":["kind","text","start","end"]}]},"cursor":{"type":"number"},"selection":{"$ref":"#/$defs/65"},"attach":{"type":"array","items":{"type":"object","properties":{"image":{"$ref":"#/$defs/1"}},"required":["image"]}},"detach":{"type":"array","items":{"type":"string"}}},"required":["revision"]},"result":{"type":"object","properties":{"text":{"type":"string"},"cursor":{"type":"number"},"revision":{"type":"number"}},"required":["text","cursor","revision"]}},
 +    "composer.suggest": {"arguments":{"anyOf":[{"type":"object","properties":{"revision":{"type":"number"},"id":{"type":"string"},"text":{"type":"string"}},"required":["revision","id","text"]},{"type":"object","properties":{"clear":{"const":true}},"required":["clear"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]},{"type":"object","properties":{"cleared":{"const":true}},"required":["cleared"]}]}},
-+    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/67"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
-+    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/67"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
-+    "prompts.status": {"arguments":{"$ref":"#/$defs/68"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
-+    "prompts.revoke": {"arguments":{"$ref":"#/$defs/68"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
++    "prompts.consent": {"arguments":{"type":"object","properties":{"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"}},"required":["text"]},"result":{"type":"object","properties":{"consent":{"type":"string"},"sha256":{"type":"string"}},"required":["consent","sha256"]}},
++    "prompts.submit": {"arguments":{"type":"object","properties":{"consent":{"type":"string"},"text":{"type":"string"},"attachments":{"$ref":"#/$defs/66"},"mode":{"anyOf":[{"const":"turn"},{"const":"steer"}]},"client_id":{"type":"string"}},"required":["consent","text","mode"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"anyOf":[{"const":"started"},{"const":"steered"}]},"client_id":{"type":"string"}},"required":["status","client_id"]},{"type":"object","properties":{"status":{"const":"not_submitted"},"reason":{"type":"string"}},"required":["status","reason"]}]}},
++    "prompts.status": {"arguments":{"$ref":"#/$defs/67"},"result":{"anyOf":[{"type":"object","properties":{"state":{"anyOf":[{"const":"pending"},{"const":"missing"}]}},"required":["state"]},{"type":"object","properties":{"state":{"const":"delivered"},"client_id":{"type":"string"},"turn_id":{"type":"string"}},"required":["state","client_id","turn_id"]},{"type":"object","properties":{"state":{"const":"unconfirmed"},"client_id":{"type":"string"}},"required":["state","client_id"]}]}},
++    "prompts.revoke": {"arguments":{"$ref":"#/$defs/67"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
-+    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
++    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"required"},{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"required":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","required","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
 +    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}}},"required":["index","packages"]}},
-+    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
-+    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
++    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
++    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/74"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
 +    "settings.write": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"values":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["values"]},"result":{"type":"object","properties":{"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["settings"]}},
-+    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
-+    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/77"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
++    "terminal.open": {"arguments":{"anyOf":[{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]},{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]},{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"number"},"editor":{"const":true}},"required":["path","editor"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"opened":{"const":true}},"required":["opened"]}]}},
++    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/76"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/77"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/78"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/65"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/76"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/77"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/64"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/79"},{"$ref":"#/$defs/79"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
-+    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"$ref":"#/$defs/55"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/91"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/82"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/91"}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/78"},{"$ref":"#/$defs/78"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"$ref":"#/$defs/54"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/90"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/90"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -109027,23 +109231,23 @@ index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943eb
 +    "14": {"type":"object","properties":{"status":{"type":"number"},"url":{"type":"string"},"headers":{"$ref":"#/$defs/0"},"redirects":{"$ref":"#/$defs/13"}},"required":["status","url","headers","redirects"]},
 +    "15": {"type":"object","properties":{"handle":{"type":"number"}},"required":["handle"]},
 +    "16": {"type":"object","properties":{"server":{"type":"string"}},"required":["server"]},
-+    "17": {"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"]},
-+    "18": {"anyOf":[{"const":"host"},{"const":"lead"},{"const":"any"},{"const":"separate_agent"},{"const":"integration"}]},
-+    "19": {"type":"array","items":{"anyOf":[{"const":"candidate"},{"const":"acceptance"}]}},
-+    "20": {"type":"object","properties":{"receipt":{"type":"string"},"producer":{"$ref":"#/$defs/18"},"bind":{"$ref":"#/$defs/19"},"blocking_findings":{"anyOf":[{"const":"reject"},{"const":"allow"}]}},"required":["receipt"]},
-+    "21": {"type":"array","items":{"$ref":"#/$defs/20"}},
-+    "22": {"anyOf":[{"const":"event"},{"const":"tool"},{"const":"user_command"},{"const":"cli"}]},
-+    "23": {"type":"object","properties":{"mod":{"type":"string"},"source_sha256":{"type":"string"},"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"$ref":"#/$defs/22"},"at":{"type":"number"}},"required":["mod","source_sha256","thread_id","origin","at"]},
-+    "24": {"type":"object","properties":{"value":{},"revision":{"type":"number"},"provenance":{"$ref":"#/$defs/23"}},"required":["value","revision","provenance"]},
-+    "25": {"type":"object","properties":{"session_id":{"type":"string"},"task_id":{"type":"string"},"parent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"timestamp":{"type":"string"},"revision":{"type":"string"},"handle":{"type":"string"},"history_mode":{"type":"string"},"inherited_history":{"type":"boolean"},"incomplete_tail":{"type":"boolean"}},"required":["session_id","task_id","parent_id","timestamp","revision","handle","history_mode","inherited_history","incomplete_tail"]},
-+    "26": {"type":"object","properties":{"session_id":{"type":"string"},"turn_id":{"type":"string"},"item":{"type":"number"},"timestamp":{"anyOf":[{"type":"null"},{"type":"string"}]},"untrusted":{"const":true}},"required":["session_id","turn_id","item","timestamp","untrusted"]},
-+    "27": {"type":"object","properties":{"kind":{"const":"tool_call"},"name":{"type":"string"},"call_id":{"type":"string"}},"required":["kind","name","call_id"]},
-+    "28": {"type":"object","properties":{"bytes":{"type":"number"},"sha256":{"type":"string"}},"required":["bytes","sha256"]},
-+    "29": {"type":"object","properties":{"truncated":{"type":"boolean"},"redacted":{"type":"boolean"}},"required":["truncated","redacted"]},
-+    "30": {"type":"object","properties":{"kind":{"const":"tool_result"},"call_id":{"type":"string"}},"required":["kind","call_id"]},
-+    "31": {"type":"object","properties":{"sha256":{"type":"string"},"bytes":{"type":"number"},"items":{"type":"number"},"revision":{"type":"number"}},"required":["sha256","bytes","items","revision"]},
-+    "32": {"anyOf":[{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},
-+    "33": {"type":"object","properties":{"name":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"reasoning":{"type":"string"},"roles":{"type":"array","items":{"anyOf":[{"const":"worker"},{"const":"lead"}]}},"billing":{"$ref":"#/$defs/32"},"tools":{"type":"array","items":{"type":"string"}},"available":{"type":"boolean"},"credential":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["name","model","provider","reasoning","roles","billing","tools","available","credential"]},
++    "17": {"anyOf":[{"const":"host"},{"const":"lead"},{"const":"any"},{"const":"separate_agent"},{"const":"integration"}]},
++    "18": {"type":"array","items":{"anyOf":[{"const":"candidate"},{"const":"acceptance"}]}},
++    "19": {"type":"object","properties":{"receipt":{"type":"string"},"producer":{"$ref":"#/$defs/17"},"bind":{"$ref":"#/$defs/18"},"blocking_findings":{"anyOf":[{"const":"reject"},{"const":"allow"}]}},"required":["receipt"]},
++    "20": {"type":"array","items":{"$ref":"#/$defs/19"}},
++    "21": {"anyOf":[{"const":"event"},{"const":"tool"},{"const":"user_command"},{"const":"cli"}]},
++    "22": {"type":"object","properties":{"mod":{"type":"string"},"source_sha256":{"type":"string"},"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"$ref":"#/$defs/21"},"at":{"type":"number"}},"required":["mod","source_sha256","thread_id","origin","at"]},
++    "23": {"type":"object","properties":{"value":{},"revision":{"type":"number"},"provenance":{"$ref":"#/$defs/22"}},"required":["value","revision","provenance"]},
++    "24": {"type":"object","properties":{"session_id":{"type":"string"},"task_id":{"type":"string"},"parent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"timestamp":{"type":"string"},"revision":{"type":"string"},"handle":{"type":"string"},"history_mode":{"type":"string"},"inherited_history":{"type":"boolean"},"incomplete_tail":{"type":"boolean"}},"required":["session_id","task_id","parent_id","timestamp","revision","handle","history_mode","inherited_history","incomplete_tail"]},
++    "25": {"type":"object","properties":{"session_id":{"type":"string"},"turn_id":{"type":"string"},"item":{"type":"number"},"timestamp":{"anyOf":[{"type":"null"},{"type":"string"}]},"untrusted":{"const":true}},"required":["session_id","turn_id","item","timestamp","untrusted"]},
++    "26": {"type":"object","properties":{"kind":{"const":"tool_call"},"name":{"type":"string"},"call_id":{"type":"string"}},"required":["kind","name","call_id"]},
++    "27": {"type":"object","properties":{"bytes":{"type":"number"},"sha256":{"type":"string"}},"required":["bytes","sha256"]},
++    "28": {"type":"object","properties":{"truncated":{"type":"boolean"},"redacted":{"type":"boolean"}},"required":["truncated","redacted"]},
++    "29": {"type":"object","properties":{"kind":{"const":"tool_result"},"call_id":{"type":"string"}},"required":["kind","call_id"]},
++    "30": {"type":"object","properties":{"sha256":{"type":"string"},"bytes":{"type":"number"},"items":{"type":"number"},"revision":{"type":"number"}},"required":["sha256","bytes","items","revision"]},
++    "31": {"anyOf":[{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},
++    "32": {"type":"object","properties":{"name":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"reasoning":{"type":"string"},"roles":{"type":"array","items":{"anyOf":[{"const":"worker"},{"const":"lead"}]}},"billing":{"$ref":"#/$defs/31"},"tools":{"type":"array","items":{"type":"string"}},"available":{"type":"boolean"},"credential":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["name","model","provider","reasoning","roles","billing","tools","available","credential"]},
++    "33": {"type":"object","properties":{"status":{"const":"declined"}},"required":["status"]},
 +    "34": {"anyOf":[{"const":"host"},{"const":"lead"},{"const":"agent"},{"const":"integration"}]},
 +    "35": {"type":"object","properties":{"kind":{"$ref":"#/$defs/34"},"handle":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["kind","handle"]},
 +    "36": {"type":"object","properties":{"fingerprint":{"type":"string"},"severity":{"anyOf":[{"const":"warning"},{"const":"advice"},{"const":"blocking"}]},"summary":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["fingerprint","severity","summary","paths"]},
@@ -109054,54 +109258,53 @@ index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943eb
 +    "41": {"type":"object","properties":{},"required":[],"additionalProperties":{"$ref":"#/$defs/40"}},
 +    "42": {"type":"object","properties":{"operation":{"type":"string"},"when":{"$ref":"#/$defs/41"}},"required":["operation","when"]},
 +    "43": {"type":"array","items":{"$ref":"#/$defs/42"}},
-+    "44": {"type":"object","properties":{"status":{"const":"declined"}},"required":["status"]},
-+    "45": {"type":"object","properties":{"cancelled":{"type":"boolean"}},"required":["cancelled"]},
-+    "46": {"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},
-+    "47": {"type":"object","properties":{"status":{"const":"running"}},"required":["status"]},
-+    "48": {"anyOf":[{"const":"transport"},{"const":"unknown"},{"const":"rate_limit"},{"const":"authorization"},{"const":"sandbox"},{"const":"allowance"},{"const":"invalid_request"}]},
-+    "49": {"type":"object","properties":{"category":{"$ref":"#/$defs/48"},"code":{},"message":{"type":"string"}},"required":["category","code","message"]},
-+    "50": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/49"}]},
-+    "51": {"type":"object","properties":{"status":{"const":"failed"},"error":{"type":"string"},"failure":{"$ref":"#/$defs/50"}},"required":["status","error"]},
-+    "52": {"type":"object","properties":{"status":{"const":"completed"},"text":{"type":"string"},"consumed":{"type":"boolean"},"evidence":{"$ref":"#/$defs/1"},"candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}}},"required":["status","text","consumed","evidence"]},
-+    "53": {"anyOf":[{"$ref":"#/$defs/47"},{"$ref":"#/$defs/51"},{"$ref":"#/$defs/52"}]},
-+    "54": {"type":"object","properties":{"removed":{"type":"boolean"}},"required":["removed"]},
-+    "55": {"type":"object","properties":{"session":{"type":"string"},"running":{"const":true}},"required":["session","running"]},
-+    "56": {"type":"object","properties":{"session":{"type":"string"}},"required":["session"]},
-+    "57": {"type":"object","properties":{"stopped":{"type":"boolean"}},"required":["stopped"]},
-+    "58": {"type":"object","properties":{"id":{"type":"string"},"secrets":{"type":"array","items":{"type":"string"}}},"required":["id"]},
-+    "59": {"type":"object","properties":{"watch_id":{"type":"string"}},"required":["watch_id"]},
-+    "60": {"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"}},"required":["key","delay_ms"]},
-+    "61": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
-+    "62": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
-+    "63": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/62"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
-+    "64": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
-+    "65": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
-+    "66": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
-+    "67": {"type":"array","items":{"$ref":"#/$defs/1"}},
-+    "68": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
-+    "69": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
-+    "70": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
-+    "71": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
-+    "72": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
-+    "73": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
-+    "74": {"anyOf":[{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"},{"$ref":"#/$defs/73"}]},
-+    "75": {"type":"object","properties":{"action":{"$ref":"#/$defs/69"},"id":{"type":"string"},"source":{"$ref":"#/$defs/74"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
-+    "76": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
-+    "77": {"type":"array","items":{"$ref":"#/$defs/76"}},
-+    "78": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
-+    "79": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "80": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "81": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "82": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/80"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/81"}},"required":["prompt"]},
-+    "83": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "84": {"type":"array","items":{"$ref":"#/$defs/83"}},
-+    "85": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "86": {"type":"array","items":{"$ref":"#/$defs/85"}},
-+    "87": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "88": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "89": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/88"}},"required":["microusd","basis"]},
-+    "90": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "91": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/84"},"tool_calls":{"$ref":"#/$defs/86"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/87"},"cost":{"$ref":"#/$defs/89"},"timing":{"$ref":"#/$defs/90"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "44": {"type":"object","properties":{"cancelled":{"type":"boolean"}},"required":["cancelled"]},
++    "45": {"type":"object","properties":{"handle":{"type":"string"},"consume":{"anyOf":[{"const":false},{"const":true}]}},"required":["handle"]},
++    "46": {"type":"object","properties":{"status":{"const":"running"}},"required":["status"]},
++    "47": {"anyOf":[{"const":"transport"},{"const":"unknown"},{"const":"rate_limit"},{"const":"authorization"},{"const":"sandbox"},{"const":"allowance"},{"const":"invalid_request"}]},
++    "48": {"type":"object","properties":{"category":{"$ref":"#/$defs/47"},"code":{},"message":{"type":"string"}},"required":["category","code","message"]},
++    "49": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/48"}]},
++    "50": {"type":"object","properties":{"status":{"const":"failed"},"error":{"type":"string"},"failure":{"$ref":"#/$defs/49"}},"required":["status","error"]},
++    "51": {"type":"object","properties":{"status":{"const":"completed"},"text":{"type":"string"},"consumed":{"type":"boolean"},"evidence":{"$ref":"#/$defs/1"},"candidate_sha256":{"type":"string"},"changed_paths":{"type":"array","items":{"type":"string"}}},"required":["status","text","consumed","evidence"]},
++    "52": {"anyOf":[{"$ref":"#/$defs/46"},{"$ref":"#/$defs/50"},{"$ref":"#/$defs/51"}]},
++    "53": {"type":"object","properties":{"removed":{"type":"boolean"}},"required":["removed"]},
++    "54": {"type":"object","properties":{"session":{"type":"string"},"running":{"const":true}},"required":["session","running"]},
++    "55": {"type":"object","properties":{"session":{"type":"string"}},"required":["session"]},
++    "56": {"type":"object","properties":{"stopped":{"type":"boolean"}},"required":["stopped"]},
++    "57": {"type":"object","properties":{"id":{"type":"string"},"secrets":{"type":"array","items":{"type":"string"}}},"required":["id"]},
++    "58": {"type":"object","properties":{"watch_id":{"type":"string"}},"required":["watch_id"]},
++    "59": {"type":"object","properties":{"key":{"type":"string"},"delay_ms":{"type":"number"}},"required":["key","delay_ms"]},
++    "60": {"type":"object","properties":{"tool":{"type":"string"},"arguments":{}},"required":["tool","arguments"]},
++    "61": {"anyOf":[{"const":"secret"},{"const":"provider"},{"const":"chatgpt"},{"const":"api_key"}]},
++    "62": {"type":"object","properties":{"id":{"type":"string"},"label":{"type":"string"},"kind":{"$ref":"#/$defs/61"},"provider":{"anyOf":[{"type":"null"},{"type":"string"}]},"origin":{"anyOf":[{"type":"null"},{"type":"string"}]},"status":{"anyOf":[{"const":"ready"},{"const":"not_enrolled"}]},"default":{"type":"boolean"}},"required":["id","label","kind","provider","origin","status","default"]},
++    "63": {"type":"object","properties":{"command":{"type":"string"},"description":{"type":"string"},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"hidden":{"type":"boolean"},"args_hint":{"anyOf":[{"type":"null"},{"type":"string"}]},"immediate":{"type":"boolean"},"protected":{"type":"boolean"}},"required":["command","description","owner","hidden","args_hint","immediate","protected"]},
++    "64": {"type":"object","properties":{"command":{"type":"string"},"args":{"type":"string"}},"required":["command"]},
++    "65": {"type":"object","properties":{"start":{"type":"number"},"end":{"type":"number"}},"required":["start","end"]},
++    "66": {"type":"array","items":{"$ref":"#/$defs/1"}},
++    "67": {"type":"object","properties":{"consent":{"type":"string"}},"required":["consent"]},
++    "68": {"anyOf":[{"const":"rollback"},{"const":"remove"},{"const":"update"},{"const":"install"},{"const":"enable"},{"const":"disable"},{"const":"trust"}]},
++    "69": {"type":"object","properties":{"kind":{"const":"local"},"path":{"type":"string"}},"required":["kind","path"]},
++    "70": {"type":"object","properties":{"kind":{"const":"repository"},"repository":{"type":"string"},"revision":{"type":"string"},"subdirectory":{"type":"string"}},"required":["kind","repository","revision"]},
++    "71": {"type":"object","properties":{"kind":{"const":"package"},"index":{"type":"string"},"id":{"type":"string"},"version":{"type":"string"}},"required":["kind","index","id","version"]},
++    "72": {"type":"object","properties":{"kind":{"const":"npm"},"package":{"type":"string"},"version":{"type":"string"},"registry":{"type":"string"},"integrity":{"type":"string"}},"required":["kind","package"]},
++    "73": {"anyOf":[{"$ref":"#/$defs/69"},{"$ref":"#/$defs/70"},{"$ref":"#/$defs/71"},{"$ref":"#/$defs/72"}]},
++    "74": {"type":"object","properties":{"action":{"$ref":"#/$defs/68"},"id":{"type":"string"},"source":{"$ref":"#/$defs/73"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
++    "75": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
++    "76": {"type":"array","items":{"$ref":"#/$defs/75"}},
++    "77": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
++    "78": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "79": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "80": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "81": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/79"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/80"}},"required":["prompt"]},
++    "82": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "83": {"type":"array","items":{"$ref":"#/$defs/82"}},
++    "84": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "85": {"type":"array","items":{"$ref":"#/$defs/84"}},
++    "86": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "87": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "88": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/87"}},"required":["microusd","basis"]},
++    "89": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "90": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/83"},"tool_calls":{"$ref":"#/$defs/85"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/86"},"cost":{"$ref":"#/$defs/88"},"timing":{"$ref":"#/$defs/89"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -109396,10 +109599,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c0e4900b8
+index 0000000000000000000000000000000000000000..a14790c2a95ea99b6503d081b1dd7c005eed6954
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2901 @@
+@@ -0,0 +1,2904 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -110113,6 +110316,7 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +                secret_environment: package.trust.secret_environment.clone(),
 +                expires_at: None,
 +                tier: None,
++                required: selection.is_some_and(|selection| config.mods[selection].required),
 +            };
 +            if let Some(selection) = selection {
 +                config.mods[selection] = next;
@@ -110545,6 +110749,7 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +            secret_environment: previous.trust.secret_environment,
 +            expires_at: None,
 +            tier: None,
++            required: selection.required,
 +        };
 +        config.revision = config
 +            .revision
@@ -112171,6 +112376,7 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +            secret_environment: Vec::new(),
 +            expires_at: None,
 +            tier: None,
++            required: false,
 +        };
 +        let loaded = packages::detached(package, source, assets, selection, Value::Null);
 +        packages::migration_registrations(node, &loaded).map_err(|error| {
@@ -112830,10 +113036,10 @@ index 0000000000000000000000000000000000000000..cb228f8813ecf358864e76057fe33453
 +}
 diff --git a/codex-rs/omd/src/mods/policy.rs b/codex-rs/omd/src/mods/policy.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..262995594fc1c7ec9281bc3138c3e44d9c02dadb
+index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756910076d5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/policy.rs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,493 @@
 +use super::*;
 +use std::os::unix::fs::MetadataExt;
 +
@@ -113244,6 +113450,7 @@ index 0000000000000000000000000000000000000000..262995594fc1c7ec9281bc3138c3e44d
 +            secret_environment: package.secret_environment.clone(),
 +            expires_at: None,
 +            tier: package.tier,
++            required: false,
 +        };
 +        let targets = self.targets(user, project);
 +        let mut loading: BTreeSet<&str> = targets.iter().map(|target| target.id.as_str()).collect();
@@ -116309,10 +116516,10 @@ index 0000000000000000000000000000000000000000..7779d60984c037dcb098eb89d2eee642
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254ffd361bdb
+index 0000000000000000000000000000000000000000..6798f8294560406435cdc9c1e0579ada14a3c08b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1500 @@
+@@ -0,0 +1,1522 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -116709,7 +116916,7 @@ index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254f
 +    Unavailable(&'static str),
 +}
 +
-+fn lock(path: &Path) -> Result<File> {
++pub(crate) fn lock(path: &Path) -> Result<File> {
 +    let file = OpenOptions::new()
 +        .create(true)
 +        .truncate(false)
@@ -117345,6 +117552,7 @@ index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254f
 +                "scope": selection.scope,
 +                "tier": selection.tier,
 +                "selected": selection.enabled,
++                "required": selection.required,
 +                "packaged": packaged,
 +                "settings_origin": settings_origin,
 +                "sha256": selection.sha256,
@@ -117485,11 +117693,11 @@ index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254f
 +                return Err(failure("explicit_exact_capability_grant_required"));
 +            }
 +            super::check_secret_environment(&package, &secret_environment)?;
-+            let settings = config
++            let (settings, required) = config
 +                .mods
 +                .iter()
 +                .find(|m| m.path == path)
-+                .map(|m| m.settings.clone())
++                .map(|m| (m.settings.clone(), m.required))
 +                .unwrap_or_default();
 +            super::validate_settings(&package, &settings)?;
 +            config.mods.retain(|m| m.path != path);
@@ -117504,6 +117712,7 @@ index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254f
 +                secret_environment: package.secret_environment(),
 +                expires_at,
 +                tier: None,
++                required,
 +            });
 +        }
 +        config.revision = config
@@ -117664,6 +117873,26 @@ index 0000000000000000000000000000000000000000..389978990df181685570f6fc0ba1254f
 +            self.check_service_providers(&manifest, path)?;
 +        }
 +        selection.enabled = enabled;
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.write("mods.json", &serde_json::to_value(config)?)
++    }
++
++    pub fn root(&self) -> &Path {
++        &self.root
++    }
++
++    pub fn set_required(&self, path: &Path, required: bool) -> Result<()> {
++        let _lock = self.lock()?;
++        let mut config = self.configuration()?;
++        let selection = config
++            .mods
++            .iter_mut()
++            .find(|m| m.path == path)
++            .ok_or_else(|| failure("package_not_trusted"))?;
++        selection.required = required;
 +        config.revision = config
 +            .revision
 +            .checked_add(1)
@@ -120238,10 +120467,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b91936fbd
+index 0000000000000000000000000000000000000000..544ea4c6ec21d12f0e43fd7b81eb652f86da34fc
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,709 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -120431,20 +120660,62 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
 +    let selections = selections(store)?;
 +    let Some(cache) = &selections.listing else {
-+        return Ok(listing(&selections, runtime)?.0);
++        return Ok(with_route_choices(
++            store.root(),
++            listing(&selections, runtime)?.0,
++        ));
 +    };
 +    let read = listing_key(runtime);
 +    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
 +    if let Some((key, listed)) = &*cache
 +        && *key == read
 +    {
-+        return Ok(listed.clone());
++        return Ok(with_route_choices(store.root(), listed.clone()));
 +    }
 +    let (listed, cacheable) = listing(&selections, runtime)?;
 +    if cacheable {
 +        *cache = Some((read, listed.clone()));
 +    }
-+    Ok(listed)
++    Ok(with_route_choices(store.root(), listed))
++}
++
++/// Lists the `host.json` worker routes open to each mod as the `enum` of its `"choices": "routes"` settings; read on
++/// every call because `host.json` changes outside the listing cache.
++fn with_route_choices(root: &Path, mut listed: Value) -> Value {
++    let config = std::fs::read(root.join("host.json"))
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .unwrap_or_default();
++    let routes = config["routes"]
++        .as_array()
++        .map(Vec::as_slice)
++        .unwrap_or_default();
++    for package in listed["packages"].as_array_mut().into_iter().flatten() {
++        let id = package["id"].clone();
++        let names: Vec<Value> = routes
++            .iter()
++            .filter(|route| {
++                route["roles"]
++                    .as_array()
++                    .is_some_and(|roles| roles.contains(&json!("worker")))
++                    && route["mods"]
++                        .as_array()
++                        .is_none_or(|mods| mods.is_empty() || mods.contains(&id))
++            })
++            .filter_map(|route| route["name"].as_str().map(Value::from))
++            .collect();
++        for property in package
++            .get_mut("settings_schema")
++            .and_then(|schema| schema.get_mut("properties"))
++            .and_then(Value::as_object_mut)
++            .into_iter()
++            .flat_map(|properties| properties.values_mut())
++            .filter(|property| property["choices"] == "routes")
++        {
++            property["enum"] = Value::from(names.clone());
++        }
++    }
++    listed
 +}
 +
 +pub fn listing_key(runtime: Option<&Value>) -> Value {
@@ -120541,6 +120812,7 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +                "blocked": locked.and_then(|package| lock.blocked_reason(&package.id, &package.version, &package.integrity)),
 +                "installed": true,
 +                "enabled": enabled,
++                "required": selection["required"],
 +                "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
 +                "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
 +                "failed": failed,
@@ -120910,10 +121182,10 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..75b33c38aec7dbbb4fb07c66a40e2f5840173df3
+index 0000000000000000000000000000000000000000..6c136b1d60a8ac5585f99df79d62aa3b2d8af3ab
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,326 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -121193,6 +121465,51 @@ index 0000000000000000000000000000000000000000..75b33c38aec7dbbb4fb07c66a40e2f58
 +    assert_eq!(
 +        list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
 +        "reload"
++    );
++}
++
++#[test]
++fn listing_offers_host_routes_and_marks_required_selections() {
++    let (_temp, store, root) = setup();
++    let path = fixture_package(&root, "routed_mod", &["commands"], json!([]));
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++    let setting = json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes"});
++    manifest["settings_schema"] = json!({"type": "object", "properties": {"route": setting}});
++    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
++    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store
++        .trust(path.clone(), &sha256, vec!["commands".into()], "user")
++        .unwrap();
++    store.set_required(&path, true).unwrap();
++    std::fs::write(
++        store.root().join("host.json"),
++        json!({"routes": [{"name": "open", "roles": ["worker"]}, {"name": "lead", "roles": ["lead"]},
++            {"name": "scoped", "roles": ["worker"], "mods": ["routed_mod"]},
++            {"name": "other", "roles": ["worker"], "mods": ["another_mod"]}]})
++        .to_string(),
++    )
++    .unwrap();
++    let listed = list(&store, None).unwrap();
++    let package = &listed["packages"][0];
++    assert_eq!(package["required"], true);
++    assert_eq!(
++        package["settings_schema"]["properties"]["route"],
++        json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes",
++            "enum": ["open", "scoped"]})
++    );
++
++    manifest["settings_schema"]["properties"]["route"] =
++        json!({"type": "number", "choices": "routes"});
++    std::fs::write(path.join("mod.json"), manifest.to_string()).unwrap();
++    assert!(
++        ModStore::inspect_package(&path)
++            .unwrap_err()
++            .to_string()
++            .contains("invalid_setting_choices")
 +    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
@@ -121923,6 +122240,217 @@ index 0000000000000000000000000000000000000000..dbf1f542f1154706c947a0454ddc3659
 +    let mut alpha = spawn("alpha");
 +    assert!(alpha.wait().unwrap().success());
 +    assert!(beta.wait().unwrap().success());
++}
+diff --git a/codex-rs/omd/src/plan_routes.rs b/codex-rs/omd/src/plan_routes.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3cc2bfa4f229e9a56a0c16b2cd8180ce124e817
+--- /dev/null
++++ b/codex-rs/omd/src/plan_routes.rs
+@@ -0,0 +1,117 @@
++//! Worker routes on the user's ChatGPT plan, added from a confirmed client request.
++
++use serde_json::Value;
++use serde_json::json;
++use sha2::Digest;
++use sha2::Sha256;
++use std::io;
++use std::path::Path;
++
++pub const SUBSCRIPTION_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
++// `host.json` and grant limits the extension enforces when it loads them.
++const ROUTES: usize = 32;
++const GRANT_BYTES: usize = 16_384;
++
++pub struct PlanRoute {
++    pub model: String,
++    pub reasoning_effort: String,
++    pub context_window: u64,
++    pub mod_id: String,
++}
++
++/// One route per model and mod, so approving a mod never opens the route to another mod.
++pub fn route_name(model: &str, mod_id: &str) -> String {
++    let room = 64usize.saturating_sub("plan--".len() + mod_id.len());
++    let slug: String = model
++        .to_ascii_lowercase()
++        .chars()
++        .map(|c| {
++            if c.is_ascii_alphanumeric() || c == '_' {
++                c
++            } else {
++                '-'
++            }
++        })
++        .take(room)
++        .collect();
++    format!("plan-{slug}-{mod_id}")
++}
++
++/// Lets `plan.mod_id` run workers on its plan route for `plan.model` and adds `repository` to the route's grant,
++/// which lists every repository where the user approved that mod.
++pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<String> {
++    let name = route_name(&plan.model, &plan.mod_id);
++    if name.starts_with("plan--") {
++        return Err(io::Error::other("plan_route_name_invalid"));
++    }
++    let _lock = crate::mods::store_lock(&store.join("store.lock")).map_err(io::Error::other)?;
++    let directory = store.join("routes").join("plan");
++    std::fs::create_dir_all(&directory)?;
++    let grant_path = directory.join(format!("{name}.json"));
++    let identity = format!(
++        "{:x}",
++        Sha256::digest(repository.as_os_str().as_encoded_bytes())
++    );
++    let mut grant = read(&grant_path)?.unwrap_or_else(|| {
++        json!({"schema": 1, "included_subscription": true, "revocable": true, "provider": "openai",
++            "model": plan.model, "responses_url": SUBSCRIPTION_RESPONSES_URL, "repositories": []})
++    });
++    if grant["model"] != plan.model.as_str() {
++        return Err(io::Error::other("plan_route_name_taken"));
++    }
++    let repositories = grant["repositories"]
++        .as_array_mut()
++        .ok_or_else(|| io::Error::other("plan_route_grant_invalid"))?;
++    if !repositories.contains(&json!(identity)) {
++        repositories.push(json!(identity));
++    }
++    let bytes = serde_json::to_vec(&grant)?;
++    if bytes.len() > GRANT_BYTES {
++        return Err(io::Error::other("plan_route_grant_full"));
++    }
++    let host_path = store.join("host.json");
++    let mut host = read(&host_path)?.unwrap_or_else(|| json!({"schema": 1}));
++    let routes = host
++        .as_object_mut()
++        .ok_or_else(|| io::Error::other("host_config_invalid"))?
++        .entry("routes")
++        .or_insert_with(|| json!([]))
++        .as_array_mut()
++        .ok_or_else(|| io::Error::other("host_config_invalid"))?;
++    match routes
++        .iter()
++        .position(|route| route["name"] == name.as_str())
++    {
++        Some(index) if routes[index]["grant"]["path"] != grant_path.to_string_lossy().as_ref() => {
++            return Err(io::Error::other("plan_route_name_taken"));
++        }
++        Some(index) => {
++            routes.remove(index);
++        }
++        None if routes.len() >= ROUTES => return Err(io::Error::other("host_routes_full")),
++        None => {}
++    }
++    crate::broker::write_private(&grant_path, &grant)?;
++    let sha256 = format!("{:x}", Sha256::digest(&bytes));
++    routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
++        "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
++        "roles": ["worker"], "mods": [plan.mod_id], "grant": {"path": grant_path, "sha256": sha256},
++        "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0,
++            "max_output_tokens": plan.context_window.min(128_000), "input_token_ceiling": plan.context_window,
++            "included_subscription": true}}));
++    crate::broker::write_private(&host_path, &host)?;
++    Ok(name)
++}
++
++fn read(path: &Path) -> io::Result<Option<Value>> {
++    match std::fs::read(path) {
++        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
++        Err(error) => Err(error),
++    }
++}
++
++#[cfg(test)]
++#[path = "plan_routes_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/plan_routes_tests.rs b/codex-rs/omd/src/plan_routes_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..40a2f30852dcf47ba8341b1298e98ea67b7a8878
+--- /dev/null
++++ b/codex-rs/omd/src/plan_routes_tests.rs
+@@ -0,0 +1,82 @@
++use super::*;
++
++fn plan(model: &str, mod_id: &str) -> PlanRoute {
++    PlanRoute {
++        model: model.into(),
++        reasoning_effort: "high".into(),
++        context_window: 272_000,
++        mod_id: mod_id.into(),
++    }
++}
++
++fn host(store: &Path) -> Value {
++    serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap()
++}
++
++#[test]
++fn each_mod_gets_its_own_plan_route_listing_the_repositories_it_was_approved_in() {
++    let temp = tempfile::tempdir().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    std::fs::write(
++        store.join("host.json"),
++        json!({"schema": 1, "routes": [{"name": "kept"}], "limits": {"requests": 3}}).to_string(),
++    )
++    .unwrap();
++    assert_eq!(
++        add(
++            &store,
++            Path::new("/one"),
++            &plan("GPT-6.1-Sol", "omd_advisor")
++        )
++        .unwrap(),
++        "plan-gpt-6-1-sol-omd_advisor"
++    );
++    add(
++        &store,
++        Path::new("/two"),
++        &plan("GPT-6.1-Sol", "omd_advisor"),
++    )
++    .unwrap();
++    add(
++        &store,
++        Path::new("/two"),
++        &plan("GPT-6.1-Sol", "omd_workflow"),
++    )
++    .unwrap();
++    let host = host(&store);
++    assert_eq!(host["limits"], json!({"requests": 3}));
++    assert_eq!(host["routes"][0]["name"], "kept");
++    let route = &host["routes"][1];
++    assert_eq!(route["mods"], json!(["omd_advisor"]));
++    assert_eq!(host["routes"][2]["mods"], json!(["omd_workflow"]));
++    assert_eq!(route["rates"]["max_output_tokens"], 128_000);
++    let bytes = std::fs::read(route["grant"]["path"].as_str().unwrap()).unwrap();
++    assert_eq!(
++        route["grant"]["sha256"],
++        format!("{:x}", Sha256::digest(&bytes))
++    );
++    let grant: Value = serde_json::from_slice(&bytes).unwrap();
++    let identity = |path: &str| format!("{:x}", Sha256::digest(path.as_bytes()));
++    assert_eq!(
++        grant["repositories"],
++        json!([identity("/one"), identity("/two")])
++    );
++}
++
++#[test]
++fn a_plan_route_never_replaces_another_route_or_model_of_the_same_name() {
++    let temp = tempfile::tempdir().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    add(&store, Path::new("/one"), &plan("gpt-6.1", "omd_advisor")).unwrap();
++    let error = add(&store, Path::new("/one"), &plan("gpt-6-1", "omd_advisor")).unwrap_err();
++    assert_eq!(error.to_string(), "plan_route_name_taken");
++    std::fs::write(
++        store.join("host.json"),
++        json!({"schema": 1, "routes": [{"name": "plan-gpt-7-omd_advisor", "grant": {"path": "/elsewhere"}}]})
++            .to_string(),
++    )
++    .unwrap();
++    let error = add(&store, Path::new("/one"), &plan("gpt-7", "omd_advisor")).unwrap_err();
++    assert_eq!(error.to_string(), "plan_route_name_taken");
++    assert_eq!(host(&store)["routes"][0]["grant"]["path"], "/elsewhere");
 +}
 diff --git a/codex-rs/omd/src/plugin_component.rs b/codex-rs/omd/src/plugin_component.rs
 new file mode 100644
@@ -127160,10 +127688,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..98be39bf01007e9ae0d619f5ce5713cc2fd5b41d
+index 0000000000000000000000000000000000000000..f5f10026f06a82b94c4532ceb8e206e526146d54
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2101 @@
+@@ -0,0 +1,2121 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -128987,6 +129515,7 @@ index 0000000000000000000000000000000000000000..98be39bf01007e9ae0d619f5ce5713cc
 +    let access = |programs: &[&str]| codex_omd::ModOsAccess {
 +        programs: strings(programs),
 +        network: false,
++        node: None,
 +    };
 +    let resolve = |programs: &[&str], name: &str| {
 +        codex_omd::host::unrestricted_program(&access(programs), name, &repository)
@@ -129002,6 +129531,23 @@ index 0000000000000000000000000000000000000000..98be39bf01007e9ae0d619f5ce5713cc
 +        format!("os_access_denied: {}", planted.display())
 +    );
 +    assert_eq!(listed.unwrap(), planted);
++}
++
++#[test]
++fn unrestricted_node_resolves_to_the_runner_node() {
++    let (temp, repository, _data, _authority) = setup();
++    let runner = temp.path().canonicalize().unwrap().join("runner/node");
++    std::fs::create_dir_all(runner.parent().unwrap()).unwrap();
++    std::fs::write(&runner, "#!/bin/sh\n").unwrap();
++    let access = codex_omd::ModOsAccess {
++        programs: strings(&["node"]),
++        network: false,
++        node: Some(runner.clone()),
++    };
++    assert_eq!(
++        codex_omd::host::unrestricted_program(&access, "node", &repository).unwrap(),
++        runner
++    );
 +}
 +
 +#[test]
@@ -129023,6 +129569,7 @@ index 0000000000000000000000000000000000000000..98be39bf01007e9ae0d619f5ce5713cc
 +    let access = codex_omd::ModOsAccess {
 +        programs: strings(&["cat", "env"]),
 +        network: true,
++        node: None,
 +    };
 +    let granted = Caller {
 +        os_access: Some(&access),
@@ -129077,6 +129624,7 @@ index 0000000000000000000000000000000000000000..98be39bf01007e9ae0d619f5ce5713cc
 +    let offline = codex_omd::ModOsAccess {
 +        programs: strings(&["*"]),
 +        network: false,
++        node: None,
 +    };
 +    let offline = Caller {
 +        os_access: Some(&offline),
@@ -135548,10 +136096,10 @@ index 0000000000000000000000000000000000000000..279fbdc1a84e609d6fa4db0180621ceb
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4ff1e2a282
+index 0000000000000000000000000000000000000000..376d3c17cd54b35fa2405698222e1153bab59889
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1581 @@
+@@ -0,0 +1,1585 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -135729,6 +136277,8 @@ index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4f
 +            .to_string()
 +            .contains("source_changed")
 +    );
++    let selected = store.configuration().unwrap().mods[0].path.clone();
++    store.set_required(&selected, true).unwrap();
 +    let mut update = request(&package, &["commands", "store"]);
 +    update.settings.clear();
 +    let plan = store.package_plan(update.clone()).unwrap();
@@ -135744,6 +136294,7 @@ index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4f
 +    );
 +    let lock = store.package_apply(update, &plan.confirmation).unwrap();
 +    assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
++    assert!(store.configuration().unwrap().mods[0].required);
 +    assert!(
 +        store
 +            .package_enable("fixture")
@@ -135764,6 +136315,7 @@ index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4f
 +        .unwrap();
 +    assert_eq!(lock.packages["fixture"].version, "1.0.0");
 +    assert!(!lock.packages["fixture"].enabled);
++    assert!(store.configuration().unwrap().mods[0].required);
 +    assert_ne!(lock.packages["fixture"].path, package);
 +    assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
 +
@@ -141936,10 +142488,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191aa28c4ae
+index 0000000000000000000000000000000000000000..21cace8d2865d27aad9340512dd298c5d53986f1
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2073 @@
+@@ -0,0 +1,2139 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -142258,6 +142810,7 @@ index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191
 +
 +enum Confirmed {
 +    Package(Box<PackageControl>),
++    Route(Box<codex_omd::plan_routes::PlanRoute>),
 +    Contract(Option<String>),
 +    Pty(crate::mod_pty::Binding),
 +}
@@ -142883,6 +143436,20 @@ index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191
 +            let _ = call.reply.send(Err("pty_context_changed".into()));
 +            return;
 +        }
++        if call.operation == "routes.add" {
++            match self.plan_route(&call) {
++                Ok((title, prompt, plan)) => self.confirm_mod_surface_call(
++                    call,
++                    Some(title),
++                    prompt,
++                    Some(Confirmed::Route(Box::new(plan))),
++                ),
++                Err(error) => {
++                    let _ = call.reply.send(Err(error));
++                }
++            }
++            return;
++        }
 +        match confirmation(&call) {
 +            Ok(Some((title, prompt, held))) => self.confirm_mod_surface_call(
 +                call,
@@ -142898,6 +143465,49 @@ index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191
 +                let _ = call.reply.send(Err(error));
 +            }
 +        }
++    }
++
++    /// The plan route uses the model and effort of this conversation and the user's ChatGPT sign-in.
++    fn plan_route(
++        &self,
++        call: &SurfaceCall,
++    ) -> Result<(String, String, codex_omd::plan_routes::PlanRoute), String> {
++        let mod_id = call.arguments["mod"]
++            .as_str()
++            .filter(|id| {
++                crate::mod_runtime::terminal_source(id).is_some() || caller_source(id).is_some()
++            })
++            .ok_or("routes_add_mod_unknown")?;
++        if !self.chat_widget.has_chatgpt_account() {
++            return Err("routes_add_needs_chatgpt: sign in to Codex with ChatGPT".into());
++        }
++        let model = self.chat_widget.current_model().to_owned();
++        let effort = self
++            .chat_widget
++            .current_reasoning_effort()
++            .map_or_else(|| "medium".to_owned(), |effort| effort.to_string());
++        // Without a reported window, Codex's standard 272,000-token input window.
++        let context_window = self
++            .chat_widget
++            .status_line_context_window_size()
++            .and_then(|window| u64::try_from(window).ok())
++            .unwrap_or(272_000);
++        Ok((
++            format!("Let {mod_id} run helper models on your ChatGPT plan?"),
++            format!(
++                "Mod {} asks to add the helper model route {} using {model} ({effort}) with your Codex \
++                 sign-in, for this project. It stays until you remove it from host.json in your mod store; its \
++                 requests count against your ChatGPT plan's limits.",
++                call.caller,
++                codex_omd::plan_routes::route_name(&model, mod_id)
++            ),
++            codex_omd::plan_routes::PlanRoute {
++                model,
++                reasoning_effort: effort,
++                context_window,
++                mod_id: mod_id.to_owned(),
++            },
++        ))
 +    }
 +
 +    fn confirm_mod_surface_call(
@@ -143364,6 +143974,14 @@ index 0000000000000000000000000000000000000000..beaa7213c788c73184685f13a806a191
 +                return;
 +            }
 +            "contract.select" => select_contract(&call.arguments, held),
++            "routes.add" => match held {
++                Some(Confirmed::Route(plan)) => store_paths().and_then(|(store, repository)| {
++                    codex_omd::plan_routes::add(&store, &repository, &plan)
++                        .map(|route| json!({"route": route}))
++                        .map_err(|error| error.to_string())
++                }),
++                _ => Err("routes_add_confirmation_missing".into()),
++            },
 +            "composer.read" => {
 +                let mut draft = self.chat_widget.mod_composer_read();
 +                draft_resources(&call.caller, call.thread.as_deref(), &mut draft).map(|()| draft)
@@ -144766,7 +145384,7 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5890093d57d345d49be40ec310cfc5ada83c4e2
+index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec61d49ce0f
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 @@ -0,0 +1,635 @@
@@ -145285,7 +145903,7 @@ index 0000000000000000000000000000000000000000..a5890093d57d345d49be40ec310cfc5a
 +        subtitle: request.subtitle.clone(),
 +        max_visible_rows: rows.clamp(1, MAX_ROWS),
 +        reserve_result_rows: tabbed,
-+        row_display: SelectionRowDisplay::SingleLine,
++        row_display: SelectionRowDisplay::Wrapped,
 +        description_layout: SelectionDescriptionLayout::SelectedBelowWhenNarrow {
 +            min_description_width: 45,
 +        },
@@ -146463,10 +147081,10 @@ index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d44bebbe3
+index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1fe097eb18
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,273 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -146481,6 +147099,7 @@ index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d
 +    path: PathBuf,
 +    scope: String,
 +    enabled: bool,
++    required: bool,
 +    managed: bool,
 +    blocked: Option<String>,
 +    failure: Option<String>,
@@ -146535,6 +147154,7 @@ index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d
 +                path,
 +                scope: selection["scope"].as_str().unwrap_or("user").to_owned(),
 +                enabled: selection["selected"] == true,
++                required: selection["required"] == true,
 +                managed: selection["packaged"] == true,
 +                blocked: selection["error"].as_str().map(first_line),
 +                failure,
@@ -146550,6 +147170,7 @@ index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d
 +        description.push_str(&format!(" · {reason}"));
 +    }
 +    let blocked = !entry.enabled && entry.blocked.is_some();
++    let required = entry.enabled && entry.required;
 +    SelectionItem {
 +        name: format!(
 +            "{} {}",
@@ -146557,8 +147178,15 @@ index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d
 +            entry.id
 +        ),
 +        description: Some(description),
-+        is_disabled: blocked,
-+        disabled_reason: blocked.then(|| entry.blocked.clone().unwrap_or_default()),
++        is_disabled: blocked || required,
++        disabled_reason: if required {
++            Some(format!(
++                "Oh My Diff needs this mod; turn it off from a shell with omd mods disable {}",
++                entry.id
++            ))
++        } else {
++            blocked.then(|| entry.blocked.clone().unwrap_or_default())
++        },
 +        require_explicit_confirmation: true,
 +        actions: vec![Box::new(move |tx| {
 +            tx.send(AppEvent::OmdModToggle {
@@ -146732,10 +147360,10 @@ index 0000000000000000000000000000000000000000..4309a30293aafaeb082d421c3060b48d
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a8c7d25c1329c142262a6d047034a5a9f772082b
+index 0000000000000000000000000000000000000000..a79b2f515ae5289442a461d6da27234580b60884
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,78 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -146778,6 +147406,41 @@ index 0000000000000000000000000000000000000000..a8c7d25c1329c142262a6d047034a5a9
 +        .expect("toggle event");
 +    chat.finish_omd_mod_toggle(Ok("Mod toggle_fixture disabled.".into()), all_mods);
 +    assert_eq!(chat.bottom_pane.active_view_id(), Some("omd-all-mods"));
++}
++
++#[tokio::test]
++#[serial_test::serial]
++async fn required_mods_cannot_be_turned_off_from_all_mods() {
++    let directory = tempfile::tempdir().unwrap();
++    let root = directory.path().canonicalize().unwrap();
++    let package = root.join("package");
++    std::fs::create_dir(&package).unwrap();
++    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "required_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": []})).unwrap()).unwrap();
++    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
++    let store = ModStore::create(
++        root.join("store"),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap();
++    let source = ModStore::inspect_package(&package).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    store
++        .trust(package.clone(), &source, Vec::new(), "user")
++        .unwrap();
++    store.enable(&package, true).unwrap();
++    store.set_required(&package, true).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&root.join("store"));
++    let (mut chat, _tx, mut rx, _op_rx) =
++        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
++
++    chat.open_omd_all_mods();
++    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++    assert!(
++        !std::iter::from_fn(|| rx.try_recv().ok())
++            .any(|event| matches!(event, AppEvent::OmdModToggle { .. }))
++    );
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
@@ -152436,10 +153099,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..234f6dc93bbedcfe23ec554cbb294445ac3799e2
+index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9bf938bc6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1602 @@
+@@ -0,0 +1,1622 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -153312,6 +153975,13 @@ index 0000000000000000000000000000000000000000..234f6dc93bbedcfe23ec554cbb294445
 +    run(&mut runtime, &paths)
 +}
 +
++/// A mod's source in the terminal's own host, which admits its client-surface calls; `None` while the host is closed or busy.
++pub(crate) fn terminal_source(id: &str) -> Option<String> {
++    let runtime = lock_within(&HOST, LOCK_WAIT)?.clone()?;
++    let grants = lock_within(&runtime, LOCK_WAIT)?.grants(id)?;
++    Some(grants.source_sha256)
++}
++
 +/// Mods the terminal's own host has failed; `mod-status.json` belongs to the session's host and never lists them.
 +pub(crate) fn terminal_failures() -> BTreeMap<String, String> {
 +    (|| {
@@ -153805,11 +154475,6 @@ index 0000000000000000000000000000000000000000..234f6dc93bbedcfe23ec554cbb294445
 +    }
 +    let ModSlashTarget { id, command } = target;
 +    let runtime = shared_host()?;
-+    let (generation, grants) = {
-+        let mut runtime = runtime.locked();
-+        reload(&mut runtime);
-+        (runtime.generation(), owner_grants(&runtime))
-+    };
 +    let thread = invocation.context.thread_id.map(|id| id.to_string());
 +    let _thread = codex_omd::StateThread::enter(thread.clone());
 +    let scope = CallScope {
@@ -153821,27 +154486,45 @@ index 0000000000000000000000000000000000000000..234f6dc93bbedcfe23ec554cbb294445
 +            Arc::new(move || current(&invocation))
 +        },
 +    };
-+    let value = codex_omd::invoke_shared(
-+        &runtime,
-+        id,
-+        generation,
-+        "command",
-+        command,
-+        Value::String(args.to_owned()),
-+        active,
-+        |caller, call| {
-+            crate::mod_surface::host_call(
-+                &paths,
-+                &invocation.context.policy,
-+                grants.get(caller).cloned(),
-+                caller,
-+                call,
-+                &scope,
-+            )
-+        },
-+        |_| {},
-+    )
-+    .map_err(|error| error.to_string())?;
++    let mut retried = false;
++    let (generation, value) = loop {
++        let (generation, grants) = {
++            let mut runtime = runtime.locked();
++            reload(&mut runtime);
++            (runtime.generation(), owner_grants(&runtime))
++        };
++        let mut wrote = false;
++        let result = codex_omd::invoke_shared(
++            &runtime,
++            id,
++            generation,
++            "command",
++            command,
++            Value::String(args.to_owned()),
++            active,
++            |caller, call| {
++                wrote |= !codex_omd::read_only_call(&call);
++                crate::mod_surface::host_call(
++                    &paths,
++                    &invocation.context.policy,
++                    grants.get(caller).cloned(),
++                    caller,
++                    call,
++                    &scope,
++                )
++            },
++            |_| {},
++        );
++        // A reload during the callback discards its result; when it only read, running it again repeats nothing.
++        match result {
++            Err(error)
++                if !wrote && !retried && error.to_string().starts_with("stale_mod_generation") =>
++            {
++                retried = true;
++            }
++            result => break (generation, result.map_err(|error| error.to_string())?),
++        }
++    };
 +    if !active() {
 +        return Err("callback_cancelled".to_owned());
 +    }
@@ -154673,10 +155356,10 @@ index 0000000000000000000000000000000000000000..4a1ca43cd08ebf72dae4ec5962137273
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e49e77eac4f6632e4fd0ca9355d5545d3fe38d1f
+index 0000000000000000000000000000000000000000..cde3e57ad2c8da3962344806eb9431cb2ef1c8dc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1125 @@
+@@ -0,0 +1,1137 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -154838,8 +155521,20 @@ index 0000000000000000000000000000000000000000..e49e77eac4f6632e4fd0ca9355d5545d
 +        return Err("client_context_changed".into());
 +    }
 +    let binding = call_binding(&call.caller);
++    // The terminal's host and the session's host (which writes `mod-status.json`) reload at different times, so an
++    // admission from either is current. The terminal host's lock can be busy, so it is consulted only when needed.
++    let session_admits = binding["source"].is_string()
++        && call
++            .lifetime
++            .admission
++            .as_ref()
++            .is_none_or(|admitted| admitted["source"] == binding["source"]);
++    let terminal_source = (!session_admits)
++        .then(|| crate::mod_runtime::terminal_source(&call.caller))
++        .flatten();
 +    if let Some(admitted) = &call.lifetime.admission
 +        && admitted["source"] != binding["source"]
++        && admitted["source"].as_str() != terminal_source.as_deref()
 +    {
 +        return Err(codex_omd::client_surface::BlitError::retryable(
 +            "client_surface_admission_changed",
@@ -154847,7 +155542,7 @@ index 0000000000000000000000000000000000000000..e49e77eac4f6632e4fd0ca9355d5545d
 +    }
 +    if call.lifetime.binding.as_ref() != Some(&binding)
 +        || (call.caller != codex_omd::broker::HOST_CALLER
-+            && (binding["source"].is_null()
++            && (binding["source"].is_null() && terminal_source.is_none()
 +                || call.thread.is_some() && call.thread != current_thread()))
 +    {
 +        return Err(codex_omd::client_surface::BlitError::retryable(
@@ -155804,10 +156499,10 @@ index 0000000000000000000000000000000000000000..e49e77eac4f6632e4fd0ca9355d5545d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370d7d93a9b
+index 0000000000000000000000000000000000000000..a9835b4009fa677391ba5d552b992cd24daaf2b4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,965 @@
+@@ -0,0 +1,1002 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -155888,6 +156583,43 @@ index 0000000000000000000000000000000000000000..e4760ff4608f2a29e140d0a2f21b3370
 +    attach(&sender, Some("another-thread".into()));
 +    attach(&sender, Some("surface-thread".into()));
 +    assert!(validate_call(&call).is_err());
++    drop(pending);
++    *STATE.locked() = previous;
++}
++
++#[test]
++#[serial_test::serial]
++fn client_surface_admits_a_mod_the_session_host_has_not_published_yet() {
++    let (directory, _store, source) = surface_package();
++    let store = directory.path().canonicalize().unwrap().join("store");
++    std::fs::write(
++        store.join("mod-status.json"),
++        json!({"mods": [], "rejected": []}).to_string(),
++    )
++    .unwrap();
++    let _environment = crate::omd::tests::omd_environment(&store);
++    let _host = crate::mod_runtime::test_fresh_host();
++    crate::mod_runtime::shared_host().unwrap();
++    let previous = STATE.locked().take();
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    let sender = AppEventSender::new(tx);
++    attach(&sender, Some("surface-thread".into()));
++    let pending = codex_omd::client_surface::with_admission(&source, 1, None, || {
++        codex_omd::client_surface::submit(
++            "surface_fixture",
++            "composer.read",
++            json!({}),
++            InvocationContext::User,
++            false,
++            Some("surface-thread"),
++            None,
++        )
++        .unwrap()
++    });
++    let AppEvent::ModSurfaceCall(call, _) = rx.try_recv().unwrap() else {
++        panic!("queued surface call")
++    };
++    assert!(validate_call(&call).is_ok());
 +    drop(pending);
 +    *STATE.locked() = previous;
 +}
@@ -164052,10 +164784,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7de1edc40bbec218d92ab1f758722308d13d48a5
+index 0000000000000000000000000000000000000000..fcd78271e170693dd12380243e995a9b6d797d1f
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,722 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -164563,14 +165295,14 @@ index 0000000000000000000000000000000000000000..7de1edc40bbec218d92ab1f758722308
 +        Ok(_) => {
 +            let status = mod_status();
 +            match snapshot_with_status(status.as_deref().unwrap_or(&Value::Null), false) {
++                Err(_) if store_root().is_some() => {
++                    "Oh My Diff · mods off in this directory · run codex in a project".to_string()
++                }
 +                _ if status
 +                    .as_ref()
 +                    .is_some_and(|status| status["activation_error"].is_string()) =>
 +                {
 +                    "Oh My Diff · mods inactive · see /omd".to_string()
-+                }
-+                Err(_) if store_root().is_some() => {
-+                    "Oh My Diff · mods off in this directory · see /omd".to_string()
 +                }
 +                Ok(snapshot) if status.is_some() => format!(
 +                    "Oh My Diff · {} mod{} on{}{}",
@@ -164764,12 +165496,17 @@ index 0000000000000000000000000000000000000000..7de1edc40bbec218d92ab1f758722308
 +        let _omd = omd_environment(&store);
 +        assert!(mod_paths().is_some());
 +        let _home = EnvGuard::set("HOME", store.to_str());
++        std::fs::write(
++            store.join("mod-status.json"),
++            serde_json::json!({"activation_error":"home","mods":[],"rejected":[]}).to_string(),
++        )
++        .unwrap();
 +        assert!(mod_paths().is_none());
 +        assert!(!terminal_active());
 +        assert!(mod_status().is_some());
 +        assert_eq!(
 +            compact_status().as_deref(),
-+            Some("Oh My Diff · mods off in this directory · see /omd")
++            Some("Oh My Diff · mods off in this directory · run codex in a project")
 +        );
 +    }
 +}

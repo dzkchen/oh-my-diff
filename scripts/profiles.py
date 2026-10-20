@@ -26,6 +26,7 @@ DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd
                   "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
+REQUIRED = PLATFORM_PACKAGES
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
@@ -532,12 +533,25 @@ def install(args):
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
         (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
+        granted = {Path(item["path"]).resolve(): set(item.get("capabilities", ()))
+                   for item in invoke(installed_manager, "selection-status", store)["selections"]}
+        for identifier in REQUIRED:
+            target = sources / identifier
+            # A revoked selection keeps its row with no capabilities; a user-disabled one keeps its grant and stays off.
+            current = granted.get(target.resolve())
+            if ((current is None or not set(packages[identifier]["capabilities"]) <= current)
+                    and all(item["path"] != str(target) for item in trusted)):
+                trusted.append({"path": str(target), "sha256": packages[identifier]["package_sha256"],
+                                "capabilities": packages[identifier]["capabilities"]})
+                enabled.append(target)
         for item in trusted:
             verify(installed_manager, Path(item["path"]), item["sha256"])
         if trusted:
             invoke(installed_manager, "trust-all", store, json.dumps(trusted))
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
+        for identifier in REQUIRED:
+            invoke(installed_manager, "require", store, sources / identifier)
         sync_sources(installed_manager, store, prefix / "sources", installed)
         for identifier in installed:
             verify(installed_manager, sources / identifier, installed[identifier]["sha256"])

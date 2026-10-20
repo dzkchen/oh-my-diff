@@ -41,7 +41,7 @@ function call(input, answer = host()) {
 }
 const feed = (state, events, answer) => events.reduce((current, [event, payload, extra = {}]) => call({ event, payload, state: current, ...extra }, answer).state, state);
 const response = (id, patch = {}) => ({
-  request_id: id, attempt: 1, ledger_request: null, scope: { thread_id: 'lead', agent_id: null, kind: 'main' }, route: 'codex', provider: 'openai', credential: 'chatgpt',
+  request_id: id, attempt: 1, ledger_request: null, scope: { thread_id: 'lead', agent_id: null, kind: 'main' }, route: 'session', provider: 'openai', credential: 'chatgpt',
   requested_model: 'gpt-6.1-sol', served_model: 'gpt-6.1-sol', status: 'completed', stop_reason: 'end_turn', output: { text: '', tool_calls: [] },
   usage: { input_tokens: 100_000, input_tokens_details: { cached_tokens: 80_000 }, output_tokens: 2_000, output_tokens_details: { reasoning_tokens: 500 } },
   cache: { read_tokens: 80_000, write_tokens: null }, cost: { microusd: 1_250_000, basis: 'settled' }, context_window: 272_000,

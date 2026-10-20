@@ -333,7 +333,7 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'npm' | 'selection'; blocked: string | null; installed: boolean; enabled: boolean; required: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
 export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string } | { kind: 'npm'; package: string; version?: string; registry?: string; integrity?: string };
 export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; reference?: string; version?: string; index?: string; scope?: 'user' | 'project' };
 export type PackageCatalogEntry = { id: string; latest: string; description: string; support: string | null; versions: { version: string; blocked: string | null }[]; installed: string | null };
@@ -376,6 +376,7 @@ export interface HostOperations {
   'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
+  'routes.add': { arguments: { mod: string }; result: { route: string } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };
   'task.complete': { arguments: { candidate_sha256: string; acceptance_sha256?: string }; result: { status: 'completed'; receipts: Receipt[] } | { status: 'refused'; missing: ContractRequirement[] } | { status: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[] } };
   'receipts.submit': { arguments: { kind: string; candidate_sha256: string; acceptance_sha256?: string; outcome: 'pass' | 'fail'; evidence: ResourceRef; agent?: string; execution?: boolean; findings?: ReceiptFinding[]; resolves?: string[] }; result: Receipt };
@@ -394,7 +395,7 @@ export interface HostOperations {
   'turns.queue': { arguments: { prompt: string; key: string; priority?: 'high' | 'normal' | 'low'; deadline_ms?: number }; result: { key: string; status: 'queued' | 'duplicate'; paused?: boolean } };
   'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
-  'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
+  'process.which': { arguments: { names: string[]; sandbox?: 'none' }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
   /** One call returns messages until the next would push their encoded size past 48 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */

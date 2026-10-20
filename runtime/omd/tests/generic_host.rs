@@ -1821,6 +1821,7 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
     let access = |programs: &[&str]| codex_omd::ModOsAccess {
         programs: strings(programs),
         network: false,
+        node: None,
     };
     let resolve = |programs: &[&str], name: &str| {
         codex_omd::host::unrestricted_program(&access(programs), name, &repository)
@@ -1836,6 +1837,23 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
         format!("os_access_denied: {}", planted.display())
     );
     assert_eq!(listed.unwrap(), planted);
+}
+
+#[test]
+fn unrestricted_node_resolves_to_the_runner_node() {
+    let (temp, repository, _data, _authority) = setup();
+    let runner = temp.path().canonicalize().unwrap().join("runner/node");
+    std::fs::create_dir_all(runner.parent().unwrap()).unwrap();
+    std::fs::write(&runner, "#!/bin/sh\n").unwrap();
+    let access = codex_omd::ModOsAccess {
+        programs: strings(&["node"]),
+        network: false,
+        node: Some(runner.clone()),
+    };
+    assert_eq!(
+        codex_omd::host::unrestricted_program(&access, "node", &repository).unwrap(),
+        runner
+    );
 }
 
 #[test]
@@ -1857,6 +1875,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let access = codex_omd::ModOsAccess {
         programs: strings(&["cat", "env"]),
         network: true,
+        node: None,
     };
     let granted = Caller {
         os_access: Some(&access),
@@ -1911,6 +1930,7 @@ fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let offline = codex_omd::ModOsAccess {
         programs: strings(&["*"]),
         network: false,
+        node: None,
     };
     let offline = Caller {
         os_access: Some(&offline),
