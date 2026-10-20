@@ -193,8 +193,9 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         bundle = Path(full["plugin_bundle"]["marketplace"])
         assert full["plugin_bundle"]["plugins"] == ["omd-anchored-edit", "omd-artifact-reading", "omd-code-execution"]
         assert not (base / "full-prefix/browser").exists()
-        host = base / "full-prefix/artifacts/codex-code-mode-host"
-        assert host.is_file() and support.digest(host) == support.digest(artifact_dir / "codex-code-mode-host")
+        for name in ("codex-code-mode-host", "omd-runner"):
+            installed = base / "full-prefix/artifacts" / name
+            assert installed.is_file() and support.digest(installed) == support.digest(artifact_dir / name)
         staged_skills = {}
         inert_hooks = []
         for identifier in full["plugin_bundle"]["plugins"]:
@@ -278,7 +279,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
                 for path in (sentinel, auth, session)} == shared_hashes
     result = {"status": "pass", "release_lock_sha256": support.digest(ROOT / "runtime/release.lock.json"),
               "artifact_sha256": {name: support.digest(artifact_dir / name) for name in (
-                  "codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "mod-api.tgz")},
+                  "codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker", "omd-runner", "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)

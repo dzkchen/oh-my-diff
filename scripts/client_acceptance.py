@@ -35,7 +35,7 @@ def reply(body, count):
 
 def store_with(manager, store, mods, init=True):
     if init:
-        call([manager, "init", store, call(["mise", "which", "node"], ROOT).stdout.strip()], ROOT)
+        call([manager, "init", store], ROOT)
     for directory in mods:
         inspected = json.loads(call([manager, "inspect", directory], ROOT).stdout)
         call([manager, "trust", store, directory, inspected["sha256"], ",".join(inspected["manifest"]["capabilities"])], ROOT)

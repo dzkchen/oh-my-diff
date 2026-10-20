@@ -250,7 +250,7 @@ export function runScenarioObject(directory, scenario, afterRun) {
   const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
   const store = join(temporary, 'store');
   try {
-    engineJson(['init', store, node]);
+    engineJson(['init', store]);
     const installed = new Map(packages.map(packagePath => {
       const inspected = trustPackage(store, resolve(packagePath));
       return [inspected.manifest.id, inspected.path];

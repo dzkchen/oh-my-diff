@@ -96,11 +96,11 @@ host:
 
 - keeps credential profiles, secrets and sign-in tokens in the broker (enrollment never writes them to the user's
   disk);
-- runs mod callbacks only under the `node` binary in `mods.json` whose path and digest the broker holds as a runner
-  grant (`node_unverified` otherwise, `node_changed` when the binary changes after verification). Only `omd-mod
-  init`, `omd-mod set-node STORE NODE` (for example after a Node upgrade) and broker grant import grant a runner;
-  trusting or installing packages never does. A missing `node` fails with `node_unavailable`, without a `PATH`
-  fallback;
+- runs mod callbacks only under the `omd-runner` beside the host executable whose path and digest the broker holds
+  as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
+  Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
+  import grant a runner; trusting or installing packages never does. A missing runner fails with
+  `runner_unavailable`, with no fallback to another program;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the

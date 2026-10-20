@@ -26,7 +26,7 @@ tools, context and screens. You still run `codex`, with your settings, sign-in a
 
 ## Install
 
-Needs an Apple Silicon Mac, Codex `0.163.x`, Node 24 and Python 3.12+ ([details](docs/install.md#before-you-begin)).
+Needs an Apple Silicon Mac, Codex `0.163.x` and Python 3.12+ ([details](docs/install.md#before-you-begin)).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full

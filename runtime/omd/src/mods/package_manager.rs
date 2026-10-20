@@ -488,7 +488,6 @@ impl ModStore {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
-                    node: PathBuf::new(),
                     mods: Vec::new(),
                 },
             )
@@ -658,8 +657,8 @@ impl ModStore {
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
-        self.verified_node(&config.node)?;
-        require_migration_handlers(&plan, &scope, &config.node)?;
+        self.verified_runner()?;
+        require_migration_handlers(&plan, &scope)?;
         let mut selection_ids = config
             .mods
             .iter()
@@ -2120,14 +2119,12 @@ impl ModStore {
             store::PACKAGE_FILE_LIMIT,
         )?)
         .map_err(failure)?;
-        let node = self.configuration()?.node;
-        self.verified_node(&node)?;
+        self.verified_runner()?;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
             "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
         process::evaluate(
-            &node,
             &request,
             std::time::Duration::from_secs(1),
             &|| true,
@@ -2749,7 +2746,7 @@ fn selected_settings(
         )
 }
 
-fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -> Result<()> {
+fn require_migration_handlers(plan: &ModPackagePlan, scope: &str) -> Result<()> {
     let changes = plan.changes["packages"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
@@ -2771,7 +2768,7 @@ fn require_migration_handlers(plan: &ModPackagePlan, scope: &str, node: &Path) -
             tier: None,
         };
         let loaded = packages::detached(package, source, assets, selection, Value::Null);
-        packages::migration_registrations(node, &loaded).map_err(|error| {
+        packages::migration_registrations(&loaded).map_err(|error| {
             if error.to_string() != "explicit_migration_handler_required" {
                 return error;
             }

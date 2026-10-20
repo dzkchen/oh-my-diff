@@ -6,8 +6,7 @@ use std::path::PathBuf;
 fn fixture() -> (tempfile::TempDir, ModStore, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("OMD_TEST_NODE required"));
-    let store = ModStore::create(root.join("store"), node).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let source =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples/virtual_reader");
     let package = root.join("provider");

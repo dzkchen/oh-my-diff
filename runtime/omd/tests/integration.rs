@@ -8,12 +8,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-fn node() -> PathBuf {
-    PathBuf::from(
-        std::env::var_os("OMD_TEST_NODE")
-            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
-    )
-}
 
 fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
     for _ in 0..200 {
@@ -60,7 +54,7 @@ fn host(temp: &TempDir) -> ModHost {
 
 fn workspace(temp: &TempDir) -> (PathBuf, ModStore) {
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     (root, store)
 }
 

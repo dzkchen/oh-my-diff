@@ -105,8 +105,7 @@ fn install_package(
     source: &str,
     capabilities: &[&str],
 ) -> (ModStore, std::path::PathBuf, Arc<Mutex<ModHost>>) {
-    let node = std::path::PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
-    let store = ModStore::create(root.join("mod-store"), node).unwrap();
+    let store = ModStore::create(root.join("mod-store")).unwrap();
     let package = root.join("request_router");
     std::fs::create_dir(&package).unwrap();
     std::fs::write(

@@ -1459,9 +1459,6 @@ fn builtin_controls_protect_recovery_commands() {
     }
 }
 
-fn node() -> PathBuf {
-    PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("set OMD_TEST_NODE to Node 24.18.0"))
-}
 
 fn package(
     root: &Path,
@@ -1544,7 +1541,7 @@ fn error_of(host: &ModHost, id: &str) -> String {
 fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let modern = package(
         &root,
         "modern",
@@ -1682,7 +1679,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
 fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let empty = ModHost::open(root.join("store")).unwrap();
     assert!(empty.builtin_controls().is_empty());
     assert!(empty.contract_documents().is_empty());

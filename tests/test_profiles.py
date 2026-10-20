@@ -23,7 +23,7 @@ def installed_fixture(base):
     for name in profiles.LAUNCHERS:
         (bin_dir / name).write_text(f"launcher {name}")
         digests[name] = profiles.support.digest(bin_dir / name)
-    record = {key: {"installed_path": str(prefix / key)} for key in ("binary", "code_mode_host", "broker", "manager")}
+    record = {key: {"installed_path": str(prefix / key)} for key in ("binary", "code_mode_host", "broker", "runner", "manager")}
     record.update(author={"files": [], "launcher_sha256": digests["omd-mod-author"]},
                   management={"files": [], "launcher_sha256": digests["omd-package"]},
                   activation={"sha256": digests["codex"]},
@@ -32,7 +32,7 @@ def installed_fixture(base):
                   packages={"example": {"files": ["index.ts"]}},
                   sources={"example": ["index.ts"], "inactive": ["index.ts"]},
                   shared_state={"codex_home": str(base / "home")}, store=str(base / "store"))
-    for name in ("install.json", "binary", "code_mode_host", "broker", "manager"):
+    for name in ("install.json", "binary", "code_mode_host", "broker", "runner", "manager"):
         (prefix / name).touch()
     for identifier in record["sources"]:
         source = prefix / "sources" / identifier
@@ -206,6 +206,15 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
+    def test_an_attached_store_drops_the_node_a_previous_release_ran_mods_with(self):
+        with tempfile.TemporaryDirectory(prefix="omd-profile-store-", dir="/private/tmp") as temporary:
+            store = Path(temporary)
+            selection = {"path": "/mods/example", "sha256": "a" * 64, "enabled": True}
+            (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 3, "node": "/usr/bin/node", "mods": [selection]}))
+            profiles.forget_node(store)
+            self.assertEqual(json.loads((store / "mods.json").read_text()), {"schema": 1, "revision": 3, "mods": [selection]})
+            self.assertEqual((store / "mods.json").stat().st_mode & 0o777, 0o600)
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],
@@ -236,11 +245,10 @@ enabled = true
     @unittest.skipUnless(os.environ.get("OMD_TEST_MOD_BIN"), "set OMD_TEST_MOD_BIN for native offline coverage")
     def test_service_import_enable_requires_its_provider_in_isolated_store(self):
         manager = Path(os.environ["OMD_TEST_MOD_BIN"]).resolve()
-        node = subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()
         with tempfile.TemporaryDirectory(prefix="omd-profile-selection-", dir="/private/tmp") as temporary:
             base = Path(temporary)
             store = base / "store"
-            profiles.invoke(manager, "init", store, node)
+            profiles.invoke(manager, "init", store)
             sources = store / "sources"
             sources.mkdir()
             for identifier in ("omd_lsp_view", "omd_lsp_sync"):

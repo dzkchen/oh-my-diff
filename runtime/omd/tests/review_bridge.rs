@@ -8,8 +8,7 @@ use std::path::PathBuf;
 fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("OMD_TEST_NODE required"));
-    let store = ModStore::create(root.join("store"), node).unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mods/examples/review_probe");
     let package = root.join("probe");
     fs::create_dir(&package).unwrap();

@@ -52,45 +52,55 @@ static VERIFIED_RUNNERS: LazyLock<Mutex<HashMap<PathBuf, String>>> =
     LazyLock::new(Default::default);
 
 /// The runner binary's digest, rehashed only when its file stamp changes.
-fn runner_digest(node: &Path) -> Result<String> {
-    let stamp = file_stamp(&std::fs::metadata(node)?);
+fn runner_digest(runner: &Path) -> Result<String> {
+    let stamp = file_stamp(&std::fs::metadata(runner)?);
     let mut digests = RUNNER_DIGESTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((cached, digest)) = digests.get(node)
+    if let Some((cached, digest)) = digests.get(runner)
         && *cached == stamp
     {
         return Ok(digest.clone());
     }
     let mut hasher = Sha256::new();
-    std::io::copy(&mut File::open(node)?, &mut hasher)?;
+    std::io::copy(&mut File::open(runner)?, &mut hasher)?;
     let digest = format!("{:x}", hasher.finalize());
-    digests.insert(node.to_path_buf(), (stamp, digest.clone()));
+    digests.insert(runner.to_path_buf(), (stamp, digest.clone()));
     Ok(digest)
 }
 
-fn runner_record(node: &Path, sha256: &str) -> String {
-    crate::broker::canonical(&json!({"runner": {"path": node, "sha256": sha256}}))
+fn runner_record(runner: &Path, sha256: &str) -> String {
+    crate::broker::canonical(&json!({"runner": {"path": runner, "sha256": sha256}}))
 }
 
-/// The protected record that lets this exact `node` binary serve a store's mods.
-pub(super) fn runner_grant(node: &Path) -> Result<String> {
-    let node = node.canonicalize()?;
-    Ok(runner_record(&node, &runner_digest(&node)?))
+/// The protected record that lets this exact runner binary serve a store's mods.
+pub(super) fn runner_grant(runner: &Path) -> Result<String> {
+    let runner = runner.canonicalize()?;
+    Ok(runner_record(&runner, &runner_digest(&runner)?))
+}
+
+/// The runner grant a store write authorizes; only a deployed broker holds grants.
+fn runner_approval() -> Result<BTreeSet<String>> {
+    if !crate::broker::deployed() {
+        return Ok(BTreeSet::new());
+    }
+    Ok(BTreeSet::from([runner_grant(
+        &super::process::runner_path()?,
+    )?]))
 }
 
 /// With brokered `grants`, mods run only under a runner whose path and digest the broker holds.
-pub(super) fn verify_runner(node: &Path, grants: Option<&BTreeSet<String>>) -> Result<()> {
+pub(super) fn verify_runner(runner: &Path, grants: Option<&BTreeSet<String>>) -> Result<()> {
     let Some(grants) = grants else {
         return Ok(());
     };
     let unverified = || {
         failure(format!(
-            "node_unverified: {} has no protected runner grant; run omd-mod set-node STORE NODE",
-            node.display()
+            "runner_unverified: {} has no protected runner grant; run omd-mod authorize-runner STORE",
+            runner.display()
         ))
     };
-    let canonical = node.canonicalize().map_err(|_| unverified())?;
+    let canonical = runner.canonicalize().map_err(|_| unverified())?;
     let digest = runner_digest(&canonical)?;
     if !grants.contains(&runner_record(&canonical, &digest)) {
         return Err(unverified());
@@ -103,16 +113,16 @@ pub(super) fn verify_runner(node: &Path, grants: Option<&BTreeSet<String>>) -> R
 }
 
 /// Refuses to start a verified runner path whose binary changed since its verification.
-pub(super) fn check_runner(node: &Path) -> Result<()> {
+pub(super) fn check_runner(runner: &Path) -> Result<()> {
     let verified = VERIFIED_RUNNERS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(node)
+        .get(runner)
         .cloned();
     match verified {
-        Some(digest) if digest != runner_digest(node)? => Err(failure(format!(
-            "node_changed: {} differs from its protected runner grant",
-            node.display()
+        Some(digest) if digest != runner_digest(runner)? => Err(failure(format!(
+            "runner_changed: {} differs from its protected runner grant",
+            runner.display()
         ))),
         _ => Ok(()),
     }
@@ -148,18 +158,30 @@ mod runner_tests {
     #[test]
     fn brokered_runners_need_their_exact_protected_grant() {
         let directory = tempfile::tempdir().unwrap();
-        let node = directory.path().canonicalize().unwrap().join("node");
-        std::fs::write(&node, "first").unwrap();
+        let runner = directory.path().canonicalize().unwrap().join("omd-runner");
+        std::fs::write(&runner, "first").unwrap();
         let refusal = |result: Result<()>| result.unwrap_err().to_string();
-        verify_runner(&node, None).unwrap();
+        verify_runner(&runner, None).unwrap();
         let mut grants = BTreeSet::new();
-        assert!(refusal(verify_runner(&node, Some(&grants))).starts_with("node_unverified"));
-        grants.insert(runner_grant(&node).unwrap());
-        verify_runner(&node, Some(&grants)).unwrap();
-        check_runner(&node).unwrap();
-        std::fs::write(&node, "replaced binary").unwrap();
-        assert!(refusal(check_runner(&node)).starts_with("node_changed"));
-        assert!(refusal(verify_runner(&node, Some(&grants))).starts_with("node_unverified"));
+        assert!(refusal(verify_runner(&runner, Some(&grants))).starts_with("runner_unverified"));
+        grants.insert(runner_grant(&runner).unwrap());
+        verify_runner(&runner, Some(&grants)).unwrap();
+        check_runner(&runner).unwrap();
+        std::fs::write(&runner, "replaced binary").unwrap();
+        assert!(refusal(check_runner(&runner)).starts_with("runner_changed"));
+        assert!(refusal(verify_runner(&runner, Some(&grants))).starts_with("runner_unverified"));
+    }
+
+    #[test]
+    fn runner_grants_outlive_a_runner_change_while_their_binary_exists() {
+        let directory = tempfile::tempdir().unwrap();
+        let previous = directory.path().join("node");
+        std::fs::write(&previous, "previous runner").unwrap();
+        let config = json!({"mods": []});
+        let kept = |path: &Path| kept_grant(&runner_record(path, "a"), &BTreeSet::new(), &config);
+        assert!(kept(&previous));
+        assert!(!kept(&directory.path().join("removed")));
+        assert!(!kept_grant(r#"{"other":{}}"#, &BTreeSet::new(), &config));
     }
 }
 
@@ -192,6 +214,31 @@ mod provenance_tests {
         changed.path = "/other".into();
         assert!(authenticated_source(&changed, "package", Some(&grants)).is_none());
     }
+}
+
+/// Whether a broker grant still serves `config`: a selected mod, its source provenance, or a runner binary that still exists.
+fn kept_grant(record: &str, selected: &BTreeSet<String>, config: &Value) -> bool {
+    if selected.contains(record) {
+        return true;
+    }
+    let Ok(record) = serde_json::from_str::<Value>(record) else {
+        return false;
+    };
+    if let Some(runner) = record.get("runner") {
+        return runner["path"]
+            .as_str()
+            .is_some_and(|path| Path::new(path).is_file());
+    }
+    let Some(source) = record.get("package_source") else {
+        return false;
+    };
+    config["mods"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|selection| {
+            source["path"] == selection["path"] && source["sha256"] == selection["sha256"]
+        })
 }
 
 pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
@@ -521,50 +568,52 @@ fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<
 }
 
 impl ModStore {
-    pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
+    pub fn create(root: PathBuf) -> Result<Self> {
         std::fs::DirBuilder::new().mode(0o700).create(&root)?;
         let store = Self::open(root.canonicalize()?)?;
         let config = ModConfiguration {
             schema: 1,
             revision: 0,
-            node: node.canonicalize()?,
             mods: Vec::new(),
         };
-        let approved = BTreeSet::from([runner_grant(&config.node)?]);
-        store.write_granting("mods.json", &serde_json::to_value(config)?, &approved)?;
+        store.write_granting(
+            "mods.json",
+            &serde_json::to_value(config)?,
+            &runner_approval()?,
+        )?;
         Ok(store)
     }
 
-    /// The configured `node`, refused when the broker holds no runner grant for it.
-    pub(super) fn verified_node(&self, node: &Path) -> Result<()> {
-        verify_runner(
-            node,
-            brokered_grants(&self.root)?
-                .as_ref()
-                .map(|(_, grants)| grants),
-        )
-    }
-
-    /// Points the store at another `node` binary, authorizing it as the runner when the broker is deployed.
-    pub fn set_node(&self, node: &Path) -> Result<()> {
+    /// Grants the runner beside this binary, after an install or update replaced it, when the broker is deployed.
+    pub fn authorize_runner(&self) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
-        let node = node.canonicalize()?;
-        if !node.is_file() {
-            return Err(failure("node_unavailable"));
-        }
-        let mut config = self.configuration()?;
-        // The same path still needs a fresh grant after an in-place Node upgrade.
-        if config.node == node && self.verified_node(&node).is_ok() {
+        let Some((_, grants)) = brokered_grants(&self.root)? else {
+            return Ok(());
+        };
+        if verify_runner(&super::process::runner_path()?, Some(&grants)).is_ok() {
             return Ok(());
         }
-        config.node = node;
+        let mut config = self.configuration()?;
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        let approved = BTreeSet::from([runner_grant(&config.node)?]);
-        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
+        self.write_granting(
+            "mods.json",
+            &serde_json::to_value(config)?,
+            &runner_approval()?,
+        )
+    }
+
+    /// The runner beside this binary, refused when the broker holds no runner grant for it.
+    pub(super) fn verified_runner(&self) -> Result<()> {
+        verify_runner(
+            &super::process::runner_path()?,
+            brokered_grants(&self.root)?
+                .as_ref()
+                .map(|(_, grants)| grants),
+        )
     }
 
     /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected and a reset `packages.lock.json` leaves its packages as plain trusted selections.
@@ -581,7 +630,6 @@ impl ModStore {
             "mods.json" => Some(serde_json::to_value(ModConfiguration {
                 schema: 1,
                 revision: 0,
-                node: super::node_on_path().ok_or_else(|| failure("node_unavailable"))?,
                 mods: Vec::new(),
             })?),
             _ => None,
@@ -643,33 +691,13 @@ impl ModStore {
         let Some((mut generation, current)) = brokered else {
             return self.write_staged(name, &bytes, || Ok(()));
         };
-        let runner = value["node"]
-            .as_str()
-            .and_then(|node| runner_grant(Path::new(node)).ok());
         let selected = value["mods"]
             .as_array()
             .into_iter()
             .flatten()
             .map(grant)
             .collect::<BTreeSet<_>>();
-        let selected_record = |record: &String| {
-            if selected.contains(record) || runner.as_ref() == Some(record) {
-                return true;
-            }
-            let Ok(record) = serde_json::from_str::<Value>(record) else {
-                return false;
-            };
-            let Some(source) = record.get("package_source") else {
-                return false;
-            };
-            value["mods"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|selection| {
-                    source["path"] == selection["path"] && source["sha256"] == selection["sha256"]
-                })
-        };
+        let selected_record = |record: &String| kept_grant(record, &selected, value);
         let added = approved
             .iter()
             .filter(|grant| selected_record(grant) && !current.contains(*grant))
@@ -1223,7 +1251,7 @@ impl ModStore {
         if snapshot != current {
             return Err(failure("broker_import_configuration_changed"));
         }
-        let mut approved = BTreeSet::from([runner_grant(&config.node)?]);
+        let mut approved = runner_approval()?;
         let mut skipped = Vec::new();
         for selection in &config.mods {
             let eligible = (|| {

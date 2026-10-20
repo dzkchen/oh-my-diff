@@ -44,14 +44,11 @@ fn mod_package(
 }
 
 fn store(temp: &TempDir) -> ModStore {
-    ModStore::create(temp.path().join("store"), std::env::current_exe().unwrap()).unwrap()
+    ModStore::create(temp.path().join("store")).unwrap()
 }
 
 fn store_with_node(temp: &TempDir) -> ModStore {
-    ModStore::create(
-        temp.path().join("store"),
-        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
-    )
+    ModStore::create(temp.path().join("store"))
     .unwrap()
 }
 
@@ -863,7 +860,7 @@ fn stale_plans_and_interrupted_transactions_preserve_the_previous_lock() {
     std::fs::write(
         store_path.join("mods.json"),
         serde_json::to_vec_pretty(
-            &json!({"schema":1,"revision":999,"node":std::env::current_exe().unwrap(),"mods":[]}),
+            &json!({"schema":1,"revision":999,"mods":[]}),
         )
         .unwrap(),
     )

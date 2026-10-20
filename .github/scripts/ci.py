@@ -59,7 +59,7 @@ def own_paths_only(status, text):
 def core_env():
     home = WORK / "core-test-home"
     home.mkdir(parents=True, exist_ok=True)
-    return {"OMD_TEST_NODE": build.node(), "HOME": str(home),
+    return {"HOME": str(home),
             "PATH": os.pathsep.join([str(Path(sys.executable).parent), str(Path(build.node()).parent), os.environ["PATH"]]),
             "CARGO_HOME": os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")),
             "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup")),
@@ -269,7 +269,7 @@ def archive_acceptance(archive, upstream):
             prefix, bin_dir = base / f"{profile}-prefix", base / f"{profile}-bin"
             install = [sys.executable, "-m", "scripts.package", "install", "--archive", archive,
                        "--sha256", digest, "--profile", profile, "--prefix", prefix, "--bin-dir", bin_dir,
-                       "--store", base / f"{profile}-store", "--node", build.node(), "--upstream", upstream]
+                       "--store", base / f"{profile}-store", "--upstream", upstream]
             subprocess.run(list(map(str, install)), cwd=payload, env=environment, check=True)
             next_prefix, next_bin = base / f"{profile}-next-prefix", base / f"{profile}-next-bin"
             reinstall = list(install)

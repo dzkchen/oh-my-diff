@@ -58,12 +58,10 @@ Each mod's README in [`mods/first-party`](../mods/first-party) lists its setting
 
 ## What mods cost
 
-Measured once on one Apple Silicon Mac with the `1.0.0` release candidate and a scripted model, October 2026. Your
-numbers will differ.
+Measured on one Apple Silicon Mac with a scripted model, October 2026. Your numbers will differ.
 
-- Codex alone was ready to type in about 0.5 s and used about 30 MB of memory. OMD+ as installed was ready in about
-  0.85 s and used about 430 MB.
-- Most of that memory is the Node processes that run mods, about 43 MB each. OMD+ as installed runs nine.
+- Codex alone was ready to type in about 0.5 s and used about 30 MB of memory.
+- Mods run in `omd-runner` processes of about 6–15 MB each. OMD+ as installed runs nine, about 80 MB together.
 - Turning on `omd_preview`, `omd_usage`, `omd_lsp_view`, `omd_claude_cli`, `omd_profiles` or `omd_advisor` adds one
   such process each. The other off-by-default mods added no measurable memory or startup time.
 

@@ -1,10 +1,29 @@
 import { AssertionError } from 'node:assert';
 import { spawn, execFileSync } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 
-const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
+function engineOnPath() {
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    const candidate = join(directory, 'omd-mod');
+    if (!existsSync(candidate)) continue;
+    const launcher = readFileSync(candidate, 'latin1');
+    if (!launcher.startsWith('#!')) return candidate;
+    const match = launcher.match(/^exec (?:'([^']+)'|(\S+)) /m);
+    return match?.[1] ?? match?.[2];
+  }
+}
+
+function locate() {
+  if (process.env.OMD_TEST_RUNNER) return realpathSync(process.env.OMD_TEST_RUNNER);
+  const engine = process.env.OMD_MOD_BIN ?? engineOnPath();
+  const runner = engine && join(dirname(realpathSync(engine)), 'omd-runner');
+  if (runner && existsSync(runner)) return realpathSync(runner);
+  throw new Error('omd-runner not found: set OMD_TEST_RUNNER to a built omd-runner, or install Oh My Diff so one sits beside omd-mod');
+}
+
+export const runner = locate();
 const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
 const pairs = name => Object.fromEntries([...table(name).matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
@@ -30,8 +49,7 @@ let slots = 0;
 function boot() {
   const slot = join(directory, String(slots++));
   execFileSync('mkfifo', [`${slot}.in`, `${slot}.out`]);
-  const child = spawn('sh', ['-c', 'exec "$0" --max-old-space-size=64 --no-compilation-cache --no-lazy --enable-source-maps --no-warnings --experimental-vm-modules --disallow-code-generation-from-strings --input-type=module --eval "$1" < "$2" > "$3" 2> "$4"',
-    process.execPath, runner, `${slot}.in`, `${slot}.out`, `${slot}.err`], { stdio: 'ignore' });
+  const child = spawn('sh', ['-c', 'exec "$0" < "$1" > "$2" 2> "$3"', runner, `${slot}.in`, `${slot}.out`, `${slot}.err`], { stdio: 'ignore' });
   child.unref();
   return { child, input: openSync(`${slot}.in`, 'w'), output: openSync(`${slot}.out`, 'r'), stderr: `${slot}.err`, buffer: Buffer.alloc(0) };
 }

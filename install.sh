@@ -211,30 +211,6 @@ def upstream_binary(args, current, minor=None):
     return first_passing(([lambda: recorded] if recorded and recorded.is_file() else []) + [found], accept)
 
 
-def node_binary(args, required="24.18.0", recorded=None):
-    major, minor = required.split(".")[:2]
-
-    def accept(path):
-        found = re.fullmatch(rf"v{major}\.(\d+)\.\d+", run([path, "--version"]).strip())
-        if not found or int(found[1]) < int(minor):
-            fail(f"Node {major}.{minor} or a later {major}.x is required; pass --node with a matching executable")
-        return path
-
-    def discovered():
-        if not shutil.which("mise"):
-            fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
-        return Path(run(["mise", "which", "node"]).strip()).resolve()
-
-    def on_path():
-        if not shutil.which("node"):
-            fail(f"Node {major}.{minor} or a later {major}.x is required; install it with mise or pass --node /path/to/node")
-        return Path(shutil.which("node")).resolve()
-
-    if args.node:
-        return first_passing([lambda: Path(args.node).expanduser().resolve()], accept)
-    return first_passing(([lambda: Path(recorded).expanduser().resolve()] if recorded else []) + [discovered, on_path], accept)
-
-
 def profile_choice(args):
     if args.profile:
         return args.profile
@@ -416,15 +392,13 @@ def install(args, root, current):
         step(f"Release {manifest['version']}", "signature verified")
     upstream = upstream_binary(args, current, minor_of(manifest) if manifest else UPSTREAM_MINOR)
     step(f"Codex {upstream['version'].removeprefix('codex-cli ')}", tilde(upstream["path"]))
-    node = node_binary(args, manifest["node"]) if manifest else node_binary(args)
-    step(f"Node {run([node, '--version']).strip().removeprefix('v')}", tilde(node))
     refuse_sessions(root, args.session)
     with tempfile.TemporaryDirectory(prefix="omd-https-install-") as temporary:
         archive = Path(temporary) / "package.tar.xz"
         size = download(url, expected, archive, download_progress)
         step(f"Downloaded {megabytes(size)} MB", "checksum matches")
         pending(f"Installing {PROFILE_LABELS[profile]}")
-        result = transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest)
+        result = transaction(args, root, current, archive, url, expected, profile, upstream, manifest)
         _, record, store = installation(root, pointer(root, "current"))
         if policy(store)["channel"] != channel:
             set_policy(root, record, "channel", channel)
@@ -481,7 +455,7 @@ def journaled(root, generation, own, created=None):
         raise
 
 
-def transaction(args, root, current, archive, url, expected, profile, upstream, node, manifest=None):
+def transaction(args, root, current, archive, url, expected, profile, upstream, manifest=None):
     if manifest and not (signed(manifest.get("body", "").encode(), manifest.get("signature", "").encode())
                          and json.loads(manifest["body"]).get("sha256") == expected):
         fail("the release manifest no longer verifies; run omd update check")
@@ -502,7 +476,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
         command = [sys.executable, "-m", "scripts.package", "install",
                    "--payload", payload, "--upstream", upstream["path"],
                    "--profile", profile, "--prefix", generation / "prefix",
-                   "--bin-dir", generation / "bin", "--store", store, "--node", node]
+                   "--bin-dir", generation / "bin", "--store", store]
         if store.exists():
             command.append("--attach-store")
         if current:
@@ -563,7 +537,20 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
 
 def restore_store(generation, upstream, bin_dir):
     if generation:
+        restore_node(generation)
         package(generation, upstream, bin_dir, "reconcile")
+
+
+def restore_node(generation):
+    record = read_json(generation / "prefix/install.json", {})
+    node = record.get("author", {}).get("node")
+    path = Path(record.get("store", "")) / "mods.json"
+    configuration = read_json(path, None) if node and "runner" not in record else None
+    if isinstance(configuration, dict) and "node" not in configuration:
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps(configuration | {"node": node}, indent=2))
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
 
 
 def abandon(root, generation, upstream, bin_dir):
@@ -854,12 +841,12 @@ def release_manifest(release):
     archive = release["assets"].get(record.get("archive")) if isinstance(record, dict) else None
     if (not archive or record.get("schema") != 1 or record.get("version") != release["version"]
             or not re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256")))
-            or not all(isinstance(record.get(name), str) for name in ("target", "upstream_tag", "mod_api", "node"))
+            or not all(isinstance(record.get(name), str) for name in ("target", "upstream_tag", "mod_api"))
             or not isinstance(record.get("artifacts"), dict)):
         fail(f"release {release['version']} has a malformed {RELEASE_MANIFEST}")
     if archive.get("digest") not in (None, f"sha256:{record['sha256']}"):
         fail(f"release {release['version']} archive digest disagrees with its manifest")
-    return {key: record[key] for key in ("version", "target", "upstream_tag", "mod_api", "node", "sha256")} | {
+    return {key: record[key] for key in ("version", "target", "upstream_tag", "mod_api", "sha256")} | {
         "url": str(archive.get("browser_download_url")), "body": body.decode(), "signature": signature.decode()}
 
 
@@ -915,14 +902,12 @@ def save(root, **changes):
     write_json(update_dir(root) / "state.json", state(root) | changes)
 
 
-def blockers(args, current, manifest, record):
+def blockers(args, current, manifest):
     reasons = [] if manifest["target"] == TARGET else [f"built for {manifest['target']}"]
-    for check_requirement in (lambda: upstream_binary(args, current, minor_of(manifest)),
-                              lambda: node_binary(args, manifest["node"], record["author"]["node"])):
-        try:
-            check_requirement()
-        except (OSError, ValueError) as error:
-            reasons.append(str(error))
+    try:
+        upstream_binary(args, current, minor_of(manifest))
+    except (OSError, ValueError) as error:
+        reasons.append(str(error))
     return reasons
 
 
@@ -952,7 +937,7 @@ def probe(args, root, current):
             except ValueError as error:
                 result["error"] = result["error"] or text(str(error), 300)
                 continue
-            if reasons := blockers(args, current, manifest, record):
+            if reasons := blockers(args, current, manifest):
                 result["blocked"] = result["blocked"] or {"version": item["version"], "reasons": reasons}
                 continue
             result["available"] = {key: item[key] for key in ("version", "prerelease", "notes", "page")} | {
@@ -1040,8 +1025,7 @@ def apply(args, root, current, available):
             with flocked(update_dir(root) / ".stage.lock", DOWNLOAD_WAIT):
                 archive = stage(root, available)
         upstream = upstream_binary(args, current, minor_of(manifest))
-        node = node_binary(args, manifest["node"], record["author"]["node"])
-        result = transaction(args, root, current, archive, manifest["url"], manifest["sha256"], details["profile"], upstream, node, manifest)
+        result = transaction(args, root, current, archive, manifest["url"], manifest["sha256"], details["profile"], upstream, manifest)
     except SessionsOpen:
         raise
     except BaseException as error:
@@ -1176,7 +1160,7 @@ def launch(args, root, current):
     settings = policy(store)
     allowed = eligible(settings, available, record["version"])
     if allowed:
-        allowed = (not blockers(args, current, available["manifest"], record)
+        allowed = (not blockers(args, current, available["manifest"])
                    and (not automatic or settings["auto"] == "on"
                         and available["version"] not in ((saved.get("failed") or {}).get("version"),
                                                           (saved.get("held") or {}).get("version"))
@@ -1239,7 +1223,6 @@ def main():
     parser.add_argument("--yes", action="store_true", help="update even when enabled mods do not support the new mod API")
     parser.add_argument("--json", action="store_true", help="print the install result as JSON")
     parser.add_argument("--upstream", type=Path)
-    parser.add_argument("--node", type=Path)
     parser.add_argument("--root", type=Path, default=Path.home() / ".local/share/oh-my-diff")
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument("--session", type=int, help=argparse.SUPPRESS)

@@ -4437,6 +4437,14 @@ Every context has the standard `TextEncoder`. Host limits count UTF-8 bytes:
 
 The `crypto` environment provides `getRandomValues`, `randomUUID` and the `crypto.subtle` methods.
 
+- `crypto.subtle` implements the Web Cryptography API's standard algorithms: SHA-1/256/384/512, HMAC, AES-GCM,
+  AES-CBC, AES-CTR, AES-KW, PBKDF2, HKDF, ECDSA and ECDH (P-256, P-384, P-521), Ed25519, X25519,
+  RSASSA-PKCS1-v1_5, RSA-PSS and RSA-OAEP, with `raw`, `spki`, `pkcs8` and `jwk` keys as each algorithm allows.
+- Limits: AES-GCM takes a 96-bit `iv` and a 128-bit tag; AES-KW keys are 128 or 256 bits; ECDSA signs P-256 with
+  SHA-256, P-384 with SHA-384 and P-521 with SHA-256, SHA-384 or SHA-512; RSA keys are 2048–8192 bits with exponent
+  65537, and RSA-PSS `saltLength` equals the hash length. Anything else fails with `NotSupportedError`. Generated
+  HMAC keys and derived bits are at most 8,388,608 bits (1 MiB) and PBKDF2 `iterations` at most 4,294,967,295;
+  larger values fail with `OperationError`.
 - Their results are copied into the mod's context.
 - A `CryptoKey` is a frozen handle with `type`, `extractable`, `algorithm` and `usages`.
 - Failures are plain `Error`s whose `name` is the Web Crypto error name.
@@ -4695,7 +4703,7 @@ Saving an entry point, asset or lifecycle file reloads again after 100 ms, and r
 stopping. A running session picks the reload up at its next turn boundary; `/omd` reloads at once while no turn runs,
 and also disables or resets a mod.
 
-**Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE NODE`) that holds
+**Because `watch` approves what it watches, point it only at a scratch store** (`omd-mod init STORE`) that holds
 no other trusted mods, and run it only on code you wrote or reviewed. To try the mod in a real store, review the
 digest and approve it there yourself with `/omd` or `omd-mod trust`. Code an agent wrote is never trusted
 automatically.
@@ -4829,9 +4837,9 @@ offline. For the author-side commands, see [Authoring](#authoring).
 | --- | --- |
 | `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod credentials STORE add-secret MOD_ID LABEL ORIGIN` | Store stdin as a secret owned by `MOD_ID` (replacing that mod's same-label secret) and print the profile |
-| `omd-mod set-node STORE NODE` | Point the store at another `node` binary; with the authority broker deployed this grants it as the runner and asks for authorization |
+| `omd-mod authorize-runner STORE` | With the authority broker deployed, grant the `omd-runner` beside this `omd-mod` as the store's runner (the installer runs it after each update); without the broker it does nothing |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
-| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the configured `node` as the runner; imports no package-source provenance. |
+| `omd-mod broker-grants-import STORE [SNAPSHOT_JSON]` | Without a snapshot, capture the exact current configuration. With that unchanged snapshot, protect existing valid selections without changing capabilities, secret grants, expiry, settings or activation; report stale selections as skipped. Also grants the `omd-runner` beside this `omd-mod` as the runner; imports no package-source provenance. |
 
 #### Selection, policy and protection
 
@@ -5287,11 +5295,11 @@ host:
 
 - keeps credential profiles, secrets and sign-in tokens in the broker (enrollment never writes them to the user's
   disk);
-- runs mod callbacks only under the `node` binary in `mods.json` whose path and digest the broker holds as a runner
-  grant (`node_unverified` otherwise, `node_changed` when the binary changes after verification). Only `omd-mod
-  init`, `omd-mod set-node STORE NODE` (for example after a Node upgrade) and broker grant import grant a runner;
-  trusting or installing packages never does. A missing `node` fails with `node_unavailable`, without a `PATH`
-  fallback;
+- runs mod callbacks only under the `omd-runner` beside the host executable whose path and digest the broker holds
+  as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
+  Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
+  import grant a runner; trusting or installing packages never does. A missing runner fails with
+  `runner_unavailable`, with no fallback to another program;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the

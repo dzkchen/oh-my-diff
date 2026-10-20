@@ -2338,7 +2338,6 @@ pub struct ModConfiguration {
     pub schema: u32,
     #[serde(default)]
     pub revision: u64,
-    pub node: PathBuf,
     pub mods: Vec<ModSelection>,
 }
 
@@ -2391,12 +2390,6 @@ pub fn activation_failures(status: &Value) -> Vec<String> {
         .collect()
 }
 
-/// The first real `node` executable on PATH; version-manager shims resolve to other programs.
-pub fn node_on_path() -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .filter_map(|directory| directory.join("node").canonicalize().ok())
-        .find(|node| node.file_name() == Some("node".as_ref()) && node.is_file())
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -2635,10 +2628,7 @@ mod reload_tests {
     fn raw_frame_authority_poll_skips_reads_but_detects_rewrites_and_refreshes_policy() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
-        ModStore::create(
-            root.clone(),
-            std::env::var_os("OMD_TEST_NODE").unwrap().into(),
-        )
+        ModStore::create(root.clone())
         .unwrap();
         let mut host = ModHost::open(root.clone()).unwrap();
         let reads = store::READS.get();
@@ -2674,7 +2664,7 @@ mod reload_tests {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
-        ModStore::create(root.clone(), std::env::current_exe().unwrap()).unwrap();
+        ModStore::create(root.clone()).unwrap();
         let peers = crate::peers::Peers::open(&root, "alpha", Path::new("/repo")).unwrap();
         peers.publish(&[]).unwrap();
         crate::consents::grant(&root, "thread", "owner", "digest", "id").unwrap();
@@ -2767,7 +2757,6 @@ pub struct ModGrants {
 
 pub struct ModHost {
     store: ModStore,
-    node: PathBuf,
     generation: u64,
     configuration_sha256: String,
     configuration_stamp: Option<FileStamp>,
@@ -2863,7 +2852,6 @@ struct Invocation {
     thread: Option<String>,
     loaded: Loaded,
     dynamic: Vec<String>,
-    node: PathBuf,
     virtual_time_ms: Option<u64>,
     started: Instant,
     migrate: bool,
@@ -3005,7 +2993,6 @@ fn invoke(
             access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
         if invocation.migrate {
             invocation.loaded.state = packages::migrate_state(
-                &invocation.node,
                 &invocation.loaded,
                 &invocation.location,
                 active,
@@ -3013,7 +3000,6 @@ fn invoke(
         }
         let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
         bridge::run(
-            &invocation.node,
             &invocation.loaded,
             event,
             name,
@@ -3268,7 +3254,6 @@ impl ModHost {
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
-            node: PathBuf::new(),
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
@@ -3464,16 +3449,10 @@ impl ModHost {
         }
         let configured = bytes
             .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
-            .and_then(
-                |config| match config.schema != 1 || !config.node.is_absolute() {
-                    true => Err(failure("invalid_mod_configuration")),
-                    false if !config.node.is_file() => Err(failure(format!(
-                        "node_unavailable: {} is missing; run omd-mod set-node STORE NODE",
-                        config.node.display()
-                    ))),
-                    false => Ok(config),
-                },
-            );
+            .and_then(|config| match config.schema != 1 {
+                true => Err(failure("invalid_mod_configuration")),
+                false => process::runner_path().map(|_| config),
+            });
         let mut rejected = Vec::new();
         let config = match configured {
             Ok(config) => config,
@@ -3488,19 +3467,18 @@ impl ModHost {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
-                    node: self.node.clone(),
                     mods: Vec::new(),
                 }
             }
             Err(error) => return Err(error),
         };
-        if let Err(error) =
-            store::verify_runner(&config.node, brokered.as_ref().map(|(_, grants)| grants))
-        {
+        if let Err(error) = process::runner_path().and_then(|runner| {
+            store::verify_runner(&runner, brokered.as_ref().map(|(_, grants)| grants))
+        }) {
             self.fail_closed(error.to_string());
             return Err(error);
         }
-        let ui_signature = digest(serde_json::to_vec(&(&config.node, &config.mods))?.as_slice());
+        let ui_signature = digest(serde_json::to_vec(&config.mods)?.as_slice());
         if self
             .ui_configuration
             .as_ref()
@@ -3671,7 +3649,7 @@ impl ModHost {
                     }
                     state => state?,
                 };
-                let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, active)?;
+                let reply = Self::run(&loaded, "inspect", "", Value::Null, active)?;
                 if reply.state != loaded.state {
                     return Err(failure("state_write_during_registration"));
                 }
@@ -3748,7 +3726,6 @@ impl ModHost {
                 .collect::<BTreeSet<_>>()
                 .len(),
         );
-        self.node = config.node;
         for (id, previous) in &mut self.loaded {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
@@ -4482,7 +4459,6 @@ impl ModHost {
     }
 
     fn run(
-        node: &Path,
         loaded: &Loaded,
         event: &str,
         name: &str,
@@ -4490,7 +4466,6 @@ impl ModHost {
         active: &dyn Fn() -> bool,
     ) -> Result<Reply> {
         bridge::run(
-            node,
             loaded,
             event,
             name,
@@ -4685,7 +4660,7 @@ impl ModHost {
         // An unchanged authority inventory cannot introduce a different precedence winner.
         let unchanged = hash == self.configuration_sha256;
         match configuration {
-            Ok(config) if config.schema == 1 && config.node == self.node => selections.extend(
+            Ok(config) if config.schema == 1 => selections.extend(
                 config
                     .mods
                     .iter()
@@ -4735,7 +4710,6 @@ impl ModHost {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
             && stamp == *cached_stamp
-            && configuration.node.is_file()
         {
             return (sha256.clone(), Ok(configuration.clone()));
         }
@@ -4826,7 +4800,6 @@ impl ModHost {
                 .map(|tool| tool.name.clone())
                 .collect(),
             loaded,
-            node: self.node.clone(),
             virtual_time_ms: self.virtual_time_ms,
             started: Instant::now(),
             migrate,

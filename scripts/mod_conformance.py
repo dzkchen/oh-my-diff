@@ -8,7 +8,7 @@ from scripts.mod_compatibility import array_constant, host_contract
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "mods/conformance/contract.json"
 CLASSIC = ROOT / "mods/conformance/classic-hooks.json"
-RUNNER = ROOT / "runtime/omd/src/mods/runner.mjs"
+RUNNER = ROOT / "runtime/omd/runner/src/bootstrap.js"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
 GROUPS = {
@@ -147,7 +147,7 @@ def check(contract, version, sets):
     typed = set(re.findall(r"'(\w+)'", re.search(r"export type ClassicHook = (.*?);", (ROOT / "mods/api.d.ts").read_text(), re.S).group(1)))
     names = [entry["hook"] for entry in classic]
     if len(names) != 33 or set(names) != set(mapped) or set(names) != typed:
-        problems.append("classic hooks disagree between classic-hooks.json, runner.mjs and api.d.ts")
+        problems.append("classic hooks disagree between classic-hooks.json, the runner bootstrap and api.d.ts")
     for entry in classic:
         if mapped.get(entry["hook"]) != entry["native"]:
             problems.append(f"classic hook {entry['hook']}: ledger maps {entry['native']}, runner maps {mapped.get(entry['hook'])}")

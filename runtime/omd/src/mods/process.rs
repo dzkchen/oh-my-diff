@@ -21,29 +21,38 @@ use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
 
-const RUNNER: &str = include_str!("runner.mjs");
+/// The runner installed beside the host executable, as release artifacts and cargo targets lay them out.
+pub(super) fn runner_path() -> Result<PathBuf> {
+    let host = std::env::current_exe()?.canonicalize()?;
+    let runner = host.with_file_name("omd-runner");
+    match runner.canonicalize() {
+        Ok(runner) if runner.is_file() => Ok(runner),
+        _ => Err(failure(format!(
+            "runner_unavailable: {} is missing; reinstall Oh My Diff",
+            runner.display()
+        ))),
+    }
+}
 
-fn command(node: &Path) -> Result<Command> {
+fn sandboxed(program: &Path) -> Result<Command> {
     if !cfg!(target_os = "macos") {
         return Err(failure("unsupported_platform: mods require macOS Seatbelt"));
     }
-    let node = node.canonicalize()?;
-    super::store::check_runner(&node)?;
-    let literal = serde_json::to_string(&node)?;
+    let literal = serde_json::to_string(program)?;
     let profile = format!(
         "(version 1)(deny default)(allow process-exec (literal {literal}))(allow process-info* (target self))(allow sysctl-read)(allow signal (target self))(allow file-read* (literal \"/\")(literal {literal})(subpath \"/System/Library\")(subpath \"/usr/lib\")(literal \"/dev/null\")(literal \"/dev/urandom\")(literal \"/dev/random\"))(allow file-write* (literal \"/dev/null\"))"
     );
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command
         .args(["-p", &profile])
-        .arg(&node)
+        .arg(program)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .current_dir("/");
     Ok(command)
 }
 
-type Spares = (Vec<(PathBuf, Child)>, Option<Instant>);
+type Spares = (Vec<Child>, Option<Instant>);
 
 static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
 const BUSY_RUNNERS: usize = 3;
@@ -166,7 +175,7 @@ fn reap() {
                         Vec::new()
                     }
                 };
-                for (_, child) in surplus {
+                for child in surplus {
                     stop(child);
                 }
             }
@@ -174,20 +183,10 @@ fn reap() {
     });
 }
 
-fn spawn(node: &Path) -> Result<Child> {
-    let child = command(node)?
-        .args([
-            "--max-old-space-size=64",
-            "--no-compilation-cache",
-            "--no-lazy",
-            "--enable-source-maps",
-            "--no-warnings",
-            "--experimental-vm-modules",
-            "--disallow-code-generation-from-strings",
-            "--input-type=module",
-            "--eval",
-            RUNNER,
-        ])
+fn spawn() -> Result<Child> {
+    let runner = runner_path()?;
+    super::store::check_runner(&runner)?;
+    let child = sandboxed(&runner)?
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -196,25 +195,22 @@ fn spawn(node: &Path) -> Result<Child> {
     Ok(child)
 }
 
-fn runner(node: &Path) -> Result<Child> {
+fn runner() -> Result<Child> {
     let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
     let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
     spares.1 = Some(Instant::now());
-    for (_, child) in spares
-        .0
-        .extract_if(.., |(path, child)| path != node || exited(child))
-    {
+    for child in spares.0.extract_if(.., exited) {
         stop(child);
     }
-    let warm = (!spares.0.is_empty()).then(|| spares.0.remove(0).1);
+    let warm = (!spares.0.is_empty()).then(|| spares.0.remove(0));
     while spares.0.len() < if busy { BUSY_RUNNERS } else { 1 } {
-        match spawn(node) {
-            Ok(child) => spares.0.push((node.to_path_buf(), child)),
+        match spawn() {
+            Ok(child) => spares.0.push(child),
             Err(_) => break,
         }
     }
     reap();
-    warm.map_or_else(|| spawn(node), Ok)
+    warm.map_or_else(spawn, Ok)
 }
 
 pub(super) const INPUT_LIMIT: usize = 1_048_576;
@@ -470,8 +466,8 @@ fn mount(owner: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
-fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
-    let mut child = runner(node)?;
+fn warm_runner(key: &str, serve: bool) -> Result<Warm> {
+    let mut child = runner()?;
     let stderr = child
         .stderr
         .take()
@@ -512,7 +508,6 @@ fn warm_runner(node: &Path, key: &str, serve: bool) -> Result<Warm> {
 
 /// Warm render runners are reused for the same `key` (package, settings and state, everything except the render's own input); other callbacks reuse a runner only of the same package identity, each in a fresh context.
 pub(super) fn evaluate_warm<R>(
-    node: &Path,
     key: &str,
     request: &R,
     budget: Duration,
@@ -576,7 +571,7 @@ where
             if let Some(owner) = &pinned {
                 mount(owner, key)?;
             }
-            let mut warm = match warm_runner(node, key, request["serve"] == true) {
+            let mut warm = match warm_runner(key, request["serve"] == true) {
                 Ok(warm) => warm,
                 Err(error) => {
                     if let (Some(owner), Ok(mut mounted)) = (&pinned, MOUNTED.lock()) {
@@ -699,14 +694,13 @@ fn process_failure(errors: &[u8]) -> std::io::Error {
 }
 
 pub(super) fn evaluate(
-    node: &Path,
     request: &impl serde::Serialize,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
 ) -> Result<Value> {
     let bytes = request_line(request)?;
-    let mut child = runner(node)?;
+    let mut child = runner()?;
     let stderr = child
         .stderr
         .take()

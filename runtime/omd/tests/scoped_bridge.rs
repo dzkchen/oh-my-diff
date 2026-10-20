@@ -49,9 +49,8 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     for file in ["index.ts", "mod.json"] {
         fs::copy(source.join(file), component.join(file)).unwrap();
     }
-    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("OMD_TEST_NODE required"));
     let store_path = root.join("store");
-    let store = ModStore::create(store_path.clone(), node).unwrap();
+    let store = ModStore::create(store_path.clone()).unwrap();
     let inspected = ModStore::inspect_package(&component).unwrap();
     let hash = inspected["sha256"].as_str().unwrap();
     fs::write(

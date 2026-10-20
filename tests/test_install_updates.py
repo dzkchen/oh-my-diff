@@ -256,7 +256,7 @@ class UpdateSelection(unittest.TestCase):
                         else:
                             with self.assertRaisesRegex(OSError, "launcher creation failed"):
                                 self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                        "platform", {"path": "/usr/bin/true"}, "/usr/bin/true")
+                                                        "platform", {"path": "/usr/bin/true"})
                     if interrupted:
                         self.module.recover(args, root, None)
                     for name, original in originals.items():
@@ -333,7 +333,7 @@ class UpdateSelection(unittest.TestCase):
         for bad in (tampered, {key: value for key, value in manifest.items() if key != "signature"}):
             with self.assertRaisesRegex(ValueError, "no longer verifies"):
                 self.module.transaction(None, self.root, self.current, None, manifest["url"], manifest["sha256"],
-                                        "platform", None, None, bad)
+                                        "platform", None, bad)
 
     def test_release_lists_come_only_from_github_or_a_loopback_server(self):
         for url in ("https://api.github.com/repos/dzkchen/oh-my-diff/releases?per_page=20", "https://127.0.0.1:8443/releases"):
@@ -396,11 +396,24 @@ class UpdateSelection(unittest.TestCase):
                         patch.object(self.module, "discard"), patch.object(self.module, "abandon"):
                     with self.assertRaises(KeyboardInterrupt):
                         self.module.transaction(args, root, None, root / "archive", "https://example.test/archive", "a" * 64,
-                                                "platform", {"path": "/usr/bin/true"}, "/usr/bin/true")
+                                                "platform", {"path": "/usr/bin/true"})
                 self.assertEqual(self.module.read_json(root / "update/journal.json", {})["created"], None if existing else "platform")
                 self.module.recover(args, root, None)
                 self.assertEqual(store.exists(), existing)
                 self.assertFalse((root / "update/journal.json").exists())
+
+    def test_rollback_to_a_node_generation_restores_its_recorded_node(self):
+        store = self.root / "stores/platform"
+        for runner, expected in ((None, {"node": "/opt/node"}), ({"installed_path": "/opt/omd-runner"}, {})):
+            with self.subTest(runner=runner):
+                generation = self.root / "releases" / ("1" * 32)
+                record = {"store": str(store), "author": {"node": "/opt/node"}} | ({"runner": runner} if runner else {})
+                (generation / "prefix").mkdir(parents=True, exist_ok=True)
+                (generation / "prefix/install.json").write_text(json.dumps(record))
+                (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 3, "mods": []}))
+                self.module.restore_node(generation)
+                configuration = json.loads((store / "mods.json").read_text())
+                self.assertEqual(configuration, {"schema": 1, "revision": 3, "mods": []} | expected)
 
     def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
         bin_dir = self.root / "bin"
@@ -548,18 +561,6 @@ class UpdateSelection(unittest.TestCase):
 
 
 class ProfilePrompt(unittest.TestCase):
-    def test_node_on_path_is_used_without_mise(self):
-        module = installer()
-        with tempfile.TemporaryDirectory(prefix="omd-node-", dir="/private/tmp") as temporary:
-            node = Path(temporary).resolve() / "node"
-            node.write_text("#!/bin/sh\necho v24.18.1\n")
-            node.chmod(0o755)
-            with patch.dict(os.environ, {"PATH": f"{temporary}:/usr/bin:/bin"}):
-                self.assertEqual(module.node_binary(types.SimpleNamespace(node=None)), node)
-                node.write_text("#!/bin/sh\necho v22.1.0\n")
-                with self.assertRaisesRegex(ValueError, "Node 24.18 or a later 24.x is required"):
-                    module.node_binary(types.SimpleNamespace(node=None))
-
     def test_piped_install_reads_the_profile_from_the_terminal(self):
         module = installer()
         pid, leader = pty.fork()

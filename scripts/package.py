@@ -122,8 +122,9 @@ def install_payload(payload, args):
     command = [sys.executable, "-m", "scripts.profiles", "--prefix", args.prefix,
                "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
                "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
-               "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
-               "--store", args.store]
+               "--author-archive", payload / "artifacts/mod-api.tgz", "--store", args.store]
+    if args.node:
+        command += ["--node", args.node]
     if args.attach_store:
         command.append("--attach-store")
     if getattr(args, "previous", None):
@@ -150,7 +151,7 @@ def main():
     install.add_argument("--prefix", type=Path, required=True)
     install.add_argument("--bin-dir", type=Path, required=True)
     install.add_argument("--store", type=Path, required=True)
-    install.add_argument("--node", type=Path, required=True)
+    install.add_argument("--node", type=Path, help="Node.js for omd-mod-author and route setup (default: node on PATH)")
     install.add_argument("--attach-store", action="store_true")
     args = parser.parse_args()
     if args.command == "install" and args.archive and not args.sha256:
