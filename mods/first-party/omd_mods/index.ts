@@ -42,9 +42,16 @@ export default function activate(api: ModAPI) {
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
-    const found = api.host.tryCall('packages.index', {});
     const kept = (entry: PackageCatalogEntry): PackageCatalogEntry => ({ ...entry, description: clip(entry.description, 120), versions: entry.versions.filter(item => !item.blocked).slice(0, 1) });
-    return found.ok ? { ...state, catalog: found.value.packages.slice(0, CATALOG).map(kept), catalogError: null } : { ...state, catalog: [], catalogError: found.error };
+    const catalog: PackageCatalogEntry[] = [];
+    let cursor: string | undefined;
+    do {
+      const found = api.host.tryCall('packages.index', { limit: Math.min(50, CATALOG - catalog.length), ...cursor && { cursor } });
+      if (!found.ok) return { ...state, catalog: [], catalogError: found.error };
+      catalog.push(...found.value.packages.map(kept));
+      cursor = found.value.cursor ?? undefined;
+    } while (cursor && catalog.length < CATALOG);
+    return { ...state, catalog, catalogError: null };
   };
   // A successful change reloads mods, which refuses this callback's later panel calls; the host then reruns every open panel's action.
   const apply = (state: Saved, request: PackageRequest, label: string, generation = state.generation): Saved | null => {

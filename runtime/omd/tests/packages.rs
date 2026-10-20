@@ -1578,7 +1578,7 @@ fn package_requests_refuse_a_wrong_action_another_scope_and_nested_index_sources
     )
     .unwrap();
     let error = store
-        .package_index_entries(&index, "")
+        .package_index_entries(&index, "", 0, 200)
         .unwrap_err()
         .to_string();
     assert!(error.contains("index_release_source_invalid"), "{error}");

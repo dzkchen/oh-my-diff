@@ -412,10 +412,17 @@ impl ModStore {
         path.is_file().then_some(path)
     }
 
-    pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
+    pub fn package_index_entries(
+        &self,
+        index: &Path,
+        query: &str,
+        start: usize,
+        limit: usize,
+    ) -> Result<Value> {
         let lock = self.package_lock()?;
         let query = query.trim().to_lowercase();
         let mut packages = Vec::new();
+        let mut total = 0;
         for (id, releases) in read_index(index)?.packages {
             let mut releases = releases;
             releases.reverse();
@@ -435,6 +442,10 @@ impl ModStore {
             {
                 continue;
             }
+            total += 1;
+            if total <= start || packages.len() == limit {
+                continue;
+            }
             packages.push(json!({
                 "id": id,
                 "latest": newest.version,
@@ -444,11 +455,10 @@ impl ModStore {
                     "blocked": release.blocked})).collect::<Vec<_>>(),
                 "installed": lock.packages.get(&id).map(|package| &package.version),
             }));
-            if packages.len() == 200 {
-                break;
-            }
         }
-        Ok(json!({"index": index, "packages": packages}))
+        let end = start + packages.len();
+        Ok(json!({"index": index, "packages": packages, "total": total,
+            "cursor": (end < total).then(|| end.to_string())}))
     }
 
     pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {

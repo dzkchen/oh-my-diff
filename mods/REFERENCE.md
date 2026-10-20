@@ -4288,13 +4288,15 @@ or with a `reference` string and an optional `version`.
 
 #### `packages.index`
 
-`packages.index {index?, query?}` is read-only and returns:
+`packages.index {index?, query?, cursor?, limit?}` is read-only and returns:
 
 ```ts
-{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}]}
+{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}], total, cursor}
 ```
 
-It reads the named index (the store's `package-index.json` by default), filtered by `query`. It fails with
+It reads the named index (the store's `package-index.json` by default), filtered by `query`, one page of `limit`
+entries (1-200, default 200) in id order. `total` counts every match; pass the returned `cursor` to read the next
+page, and it is `null` on the last one. Paging requires `package_index_paging_v1`. It fails with
 `package_index_unavailable` when no index exists.
 
 #### Package state fields

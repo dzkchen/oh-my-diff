@@ -59,6 +59,10 @@ struct IndexArguments {
     index: Option<PathBuf>,
     #[serde(default)]
     query: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
@@ -70,7 +74,17 @@ pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
         .ok_or_else(|| {
             failure("package_index_unavailable: install from npm:, git+ or a folder instead")
         })?;
-    store.package_index_entries(&path, &arguments.query)
+    let start = arguments
+        .cursor
+        .map(|cursor| cursor.parse::<usize>())
+        .transpose()
+        .map_err(|_| failure("package_arguments_invalid: cursor"))?
+        .unwrap_or(0);
+    let limit = arguments.limit.unwrap_or(200);
+    if !(1..=200).contains(&limit) {
+        return Err(failure("package_arguments_invalid: limit must be 1-200"));
+    }
+    store.package_index_entries(&path, &arguments.query, start, limit)
 }
 
 fn user() -> String {
