@@ -246,15 +246,15 @@ where
     Ok(digest.finalize().into())
 }
 
-fn lean_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
-    let mut lean = serde_json::to_value(request)?;
-    if let Some(fields) = lean.as_object_mut() {
+fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
+    let mut line = serde_json::to_value(request)?;
+    if let Some(fields) = line.as_object_mut() {
         for field in KEPT_FIELDS {
             fields.remove(field);
         }
         fields.insert("kept".into(), Value::Bool(true));
     }
-    request_line(&lean)
+    request_line(&line)
 }
 
 fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHandle<()>) {
@@ -555,8 +555,7 @@ where
     }
     let (mut warm, bytes) = match reused {
         Some(warm) if kept.is_some() && warm.kept == kept => {
-            let lean = lean_line(request)?;
-            (warm, lean)
+            (warm, kept_line(request)?)
         }
         Some(warm) => {
             // The activation request differs from this one only in the serve fields.

@@ -14,7 +14,7 @@ import tomllib
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-TMP = Path(os.environ.get("OMD_BATCH_ROOT", "/private/tmp"))
+TMP = Path(os.environ.get("OMD_WORK_ROOT", "/private/tmp"))
 SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
@@ -33,8 +33,8 @@ def base_tag():
     return "normalized" + pin()["tag"].removeprefix("rust-v").replace(".", "").lstrip("0")
 
 
-def batch_dir(batch):
-    return TMP / f"omd-b{batch}"
+def work_dir(name):
+    return TMP / f"omd-b{name}"
 
 
 def run(*args, cwd=None, allowed=(0,)):
@@ -72,11 +72,11 @@ def prepare(tree, commit):
 
 
 def setup(args):
-    batch = batch_dir(args.batch)
-    tree = batch / "codex"
+    work = work_dir(args.name)
+    tree = work / "codex"
     if not tree.exists():
         commit = scratch_repo()
-        batch.mkdir(parents=True, exist_ok=True)
+        work.mkdir(parents=True, exist_ok=True)
         git(SCRATCH, "worktree", "add", "--quiet", "--detach", tree, commit)
         prepare(tree, commit)
         if not git(SCRATCH, "tag", "-l", base_tag()).strip():
@@ -90,11 +90,11 @@ def setup(args):
     print(tree)
 
 
-def cargo_env(batch):
+def cargo_env(work):
     env = {key: value for key, value in os.environ.items()
            if key not in ("CODEX_SQLITE_HOME", "FORCE_COLOR", "COLORTERM", "NO_COLOR")}
     env.update({
-        "CARGO_TARGET_DIR": str(batch / "target"),
+        "CARGO_TARGET_DIR": str(work / "target"),
         "CARGO_INCREMENTAL": os.environ.get("CARGO_INCREMENTAL", "1"),
         "CARGO_PROFILE_DEV_DEBUG": os.environ.get("CARGO_PROFILE_DEV_DEBUG", "0"),
         "CARGO_PROFILE_RELEASE_LTO": os.environ.get("CARGO_PROFILE_RELEASE_LTO", "off"),
@@ -109,11 +109,11 @@ def cargo_env(batch):
     return env
 
 
-def cargo_run(batch, log, cargo_args):
+def cargo_run(work, log, cargo_args):
     log = Path(log)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w") as output:
-        status = subprocess.run(["cargo", *cargo_args], cwd=batch / "codex/codex-rs", env=cargo_env(batch),
+        status = subprocess.run(["cargo", *cargo_args], cwd=work / "codex/codex-rs", env=cargo_env(work),
                                 stdout=output, stderr=subprocess.STDOUT).returncode
         output.write(f"exit={status}\n")
     text = log.read_text(errors="replace").splitlines()
@@ -128,7 +128,7 @@ def cargo_run(batch, log, cargo_args):
 def v8(args):
     if os.environ.get("V8_FROM_SOURCE") or os.environ.get("RUSTY_V8_ARCHIVE"):
         return
-    checkout = batch_dir(args.batch) / "codex"
+    checkout = work_dir(args.name) / "codex"
     lock = tomllib.loads((checkout / "codex-rs/Cargo.lock").read_text())
     (version,) = {package["version"] for package in lock["package"] if package["name"] == "v8"}
     target = run("rustc", "-vV", cwd=checkout / "codex-rs").decode().split("host: ", 1)[1].split()[0]
@@ -152,7 +152,7 @@ def v8(args):
 
 
 def cargo(args):
-    raise SystemExit(cargo_run(batch_dir(args.batch), args.log, args.cargo_args))
+    raise SystemExit(cargo_run(work_dir(args.name), args.log, args.cargo_args))
 
 
 def tracked(tree, *paths):
@@ -165,8 +165,8 @@ def skipped(relative):
 
 
 def sync(args):
-    batch = batch_dir(args.batch)
-    source = batch / "codex"
+    work = work_dir(args.name)
+    source = work / "codex"
     base = base_tag()
     patch = git(source, "diff", "--binary", "--full-index", "--no-renames", base, "--", "codex-rs")
     changed = set(git(source, "diff", "--name-only", "--no-renames", base, "--", "codex-rs").decode().splitlines())
@@ -212,7 +212,7 @@ def sync(args):
                 mirrors += 1
     shutil.copyfile(source / OBSERVER, ROOT / "runtime/native/src/request_observer.rs")
     checks = {}
-    with tempfile.TemporaryDirectory(dir=batch, prefix="replay-") as temporary:
+    with tempfile.TemporaryDirectory(dir=work, prefix="replay-") as temporary:
         replay = Path(temporary) / "codex"
         run("git", "clone", "--quiet", "--shared", "--no-checkout", source, replay)
         git(replay, "checkout", "--quiet", "--detach", pin()["commit"])
@@ -237,16 +237,16 @@ def pack_sdk(output):
 
 
 def artifacts(args):
-    batch = batch_dir(args.batch)
+    work = work_dir(args.name)
     sys.path.insert(0, str(ROOT))
     from scripts import build_provenance, release_lock
-    built = batch / "target/release"
-    output = batch / "artifacts"
-    log = batch / "logs/build-artifacts.log"
-    tree, environment = batch / "codex", cargo_env(batch)
+    built = work / "target/release"
+    output = work / "artifacts"
+    log = work / "logs/build-artifacts.log"
+    tree, environment = work / "codex", cargo_env(work)
     before = build_provenance.inputs(tree, BUILD, environment)
     (built / build_provenance.RECORD).unlink(missing_ok=True)
-    if cargo_run(batch, log, BUILD):
+    if cargo_run(work, log, BUILD):
         raise SystemExit(1)
     build_provenance.record_build(built, before, build_provenance.inputs(tree, BUILD, environment))
     unsigned = build_provenance.verify(built, signed=False, expected_inputs=before)
@@ -280,21 +280,21 @@ def main():
     parser = argparse.ArgumentParser(description="Hosted build tree for the pinned Codex runtime patch")
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("setup", help="worktree at the pin, normalized and patched")
-    command.add_argument("batch")
+    command.add_argument("name")
     command.set_defaults(handler=setup)
-    command = commands.add_parser("cargo", help="cargo in the batch tree; full log to a file, summary to stdout")
-    command.add_argument("batch")
+    command = commands.add_parser("cargo", help="cargo in the scratch tree; full log to a file, summary to stdout")
+    command.add_argument("name")
     command.add_argument("log", help="log file path")
     command.add_argument("cargo_args", nargs=argparse.REMAINDER)
     command.set_defaults(handler=cargo)
     command = commands.add_parser("v8", help="download and verify the V8 prebuilt that codex-cli builds link")
-    command.add_argument("batch")
+    command.add_argument("name")
     command.set_defaults(handler=v8)
     command = commands.add_parser("sync", help="regenerate patch, manifest, pin hash and runtime mirrors; verify replay")
-    command.add_argument("batch")
+    command.add_argument("name")
     command.set_defaults(handler=sync)
     command = commands.add_parser("artifacts", help="build, copy, sign and pack release lock inputs")
-    command.add_argument("batch")
+    command.add_argument("name")
     command.set_defaults(handler=artifacts)
     command = commands.add_parser("locks", help="rewrite every generated source lock and document in dependency order")
     command.set_defaults(handler=locks)

@@ -13,7 +13,4 @@ __pycache__/
 /pnpm-workspace.yaml
 /mods/node_modules/
 /mods/first-party/*/node_modules/
-/node_modules/
-/package.json
-/pnpm-lock.yaml
 /mise.local.toml

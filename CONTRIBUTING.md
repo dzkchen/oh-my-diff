@@ -53,7 +53,7 @@ python3 .github/scripts/build.py locks                                       # r
 
 - **Crates:** `runtime/omd` is `codex-omd` and `runtime/native` is `codex-omd-extension`. Rust tests sit beside the code
   in `*_tests.rs` files. Always run cargo through `build.py cargo`: it sets the target and the Node the mod tests need.
-- **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_BATCH_ROOT`
+- **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
   replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
   (`git -C TREE diff normalized1630 -- codex-rs/PATH`).
 - **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
@@ -64,6 +64,20 @@ python3 .github/scripts/build.py locks                                       # r
   `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
   `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.
   `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
+
+### Linux container
+
+The `Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
+without a Mac. OMD itself supports only Apple Silicon macOS, and the mod host runs mods only there.
+
+```sh
+docker build -t oh-my-diff .
+docker run --rm -it -v omd-work:/home/omd/work oh-my-diff   # then the build.py commands above
+```
+
+The work root is `/home/omd/work`, kept in the `omd-work` volume; rebuild the image after changing the checkout.
+The binaries build and the Python, `mods:check` and most `mods:test` checks pass there. Tests that start a mod
+runner or the authority broker fail by design.
 
 ## Open a pull request
 

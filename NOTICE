@@ -8,7 +8,9 @@ OpenAI Codex rust-v0.163.0 and are licensed under the Apache License,
 Version 2.0 (see LICENSE-APACHE).
 
 Credits for third-party projects that OMD packages adapt or port are in
-THIRD_PARTY_NOTICES.md.
+THIRD_PARTY_NOTICES.md. Licenses and copyright notices of the Rust crates built
+into the binaries are in runtime/crate-notices.txt, and those of the libraries in
+the linked V8 prebuilt are in runtime/v8-notices.txt.
 
 This product modifies OpenAI Codex, which carries the following notice:
 

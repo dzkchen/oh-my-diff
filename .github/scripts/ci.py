@@ -18,7 +18,7 @@ import build
 from scripts import authority_broker, install_support as support, package as release_package, profile_acceptance, release_lock
 
 WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
-BATCH = "nightly"
+TREE = "nightly"
 CRATES = ["codex-omd", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
 
@@ -36,7 +36,7 @@ class Step:
 def cargo_step(log, *args):
     if args[0] in ("build", "test", "clippy"):
         args = (args[0], "--locked", *args[1:])
-    return ["python3", ".github/scripts/build.py", "cargo", BATCH, str(WORK / "logs" / f"{log}.cargo.log"), *args]
+    return ["python3", ".github/scripts/build.py", "cargo", TREE, str(WORK / "logs" / f"{log}.cargo.log"), *args]
 
 
 def packages(names):
@@ -67,20 +67,20 @@ def core_env():
 
 
 def tree_steps():
-    return [Step("setup", ["python3", ".github/scripts/build.py", "setup", BATCH], fatal=True),
-            Step("verified V8", ["python3", ".github/scripts/build.py", "v8", BATCH], fatal=True)]
+    return [Step("setup", ["python3", ".github/scripts/build.py", "setup", TREE], fatal=True),
+            Step("verified V8", ["python3", ".github/scripts/build.py", "v8", TREE], fatal=True)]
 
 
 def job_steps(job):
-    artifact_dir = build.batch_dir(BATCH) / "artifacts"
+    artifact_dir = build.work_dir(TREE) / "artifacts"
     manager = str(artifact_dir / "omd-mod")
     if job == "build":
-        return [*tree_steps(), Step("host binaries", ["python3", ".github/scripts/build.py", "artifacts", BATCH])]
+        return [*tree_steps(), Step("host binaries", ["python3", ".github/scripts/build.py", "artifacts", TREE])]
     if job == "test":
         tests = ["python3", ".github/scripts/ci.py", "tests", "--suite"]
         return [
             *tree_steps(),
-            Step("patch sync", ["python3", ".github/scripts/build.py", "sync", BATCH]),
+            Step("patch sync", ["python3", ".github/scripts/build.py", "sync", TREE]),
             Step("patch matches checkout", drift("runtime", "upstream.lock.json")),
             Step("test helper binaries", cargo_step("test-helpers", "build", "-p", "codex-rmcp-client", "-p", "codex-cli",
                                                     "-p", "codex-code-mode-host", "--bins")),
@@ -163,9 +163,9 @@ def validate(job, release):
 
 
 def cargo_tests(suite):
-    batch = build.batch_dir(BATCH)
+    work = build.work_dir(TREE)
     names = ["codex-core"] if suite.startswith("core") else CRATES
-    metadata = json.loads(build.run("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1", cwd=batch / "codex/codex-rs"))
+    metadata = json.loads(build.run("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1", cwd=work / "codex/codex-rs"))
     targets = set()
     for package in metadata["packages"]:
         if package["name"] in names:
@@ -186,11 +186,11 @@ def cargo_tests(suite):
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
-        status = build.cargo_run(batch, log, args)
+        status = build.cargo_run(work, log, args)
         flaky = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)))
         if status and 0 < len(flaky) <= 5:
             print(f"rerunning {', '.join(flaky)}")
-            status = build.cargo_run(batch, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
+            status = build.cargo_run(work, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
         failed |= status != 0
         for line in log.read_text().splitlines():
             try:
@@ -202,7 +202,7 @@ def cargo_tests(suite):
             if (isinstance(item, dict) and item.get("reason") == "compiler-artifact"
                     and item.get("profile", {}).get("test") and item.get("executable")):
                 path = Path(item["executable"])
-                if path.resolve().parent == (batch / "target/debug/deps").resolve():
+                if path.resolve().parent == (work / "target/debug/deps").resolve():
                     path.unlink(missing_ok=True)
     raise SystemExit(int(failed))
 
@@ -216,8 +216,8 @@ def nightly_version(frozen):
 
 
 def package(version=None):
-    batch = build.batch_dir(BATCH)
-    artifact_dir = batch / "artifacts"
+    work = build.work_dir(TREE)
+    artifact_dir = work / "artifacts"
     frozen = json.loads(release_lock.OUTPUT.read_text())["version"]
     if version is None:
         version = nightly_version(frozen)
@@ -230,7 +230,7 @@ def package(version=None):
     support.output([sys.executable, "-m", "scripts.package", "pack", "--artifact-dir", artifact_dir, "--output", archive])
     if archive.stat().st_size > 150_000_000:
         raise ValueError("nightly archive exceeds the curl installer download limit")
-    upstream = batch / "upstream-bin/codex"
+    upstream = work / "upstream-bin/codex"
     upstream.parent.mkdir(parents=True)
     pin = build.pin()
     support.output(["curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",

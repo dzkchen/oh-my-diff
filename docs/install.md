@@ -64,7 +64,7 @@ delete it to remove them.
 
 ## More
 
-- **Release candidates or nightly builds:** `--channel prerelease|nightly` on install, or
+- **Prereleases or nightly builds:** `--channel prerelease|nightly` on install, or
   `omd update channel prerelease|nightly|stable`.
 - **Update settings:** `omd update checks on|off`, `cadence daily|weekly`, `pin VERSION|none`, `enable|disable`, or
   `/update`.
