@@ -58,5 +58,5 @@ Removing a plugin doesn't disable a mod component you trusted. Disable that too.
 
 ## More
 
-- [Launch collection](../docs/collection.md)
+- [Included mods](../docs/collection.md)
 - Language server mods aren't plugins. See [`mods/first-party`](../mods/first-party).

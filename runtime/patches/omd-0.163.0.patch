@@ -85736,10 +85736,10 @@ index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df19186755
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a481e7c53ee851bebab2603f0f77b70852e9d4eb
+index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5cdcbb9ab8
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,607 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -86148,7 +86148,6 @@ index 0000000000000000000000000000000000000000..a481e7c53ee851bebab2603f0f77b708
 +    })
 +}
 +
-+/// A value read back through the client surface carries the redaction marker in place of a secret.
 +/// Whether a config value still holds a `<redacted>` mask from a read.
 +pub fn redacted(value: &Value) -> bool {
 +    match value {
@@ -113329,10 +113328,10 @@ index 0000000000000000000000000000000000000000..262995594fc1c7ec9281bc3138c3e44d
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f7ef2890f750005f1bda5910975d036f4eac606
+index 0000000000000000000000000000000000000000..42128e05cbcbf6aefaf7f1706a2a0b176536d08a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,754 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -113581,15 +113580,15 @@ index 0000000000000000000000000000000000000000..9f7ef2890f750005f1bda5910975d036
 +    Ok(digest.finalize().into())
 +}
 +
-+fn lean_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
-+    let mut lean = serde_json::to_value(request)?;
-+    if let Some(fields) = lean.as_object_mut() {
++fn kept_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
++    let mut line = serde_json::to_value(request)?;
++    if let Some(fields) = line.as_object_mut() {
 +        for field in KEPT_FIELDS {
 +            fields.remove(field);
 +        }
 +        fields.insert("kept".into(), Value::Bool(true));
 +    }
-+    request_line(&lean)
++    request_line(&line)
 +}
 +
 +fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHandle<()>) {
@@ -113890,8 +113889,7 @@ index 0000000000000000000000000000000000000000..9f7ef2890f750005f1bda5910975d036
 +    }
 +    let (mut warm, bytes) = match reused {
 +        Some(warm) if kept.is_some() && warm.kept == kept => {
-+            let lean = lean_line(request)?;
-+            (warm, lean)
++            (warm, kept_line(request)?)
 +        }
 +        Some(warm) => {
 +            // The activation request differs from this one only in the serve fields.

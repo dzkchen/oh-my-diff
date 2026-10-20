@@ -1,0 +1,11 @@
+**/node_modules
+**/target
+**/__pycache__
+.docs
+.omd
+.omd-tmp
+.pytest_cache
+.DS_Store
+mise.local.toml
+AGENTS.override.md
+CLAUDE.md

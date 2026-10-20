@@ -52,4 +52,4 @@ codex plugin remove omd-anchored-edit@oh-my-diff
 
 ## Credit
 
-Ported from [`@d3ara1n/pi-hashline-edit`](https://pi.dev/packages/@d3ara1n/pi-hashline-edit) and [`pi-hashline-edit-pro`](https://pi.dev/packages/pi-hashline-edit-pro) (MIT). See `THIRD_PARTY_NOTICES.md`.
+Reimplemented from [`@d3ara1n/pi-hashline-edit`](https://pi.dev/packages/@d3ara1n/pi-hashline-edit) and [`pi-hashline-edit-pro`](https://pi.dev/packages/pi-hashline-edit-pro) (MIT). See `THIRD_PARTY_NOTICES.md`.
