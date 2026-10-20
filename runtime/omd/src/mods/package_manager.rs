@@ -412,10 +412,17 @@ impl ModStore {
         path.is_file().then_some(path)
     }
 
-    pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
+    pub fn package_index_entries(
+        &self,
+        index: &Path,
+        query: &str,
+        start: usize,
+        limit: usize,
+    ) -> Result<Value> {
         let lock = self.package_lock()?;
         let query = query.trim().to_lowercase();
         let mut packages = Vec::new();
+        let mut total = 0;
         for (id, releases) in read_index(index)?.packages {
             let mut releases = releases;
             releases.reverse();
@@ -435,6 +442,10 @@ impl ModStore {
             {
                 continue;
             }
+            total += 1;
+            if total <= start || packages.len() == limit {
+                continue;
+            }
             packages.push(json!({
                 "id": id,
                 "latest": newest.version,
@@ -444,11 +455,10 @@ impl ModStore {
                     "blocked": release.blocked})).collect::<Vec<_>>(),
                 "installed": lock.packages.get(&id).map(|package| &package.version),
             }));
-            if packages.len() == 200 {
-                break;
-            }
         }
-        Ok(json!({"index": index, "packages": packages}))
+        let end = start + packages.len();
+        Ok(json!({"index": index, "packages": packages, "total": total,
+            "cursor": (end < total).then(|| end.to_string())}))
     }
 
     pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
@@ -710,6 +720,7 @@ impl ModStore {
                 secret_environment: package.trust.secret_environment.clone(),
                 expires_at: None,
                 tier: None,
+                required: selection.is_some_and(|selection| config.mods[selection].required),
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -1142,6 +1153,7 @@ impl ModStore {
             secret_environment: previous.trust.secret_environment,
             expires_at: None,
             tier: None,
+            required: selection.required,
         };
         config.revision = config
             .revision
@@ -2766,6 +2778,7 @@ fn require_migration_handlers(plan: &ModPackagePlan, scope: &str) -> Result<()> 
             secret_environment: Vec::new(),
             expires_at: None,
             tier: None,
+            required: false,
         };
         let loaded = packages::detached(package, source, assets, selection, Value::Null);
         packages::migration_registrations(&loaded).map_err(|error| {

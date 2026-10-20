@@ -29,7 +29,7 @@ From a shell, `omd-package contract select ID@VERSION` picks a contract too.
 | `worker_route` | `contributor` | Route for agents that do the work. |
 | `review_route` | `reviewer` | Route for the independent review. |
 | `verify_route` | `verifier` | Route for the independent verification. |
-| `fallback_route` | empty | Route to use if the first one is down. |
+| `fallback_route` | empty (none) | Route to use if the first one is down. |
 | `initial_task` | `{}` | Start with a task already recorded: an objective and acceptance criteria. |
 | `max_no_progress_calls` | `0` | Limit on workflow calls that make no progress (0 to 32). `0` means no limit. |
 
@@ -38,6 +38,6 @@ Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to use
 ## Needs and limits
 
 - Nothing is delegated until you pick a contract and the agent starts a task.
-- Routes must exist in `host.json`. This mod doesn't grant provider access or turn on paid fallback.
+- Routes must exist in `host.json`; Add a helper model in `/mods` (Workflow) adds one on your ChatGPT plan. This mod doesn't grant provider access or turn on paid fallback.
 - The final reviewer and verifier must differ from the model you are using.
 - A contract you pick applies to this repository from your next session.

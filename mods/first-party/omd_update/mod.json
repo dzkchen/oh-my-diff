@@ -22,11 +22,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "checks": {"type": "string", "enum": ["on", "off"], "default": "on"},
-      "auto": {"type": "string", "enum": ["off", "on"], "default": "off"},
-      "channel": {"type": "string", "enum": ["stable", "prerelease", "nightly"], "default": "stable"},
-      "cadence": {"type": "string", "enum": ["daily", "weekly"], "default": "daily"},
-      "pin": {"type": "string", "default": ""}
+      "checks": {"type": "string", "enum": ["on", "off"], "default": "on", "title": "Check for updates", "description": "Look for new Oh My Diff releases"},
+      "auto": {"type": "string", "enum": ["off", "on"], "default": "off", "title": "Install automatically", "description": "Install new releases without asking"},
+      "channel": {"type": "string", "enum": ["stable", "prerelease", "nightly"], "default": "stable", "title": "Release channel", "description": "stable, prerelease or nightly builds"},
+      "cadence": {"type": "string", "enum": ["daily", "weekly"], "default": "daily", "title": "How often", "description": "Check daily or weekly"},
+      "pin": {"type": "string", "default": "", "title": "Pinned version", "description": "Stay on this exact version; leave empty to follow the channel"}
     }
   },
   "compatibility": {

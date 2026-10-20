@@ -741,17 +741,25 @@ impl ManagedProcesses {
                 #[serde(deny_unknown_fields)]
                 struct Input {
                     names: Vec<String>,
+                    sandbox: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 if input.names.is_empty() || input.names.len() > 8 {
                     return Err("process_candidate_limit".into());
                 }
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 let found = input
                     .names
                     .iter()
                     .filter_map(|name| {
-                        let path = program(name, repository)?;
+                        let path = match unrestricted {
+                            Some(access) => {
+                                codex_omd::host::unrestricted_program(access, name, repository)
+                                    .ok()?
+                            }
+                            None => program(name, repository)?,
+                        };
                         let metadata = fs::metadata(&path).ok()?;
                         if metadata.len() > 128 * 1024 * 1024 {
                             return None;
@@ -819,14 +827,10 @@ impl ManagedProcesses {
                     }
                     _ => return Err("process_raster_invalid".into()),
                 };
-                let unrestricted = match input.sandbox.as_deref() {
-                    None => None,
-                    Some("none") if input.network.is_some() => {
-                        return Err("process_unrestricted_network_comes_from_os_access".into());
-                    }
-                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-                    Some(_) => return Err("process_sandbox_invalid".into()),
-                };
+                if input.sandbox.as_deref() == Some("none") && input.network.is_some() {
+                    return Err("process_unrestricted_network_comes_from_os_access".into());
+                }
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 if input.notify.len() > 2
                     || input
                         .notify
@@ -878,13 +882,15 @@ impl ManagedProcesses {
                             codex_omd::host::unrestricted_program(access, &input.name, repository)?
                                 != input.path
                         }
-                        None => program(&input.name, repository).as_ref() != Some(&input.path),
+                        None => {
+                            program(&input.name, repository).as_ref() != Some(&input.path)
+                                || input
+                                    .path
+                                    .canonicalize()
+                                    .map_err(|error| error.to_string())?
+                                    != input.path
+                        }
                     }
-                    || input
-                        .path
-                        .canonicalize()
-                        .map_err(|error| error.to_string())?
-                        != input.path
                 {
                     return Err("process_program_or_arguments_invalid".into());
                 }
@@ -1373,6 +1379,17 @@ impl ManagedProcesses {
             }
             _ => Err("unsupported_process_operation".into()),
         }
+    }
+}
+
+fn unrestricted_access<'a>(
+    sandbox: Option<&str>,
+    os_access: Option<&'a codex_omd::ModOsAccess>,
+) -> Result<Option<&'a codex_omd::ModOsAccess>, &'static str> {
+    match sandbox {
+        None => Ok(None),
+        Some("none") => os_access.map(Some).ok_or("capability_denied: os"),
+        Some(_) => Err("process_sandbox_invalid"),
     }
 }
 
@@ -2350,6 +2367,44 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
                 .call(owner, "process.status", json!({"session":"slow"}), || true)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn unsandboxed_which_keeps_a_shim_link_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let repository = root.join("repository");
+        let shim = root.join("multicall");
+        let link = root.join("node");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(&shim, "#!/bin/sh\n").unwrap();
+        std::os::unix::fs::symlink(&shim, &link).unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec![link.to_string_lossy().into_owned()],
+            network: false,
+        };
+        let owner = ProcessOwner {
+            thread: None,
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            environment: None,
+            os_access: Some(&access),
+            blit: None,
+        };
+        let found = processes
+            .call(
+                owner,
+                "process.which",
+                json!({"names":[link],"sandbox":"none"}),
+                || true,
+            )
+            .unwrap();
+        assert_eq!(found["found"][0]["path"], json!(link));
     }
 
     #[test]

@@ -441,7 +441,7 @@ pub(super) enum StateLocation {
     Unavailable(&'static str),
 }
 
-fn lock(path: &Path) -> Result<File> {
+pub(crate) fn lock(path: &Path) -> Result<File> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -1058,6 +1058,7 @@ impl ModStore {
                 "scope": selection.scope,
                 "tier": selection.tier,
                 "selected": selection.enabled,
+                "required": selection.required,
                 "packaged": packaged,
                 "settings_origin": settings_origin,
                 "sha256": selection.sha256,
@@ -1198,11 +1199,11 @@ impl ModStore {
                 return Err(failure("explicit_exact_capability_grant_required"));
             }
             super::check_secret_environment(&package, &secret_environment)?;
-            let settings = config
+            let (settings, required) = config
                 .mods
                 .iter()
                 .find(|m| m.path == path)
-                .map(|m| m.settings.clone())
+                .map(|m| (m.settings.clone(), m.required))
                 .unwrap_or_default();
             super::validate_settings(&package, &settings)?;
             config.mods.retain(|m| m.path != path);
@@ -1217,6 +1218,7 @@ impl ModStore {
                 secret_environment: package.secret_environment(),
                 expires_at,
                 tier: None,
+                required,
             });
         }
         config.revision = config
@@ -1377,6 +1379,26 @@ impl ModStore {
             self.check_service_providers(&manifest, path)?;
         }
         selection.enabled = enabled;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        self.write("mods.json", &serde_json::to_value(config)?)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn require(&self, path: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        let mut config = self.configuration()?;
+        let selection = config
+            .mods
+            .iter_mut()
+            .find(|m| m.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
+        selection.required = true;
         config.revision = config
             .revision
             .checked_add(1)

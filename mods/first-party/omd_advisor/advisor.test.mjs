@@ -122,11 +122,11 @@ test('advisor without a route names the worker routes instead of calling a model
   const routes = [{ name: 'lead', roles: ['lead'], available: true }, { name: 'reviewer', roles: ['worker'], available: true }, { name: 'offline', roles: ['worker'], available: false }];
   const unset = { ...advisorOptions, settings: { every_turn: true }, state: null };
   const fixture = advisorHost({ 'routes.list': () => routes });
-  assert.equal(invoke({ question: 'Safe?' }, fixture.host, { ...unset, event: 'tool', name: 'ask' }).value, 'Advisor unavailable: set the omd_advisor route setting to a worker route (reviewer).');
+  assert.equal(invoke({ question: 'Safe?' }, fixture.host, { ...unset, event: 'tool', name: 'ask' }).value, 'Advisor unavailable: pick an Advisor model in /mods (Settings, Advisor): reviewer.');
   const reviewed = invoke(completed, fixture.host, unset).state;
   assert.equal(reviewed.status, 'unavailable');
-  assert.equal(reviewed.reason, 'set the omd_advisor route setting to a worker route (reviewer)');
-  assert.match(invoke({}, advisorHost().host, { ...unset, event: 'tool', name: 'status' }).value.reason, /host.json lists none this mod may use/);
+  assert.equal(reviewed.reason, 'pick an Advisor model in /mods (Settings, Advisor): reviewer');
+  assert.match(invoke({}, advisorHost().host, { ...unset, event: 'tool', name: 'status' }).value.reason, /or add a helper model there/);
   assert.ok(!fixture.calls.some(call => ['model.complete', 'agents.spawn', 'evidence.read'].includes(call.operation)));
   const observing = { ...unset, settings: { every_turn: true, observe: true }, state: { ...reviewed, observer: { status: 'unavailable', reason: reviewed.reason } } };
   assert.deepEqual(invoke({ event: 'idle' }, () => assert.fail('terminal host call'), { ...observing, event: 'terminal' }).value.status, ['Advisor: no route set']);

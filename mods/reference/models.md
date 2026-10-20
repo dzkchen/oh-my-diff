@@ -31,8 +31,12 @@ A route entry, with every field the host accepts:
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
 - `agents.spawn.route` names a worker route or a registered provider.
-- Worker routes require a grant file whose hash, repository, provider, model and URL are rechecked on every
-  request.
+- Worker routes require a grant file whose hash, repository (or one of its `repositories`), provider, model and URL
+  are rechecked on every request.
+- `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`
+  for the conversation's model and effort on the user's ChatGPT plan, open only to `mod`, and adds this repository
+  to its grant. It returns `{route}`, or `{status: 'declined'}`. It refuses `routes_add_needs_chatgpt` without a
+  ChatGPT sign-in or when the conversation's provider doesn't use it.
 
 ### Route reload (`route_reload_v1`)
 

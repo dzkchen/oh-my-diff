@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
+  "description": "Require checks, an independent review and a final verification before the agent can call a task done; pick a contract with /omd_workflow:contract",
   "license": "MIT",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_workflow" },
   "capabilities": [
@@ -68,30 +68,48 @@
     "type": "object",
     "properties": {
       "worker_route": {
+        "title": "Worker model",
+        "description": "The model route for agents that do the work",
+        "choices": "routes",
         "type": "string",
         "default": "contributor"
       },
       "review_route": {
+        "title": "Reviewer model",
+        "description": "The model route for the independent review of the work",
+        "choices": "routes",
         "type": "string",
         "default": "reviewer"
       },
       "verify_route": {
+        "title": "Verifier model",
+        "description": "The model route for the final, independent check that the task is done",
+        "choices": "routes",
         "type": "string",
         "default": "verifier"
       },
       "check": {
+        "title": "Check command",
+        "description": "The program run as the task's check, as {\"program\": \"/absolute/path\", \"argv\": []}",
         "type": "object",
         "default": {}
       },
       "fallback_route": {
+        "title": "Backup model",
+        "description": "The model route used when the chosen one is unavailable",
+        "choices": "routes",
         "type": "string",
         "default": ""
       },
       "initial_task": {
+        "title": "Starting task",
+        "description": "A task recorded up front: an objective and its acceptance criteria",
         "type": "object",
         "default": {}
       },
       "max_no_progress_calls": {
+        "title": "Stop after stalled calls",
+        "description": "How many workflow calls in a row may make no progress before it stops (0 to 32); 0 means no limit",
         "type": "number",
         "default": 0
       }

@@ -102,6 +102,7 @@
     "prompts.revoke",
     "prompts.status",
     "prompts.submit",
+    "routes.add",
     "session.info",
     "sessions.ports",
     "settings.write",

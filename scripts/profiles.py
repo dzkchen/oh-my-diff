@@ -539,6 +539,12 @@ def install(args):
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
         (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
+        granted = {Path(item["path"]).resolve(): item.get("capabilities")
+                   for item in invoke(installed_manager, "selection-status", store)["selections"]}
+        # Revoking keeps the selection with no capabilities; a mod the user disabled keeps its grant and stays off.
+        revoked = [identifier for identifier in PLATFORM_PACKAGES
+                   if not granted.get((sources / identifier).resolve())
+                   and all(item["path"] != str(sources / identifier) for item in trusted)]
         for item in trusted:
             verify(installed_manager, Path(item["path"]), item["sha256"])
         if trusted:
@@ -546,6 +552,14 @@ def install(args):
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
+        if revoked:
+            invoke(installed_manager, "trust-all", store, json.dumps([
+                {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],
+                 "capabilities": installed[identifier]["capabilities"]} for identifier in revoked]))
+        for identifier in revoked:
+            invoke(installed_manager, "enable", store, sources / identifier)
+        for identifier in PLATFORM_PACKAGES:
+            invoke(installed_manager, "require", store, sources / identifier)
         for identifier in installed:
             verify(installed_manager, sources / identifier, installed[identifier]["sha256"])
         home, sqlite = support.state_roots()

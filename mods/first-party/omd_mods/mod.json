@@ -19,6 +19,7 @@
   "compatibility": {
     "required_features": [
       "package_controls_v1",
+      "package_index_paging_v1",
       "terminal_panel_v1",
       "terminal_render_sites_v1",
       "terminal_welcome_v1"

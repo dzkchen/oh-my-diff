@@ -109,3 +109,36 @@ test('tool bridge preserves UTF-8 split across TCP chunks', async () => {
     await once(server, 'close');
   }
 });
+
+for (const language of ['python', 'javascript']) {
+  test(`${language} kernel keeps output written outside a cell off the result line and caps floods`, { timeout: 30_000 }, async t => {
+    const python = language === 'python';
+    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = once(child, 'exit');
+    const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    t.after(async () => {
+      child.kill();
+      await exited;
+    });
+    const cell = async code => {
+      child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
+      const { value } = await lines.next();
+      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
+      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+    };
+    const flood = "yes x | head -c 3000000";
+    await cell(python
+      ? 'import threading, time, os\nthreading.Thread(target=lambda: (time.sleep(0.3), print("late"), os.write(1, b"raw\\n"), os.write(2, b"err\\n"))).start()'
+      : 'const { spawn } = await import("node:child_process");\nspawn("sh", ["-c", "sleep 0.3; echo late; echo err >&2"], { stdio: "inherit" }).unref();');
+    await new Promise(resolve => setTimeout(resolve, 800));
+    assert.deepEqual(await cell(python ? 'print("next")' : 'console.log("next")'), { ok: true, output: 'next\n', bridge_failed: false });
+    const flooded = await cell(python
+      ? `import os, stat\nregular = stat.S_ISREG(os.fstat(1).st_mode)\nos.system("${flood}")`
+      : `(await import("node:child_process")).execSync("${flood}", { stdio: "inherit" });`);
+    assert.equal(flooded.ok, false);
+    assert.match(flooded.error, /output limit exceeded/);
+    assert.ok(Buffer.byteLength(flooded.output) <= 65536);
+    assert.deepEqual(await cell(python ? 'print(regular)' : 'console.log("after")'), { ok: true, output: python ? 'False\n' : 'after\n', bridge_failed: false });
+  });
+}

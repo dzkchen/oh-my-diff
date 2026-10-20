@@ -57,16 +57,20 @@ or with a `reference` string and an optional `version`.
 - `packages.list {fields}` keeps only the named keys of each package, so a listing view can skip schemas, settings
   and grants it does not show.
 - `packages.list` reports each mod's `settings` and `settings_schema`.
+- `required` marks a selection the installer keeps on: `/mods` and `/omd` don't turn it off, `omd mods disable`
+  still does.
 
 ### `packages.index`
 
-`packages.index {index?, query?}` is read-only and returns:
+`packages.index {index?, query?, cursor?, limit?}` is read-only and returns:
 
 ```ts
-{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}]}
+{index, packages: [{id, latest, description, support, versions: [{version, blocked}], installed}], total, cursor}
 ```
 
-It reads the named index (the store's `package-index.json` by default), filtered by `query`. It fails with
+It reads the named index (the store's `package-index.json` by default), filtered by `query`, one page of `limit`
+entries (1-200, default 200) in id order. `total` counts every match; pass the returned `cursor` to read the next
+page, and it is `null` on the last one. Paging requires `package_index_paging_v1`. It fails with
 `package_index_unavailable` when no index exists.
 
 ### Package state fields
@@ -309,6 +313,10 @@ Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snap
 
 Callbacks receive explicit settings over each `settings_schema` property's `default`; give every property a
 default.
+
+A property may also carry a `title` (up to 64 bytes) and a `description` (up to 300 bytes), which `/mods` shows
+instead of the raw name, and `choices: "routes"` on a string property without `enum`: `packages.list` then fills its
+`enum` with the names of the `host.json` worker routes open to that mod.
 
 ### Runner memory limits
 

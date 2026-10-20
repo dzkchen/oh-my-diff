@@ -128,6 +128,7 @@ pub use package_manager::ModPackagePlan;
 pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
+pub(crate) use store::lock as store_lock;
 pub use store::Trust;
 
 pub const CODEX_HOST_RELEASE: &str = "0.163.0";
@@ -326,6 +327,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "turn_activity_v1",
     "binary_evidence_v1",
     "package_controls_v1",
+    "package_index_paging_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",
@@ -463,6 +465,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "packages.preview",
     "packages.apply",
     "packages.reload",
+    "routes.add",
     "settings.write",
     "terminal.open",
     "terminal.prompt",
@@ -2121,10 +2124,9 @@ fn validate_settings_schema(schema: &Value) -> Result<()> {
         let definition = definition
             .as_object()
             .ok_or_else(|| failure("invalid_setting_schema"))?;
-        if definition
-            .keys()
-            .any(|key| !["type", "enum", "default"].contains(&key.as_str()))
-        {
+        if definition.keys().any(|key| {
+            !["type", "enum", "default", "title", "description", "choices"].contains(&key.as_str())
+        }) {
             return Err(failure("unsupported_setting_schema"));
         }
         let kind = definition
@@ -2133,6 +2135,23 @@ fn validate_settings_schema(schema: &Value) -> Result<()> {
             .ok_or_else(|| failure("setting_type_required"))?;
         if !["boolean", "number", "string", "array", "object", "null"].contains(&kind) {
             return Err(failure("unsupported_setting_type"));
+        }
+        let text = |key: &str, limit: usize| {
+            definition.get(key).is_none_or(|value| {
+                value
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= limit)
+            })
+        };
+        if !text("title", 64) || !text("description", 300) {
+            return Err(failure("invalid_setting_text"));
+        }
+        if definition.get("choices").is_some_and(|choices| {
+            choices != "routes" || kind != "string" || definition.contains_key("enum")
+        }) {
+            return Err(failure(
+                "invalid_setting_choices: \"routes\" on a string setting without enum",
+            ));
         }
         if let Some(values) = definition.get("enum") {
             let values = values
@@ -2284,6 +2303,9 @@ pub struct ModSelection {
     pub expires_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<ManagedTier>,
+    /// Set by the installer: in-app mod screens keep the mod on, while `omd mods disable` still turns it off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 impl ModSelection {
@@ -2648,6 +2670,27 @@ mod reload_tests {
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
         assert!(host.refresh_authority().is_err());
+    }
+
+    #[test]
+    fn renders_rejected_by_a_pending_reload_keep_the_last_view_without_a_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("store");
+        ModStore::create(root.clone()).unwrap();
+        let mut host = ModHost::open(root).unwrap();
+        let view = json!({"sites": {"sidebar": {"components": [{"type": "text", "id": "tree", "label": "Tree", "text": "src"}]}}});
+        let first = host.compose_terminal(vec![("a".into(), Ok(view))], "terminal", None);
+        assert_eq!(first.diagnostics, Vec::<String>::new());
+        let composed = host.compose_terminal(
+            vec![
+                ("a".into(), Err(failure("callback_authority_changed"))),
+                ("b".into(), Err(failure("broken"))),
+            ],
+            "terminal",
+            None,
+        );
+        assert_eq!(composed.contributors, ["a"]);
+        assert_eq!(composed.diagnostics, ["b: broken"]);
     }
 
     #[test]
@@ -3113,9 +3156,20 @@ fn invoke(
     }
 }
 
+/// Whether a host call only reads, so a callback that made no other call can run again.
+pub fn read_only_call(call: &ModHostCall) -> bool {
+    read_only(&call.operation, &call.arguments)
+}
+
 fn read_only_receipt(receipt: &Value) -> bool {
-    let arguments = &receipt["call"]["arguments"];
-    match receipt["call"]["operation"].as_str().unwrap_or_default() {
+    read_only(
+        receipt["call"]["operation"].as_str().unwrap_or_default(),
+        &receipt["call"]["arguments"],
+    )
+}
+
+fn read_only(operation: &str, arguments: &Value) -> bool {
+    match operation {
         "workspace.read"
         | "workspace.list"
         | "workspace.stat"
@@ -5486,8 +5540,17 @@ impl ModHost {
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
-                // An interrupted turn cancels in-flight renders; the last view stands without a fault.
-                if !error.to_string().contains("callback_cancelled") {
+                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
+                // reloads; the last view stands without a fault.
+                let error_text = error.to_string();
+                if ![
+                    "callback_cancelled",
+                    "callback_authority_changed",
+                    "stale_mod_generation",
+                ]
+                .iter()
+                .any(|transient| error_text.contains(transient))
+                {
                     diagnostics.push(format!("{id}: {error}"));
                 }
                 ModViewPatch::parse(self.valid_views.get(&id).cloned().ok_or(error)?)
@@ -5791,7 +5854,11 @@ impl ModHost {
                     .cloned()
                     .collect(),
                 exec_environment: m.package.exec_environment.clone(),
-                os_access: m.package.os_access.clone().filter(|_| current),
+                os_access: m
+                    .package
+                    .os_access
+                    .clone()
+                    .filter(|_| current),
                 approves: m.package.approves.clone().filter(|_| current),
                 http_access: m.package.http_access.clone().filter(|_| current),
                 fs_access: m.package.fs_access.clone().filter(|_| current),

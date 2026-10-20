@@ -339,7 +339,12 @@ def path_warning(bin_dir):
     if located and Path(located).parent.resolve() == bin_dir:
         return None
     return (f"codex on PATH is {located or 'missing'}, not the OMD launcher in {bin_dir}; "
-            f"add this line to your shell profile and open a new shell: {path_line(bin_dir)}")
+            f"add this line to the end of {shell_profile()} and open a new shell: {path_line(bin_dir)}")
+
+
+def shell_profile():
+    shell = Path(os.environ.get("SHELL", "zsh")).name
+    return {"zsh": "~/.zshrc", "bash": "~/.bash_profile"}.get(shell, "your shell profile")
 
 
 def path_line(bin_dir):
@@ -424,7 +429,7 @@ def installed(result):
     rows = [("Mods", "/mods and /omd inside codex"), ("Update", "omd update"), ("Website", WEBSITE), ("Docs", DOCS)]
     if result.get("path_warning"):
         say(f"  {paint('!', '33')} codex on your PATH is {shutil.which('codex') or 'missing'}, not OMD's.")
-        say("    Add this line to your shell profile, then open a new terminal and run codex:")
+        say(f"    Add this line to the end of {shell_profile()}, then open a new terminal and run codex:")
         say()
         say(f"      {path_line(result['bin_dir'])}")
         say()

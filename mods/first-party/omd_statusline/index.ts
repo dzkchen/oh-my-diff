@@ -183,7 +183,7 @@ export default function activate(api: ModAPI) {
     const now = Date.now();
     update(data => {
       // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
-      const plan = response.cost.basis === 'unpriced' && response.route === 'codex' && response.provider === 'openai' && data.subscription !== null;
+      const plan = response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && data.subscription !== null;
       const [kind, amount] = charge(plan ? 'included_subscription' : response.cost.basis, response.cost.microusd,
         number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
       const key = `${response.request_id}#${response.attempt}`;

@@ -24,11 +24,15 @@
     "type": "object",
     "properties": {
       "layout": {
+        "title": "Picker style",
+        "description": "compact redraws the model and effort pickers; native leaves them as Codex draws them",
         "type": "string",
         "enum": ["compact", "native"],
         "default": "compact"
       },
       "brand": {
+        "title": "Picker label",
+        "description": "Text shown before the picker title; leave empty to hide it",
         "type": "string",
         "default": "oh my diff"
       }

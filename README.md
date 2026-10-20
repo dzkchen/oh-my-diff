@@ -42,7 +42,7 @@ codex
 ```
 
 Type `/mods` to see which mods are on and turn others on or off. If `codex` is still plain Codex, add the
-`export PATH=...` line the installer printed to your shell profile and open a new shell. To check the install, run
+`export PATH=...` line the installer printed to the end of `~/.zshrc` and open a new shell. To check the install, run
 `omd update status`.
 
 ## Status

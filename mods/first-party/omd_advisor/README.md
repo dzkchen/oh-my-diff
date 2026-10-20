@@ -10,7 +10,7 @@ It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 omd-package mod enable omd_advisor
 ```
 
-It runs on the worker route you set in `route`, which has no default. That route needs its own model access and allowance. Until `route` names a worker route from `host.json`, the advisor reports `unavailable` with the routes it can use, and the status segment reads `Advisor: no route set`.
+It runs on the worker route you set in `route`, which has no default. Pick one in `/mods` (Advisor, Advisor model), or choose Add a helper model there to use the model you're chatting with on your ChatGPT plan. Other worker routes come from `host.json` and need their own model access and allowance. Until `route` is set, the advisor reports `unavailable` with the routes it can use, and the status segment reads `Advisor: no route set`.
 
 ## Use it
 

@@ -56,7 +56,7 @@ delete it to remove them.
 | `Python 3.12 or newer is required` | Install a newer Python and rerun. |
 | `upstream Codex 0.163.x is required` | Install Codex `0.163.x`, or pass `--upstream /path/to/codex`. |
 | `move the upstream codex out of ~/.local/bin` | Move your Codex elsewhere and pass `--upstream`. |
-| `codex on your PATH is ..., not OMD's` | Add the printed `export PATH=...` line to your shell profile; open a new shell. |
+| `codex on your PATH is ..., not OMD's` | Add the printed `export PATH=...` line to the end of `~/.zshrc` (bash: `~/.bash_profile`); open a new shell. In `~/.zshenv` it doesn't work: macOS and Homebrew reorder `PATH` after it. |
 | `codex` still starts plain Codex right after installing | Your shell cached the old `codex`: run `hash -r` or open a new terminal. |
 | `No terminal is available` | Add `--profile full` or `--profile platform`. |
 | A mod breaks `codex` | `omd mods disable ID` ([more](manage-mods.md#when-a-mod-misbehaves)). |
