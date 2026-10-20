@@ -92,11 +92,17 @@ test('installing never replaces an installed mod or the mods mod itself', () => 
   assert.match(source.panels[0].subtitle, /Mods is already running/);
 });
 
-test('a large directory index stays inside the UI state limit', () => {
+test('a large directory index is read in pages and stays inside the UI state limit', () => {
   const versions = Array.from({ length: 4 }, (_, index) => ({ version: `1.${index}.0`, blocked: null }));
-  const packages = Array.from({ length: 150 }, (_, index) => ({ id: `omd_package_${index}`, description: 'd'.repeat(300), latest: '1.3.0', installed: null, versions }));
-  assert.ok(Buffer.byteLength(JSON.stringify(packages)) > 65_536);
-  const opened = invoke('', { 'packages.index': () => ({ packages }) });
+  const packages = Array.from({ length: 250 }, (_, index) => ({ id: `omd_package_${index}`, description: 'd'.repeat(300), latest: '1.3.0', installed: null, versions }));
+  assert.ok(Buffer.byteLength(JSON.stringify(packages)) > 131_072);
+  const page = ({ cursor = '0', limit = 200 }) => {
+    const end = Number(cursor) + limit;
+    return { packages: packages.slice(Number(cursor), end), total: packages.length, cursor: end < packages.length ? String(end) : null };
+  };
+  const opened = invoke('', { 'packages.index': page });
   assert.ok(Buffer.byteLength(JSON.stringify(opened.ui)) <= 65_536);
   assert.equal(opened.ui.catalog.length, 120, opened.ui.catalogError);
+  assert.equal(opened.ui.catalog.at(-1).id, 'omd_package_119');
+  assert.ok(operations(opened).filter(operation => operation === 'packages.index').length > 1);
 });

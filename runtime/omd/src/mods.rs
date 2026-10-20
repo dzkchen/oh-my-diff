@@ -326,6 +326,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "turn_activity_v1",
     "binary_evidence_v1",
     "package_controls_v1",
+    "package_index_paging_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",

@@ -5,7 +5,7 @@ import json
 import os
 import socket
 import sys
-import tempfile
+import threading
 
 
 class LimitedOutput(io.StringIO):
@@ -62,40 +62,65 @@ def tool(name, arguments=None):
 
 state["tool"] = tool
 protocol = os.fdopen(os.dup(1), "w")
-captured = tempfile.TemporaryFile()
+reader, writer = os.pipe()
+os.dup2(writer, 1)
+os.dup2(writer, 2)
+marker = os.urandom(16).hex().encode()
+captured = {"data": bytearray(), "held": b"", "overflow": False, "ended": False}
+condition = threading.Condition()
+
+
+def keep(data):
+    room = 65536 - len(captured["data"])
+    if len(data) > room:
+        captured["overflow"] = True
+    captured["data"] += data[:room]
+
+
+def drain():
+    while chunk := os.read(reader, 65536):
+        with condition:
+            held = captured["held"] + chunk
+            while (end := held.find(marker)) >= 0:
+                keep(held[:end])
+                held = held[end + len(marker):]
+                captured["ended"] = True
+                condition.notify_all()
+            cut = max(len(held) - len(marker) + 1, 0)
+            keep(held[:cut])
+            captured["held"] = held[cut:]
+
+
+threading.Thread(target=drain, daemon=True).start()
 for line in sys.stdin:
     output = LimitedOutput()
     bridge_failed = False
-    saved = None
+    with condition:
+        captured.update(data=bytearray(), held=b"", overflow=False, ended=False)
     try:
         request = json.loads(line)
         if request.get("shutdown") is True:
             break
         active = {"active": True}
         context_token = bridge_context.set((request["port"], request["token"], active))
-        captured.seek(0)
-        captured.truncate()
-        saved = (os.dup(1), os.dup(2))
-        os.dup2(captured.fileno(), 1)
-        os.dup2(captured.fileno(), 2)
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             exec(compile(request["code"], "<omd-python-cell>", "exec"), state)
         response = {"ok": True}
     except Exception as error:
         response = {"ok": False, "error": f"{type(error).__name__}: {error}"}
     finally:
-        if saved:
-            for target, descriptor in enumerate(saved, 1):
-                os.dup2(descriptor, target)
-                os.close(descriptor)
         if "active" in locals():
             active["active"] = False
             bridge_context.reset(context_token)
             del active
-    captured.seek(0)
-    extra = captured.read(65536 - output.bytes + 1)
-    if len(extra) > 65536 - output.bytes:
-        extra = extra[: 65536 - output.bytes]
+    os.write(writer, marker)
+    with condition:
+        condition.wait_for(lambda: captured["ended"], 5)
+        extra = bytes(captured["data"])
+        overflow = captured["overflow"]
+    room = 65536 - output.bytes
+    if overflow or len(extra) > room:
+        extra = extra[:room]
         response = {"ok": False, "error": "ValueError: kernel output limit exceeded"}
     response["output"] = output.getvalue() + extra.decode("utf-8", "replace")
     response["bridge_failed"] = bridge_failed

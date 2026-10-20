@@ -99228,10 +99228,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfed8884f08
+index 0000000000000000000000000000000000000000..56e76f7ea1dd8f99f349da1aa13859edec9f563d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6143 @@
+@@ -0,0 +1,6144 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -99560,6 +99560,7 @@ index 0000000000000000000000000000000000000000..fa570d6e1accbddcae924ce2d27d2bfe
 +    "turn_activity_v1",
 +    "binary_evidence_v1",
 +    "package_controls_v1",
++    "package_index_paging_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -108882,7 +108883,7 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943ebe03881c9
+index 0000000000000000000000000000000000000000..b52ccdc74667365f7a08ab50705e961579d356ec
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,218 @@
@@ -108990,7 +108991,7 @@ index 0000000000000000000000000000000000000000..ea1d048481ab5c95a55c8fc2b99943eb
 +    "prompts.revoke": {"arguments":{"$ref":"#/$defs/68"},"result":{"type":"object","properties":{"revoked":{"type":"number"}},"required":["revoked"]}},
 +    "builtins.invoke": {"arguments":{"type":"object","properties":{"action":{"type":"string","format":"dotted-string"}},"required":["action"]},"result":{"type":"object","properties":{"invoked":{"type":"boolean"}},"required":["invoked"]}},
 +    "packages.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"fields":{"type":"array","items":{"anyOf":[{"const":"id"},{"const":"source"},{"const":"failed"},{"const":"path"},{"const":"pending"},{"const":"blocked"},{"const":"description"},{"const":"installed"},{"const":"kind"},{"const":"version"},{"const":"scope"},{"const":"enabled"},{"const":"effective"},{"const":"api"},{"const":"compatible"},{"const":"grants"},{"const":"conflicts"},{"const":"settings_schema"},{"const":"settings"}]}}},"required":["fields"]}]},"result":{"type":"object","properties":{"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"const":"mod"},"version":{"type":"string"},"description":{"anyOf":[{"type":"null"},{"type":"string"}]},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]},"path":{"anyOf":[{"type":"null"},{"type":"string"}]},"source":{"anyOf":[{"const":"repository"},{"const":"local"},{"const":"package"},{"const":"npm"},{"const":"selection"}]},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]},"installed":{"type":"boolean"},"enabled":{"type":"boolean"},"effective":{"type":"boolean"},"pending":{"anyOf":[{"type":"null"},{"const":"reload"}]},"failed":{"anyOf":[{"type":"null"},{"type":"string"}]},"api":{"type":"string"},"compatible":{"type":"boolean"},"grants":{"type":"array","items":{"type":"string"}},"conflicts":{"type":"array","items":{"type":"string"}},"settings_schema":{},"settings":{"type":"object","properties":{},"required":[],"additionalProperties":{}}},"required":["id","kind","version","description","scope","path","source","blocked","installed","enabled","effective","pending","failed","api","compatible","grants","conflicts","settings_schema","settings"]}},"generation":{"type":"number"},"reload_error":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["packages","generation","reload_error"]}},
-+    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}}},"required":["index","packages"]}},
++    "packages.index": {"arguments":{"type":"object","properties":{"index":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"number"}},"required":[]},"result":{"type":"object","properties":{"index":{"type":"string"},"packages":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"latest":{"type":"string"},"description":{"type":"string"},"support":{"anyOf":[{"type":"null"},{"type":"string"}]},"versions":{"type":"array","items":{"type":"object","properties":{"version":{"type":"string"},"blocked":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["version","blocked"]}},"installed":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["id","latest","description","support","versions","installed"]}},"total":{"type":"number"},"cursor":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["index","packages","total","cursor"]}},
 +    "packages.preview": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":[]}]},"result":{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"string"},"changes":{},"grants_added":{"type":"array","items":{"type":"string"}}},"required":["action","id","changes","grants_added"]}},
 +    "packages.apply": {"arguments":{"allOf":[{"$ref":"#/$defs/75"},{"type":"object","properties":{"expected_generation":{"type":"number"}},"required":["expected_generation"]}]},"result":{"anyOf":[{"$ref":"#/$defs/44"},{"type":"object","properties":{"status":{"const":"applied"},"generation":{"type":"number"}},"required":["status","generation"]}]}},
 +    "packages.reload": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"generation":{"type":"number"},"failed":{"type":"array","items":{"type":"string"}},"applies":{"const":"next_boundary"}},"required":["generation","failed","applies"]}},
@@ -109396,10 +109397,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c0e4900b8
+index 0000000000000000000000000000000000000000..5b830120b43d4d6b1f864c5f2c62dac3ef7c0048
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2901 @@
+@@ -0,0 +1,2911 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -109814,10 +109815,17 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +        path.is_file().then_some(path)
 +    }
 +
-+    pub fn package_index_entries(&self, index: &Path, query: &str) -> Result<Value> {
++    pub fn package_index_entries(
++        &self,
++        index: &Path,
++        query: &str,
++        start: usize,
++        limit: usize,
++    ) -> Result<Value> {
 +        let lock = self.package_lock()?;
 +        let query = query.trim().to_lowercase();
 +        let mut packages = Vec::new();
++        let mut total = 0;
 +        for (id, releases) in read_index(index)?.packages {
 +            let mut releases = releases;
 +            releases.reverse();
@@ -109837,6 +109845,10 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +            {
 +                continue;
 +            }
++            total += 1;
++            if total <= start || packages.len() == limit {
++                continue;
++            }
 +            packages.push(json!({
 +                "id": id,
 +                "latest": newest.version,
@@ -109846,11 +109858,10 @@ index 0000000000000000000000000000000000000000..01cf3ee79bbc68df869a2bce2584b41c
 +                    "blocked": release.blocked})).collect::<Vec<_>>(),
 +                "installed": lock.packages.get(&id).map(|package| &package.version),
 +            }));
-+            if packages.len() == 200 {
-+                break;
-+            }
 +        }
-+        Ok(json!({"index": index, "packages": packages}))
++        let end = start + packages.len();
++        Ok(json!({"index": index, "packages": packages, "total": total,
++            "cursor": (end < total).then(|| end.to_string())}))
 +    }
 +
 +    pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
@@ -120238,10 +120249,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b91936fbd
+index 0000000000000000000000000000000000000000..7d69221f466a8db7536be4800a0130f9f6eae17a
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,666 @@
+@@ -0,0 +1,680 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -120303,6 +120314,10 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +    index: Option<PathBuf>,
 +    #[serde(default)]
 +    query: String,
++    #[serde(default)]
++    cursor: Option<String>,
++    #[serde(default)]
++    limit: Option<usize>,
 +}
 +
 +pub fn index(store: &ModStore, arguments: Value) -> io::Result<Value> {
@@ -120314,7 +120329,17 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +        .ok_or_else(|| {
 +            failure("package_index_unavailable: install from npm:, git+ or a folder instead")
 +        })?;
-+    store.package_index_entries(&path, &arguments.query)
++    let start = arguments
++        .cursor
++        .map(|cursor| cursor.parse::<usize>())
++        .transpose()
++        .map_err(|_| failure("package_arguments_invalid: cursor"))?
++        .unwrap_or(0);
++    let limit = arguments.limit.unwrap_or(200);
++    if !(1..=200).contains(&limit) {
++        return Err(failure("package_arguments_invalid: limit must be 1-200"));
++    }
++    store.package_index_entries(&path, &arguments.query, start, limit)
 +}
 +
 +fn user() -> String {
@@ -120910,10 +120935,10 @@ index 0000000000000000000000000000000000000000..5e10635a57278ea9bd1b073b62157e5b
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..75b33c38aec7dbbb4fb07c66a40e2f5840173df3
+index 0000000000000000000000000000000000000000..4f04b8ee2a1ad2d67809693138bad038584685c7
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,319 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -121194,6 +121219,44 @@ index 0000000000000000000000000000000000000000..75b33c38aec7dbbb4fb07c66a40e2f58
 +        list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
 +        "reload"
 +    );
++}
++
++#[test]
++fn index_pages_follow_the_cursor_to_the_last_entry() {
++    let (_temp, store, root) = setup();
++    let library = fixture_package(&root, "library_mod", &["store"], json!([]));
++    let index = root.join("index.json");
++    let packages = (0..5)
++        .map(|n| {
++            (
++                format!("mod_{n}"),
++                json!([{"version": "1.0.0", "source": {"kind": "local", "path": library}, "integrity": "0".repeat(64)}]),
++            )
++        })
++        .collect::<serde_json::Map<_, _>>();
++    std::fs::write(
++        &index,
++        serde_json::to_vec(&json!({"schema": 1, "packages": packages})).unwrap(),
++    )
++    .unwrap();
++    let mut ids = Vec::new();
++    let mut cursor = None;
++    loop {
++        let page = super::index(
++            &store,
++            json!({"index": index, "limit": 2, "cursor": cursor}),
++        )
++        .unwrap();
++        assert_eq!(page["total"], 5);
++        ids.extend(page["packages"].as_array().unwrap().iter().map(|entry| entry["id"].clone()));
++        cursor = page["cursor"].as_str().map(str::to_owned);
++        if cursor.is_none() {
++            break;
++        }
++    }
++    assert_eq!(ids, ["mod_0", "mod_1", "mod_2", "mod_3", "mod_4"]);
++    let error = super::index(&store, json!({"index": index, "limit": 0})).unwrap_err();
++    assert!(error.to_string().contains("package_arguments_invalid"), "{error}");
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
@@ -135548,7 +135611,7 @@ index 0000000000000000000000000000000000000000..279fbdc1a84e609d6fa4db0180621ceb
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4ff1e2a282
+index 0000000000000000000000000000000000000000..fec87dbfa7af06396276343aa5168717dcfc8350
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,1581 @@
@@ -137128,7 +137191,7 @@ index 0000000000000000000000000000000000000000..be36b7fe0c46912dbbfcd66149e88e4f
 +    )
 +    .unwrap();
 +    let error = store
-+        .package_index_entries(&index, "")
++        .package_index_entries(&index, "", 0, 200)
 +        .unwrap_err()
 +        .to_string();
 +    assert!(error.contains("index_release_source_invalid"), "{error}");

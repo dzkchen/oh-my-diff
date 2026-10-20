@@ -279,3 +279,41 @@ fn trusted_selections_toggle_retrust_and_report_session_state() {
         "reload"
     );
 }
+
+#[test]
+fn index_pages_follow_the_cursor_to_the_last_entry() {
+    let (_temp, store, root) = setup();
+    let library = fixture_package(&root, "library_mod", &["store"], json!([]));
+    let index = root.join("index.json");
+    let packages = (0..5)
+        .map(|n| {
+            (
+                format!("mod_{n}"),
+                json!([{"version": "1.0.0", "source": {"kind": "local", "path": library}, "integrity": "0".repeat(64)}]),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    std::fs::write(
+        &index,
+        serde_json::to_vec(&json!({"schema": 1, "packages": packages})).unwrap(),
+    )
+    .unwrap();
+    let mut ids = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = super::index(
+            &store,
+            json!({"index": index, "limit": 2, "cursor": cursor}),
+        )
+        .unwrap();
+        assert_eq!(page["total"], 5);
+        ids.extend(page["packages"].as_array().unwrap().iter().map(|entry| entry["id"].clone()));
+        cursor = page["cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(ids, ["mod_0", "mod_1", "mod_2", "mod_3", "mod_4"]);
+    let error = super::index(&store, json!({"index": index, "limit": 0})).unwrap_err();
+    assert!(error.to_string().contains("package_arguments_invalid"), "{error}");
+}

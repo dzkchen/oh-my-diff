@@ -457,7 +457,7 @@ export interface HostOperations {
   'builtins.invoke': { arguments: { action: KeymapAction }; result: { invoked: boolean } };
   /** `fields` keeps only those keys of each package. */
   'packages.list': { arguments: { fields: (keyof PackageState)[] } | null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
-  'packages.index': { arguments: { index?: string; query?: string }; result: { index: string; packages: PackageCatalogEntry[] } };
+  'packages.index': { arguments: { index?: string; query?: string; cursor?: string; limit?: number }; result: { index: string; packages: PackageCatalogEntry[]; total: number; cursor: string | null } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
