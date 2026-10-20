@@ -51,12 +51,9 @@ fn each_mod_gets_its_own_plan_route_listing_the_repositories_it_was_approved_in(
     assert_eq!(host["routes"][2]["mods"], json!(["omd_workflow"]));
     assert_eq!(route["rates"]["max_output_tokens"], 128_000);
     let bytes = std::fs::read(route["grant"]["path"].as_str().unwrap()).unwrap();
-    assert_eq!(
-        route["grant"]["sha256"],
-        format!("{:x}", Sha256::digest(&bytes))
-    );
+    assert_eq!(route["grant"]["sha256"], crate::resource_data::hash(&bytes));
     let grant: Value = serde_json::from_slice(&bytes).unwrap();
-    let identity = |path: &str| format!("{:x}", Sha256::digest(path.as_bytes()));
+    let identity = |path: &str| crate::resource_data::hash(path.as_bytes());
     assert_eq!(
         grant["repositories"],
         json!([identity("/one"), identity("/two")])

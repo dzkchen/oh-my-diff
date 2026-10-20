@@ -3184,12 +3184,18 @@ fn invoke(
 
 /// Whether a host call only reads, so a callback that made no other call can run again.
 pub fn read_only_call(call: &ModHostCall) -> bool {
-    read_only_receipt(&json!({"call": {"operation": call.operation, "arguments": call.arguments}}))
+    read_only(&call.operation, &call.arguments)
 }
 
 fn read_only_receipt(receipt: &Value) -> bool {
-    let arguments = &receipt["call"]["arguments"];
-    match receipt["call"]["operation"].as_str().unwrap_or_default() {
+    read_only(
+        receipt["call"]["operation"].as_str().unwrap_or_default(),
+        &receipt["call"]["arguments"],
+    )
+}
+
+fn read_only(operation: &str, arguments: &Value) -> bool {
+    match operation {
         "workspace.read"
         | "workspace.list"
         | "workspace.stat"

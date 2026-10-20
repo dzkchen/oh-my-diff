@@ -1,4 +1,4 @@
-import type { CostBasis, Json, Ledger, ModAPI, TerminalComponent, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
+import type { CostBasis, Json, Ledger, ModAPI, ModelResponse, TerminalComponent, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
 
 type Tokens = { input: number | null; cached: number | null; write: number | null; output: number | null; reasoning: number | null };
 type Reported = { usd: number; basis: 'provider_billed' | 'client_list_estimate' };
@@ -364,7 +364,7 @@ export default function activate(api: ModAPI) {
     return (expiry() ?? 0) > Date.now();
   });
   // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
-  const plan = (state: Hud, response: { cost: { basis: CostBasis }; route: string; provider: string; credential: string | null }) =>
+  const plan = (state: Hud, response: ModelResponse) =>
     response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && (response.credential === 'chatgpt' || state.samples.length > 0);
   api.on('model_response', response => {
     const usage = object(response.usage);

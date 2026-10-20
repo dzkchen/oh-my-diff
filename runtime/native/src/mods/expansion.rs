@@ -543,7 +543,12 @@ pub(super) async fn dispatch(
             blocking(Box::new(move || {
                 codex_omd::ModStore::open(host.root.clone())
                     .and_then(|store| {
-                        codex_omd::package_controls::list_fields(&store, Some(&runtime), arguments)
+                        codex_omd::package_controls::list_fields(
+                            &store,
+                            Some(&runtime),
+                            arguments,
+                            Some(&host.repository),
+                        )
                     })
                     .map_err(|error| error.to_string())
             }))

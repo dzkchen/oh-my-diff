@@ -6,7 +6,7 @@
   "state_version": 1,
   "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session and an ask_claude delegation tool",
   "license": "MIT",
-  "subscriptions": { "channels": ["omd_claude_cli/login"] },
+  "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/code"] },
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"

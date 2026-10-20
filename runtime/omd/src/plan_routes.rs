@@ -2,8 +2,6 @@
 
 use serde_json::Value;
 use serde_json::json;
-use sha2::Digest;
-use sha2::Sha256;
 use std::io;
 use std::path::Path;
 
@@ -48,10 +46,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
     let directory = store.join("routes").join("plan");
     std::fs::create_dir_all(&directory)?;
     let grant_path = directory.join(format!("{name}.json"));
-    let identity = format!(
-        "{:x}",
-        Sha256::digest(repository.as_os_str().as_encoded_bytes())
-    );
+    let identity = crate::resource_data::hash(repository.as_os_str().as_encoded_bytes());
     let mut grant = read(&grant_path)?.unwrap_or_else(|| {
         json!({"schema": 1, "included_subscription": true, "revocable": true, "provider": "openai",
             "model": plan.model, "responses_url": SUBSCRIPTION_RESPONSES_URL, "repositories": []})
@@ -92,7 +87,7 @@ pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<Stri
         None => {}
     }
     crate::broker::write_private(&grant_path, &grant)?;
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let sha256 = crate::resource_data::hash(&bytes);
     routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
         "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
         "roles": ["worker"], "mods": [plan.mod_id], "grant": {"path": grant_path, "sha256": sha256},

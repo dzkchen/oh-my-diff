@@ -326,7 +326,11 @@ test('login runs as a background process that says the sign-in link once and rep
       : call.operation === 'packages.list' ? { packages: [] } : {});
   };
   const output = process('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`)(started.state);
-  assert.deepEqual(notices(output.calls), ['Your browser should open; if not, open this link:', link]);
+  assert.deepEqual(notices(output.calls), ['Your browser should open; if not, open this link:', link, 'If the page shows a code, run /claude code CODE']);
+  const code = state => modEvent('channel', { channel: 'omd_claude_cli/code', data: { code: 'abc' } }, state, () => ({ messages: [], running: true }));
+  assert.ok(manifest.subscriptions.channels.includes('omd_claude_cli/code'));
+  assert.deepEqual(code(output.state).calls[0].arguments, { session: 'claude_login', wait_ms: 0, send: ['abc\n'] });
+  assert.deepEqual(notices(code(null).calls), ['No Claude login is waiting for a code; run /claude login']);
   const exited = process('exit', 'Login failed\n')(output.state);
   assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login again']);
   assert.equal(exited.state.login, null);

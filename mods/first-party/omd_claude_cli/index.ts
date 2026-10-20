@@ -11,12 +11,13 @@ const version = run(['--version']);
 const auth = version.status === 0 ? run(['auth', 'status']) : null;
 console.log(JSON.stringify({ version: version.status === 0 ? version.stdout.trim() : null, auth: auth?.status === 0 ? auth.stdout : null }));`;
 // The Claude CLI binary is larger than the host's program hash limit, so the login runs it under node.
-const login = `const { spawn } = await import('node:child_process');
-const child = spawn('claude', JSON.parse(process.argv[1]), { stdio: ['ignore', 'pipe', 'pipe'] });
+const loginScript = `const { spawn } = await import('node:child_process');
+const child = spawn('claude', JSON.parse(process.argv[1]), { stdio: ['pipe', 'pipe', 'pipe'] });
+process.stdin.pipe(child.stdin);
 child.stdout.pipe(process.stdout);
 child.stderr.pipe(process.stdout);
 child.on('error', error => { console.log(error.code === 'ENOENT' ? 'Claude CLI not found on PATH' : error.message); process.exit(1); });
-child.on('exit', code => process.exit(code ?? 1));`;
+child.on('close', code => process.exit(code ?? 1));`;
 
 type Row = Record<string, any>;
 type Tool = { namespace: string; name: string; kind: 'function' | 'custom' | 'search' };
@@ -275,18 +276,23 @@ export default function activate(api: ModAPI): void {
     say(`Claude is ready on ${result.billing === 'api' ? 'Console API credits' : 'your subscription'}; pick a Claude model with /model`);
   };
   // The host reports no exit status for a managed process, so setup.mjs (checkCli) decides whether the login worked.
-  api.on('process_event', ({ session: id, kind }) => {
-    const login = saved().login;
-    if (id !== session || !plain(login)) return;
+  const exchange = (login: Row, send?: string) => {
     let out = String(login.out);
     for (let reads = 0; reads < 16; reads++) {
-      const read = api.host.tryCall('process.exchange', { session, wait_ms: 0 });
+      const read = api.host.tryCall('process.exchange', { session, wait_ms: 0, ...!reads && send !== undefined && { send: [send] } });
+      if (!read.ok && !reads && send !== undefined) say(`The code did not reach the Claude login: ${read.error}`, true);
       const chunks = read.ok ? read.value.messages as Row[] : [];
       if (!chunks.length) break;
       out = (out + chunks.map(chunk => chunk.data ?? '').join('').replace(ansi, '')).slice(-4096);
     }
+    return out;
+  };
+  api.on('process_event', ({ session: id, kind }) => {
+    const login = saved().login;
+    if (id !== session || !plain(login)) return;
+    const out = exchange(login);
     const link = login.shown ? null : /https:\/\/\S+(?=\s)/.exec(kind === 'exit' ? `${out}\n` : out)?.[0];
-    if (link) { say('Your browser should open; if not, open this link:'); say(link); }
+    if (link) { say('Your browser should open; if not, open this link:'); say(link); say('If the page shows a code, run /claude code CODE'); }
     if (kind !== 'exit') return void api.state.set({ ...saved(), login: { ...login, out, shown: login.shown || !!link } });
     api.host.tryCall('process.stop', { session });
     api.state.set({ ...saved(), login: null });
@@ -301,6 +307,11 @@ export default function activate(api: ModAPI): void {
     if (api.session().provider === provider) ensure();
   });
   api.on('channel', ({ channel, data }) => {
+    if (channel === `${api.package.id}/code`) {
+      const login = saved().login;
+      if (!plain(login)) return void say('No Claude login is waiting for a code; run /claude login', true);
+      return void api.state.set({ ...saved(), login: { ...login, out: exchange(login, `${(data as Row).code}\n`) } });
+    }
     if (channel !== `${api.package.id}/login`) return;
     const billing = (data as Row).billing;
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
@@ -308,7 +319,7 @@ export default function activate(api: ModAPI): void {
     if (!node) return void say(`Claude login did not start: ${found.ok ? 'node is unavailable' : found.error}`, true);
     const argv = billing === 'api' ? ['auth', 'login', '--console'] : ['auth', 'login'];
     const started = api.host.tryCall('process.start', { session, name: 'node', path: node.path, sha256: node.sha256,
-      arguments: ['--input-type=module', '-e', login, JSON.stringify(argv)], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
+      arguments: ['--input-type=module', '-e', loginScript, JSON.stringify(argv)], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
     if (!started.ok) return void say(`Claude login did not start: ${started.error}`, true);
     api.state.set({ ...saved(), login: { billing, out: '', shown: false } });
   });
@@ -320,7 +331,11 @@ export default function activate(api: ModAPI): void {
       if (!hop.ok || hop.value.delivered === 0) return { display: 'Claude login could not be started; run /claude login again' };
       return { display: `Starting Claude login (${billing === 'api' ? 'Console API credits' : 'subscription'}); progress shows below` };
     }
-    if (action) return { display: 'Usage: /claude (status) | /claude login | /claude login api' };
+    if (action === 'code' && mode) {
+      const hop = api.host.tryCall('events.publish', { channel: 'code', data: { code: mode } });
+      return { display: hop.ok && hop.value.delivered > 0 ? 'Sent the code to the Claude login' : 'The code could not be sent; run /claude login again' };
+    }
+    if (action) return { display: 'Usage: /claude (status) | /claude login | /claude login api | /claude code CODE' };
     const { version, auth, error } = cli();
     let status: Row = {};
     try { status = JSON.parse(auth ?? '{}'); } catch {}
@@ -330,7 +345,7 @@ export default function activate(api: ModAPI): void {
       `Login: ${status.loggedIn === true ? `${status.authMethod}${status.subscriptionType ? ` (${status.subscriptionType})` : ''}` : 'not signed in'}`,
       `Billing: ${billing === 'api' ? 'Console API credits' : billing === 'subscription' ? 'subscription' : 'not chosen; run /claude login or /claude login api'}`,
       `Models: ${published === true ? `${(models as Row[]).length} published to /model` : 'none published'}`].join('\n') };
-  }, { description: 'Sign in to Claude (login | login api) or show its status', args_hint: '[login [api]]' });
+  }, { description: 'Sign in to Claude (login | login api | code CODE) or show its status', args_hint: '[login [api] | code CODE]' });
   if (api.settings.ask_claude !== true) return;
   api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
     parameters: { type: 'object', properties: {

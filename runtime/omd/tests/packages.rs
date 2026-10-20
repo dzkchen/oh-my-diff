@@ -176,7 +176,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
             .contains("source_changed")
     );
     let selected = store.configuration().unwrap().mods[0].path.clone();
-    store.set_required(&selected, true).unwrap();
+    store.require(&selected).unwrap();
     let mut update = request(&package, &["commands", "store"]);
     update.settings.clear();
     let plan = store.package_plan(update.clone()).unwrap();

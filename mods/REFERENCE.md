@@ -932,7 +932,8 @@ A route entry, with every field the host accepts:
   are rechecked on every request.
 - `routes.add {mod}` (capability `packages`, user only) asks the user, then adds the worker route `plan-MODEL-MOD`
   for the conversation's model and effort on the user's ChatGPT plan, open only to `mod`, and adds this repository
-  to its grant. It returns `{route}`, or `{status: 'declined'}`.
+  to its grant. It returns `{route}`, or `{status: 'declined'}`. It refuses `routes_add_needs_chatgpt` without a
+  ChatGPT sign-in or when the conversation's provider doesn't use it.
 
 #### Route reload (`route_reload_v1`)
 

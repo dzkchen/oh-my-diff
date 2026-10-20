@@ -748,12 +748,7 @@ impl ManagedProcesses {
                 if input.names.is_empty() || input.names.len() > 8 {
                     return Err("process_candidate_limit".into());
                 }
-                // Resolves as `process.start` will for the same `sandbox`, so its identity check matches.
-                let unrestricted = match input.sandbox.as_deref() {
-                    None => None,
-                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-                    Some(_) => return Err("process_sandbox_invalid".into()),
-                };
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 let found = input
                     .names
                     .iter()
@@ -832,14 +827,10 @@ impl ManagedProcesses {
                     }
                     _ => return Err("process_raster_invalid".into()),
                 };
-                let unrestricted = match input.sandbox.as_deref() {
-                    None => None,
-                    Some("none") if input.network.is_some() => {
-                        return Err("process_unrestricted_network_comes_from_os_access".into());
-                    }
-                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-                    Some(_) => return Err("process_sandbox_invalid".into()),
-                };
+                if input.sandbox.as_deref() == Some("none") && input.network.is_some() {
+                    return Err("process_unrestricted_network_comes_from_os_access".into());
+                }
+                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
                 if input.notify.len() > 2
                     || input
                         .notify
@@ -1386,6 +1377,17 @@ impl ManagedProcesses {
             }
             _ => Err("unsupported_process_operation".into()),
         }
+    }
+}
+
+fn unrestricted_access<'a>(
+    sandbox: Option<&str>,
+    os_access: Option<&'a codex_omd::ModOsAccess>,
+) -> Result<Option<&'a codex_omd::ModOsAccess>, &'static str> {
+    match sandbox {
+        None => Ok(None),
+        Some("none") => os_access.map(Some).ok_or("capability_denied: os"),
+        Some(_) => Err("process_sandbox_invalid"),
     }
 }
 

@@ -1362,7 +1362,7 @@ impl ModStore {
         &self.root
     }
 
-    pub fn set_required(&self, path: &Path, required: bool) -> Result<()> {
+    pub fn require(&self, path: &Path) -> Result<()> {
         let _lock = self.lock()?;
         let mut config = self.configuration()?;
         let selection = config
@@ -1370,7 +1370,7 @@ impl ModStore {
             .iter_mut()
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
-        selection.required = required;
+        selection.required = true;
         config.revision = config
             .revision
             .checked_add(1)

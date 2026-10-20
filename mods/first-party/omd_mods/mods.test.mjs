@@ -112,12 +112,14 @@ test('a required mod stays on and the directory offers installed mods only as up
   const index = () => ({ packages: [
     { id: 'omd_update', description: 'Updates', latest: '1.0.0', installed: '1.0.0', versions: [{ version: '1.0.0', blocked: null }] },
     { id: 'omd_preview', description: 'Previews', latest: '1.2.0', installed: '1.0.0', versions: [{ version: '1.2.0', blocked: null }] },
+    { id: 'omd_logo', description: 'Logo', latest: '1.0.0', installed: '1.1.0', versions: [{ version: '1.0.0', blocked: null }] },
     { id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
   const opened = invoke('', { packages, 'packages.index': index });
   const items = opened.panels[0].items;
+  assert.equal(new Set(items.map(item => item.id)).size, items.length);
   assert.equal(items.find(item => item.id === 'user:omd_update').kind, 'action');
-  assert.deepEqual(items.filter(item => item.tab === 'directory' && /^(get|open):/.test(item.id)).map(item => [item.id, item.label]),
-    [['open:user:omd_preview', 'Preview 1.0.0 → 1.2.0'], ['get:omd_frecency', 'Frecency 1.0.0']]);
+  assert.deepEqual(items.filter(item => item.tab === 'directory' && /^(get|update):/.test(item.id)).map(item => [item.id, item.label]),
+    [['update:user:omd_preview', 'Preview 1.0.0 → 1.2.0'], ['get:omd_frecency', 'Frecency 1.0.0']]);
   const typed = invoke('disable omd_update', { packages });
   assert.deepEqual(operations(typed), ['packages.list']);
   assert.match(typed.value.display, /Update stays on because Oh My Diff needs it/);

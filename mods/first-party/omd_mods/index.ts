@@ -12,6 +12,13 @@ const LIST = 'mods';
 const SELF = 'omd_mods';
 const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
+const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
+const word = (value: string) => /^\S{1,128}$/.test(value);
+const numeric = new Intl.Collator(undefined, { numeric: true }).compare;
+const newer = (version: string, than: string) => {
+  const [core, pre = ''] = version.split(/-(.*)/s), [base, basePre = ''] = than.split(/-(.*)/s);
+  return (numeric(core, base) || (!pre === !basePre ? numeric(pre, basePre) : pre ? -1 : 1)) > 0;
+};
 const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
@@ -42,13 +49,13 @@ export default function activate(api: ModAPI) {
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
-    const kept = (entry: PackageCatalogEntry): PackageCatalogEntry => ({ ...entry, description: clip(entry.description, 120), versions: entry.versions.filter(item => !item.blocked).slice(0, 1) });
+    const trimmed = (entry: PackageCatalogEntry): PackageCatalogEntry => ({ ...entry, description: clip(entry.description, 120), versions: entry.versions.filter(item => !item.blocked).slice(0, 1) });
     const catalog: PackageCatalogEntry[] = [];
     let cursor: string | undefined;
     do {
       const found = api.host.tryCall('packages.index', { limit: Math.min(50, CATALOG - catalog.length), ...cursor && { cursor } });
       if (!found.ok) return { ...state, catalog: [], catalogError: found.error };
-      catalog.push(...found.value.packages.map(kept));
+      catalog.push(...found.value.packages.map(trimmed));
       cursor = found.value.cursor ?? undefined;
     } while (cursor && catalog.length < CATALOG);
     return { ...state, catalog, catalogError: null };
@@ -81,7 +88,7 @@ export default function activate(api: ModAPI) {
     if (property.type === 'number' && (!text.trim() || !Number.isFinite(value))) return { ...state, notice: `${name} needs a number` };
     const written = api.host.tryCall('settings.write', { id: item.id, values: { [name]: value } });
     if (!written.ok) return refresh(state, `${name} was not saved (${written.error})`);
-    store({ ...state, notice: `${property.title ?? name.replace(/_/g, ' ')} saved` });
+    store({ ...state, notice: `${labelOf(name, property)} saved` });
     return null;
   };
   const act = (state: Saved, verb: string, argument: string, from = LIST, item?: PackageState): Saved | null => {
@@ -92,8 +99,8 @@ export default function activate(api: ModAPI) {
       const added = api.host.tryCall('routes.add', { mod: item.id });
       if (!added.ok || 'status' in added.value) return { ...state, notice: added.ok ? 'No helper model was added' : `No helper model was added (${brief(added.error)})` };
       // An unchanged setting isn't written, so no reload reruns the panel to show write's notice.
-      const label = properties(item).find(([name]) => name === argument)?.[1].title ?? argument.replace(/_/g, ' ');
-      if (item.settings?.[argument] === added.value.route) return { ...state, notice: `${label} already uses ${added.value.route}` };
+      if (item.settings?.[argument] === added.value.route)
+        return { ...state, notice: `${labelOf(argument, properties(item).find(([name]) => name === argument)?.[1])} already uses ${added.value.route}` };
       return write(state, item, `${argument} ${added.value.route}`);
     }
     if (verb === 'scope') return argument === 'user' || argument === 'project' ? { ...state, scope: argument } : state;
@@ -166,11 +173,10 @@ export default function activate(api: ModAPI) {
       entry({ id: 'source', tab: 'directory', label: 'Add from source', kind: 'text', description: 'npm:NAME@VERSION, git+URL#TAG, a folder path or a directory id' }),
       ...state.catalogError ? [entry({ id: 'directory', tab: 'directory', label: 'Directory unavailable, try again', kind: 'action', description: brief(state.catalogError) })] : [],
     ];
-    // Installed mods show here only with an update, which opens their own panel.
     const offered = state.catalog.flatMap(item => {
       const local = item.installed ? state.packages.find(other => other.id === item.id) : undefined;
-      if (item.installed && (!local || [item.installed, ''].includes(newest(item)))) return [];
-      return [entry({ id: local ? `open:${key(local)}` : `get:${item.id}`, tab: 'directory', kind: 'action',
+      if (item.installed && (!local || !newer(newest(item), item.installed))) return [];
+      return [entry({ id: local ? `update:${key(local)}` : `get:${item.id}`, tab: 'directory', kind: 'action',
         label: local ? `${friendly(item.id)} ${item.installed} → ${newest(item)}` : `${friendly(item.id)} ${item.latest}`,
         description: local ? `Update available · ${item.description}` : item.description })];
     });
@@ -182,16 +188,16 @@ export default function activate(api: ModAPI) {
   };
   const settingItem = (item: PackageState, name: string, property: Property): TerminalPanelItem | null => {
     const current = item.settings?.[name];
-    const base = { id: `setting:${name}`, label: property.title ?? name.replace(/_/g, ' '), description: property.description };
+    const base = { id: `setting:${name}`, label: labelOf(name, property), description: property.description };
     if (/\s/.test(name) || encoder.encode(base.id).length > 128) return null;
     if (property.type === 'boolean') return entry({ ...base, kind: 'toggle', value: current === true });
-    const options = [...new Set((property.enum ?? []).map(value => String(value)).filter(value => /^\S{1,128}$/.test(value) && encoder.encode(value).length <= 128))].slice(0, 32);
+    const options = [...new Set((property.enum ?? []).map(value => String(value)).filter(value => word(value) && encoder.encode(value).length <= 128))].slice(0, 32);
     if (property.choices === 'routes') {
       const chosen = String(current ?? property.default ?? '') || UNSET;
-      const missing = chosen !== UNSET && !options.includes(chosen) && /^\S{1,128}$/.test(chosen);
+      const missing = chosen !== UNSET && !options.includes(chosen) && word(chosen);
       return entry({ ...base, kind: 'choice', value: missing || options.includes(chosen) ? chosen : UNSET,
         description: options.length ? base.description : 'No helper model yet: use Add a helper model below',
-        options: [{ value: UNSET, label: 'Not set' }, ...missing ? [{ value: chosen, label: `${chosen} (not in host.json)` }] : [], ...options.slice(0, 30).map(value => ({ value, label: value }))] });
+        options: [{ value: UNSET, label: 'Not set' }, ...missing ? [{ value: chosen, label: `${chosen} (unavailable in this project)` }] : [], ...options.slice(0, 30).map(value => ({ value, label: value }))] });
     }
     if (options.length) return entry({ ...base, kind: 'choice', value: options.includes(String(current)) ? String(current) : options[0], options: options.map(value => ({ value, label: value })) });
     if (property.type === 'string' || property.type === 'number') return entry({ ...base, kind: 'text', value: current === undefined || current === null ? '' : clip(String(current), 2000), description: property.description ?? (property.type === 'number' ? 'a number' : undefined) });
@@ -217,7 +223,7 @@ export default function activate(api: ModAPI) {
         ...fixed ? [] : [entry({ id: 'enabled', label: 'On', kind: 'toggle', value: item.enabled })],
         ...properties(item).slice(0, 150).map(([name, property]) => settingItem(item, name, property)).filter((value): value is TerminalPanelItem => value !== null),
         ...properties(item).filter(([, property]) => property.choices === 'routes').slice(0, 8).map(([name, property]) => entry({ id: `route:${name}`, kind: 'action',
-          label: `Add a helper model for ${property.title ?? name.replace(/_/g, ' ')}`, description: 'Uses the model you are chatting with on your ChatGPT plan; asks before changing anything' })),
+          label: `Add a helper model for ${labelOf(name, property)}`, description: 'Uses the model you are chatting with on your ChatGPT plan; asks before changing anything' })),
         ...actions.map(([verb, label]) => entry({ id: `do:${verb}`, label, kind: 'action' })),
       ],
     };
@@ -250,7 +256,7 @@ export default function activate(api: ModAPI) {
     if (verb === 'panel') {
       const [, scope, item, text] = words(raw, 3);
       const scoped: Saved = { ...lost || !item ? search(state) : state, scope: scope === 'project' ? 'project' : 'user' };
-      const target = item.startsWith('open:') ? describe(item.slice(5)) : null;
+      const target = /^(open|update):/.test(item) ? describe(item.slice(item.indexOf(':') + 1)) : null;
       if (target) return presenting(target, { ...scoped, review: null, notice: null });
       const next = !item ? { ...scoped, notice: current.notice }
         : item === 'apply' || item === 'cancel' || item === 'scope' || item === 'directory' ? act(scoped, item, text)

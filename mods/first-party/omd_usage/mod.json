@@ -17,8 +17,8 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "categories": { "type": "boolean", "default": false , "title": "Usage by role", "description": "Break requests down by role; it runs on every request, so it's off by default"},
-      "budget_usd": { "type": "number", "default": 0 , "title": "Budget (USD)", "description": "A soft spending budget in US dollars; 0 means none"}
+      "categories": { "type": "boolean", "default": false, "title": "Usage by role", "description": "Break requests down by role; it runs on every request, so it's off by default"},
+      "budget_usd": { "type": "number", "default": 0, "title": "Budget (USD)", "description": "A soft spending budget in US dollars; 0 means none"}
     },
     "additionalProperties": false
   }

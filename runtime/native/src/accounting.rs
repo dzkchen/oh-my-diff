@@ -757,7 +757,7 @@ impl Accounts {
     }
 }
 
-pub const SUBSCRIPTION_RESPONSES_URL: &str = codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
+use codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
 
 pub fn worker_authorized(
     path: &std::path::Path,

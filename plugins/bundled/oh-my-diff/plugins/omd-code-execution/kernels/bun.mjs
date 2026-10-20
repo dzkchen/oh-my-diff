@@ -116,8 +116,9 @@ child.stdout.on("data", (chunk) => {
     response.output += extra.subarray(0, room).toString("utf8");
     process.stdout.write("CODE_KERNEL_RESULT:" + JSON.stringify(response) + "\n");
   }
-  keep(held.subarray(0, Math.max(held.length - frame.length + 1, 0)));
-  held = held.subarray(Math.max(held.length - frame.length + 1, 0));
+  const cut = Math.max(held.length - frame.length + 1, 0);
+  keep(held.subarray(0, cut));
+  held = held.subarray(cut);
 });
 child.on("exit", (code) => process.exit(code ?? 1));
 process.on("exit", () => child.kill("SIGKILL"));

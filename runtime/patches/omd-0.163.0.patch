@@ -50745,7 +50745,7 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..db9a2a454b067e747ec50f964b336674881ebf6b
+index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124b6729b28
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2314 @@
@@ -51508,7 +51508,7 @@ index 0000000000000000000000000000000000000000..db9a2a454b067e747ec50f964b336674
 +    }
 +}
 +
-+pub const SUBSCRIPTION_RESPONSES_URL: &str = codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
++use codex_omd::plan_routes::SUBSCRIPTION_RESPONSES_URL;
 +
 +pub fn worker_authorized(
 +    path: &std::path::Path,
@@ -53065,10 +53065,10 @@ index 0000000000000000000000000000000000000000..db9a2a454b067e747ec50f964b336674
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e9d81040ead5da21f03cf5e24d9e32c7a7890e65
+index 0000000000000000000000000000000000000000..4c2baaa716c780e82e36494e347f2c407edbc353
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1270 @@
+@@ -0,0 +1,1253 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -54289,34 +54289,12 @@ index 0000000000000000000000000000000000000000..e9d81040ead5da21f03cf5e24d9e32c7
 +}
 +
 +#[test]
-+fn plan_grants_authorize_each_listed_repository() {
-+    let root = tempfile::tempdir().unwrap();
-+    let path = root.path().join("plan.json");
-+    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repositories":["repo-a","repo-b"],
-+        "provider":"openai","model":"model-a","responses_url":SUBSCRIPTION_RESPONSES_URL});
-+    std::fs::write(&path, grant.to_string()).unwrap();
-+    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
-+    let allowed = |repository: &str| {
-+        worker_authorized(
-+            &path,
-+            &sha,
-+            repository,
-+            "openai",
-+            "model-a",
-+            SUBSCRIPTION_RESPONSES_URL,
-+            true,
-+        )
-+    };
-+    assert!(allowed("repo-a") && allowed("repo-b"));
-+    assert!(!allowed("repo-c"));
-+}
-+
-+#[test]
-+fn an_added_plan_route_loads_and_is_authorized_in_its_repository() {
++fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
 +    let root = tempfile::tempdir().unwrap();
 +    let store = root.path().canonicalize().unwrap();
-+    let repository = store.join("repo");
++    let (repository, other) = (store.join("repo"), store.join("other"));
 +    std::fs::create_dir(&repository).unwrap();
++    std::fs::create_dir(&other).unwrap();
 +    let plan = codex_omd::plan_routes::PlanRoute {
 +        model: "gpt-6.1-sol".into(),
 +        reasoning_effort: "high".into(),
@@ -54324,24 +54302,29 @@ index 0000000000000000000000000000000000000000..e9d81040ead5da21f03cf5e24d9e32c7
 +        mod_id: "omd_advisor".into(),
 +    };
 +    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
++    assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
 +    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
 +    let route = config
 +        .route(&name, crate::config::RouteRole::Worker, Some("omd_advisor"))
 +        .unwrap();
 +    let grant = route.grant.as_ref().unwrap();
-+    assert!(worker_authorized(
-+        &grant.path,
-+        &grant.sha256,
-+        &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
-+        &route.provider,
-+        &route.model,
-+        &route.responses_url,
-+        route.rates.included_subscription,
-+    ));
++    let allowed = |repository: &std::path::Path| {
++        worker_authorized(
++            &grant.path,
++            &grant.sha256,
++            &crate::execution::hash(repository.as_os_str().as_encoded_bytes()),
++            &route.provider,
++            &route.model,
++            &route.responses_url,
++            route.rates.included_subscription,
++        )
++    };
++    assert!(allowed(&repository) && allowed(&other));
++    assert!(!allowed(&store.join("unlisted")));
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..efb47d11f4eafb75f3a784d4dd859ab710dc6ea8
+index 0000000000000000000000000000000000000000..9b0b2c3edf3a869ab977072fa143215d6e957c0c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
 @@ -0,0 +1,562 @@
@@ -54761,7 +54744,7 @@ index 0000000000000000000000000000000000000000..efb47d11f4eafb75f3a784d4dd859ab7
 +        }
 +        [command, root, path] if command == "require" => {
 +            let path = PathBuf::from(path);
-+            open(root)?.set_required(&path.canonicalize().unwrap_or(path), true)?;
++            open(root)?.require(&path.canonicalize().unwrap_or(path))?;
 +            Ok(Value::String(
 +                "selection required; in-app mod screens keep it on".into(),
 +            ))
@@ -59697,10 +59680,10 @@ index 0000000000000000000000000000000000000000..baebd6a3da2faf75180ae10c68892582
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..08e1d0b4a873a4c4cfb5609d4f02437501c3e9c8
+index 0000000000000000000000000000000000000000..363943b061a34b8157fe7c5aa084b133eed6784e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2545 @@
+@@ -0,0 +1,2547 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -60451,12 +60434,7 @@ index 0000000000000000000000000000000000000000..08e1d0b4a873a4c4cfb5609d4f024375
 +                if input.names.is_empty() || input.names.len() > 8 {
 +                    return Err("process_candidate_limit".into());
 +                }
-+                // Resolves as `process.start` will for the same `sandbox`, so its identity check matches.
-+                let unrestricted = match input.sandbox.as_deref() {
-+                    None => None,
-+                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-+                    Some(_) => return Err("process_sandbox_invalid".into()),
-+                };
++                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
 +                let found = input
 +                    .names
 +                    .iter()
@@ -60535,14 +60513,10 @@ index 0000000000000000000000000000000000000000..08e1d0b4a873a4c4cfb5609d4f024375
 +                    }
 +                    _ => return Err("process_raster_invalid".into()),
 +                };
-+                let unrestricted = match input.sandbox.as_deref() {
-+                    None => None,
-+                    Some("none") if input.network.is_some() => {
-+                        return Err("process_unrestricted_network_comes_from_os_access".into());
-+                    }
-+                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
-+                    Some(_) => return Err("process_sandbox_invalid".into()),
-+                };
++                if input.sandbox.as_deref() == Some("none") && input.network.is_some() {
++                    return Err("process_unrestricted_network_comes_from_os_access".into());
++                }
++                let unrestricted = unrestricted_access(input.sandbox.as_deref(), os_access)?;
 +                if input.notify.len() > 2
 +                    || input
 +                        .notify
@@ -61089,6 +61063,17 @@ index 0000000000000000000000000000000000000000..08e1d0b4a873a4c4cfb5609d4f024375
 +            }
 +            _ => Err("unsupported_process_operation".into()),
 +        }
++    }
++}
++
++fn unrestricted_access<'a>(
++    sandbox: Option<&str>,
++    os_access: Option<&'a codex_omd::ModOsAccess>,
++) -> Result<Option<&'a codex_omd::ModOsAccess>, &'static str> {
++    match sandbox {
++        None => Ok(None),
++        Some("none") => os_access.map(Some).ok_or("capability_denied: os"),
++        Some(_) => Err("process_sandbox_invalid"),
 +    }
 +}
 +
@@ -69217,10 +69202,10 @@ index 0000000000000000000000000000000000000000..82e034befd4b72a2f1c0cfe36cdf3d59
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f496e9c62d3e7311ebc3333868a491c953a3c5b2
+index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9bde1e1d54
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,832 @@
+@@ -0,0 +1,837 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -69766,7 +69751,12 @@ index 0000000000000000000000000000000000000000..f496e9c62d3e7311ebc3333868a491c9
 +            blocking(Box::new(move || {
 +                codex_omd::ModStore::open(host.root.clone())
 +                    .and_then(|store| {
-+                        codex_omd::package_controls::list_fields(&store, Some(&runtime), arguments)
++                        codex_omd::package_controls::list_fields(
++                            &store,
++                            Some(&runtime),
++                            arguments,
++                            Some(&host.repository),
++                        )
 +                    })
 +                    .map_err(|error| error.to_string())
 +            }))
@@ -99360,10 +99350,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ecf3d0bd40d58a6d874793d4e3a39918d2130a3
+index 0000000000000000000000000000000000000000..8c410ee1eae6afbf76b598e35892f0360ad5bc76
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6215 @@
+@@ -0,0 +1,6221 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -102550,12 +102540,18 @@ index 0000000000000000000000000000000000000000..2ecf3d0bd40d58a6d874793d4e3a3991
 +
 +/// Whether a host call only reads, so a callback that made no other call can run again.
 +pub fn read_only_call(call: &ModHostCall) -> bool {
-+    read_only_receipt(&json!({"call": {"operation": call.operation, "arguments": call.arguments}}))
++    read_only(&call.operation, &call.arguments)
 +}
 +
 +fn read_only_receipt(receipt: &Value) -> bool {
-+    let arguments = &receipt["call"]["arguments"];
-+    match receipt["call"]["operation"].as_str().unwrap_or_default() {
++    read_only(
++        receipt["call"]["operation"].as_str().unwrap_or_default(),
++        &receipt["call"]["arguments"],
++    )
++}
++
++fn read_only(operation: &str, arguments: &Value) -> bool {
++    match operation {
 +        "workspace.read"
 +        | "workspace.list"
 +        | "workspace.stat"
@@ -116527,7 +116523,7 @@ index 0000000000000000000000000000000000000000..7779d60984c037dcb098eb89d2eee642
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6798f8294560406435cdc9c1e0579ada14a3c08b
+index 0000000000000000000000000000000000000000..c3d0d87a5f81211a9bae2af110e06c771899b0aa
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1522 @@
@@ -117895,7 +117891,7 @@ index 0000000000000000000000000000000000000000..6798f8294560406435cdc9c1e0579ada
 +        &self.root
 +    }
 +
-+    pub fn set_required(&self, path: &Path, required: bool) -> Result<()> {
++    pub fn require(&self, path: &Path) -> Result<()> {
 +        let _lock = self.lock()?;
 +        let mut config = self.configuration()?;
 +        let selection = config
@@ -117903,7 +117899,7 @@ index 0000000000000000000000000000000000000000..6798f8294560406435cdc9c1e0579ada
 +            .iter_mut()
 +            .find(|m| m.path == path)
 +            .ok_or_else(|| failure("package_not_trusted"))?;
-+        selection.required = required;
++        selection.required = true;
 +        config.revision = config
 +            .revision
 +            .checked_add(1)
@@ -120478,10 +120474,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6999167d0
+index 0000000000000000000000000000000000000000..ffc87f7e5d0a107e5bae74dd2d988c6ab8ec3085
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,753 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -120664,6 +120660,7 @@ index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6
 +    store: &ModStore,
 +    runtime: Option<&Value>,
 +    arguments: Value,
++    repository: Option<&Path>,
 +) -> io::Result<Value> {
 +    let fields = match arguments {
 +        Value::Null => None,
@@ -120674,6 +120671,12 @@ index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6
 +        ),
 +    };
 +    let mut listed = list(store, runtime)?;
++    if fields
++        .as_ref()
++        .is_none_or(|fields| fields.iter().any(|field| field == "settings_schema"))
++    {
++        listed = with_route_choices(store.root(), listed, repository);
++    }
 +    if let (Some(fields), Some(packages)) = (fields, listed["packages"].as_array_mut()) {
 +        for package in packages.iter_mut().filter_map(Value::as_object_mut) {
 +            package.retain(|key, _| fields.iter().any(|field| field == key));
@@ -120685,38 +120688,54 @@ index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6
 +pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
 +    let selections = selections(store)?;
 +    let Some(cache) = &selections.listing else {
-+        return Ok(with_route_choices(
-+            store.root(),
-+            listing(&selections, runtime)?.0,
-+        ));
++        return Ok(listing(&selections, runtime)?.0);
 +    };
 +    let read = listing_key(runtime);
 +    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
 +    if let Some((key, listed)) = &*cache
 +        && *key == read
 +    {
-+        return Ok(with_route_choices(store.root(), listed.clone()));
++        return Ok(listed.clone());
 +    }
 +    let (listed, cacheable) = listing(&selections, runtime)?;
 +    if cacheable {
 +        *cache = Some((read, listed.clone()));
 +    }
-+    Ok(with_route_choices(store.root(), listed))
++    Ok(listed)
 +}
 +
-+/// Lists the `host.json` worker routes open to each mod as the `enum` of its `"choices": "routes"` settings; read on
-+/// every call because `host.json` changes outside the listing cache.
-+fn with_route_choices(root: &Path, mut listed: Value) -> Value {
-+    let config = std::fs::read(root.join("host.json"))
-+        .ok()
-+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+        .unwrap_or_default();
-+    let routes = config["routes"]
-+        .as_array()
-+        .map(Vec::as_slice)
-+        .unwrap_or_default();
++/// Read on every call because `host.json` and plan grants change outside the listing cache. Without a repository,
++/// plan routes are offered regardless of their grant.
++fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
++    let here = repository.map(|repository| {
++        Value::from(crate::resource_data::hash(
++            repository.as_os_str().as_encoded_bytes(),
++        ))
++    });
++    let mut routes: Option<Vec<Value>> = None;
 +    for package in listed["packages"].as_array_mut().into_iter().flatten() {
 +        let id = package["id"].clone();
++        let mut choices = package
++            .get_mut("settings_schema")
++            .and_then(|schema| schema.get_mut("properties"))
++            .and_then(Value::as_object_mut)
++            .into_iter()
++            .flat_map(|properties| properties.values_mut())
++            .filter(|property| property["choices"] == "routes")
++            .peekable();
++        if choices.peek().is_none() {
++            continue;
++        }
++        let routes = routes.get_or_insert_with(|| {
++            std::fs::read(root.join("host.json"))
++                .ok()
++                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++                .and_then(|config| config["routes"].as_array().cloned())
++                .unwrap_or_default()
++                .into_iter()
++                .filter(|route| here.as_ref().is_none_or(|here| granted(route, here)))
++                .collect()
++        });
 +        let names: Vec<Value> = routes
 +            .iter()
 +            .filter(|route| {
@@ -120729,18 +120748,25 @@ index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6
 +            })
 +            .filter_map(|route| route["name"].as_str().map(Value::from))
 +            .collect();
-+        for property in package
-+            .get_mut("settings_schema")
-+            .and_then(|schema| schema.get_mut("properties"))
-+            .and_then(Value::as_object_mut)
-+            .into_iter()
-+            .flat_map(|properties| properties.values_mut())
-+            .filter(|property| property["choices"] == "routes")
-+        {
++        for property in choices {
 +            property["enum"] = Value::from(names.clone());
 +        }
 +    }
 +    listed
++}
++
++fn granted(route: &Value, repository: &Value) -> bool {
++    let Some(path) = route["grant"]["path"].as_str() else {
++        return true;
++    };
++    std::fs::read(path)
++        .ok()
++        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++        .is_none_or(|grant| {
++            grant["repositories"]
++                .as_array()
++                .is_none_or(|repositories| repositories.contains(repository))
++        })
 +}
 +
 +pub fn listing_key(runtime: Option<&Value>) -> Value {
@@ -121207,10 +121233,10 @@ index 0000000000000000000000000000000000000000..d9dc6cd31bee3300cf012590ae2a1ce6
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d04566f4d
+index 0000000000000000000000000000000000000000..f6abd58b60110923ae597cfbede80e3cbea66bbf
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,384 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -121281,8 +121307,11 @@ index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d
 +        (Some("sample_mod"), Some(false), Some(true))
 +    );
 +    let generation = listed["generation"].as_u64().unwrap();
-+    assert_eq!(list_fields(&store, None, Value::Null).unwrap(), listed);
-+    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]})).unwrap();
++    assert_eq!(
++        list_fields(&store, None, Value::Null, None).unwrap(),
++        listed
++    );
++    let narrow = list_fields(&store, None, json!({"fields": ["id", "enabled"]}), None).unwrap();
 +    assert_eq!(
 +        (narrow["packages"].clone(), narrow["generation"].as_u64()),
 +        (
@@ -121295,7 +121324,7 @@ index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d
 +        json!({"fields": "id"}),
 +        json!({"fields": [], "page": 1}),
 +    ] {
-+        assert!(list_fields(&store, None, invalid).is_err());
++        assert!(list_fields(&store, None, invalid, None).is_err());
 +    }
 +
 +    let enable = preview(
@@ -121509,22 +121538,30 @@ index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d
 +    store
 +        .trust(path.clone(), &sha256, vec!["commands".into()], "user")
 +        .unwrap();
-+    store.set_required(&path, true).unwrap();
++    store.require(&path).unwrap();
++    let repository = root.join("repo");
++    let grant = |name: &str, listed: &Path| {
++        let path = root.join(format!("{name}.json"));
++        let hash = crate::resource_data::hash(listed.as_os_str().as_encoded_bytes());
++        std::fs::write(&path, json!({"repositories": [hash]}).to_string()).unwrap();
++        json!({"name": name, "roles": ["worker"], "mods": ["routed_mod"], "grant": {"path": path}})
++    };
 +    std::fs::write(
 +        store.root().join("host.json"),
 +        json!({"routes": [{"name": "open", "roles": ["worker"]}, {"name": "lead", "roles": ["lead"]},
 +            {"name": "scoped", "roles": ["worker"], "mods": ["routed_mod"]},
-+            {"name": "other", "roles": ["worker"], "mods": ["another_mod"]}]})
++            {"name": "other", "roles": ["worker"], "mods": ["another_mod"]},
++            grant("plan-here", &repository), grant("plan-elsewhere", &root.join("elsewhere"))]})
 +        .to_string(),
 +    )
 +    .unwrap();
-+    let listed = list(&store, None).unwrap();
++    let listed = list_fields(&store, None, Value::Null, Some(&repository)).unwrap();
 +    let package = &listed["packages"][0];
 +    assert_eq!(package["required"], true);
 +    assert_eq!(
 +        package["settings_schema"]["properties"]["route"],
 +        json!({"type": "string", "title": "Route", "description": "Where it runs", "choices": "routes",
-+            "enum": ["open", "scoped"]})
++            "enum": ["open", "scoped", "plan-here"]})
 +    );
 +
 +    manifest["settings_schema"]["properties"]["route"] =
@@ -121565,7 +121602,13 @@ index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d
 +        )
 +        .unwrap();
 +        assert_eq!(page["total"], 5);
-+        ids.extend(page["packages"].as_array().unwrap().iter().map(|entry| entry["id"].clone()));
++        ids.extend(
++            page["packages"]
++                .as_array()
++                .unwrap()
++                .iter()
++                .map(|entry| entry["id"].clone()),
++        );
 +        cursor = page["cursor"].as_str().map(str::to_owned);
 +        if cursor.is_none() {
 +            break;
@@ -121573,7 +121616,10 @@ index 0000000000000000000000000000000000000000..502ad6cdc06f6975652f4e01a4cecb2d
 +    }
 +    assert_eq!(ids, ["mod_0", "mod_1", "mod_2", "mod_3", "mod_4"]);
 +    let error = super::index(&store, json!({"index": index, "limit": 0})).unwrap_err();
-+    assert!(error.to_string().contains("package_arguments_invalid"), "{error}");
++    assert!(
++        error.to_string().contains("package_arguments_invalid"),
++        "{error}"
++    );
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
@@ -122306,16 +122352,14 @@ index 0000000000000000000000000000000000000000..dbf1f542f1154706c947a0454ddc3659
 +}
 diff --git a/codex-rs/omd/src/plan_routes.rs b/codex-rs/omd/src/plan_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3cc2bfa4f229e9a56a0c16b2cd8180ce124e817
+index 0000000000000000000000000000000000000000..2b5cb548aa42907b37e9f841412dcaec8eb57d13
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes.rs
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,112 @@
 +//! Worker routes on the user's ChatGPT plan, added from a confirmed client request.
 +
 +use serde_json::Value;
 +use serde_json::json;
-+use sha2::Digest;
-+use sha2::Sha256;
 +use std::io;
 +use std::path::Path;
 +
@@ -122360,10 +122404,7 @@ index 0000000000000000000000000000000000000000..c3cc2bfa4f229e9a56a0c16b2cd8180c
 +    let directory = store.join("routes").join("plan");
 +    std::fs::create_dir_all(&directory)?;
 +    let grant_path = directory.join(format!("{name}.json"));
-+    let identity = format!(
-+        "{:x}",
-+        Sha256::digest(repository.as_os_str().as_encoded_bytes())
-+    );
++    let identity = crate::resource_data::hash(repository.as_os_str().as_encoded_bytes());
 +    let mut grant = read(&grant_path)?.unwrap_or_else(|| {
 +        json!({"schema": 1, "included_subscription": true, "revocable": true, "provider": "openai",
 +            "model": plan.model, "responses_url": SUBSCRIPTION_RESPONSES_URL, "repositories": []})
@@ -122404,7 +122445,7 @@ index 0000000000000000000000000000000000000000..c3cc2bfa4f229e9a56a0c16b2cd8180c
 +        None => {}
 +    }
 +    crate::broker::write_private(&grant_path, &grant)?;
-+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
++    let sha256 = crate::resource_data::hash(&bytes);
 +    routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
 +        "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
 +        "roles": ["worker"], "mods": [plan.mod_id], "grant": {"path": grant_path, "sha256": sha256},
@@ -122429,10 +122470,10 @@ index 0000000000000000000000000000000000000000..c3cc2bfa4f229e9a56a0c16b2cd8180c
 +mod tests;
 diff --git a/codex-rs/omd/src/plan_routes_tests.rs b/codex-rs/omd/src/plan_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..40a2f30852dcf47ba8341b1298e98ea67b7a8878
+index 0000000000000000000000000000000000000000..8dce95f87f33cd986c430eb05268d1f831bb8f9b
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes_tests.rs
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,79 @@
 +use super::*;
 +
 +fn plan(model: &str, mod_id: &str) -> PlanRoute {
@@ -122486,12 +122527,9 @@ index 0000000000000000000000000000000000000000..40a2f30852dcf47ba8341b1298e98ea6
 +    assert_eq!(host["routes"][2]["mods"], json!(["omd_workflow"]));
 +    assert_eq!(route["rates"]["max_output_tokens"], 128_000);
 +    let bytes = std::fs::read(route["grant"]["path"].as_str().unwrap()).unwrap();
-+    assert_eq!(
-+        route["grant"]["sha256"],
-+        format!("{:x}", Sha256::digest(&bytes))
-+    );
++    assert_eq!(route["grant"]["sha256"], crate::resource_data::hash(&bytes));
 +    let grant: Value = serde_json::from_slice(&bytes).unwrap();
-+    let identity = |path: &str| format!("{:x}", Sha256::digest(path.as_bytes()));
++    let identity = |path: &str| crate::resource_data::hash(path.as_bytes());
 +    assert_eq!(
 +        grant["repositories"],
 +        json!([identity("/one"), identity("/two")])
@@ -127751,10 +127789,10 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5f10026f06a82b94c4532ceb8e206e526146d54
+index 0000000000000000000000000000000000000000..42e7c34b9f0eb49adb72d7d7451cf863ff0edc19
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,2121 @@
+@@ -0,0 +1,2104 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -129594,23 +129632,6 @@ index 0000000000000000000000000000000000000000..f5f10026f06a82b94c4532ceb8e206e5
 +        format!("os_access_denied: {}", planted.display())
 +    );
 +    assert_eq!(listed.unwrap(), planted);
-+}
-+
-+#[test]
-+fn unrestricted_node_resolves_to_the_runner_node() {
-+    let (temp, repository, _data, _authority) = setup();
-+    let runner = temp.path().canonicalize().unwrap().join("runner/node");
-+    std::fs::create_dir_all(runner.parent().unwrap()).unwrap();
-+    std::fs::write(&runner, "#!/bin/sh\n").unwrap();
-+    let access = codex_omd::ModOsAccess {
-+        programs: strings(&["node"]),
-+        network: false,
-+        node: Some(runner.clone()),
-+    };
-+    assert_eq!(
-+        codex_omd::host::unrestricted_program(&access, "node", &repository).unwrap(),
-+        runner
-+    );
 +}
 +
 +#[test]
@@ -136159,7 +136180,7 @@ index 0000000000000000000000000000000000000000..279fbdc1a84e609d6fa4db0180621ceb
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59a51772a091acba3ef235badc1aed0446d0f5ea
+index 0000000000000000000000000000000000000000..bfcf5a7de9a450702db6f4cb9fb58774fc2057f7
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,1585 @@
@@ -136341,7 +136362,7 @@ index 0000000000000000000000000000000000000000..59a51772a091acba3ef235badc1aed04
 +            .contains("source_changed")
 +    );
 +    let selected = store.configuration().unwrap().mods[0].path.clone();
-+    store.set_required(&selected, true).unwrap();
++    store.require(&selected).unwrap();
 +    let mut update = request(&package, &["commands", "store"]);
 +    update.settings.clear();
 +    let plan = store.package_plan(update.clone()).unwrap();
@@ -142551,10 +142572,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..21cace8d2865d27aad9340512dd298c5d53986f1
+index 0000000000000000000000000000000000000000..0b896b6ba0c4724bbd3fcb8606b275ba37cf2813
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2139 @@
+@@ -0,0 +1,2140 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -142571,6 +142592,7 @@ index 0000000000000000000000000000000000000000..21cace8d2865d27aad9340512dd298c5
 +use serde_json::json;
 +
 +const IMPORT_BYTES: u64 = 8 * 1024 * 1024;
++const STANDARD_CONTEXT_WINDOW: u64 = 272_000;
 +
 +fn selection_result(mut text: Option<String>) -> Value {
 +    let mut truncated = false;
@@ -143530,7 +143552,6 @@ index 0000000000000000000000000000000000000000..21cace8d2865d27aad9340512dd298c5
 +        }
 +    }
 +
-+    /// The plan route uses the model and effort of this conversation and the user's ChatGPT sign-in.
 +    fn plan_route(
 +        &self,
 +        call: &SurfaceCall,
@@ -143541,20 +143562,21 @@ index 0000000000000000000000000000000000000000..21cace8d2865d27aad9340512dd298c5
 +                crate::mod_runtime::terminal_source(id).is_some() || caller_source(id).is_some()
 +            })
 +            .ok_or("routes_add_mod_unknown")?;
-+        if !self.chat_widget.has_chatgpt_account() {
-+            return Err("routes_add_needs_chatgpt: sign in to Codex with ChatGPT".into());
++        if !self.chat_widget.has_chatgpt_account() || !self.chat_widget.requires_openai_auth {
++            return Err(
++                "routes_add_needs_chatgpt: sign in to Codex with ChatGPT and chat with a model on your plan".into(),
++            );
 +        }
 +        let model = self.chat_widget.current_model().to_owned();
 +        let effort = self
 +            .chat_widget
 +            .current_reasoning_effort()
 +            .map_or_else(|| "medium".to_owned(), |effort| effort.to_string());
-+        // Without a reported window, Codex's standard 272,000-token input window.
 +        let context_window = self
 +            .chat_widget
 +            .status_line_context_window_size()
 +            .and_then(|window| u64::try_from(window).ok())
-+            .unwrap_or(272_000);
++            .unwrap_or(STANDARD_CONTEXT_WINDOW);
 +        Ok((
 +            format!("Let {mod_id} run helper models on your ChatGPT plan?"),
 +            format!(
@@ -147423,7 +147445,7 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a79b2f515ae5289442a461d6da27234580b60884
+index 0000000000000000000000000000000000000000..d74cec5ea4122d32cda525b8b9be22944346c69e
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 @@ -0,0 +1,78 @@
@@ -147493,7 +147515,7 @@ index 0000000000000000000000000000000000000000..a79b2f515ae5289442a461d6da272345
 +        .trust(package.clone(), &source, Vec::new(), "user")
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    store.set_required(&package, true).unwrap();
++    store.require(&package).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&root.join("store"));
 +    let (mut chat, _tx, mut rx, _op_rx) =
 +        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
@@ -155419,10 +155441,10 @@ index 0000000000000000000000000000000000000000..4a1ca43cd08ebf72dae4ec5962137273
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cde3e57ad2c8da3962344806eb9431cb2ef1c8dc
+index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a46ff4849
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1137 @@
+@@ -0,0 +1,1138 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -156543,6 +156565,7 @@ index 0000000000000000000000000000000000000000..cde3e57ad2c8da3962344806eb9431cb
 +                    &store,
 +                    crate::omd::mod_status().as_deref(),
 +                    call.arguments,
++                    Some(&paths.repository),
 +                ),
 +                "packages.index" => codex_omd::package_controls::index(&store, call.arguments),
 +                "packages.preview" => codex_omd::package_controls::preview(&store, call.arguments)

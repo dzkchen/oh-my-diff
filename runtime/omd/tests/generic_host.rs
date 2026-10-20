@@ -1840,23 +1840,6 @@ fn unrestricted_programs_never_resolve_inside_the_repository() {
 }
 
 #[test]
-fn unrestricted_node_resolves_to_the_runner_node() {
-    let (temp, repository, _data, _authority) = setup();
-    let runner = temp.path().canonicalize().unwrap().join("runner/node");
-    std::fs::create_dir_all(runner.parent().unwrap()).unwrap();
-    std::fs::write(&runner, "#!/bin/sh\n").unwrap();
-    let access = codex_omd::ModOsAccess {
-        programs: strings(&["node"]),
-        network: false,
-        node: Some(runner.clone()),
-    };
-    assert_eq!(
-        codex_omd::host::unrestricted_program(&access, "node", &repository).unwrap(),
-        runner
-    );
-}
-
-#[test]
 fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
     let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();

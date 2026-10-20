@@ -69,13 +69,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "85d7d08d292726049869ff87c8dd99aa8f6df490c648e7e7f925f89d2c2b4717",
-        "mod.json": "302d13dc4bdc269da3f92204d95be00d468f2688250f4cda6094cadcbeb5c2dc",
+        "index.ts": "a7afe2ee8b40599f68e97f21cb7462a2b7083220abfa058cc470a637db54ea72",
+        "mod.json": "8f04fa376dac841172d9e1d1558eb704b7f3bd05892c2d6ed361137c260a0434",
         "setup.mjs": "4fa5b4f35c37f63a83aca8316559f360777d84bf829d5ed8181be7caafd81142",
         "transport.mjs": "dd8fc34857f530eae9961d92d37c189060304d43e9e497c61e5819f588399a2e"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "1a24654eaac2efedc1081ffe9856493d0702aa0c7ba789bc86daea9aad10f197",
+      "package_sha256": "6e516d0165feacb9f8947b8020c324290053b87297a997eb2433416be0ce9117",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
@@ -250,11 +250,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "50f6158726db569541113970e1e83aaa7f75dad4d4bfe95585591c31c16bde7d",
+        "index.ts": "77f02b05d823a0a3e8facd19b91133dcd7ae319d91143d0626d3c7b7356bcd9f",
         "mod.json": "541cbfbb034ba803eb97cfa68f531376f409da52492ffc8101f5d660fd0f4961"
       },
       "id": "omd_mods",
-      "package_sha256": "f2332646679dc89f319ddb8dc32fd1489aa33f4e584f7419ea8c5c8bbbcbdea5",
+      "package_sha256": "d327335402884cc1e75e2d508ff8662990f11c01ad6c99ad1e491af50e4298c1",
       "source": "mods/first-party/omd_mods",
       "version": "1.0.0"
     },
@@ -448,11 +448,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "661afe9a1b537121203be2f2bd8df6b7a4fc04d4ba0a91b80324329f2bde9c84",
-        "mod.json": "0f198bf33c895067df60b55a9e81c53caf729c52242e021c712772e68ffe9195"
+        "index.ts": "76a27b4947d09e0e316db8870b0c532973cd8d136a7e2e0f3d73059c660a7719",
+        "mod.json": "2b7d7e50a55bcb0b0815f58184d710745d4dee5efd2442089a2c7d830cc2ec17"
       },
       "id": "omd_usage",
-      "package_sha256": "8a7e4c0eb3b5676f9a9b1c43aa9c2191f02e740dd640b81fb9e6bf6cc40d83e4",
+      "package_sha256": "8227ff07711e1f6cb168af256b3f3528a7db2ef34be4241e29bd25e67d6b18e2",
       "source": "mods/first-party/omd_usage",
       "version": "1.0.0"
     },

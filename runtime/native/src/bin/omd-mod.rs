@@ -414,7 +414,7 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root, path] if command == "require" => {
             let path = PathBuf::from(path);
-            open(root)?.set_required(&path.canonicalize().unwrap_or(path), true)?;
+            open(root)?.require(&path.canonicalize().unwrap_or(path))?;
             Ok(Value::String(
                 "selection required; in-app mod screens keep it on".into(),
             ))
