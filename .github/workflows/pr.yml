@@ -1,0 +1,108 @@
+name: Pull request
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.select.outputs.native }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: python3 scripts/pr_ci.py select
+
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: node python@3.14.6 actionlint@1.7.12
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          package_json_file: mods/package.json
+      - run: pnpm --dir mods install --frozen-lockfile
+      - run: mise run mods:check
+      - run: mise run native:ownership
+      - name: Host-free Python tests
+        run: python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance
+      - name: Workflow lint
+        run: mise exec actionlint@1.7.12 -- actionlint
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca
+        with:
+          install_args: node python@3.14.6
+      - name: Install pinned Rust toolchain
+        run: |
+          OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
+          rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component rust-src
+          rustup default "$OMD_RUST_TOOLCHAIN"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-pr-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+      - name: Replay patch and check drift
+        run: |
+          python3 .github/scripts/build.py setup pr
+          python3 .github/scripts/build.py sync pr
+          git diff --exit-code -- runtime upstream.lock.json
+      - name: Compile native code and tests
+        run: |
+          python3 .github/scripts/build.py v8 pr
+          python3 .github/scripts/build.py cargo pr /private/tmp/omd-bpr/logs/check.log check --locked -p codex-cli -p codex-exec -p codex-omd -p codex-omd-runner -p codex-omd-extension -p codex-tui -p codex-core -p codex-core-plugins -p codex-git-utils --tests
+      - name: Preserve native logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pr-native-logs
+          path: /private/tmp/omd-bpr/logs/
+          retention-days: 7
+
+  gate:
+    name: PR gate
+    needs: [changes, portable, native]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - env:
+          PR_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/pr_ci.py gate

@@ -2,9 +2,28 @@
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
+| `pr.yml` | pull requests and merge queue | Portable checks, selected native compilation, one `PR gate` status |
 | `validate.yml` | called by the two below | Tests, builds and packages on `macos-15` |
 | `nightly.yml` | daily at 07:17 UTC, or **Run workflow** | Validates; on `main` publishes a nightly prerelease |
 | `release.yml` | `vX.Y.Z` or `vX.Y.Z-rc.N` tag; **Run workflow** is a dry run | Checks versions, validates, publishes the release |
+
+## Pull requests
+
+Every PR runs mod type/static checks, native ownership, selected host-free Python tests and workflow linting on
+Linux. Superseded runs are cancelled. There is no workflow-level path filter, so documentation PRs also report
+`PR gate`. The gate requires successful selection and portable checks, and successful native checks when selected;
+only an intentionally unselected native job may be skipped.
+
+Changes outside Markdown, `docs/`, mod examples/first-party packages, plugins and Python/Node `tests/` select macOS
+patch replay, drift checking and compilation of the native crates and their tests. This conservative default
+includes unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Renames examine
+both paths. Package-only and documentation-only changes avoid Rust builds. Native tests are compiled here;
+their execution and full validation remain in nightly and release workflows.
+
+After this workflow lands and a hosted PR run succeeds, apply `.github/settings.json` to require **PR gate** on
+`main` with an up-to-date branch. The checked-in setting alone does not change GitHub protection. Verify the live
+required status after applying it. Dependency license/source policy and scheduled vulnerability checks remain
+deferred until exceptions for the pinned upstream workspace are established.
 
 ## Validation
 
