@@ -158410,10 +158410,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..46066754d10b490aed4128ed18394ca50b36f51e
+index 0000000000000000000000000000000000000000..4ac81f3fd9fd744ee640308be6307f03f9c3d89a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,616 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -159017,7 +159017,12 @@ index 0000000000000000000000000000000000000000..46066754d10b490aed4128ed18394ca5
 +    };
 +    let _ = press();
 +    let holder = hold(std::time::Duration::from_millis(5));
-+    assert_eq!(press(), Ok(None));
++    // A slow runner can spend the rest of the budget in the callback, which cancels it; what this asserts is the wait.
++    let pressed = press();
++    assert!(
++        pressed == Ok(None) || pressed == Err("callback_cancelled".to_owned()),
++        "{pressed:?}"
++    );
 +    holder.join().unwrap();
 +    let holder = hold(std::time::Duration::from_millis(400));
 +    let started = Instant::now();
