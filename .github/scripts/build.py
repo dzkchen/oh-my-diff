@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -157,13 +159,25 @@ def v8(args):
     def checksums(path):
         return dict(reversed(line.split()) for line in path.read_text().splitlines() if line.strip())
 
+    def download(name):
+        for delay in (5, 15, 45, None):
+            try:
+                with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
+                    return response.read()
+            except (urllib.error.URLError, TimeoutError) as error:
+                if delay is None or (isinstance(error, urllib.error.HTTPError) and error.code < 500):
+                    raise
+                print(f"V8 download of {name} failed ({error}); retrying in {delay} s", file=sys.stderr)
+                time.sleep(delay)
+
     expected = checksums(checkout / f"third_party/v8/rusty_v8_{version.replace('.', '_')}_release_manifests.sha256")
     for name in (manifest, *names):
-        with urllib.request.urlopen(f"{url}/{name}", timeout=120) as response:
-            data = response.read()
-        if expected.get(name) != sha(data):
-            raise SystemExit(f"V8 prebuilt checksum mismatch: {name}")
-        (V8 / name).write_bytes(data)
+        cached = V8 / name
+        if not (cached.is_file() and expected.get(name) == sha(cached.read_bytes())):
+            data = download(name)
+            if expected.get(name) != sha(data):
+                raise SystemExit(f"V8 prebuilt checksum mismatch: {name}")
+            cached.write_bytes(data)
         if name == manifest:
             expected = checksums(V8 / manifest)
 

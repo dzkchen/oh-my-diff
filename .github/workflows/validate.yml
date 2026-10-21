@@ -43,6 +43,10 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: cargo-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: /private/tmp/omd-cache/v8
+          key: v8-${{ hashFiles('upstream.lock.json') }}
       - name: Validate
         run: python3 .github/scripts/ci.py validate --job "$GITHUB_JOB" ${OMD_RELEASE_VERSION:+--release}
       - name: Pack host binaries
