@@ -53,6 +53,10 @@ OMD Core includes only the first three.
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
+| `omd_source_knowledge` | Keeps file-backed facts, test evidence and approved lessons for later tasks in this repository | |
+| `omd_programmable_context` | Python helpers for kept context, child agents and a session harness; `/refine` | The `omd-code-execution` plugin's Python kernel |
+| `omd_mini` | `omd mini`: a scrollback-first session with a short prompt and one status segment; `/omd_mini:switch` | A terminal |
+| `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account and `pnpm`; not yet verified on a live account |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 

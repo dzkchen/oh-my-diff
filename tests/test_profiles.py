@@ -278,6 +278,38 @@ enabled = true
                 self.assertTrue(result["packages"][0]["enabled_in_store"])
                 self.assertIsNone(result["packages"][0]["error"])
 
+    def test_omd_mini_reopens_the_thread_its_switch_request_names(self):
+        with tempfile.TemporaryDirectory(prefix="omd-mini-", dir="/private/tmp") as temporary:
+            base = Path(temporary)
+            log, exported = base / "runs.log", base / "export.json"
+            (base / "codex").write_text(
+                "#!/bin/sh\n"
+                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH\" >> {log}\n"
+                "launch=${OH_MY_DIFF_LAUNCH%.*} run=${OH_MY_DIFF_LAUNCH##*.}\n"
+                "if [ \"$OH_MY_DIFF_PRESENTATION\" = mini ]; then\n"
+                f"  echo \"{{\\\"entries\\\":{{\\\"switch_$launch\\\":{{\\\"value\\\":{{\\\"run\\\":$run,\\\"target\\\":\\\"full\\\",\\\"thread\\\":\\\"019a0000-0000-7000-8000-000000000001\\\"}}}}}}}}\" > {exported}\n"
+                f"else echo '{{\"entries\":{{}}}}' > {exported}; exit 3; fi\n")
+            (base / "omd").write_text(f"#!/bin/sh\ncat {exported}\n")
+            for name in ("codex", "omd"):
+                (base / name).chmod(0o755)
+            record = {"activation": {"selection": "full"}, "manager": {"installed_path": "/manager"}, "store": "/store",
+                      "tools": {"omd": {"installed_path": str(base / "omd")}}}
+            selections = {"selections": [{"id": "omd_mini", "effective": True, "error": None}]}
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value=selections), \
+                    patch.object(profiles.sys.stdin, "isatty", return_value=True), \
+                    patch.object(profiles.sys.stdout, "isatty", return_value=True), \
+                    patch.object(profiles.signal, "signal"):
+                code = profiles.mini(Path("/prefix"), base, ["--model", "m"])
+                selections["selections"][0]["effective"] = False
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                    profiles.mini(Path("/prefix"), base, [])
+            runs = [line.split("|") for line in log.read_text().splitlines()]
+            self.assertEqual(code, 3)
+            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [("--no-alt-screen --model m", "mini"), ("resume 019a0000-0000-7000-8000-000000000001", "full")])
+            self.assertEqual([launch.split(".")[1] for _, _, launch in runs], ["0", "1"])
+            self.assertEqual(len({launch.split(".")[0] for _, _, launch in runs}), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

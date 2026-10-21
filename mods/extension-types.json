@@ -477,6 +477,30 @@
       "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_source_knowledge",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Refreshes source-bound repository facts against the current workspace and stores revision-checked evidence and approved lessons for later tasks; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_programmable_context",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_cursor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the Cursor SDK transport, custom-tool relay of OMD tools, usage settlement log, in-session setup and /cursor diagnostics over a host-approved provider service; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_mini",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_profiles",
       "extension_type": "mod",
       "role": "bundled",
