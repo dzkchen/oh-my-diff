@@ -7,7 +7,8 @@ import subprocess
 
 def needs_native(paths):
     return any(
-        not (path.endswith(".md") or path.startswith(("docs/", "mods/first-party/", "mods/examples/", "plugins/", "tests/")))
+        path.startswith("runtime/")
+        or not (path.endswith(".md") or path.startswith(("docs/", "mods/first-party/", "mods/examples/", "plugins/", "tests/")))
         for path in paths
     )
 

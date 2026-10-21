@@ -17,8 +17,12 @@ only an intentionally unselected native job may be skipped.
 Changes outside Markdown, `docs/`, mod examples/first-party packages, plugins and Python/Node `tests/` select macOS
 patch replay, drift checking and compilation of the native crates and their tests. This conservative default
 includes unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Renames examine
-both paths. Package-only and documentation-only changes avoid Rust builds. Native tests are compiled here;
+both paths. All `runtime/` changes, including Markdown mirrors, select native checks to detect patch drift.
+Other package-only and documentation-only changes avoid Rust builds. Native tests are compiled here;
 their execution and full validation remain in nightly and release workflows.
+
+PR, nightly and release jobs use the same Cargo download-cache keys. Patch edits can restore a previous cache
+for the same platform and upstream pin, then save newly downloaded dependencies under the new patch key.
 
 After this workflow lands and a hosted PR run succeeds, apply `.github/settings.json` to require **PR gate** on
 `main` with an up-to-date branch. The checked-in setting alone does not change GitHub protection. Verify the live

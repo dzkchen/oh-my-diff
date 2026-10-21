@@ -75,7 +75,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-pr-${{ hashFiles('upstream.lock.json', 'runtime/patches/manifest.json') }}
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-${{ hashFiles('runtime/patches/manifest.json') }}
+          restore-keys: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}-
       - name: Replay patch and check drift
         run: |
           python3 .github/scripts/build.py setup pr

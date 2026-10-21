@@ -38,7 +38,7 @@ class PullRequestChecks(unittest.TestCase):
 
     def test_native_selection_covers_shared_inputs_and_unknown_paths(self):
         for path in (
-            "runtime/patches/codex.patch", "runtime/omd/src/lib.rs", "upstream.lock.json",
+            "runtime/patches/codex.patch", "runtime/omd/src/lib.rs", "runtime/omd/README.md", "upstream.lock.json",
             "scripts/build_provenance.py", ".github/scripts/build.py", ".github/workflows/pr.yml",
             "mods/api.d.ts", "mods/pnpm-lock.yaml", "mods/conformance/host.json", "mise.toml",
             "build.py", "Dockerfile", "new-build-input",
