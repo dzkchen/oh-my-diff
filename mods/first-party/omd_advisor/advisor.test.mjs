@@ -131,3 +131,28 @@ test('advisor without a route names the worker routes instead of calling a model
   const observing = { ...unset, settings: { every_turn: true, observe: true }, state: { ...reviewed, observer: { status: 'unavailable', reason: reviewed.reason } } };
   assert.deepEqual(invoke({ event: 'idle' }, () => assert.fail('terminal host call'), { ...observing, event: 'terminal' }).value.status, ['Advisor: no route set']);
 });
+
+test('the observer skips turns that did not complete and, by default, an advisor on the lead model', () => {
+  const long = { ...evidence, records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn. '.repeat(8) }] };
+  const options = { ...advisorOptions, settings: { observe: true, route: 'astra' }, state: null };
+  const spawned = fixture => fixture.calls.some(call => call.operation === 'agents.spawn');
+  const spawn = { 'agents.spawn': () => ({ handle: 'observer-1', route: 'astra', permissions: 'read_only' }) };
+  const routes = { ...spawn, 'routes.list': () => [{ name: 'astra', model: 'advisor-model' }] };
+  const fresh = advisorHost(routes, long);
+  const first = invoke({ ...completed, evidence: { ...reference, sha256: digest(JSON.stringify(long)) } }, fresh.host, options).state.observer;
+  assert.equal(first.status, 'observing', first.reason);
+  const same = advisorHost({ ...spawn, 'routes.list': () => [{ name: 'astra', model: 'lead-model' }] }, long);
+  invoke(completed, same.host, options);
+  assert.equal(spawned(same), false);
+  const kept = advisorHost(routes, long);
+  invoke({ ...completed, outcome: 'interrupted' }, kept.host, options);
+  assert.equal(spawned(kept), false);
+  const running = { observer: { status: 'observing', handle: 'observer-0', sha256: digest('older'), turn: 'turn-0' } };
+  const stale = advisorHost(routes, long);
+  const skipped = invoke({ ...completed, outcome: 'interrupted' }, stale.host, { ...options, state: running });
+  assert.ok(stale.calls.some(call => call.operation === 'agents.cancel' && call.arguments.handle === 'observer-0'));
+  assert.deepEqual([skipped.state.observer.status, skipped.state.observer.handle], ['superseded', '']);
+  const allowed = advisorHost({ ...spawn, 'routes.list': () => [{ name: 'astra', model: 'lead-model' }] }, long);
+  invoke(completed, allowed.host, { ...options, settings: { ...options.settings, skip_same_model: false } });
+  assert.equal(spawned(allowed), true);
+});

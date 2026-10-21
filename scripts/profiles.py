@@ -141,6 +141,14 @@ def write(prefix, record):
     support.atomic_text(prefix / "install.json", json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
+def omd_text(record, tool, control):
+    update = record.get("update")
+    routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
+              f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n" if update
+              else f"if [ \"$1\" = uninstall ]; then shift; exec {shlex.quote(str(control))} uninstall \"$@\"; fi\n")
+    return f"#!/bin/sh\n{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\nexec {shlex.quote(tool)} \"$@\"\n"
+
+
 def selected_text(record):
     binary = record["binary"]["installed_path"]
     store = record["store"]
@@ -622,12 +630,8 @@ def install(args):
         record["management"]["launcher_sha256"] = support.digest(control_launcher)
         for name, details in tools.items():
             tool_launcher = bin_dir / name
-            launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
-            if name == "omd":
-                update = record.get("update")
-                routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
-                          f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n") if update else ""
-                launcher_text = (f"#!/bin/sh\n{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
+            launcher_text = (omd_text(record, details["installed_path"], control_launcher) if name == "omd"
+                             else f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = support.digest(tool_launcher)

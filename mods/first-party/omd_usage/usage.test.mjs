@@ -11,14 +11,16 @@ const NOW = 1_800_000_000_000;
 
 function call({ source, capabilities }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
   const published = [];
+  const calls = [];
   const output = callback({ source, filename: 'index.ts', api: '1.0.0', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
+    calls.push(hostCall);
     if (hostCall.operation === 'events.publish') published.push(hostCall.arguments);
     const value = answer(hostCall);
     if (value instanceof Error) throw value;
     return value;
   });
   assert.equal(output.error, undefined, output.error);
-  return { ...output, published };
+  return { ...output, published, calls };
 }
 
 const hud = { categories: true };
@@ -81,3 +83,66 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
   assert.match(dialog(state).text, new RegExp(`${state.hud.dropped} older dropped \\(not in these totals\\)`));
 });
 
+
+const billed = (id, usd, patch = {}) => response(id, { cost: { microusd: null, basis: 'unpriced' }, usage: { input_tokens: 10_000, output_tokens: 500, omd_reported_cost: { usd, basis: 'provider_billed' } }, ...patch });
+const rowText = (state, settings) => {
+  const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings, virtual_time_ms: NOW }).value;
+  const spans = [];
+  const walk = node => { for (const span of node.spans ?? []) spans.push(span); for (const child of node.children ?? []) walk(child); };
+  view.sites.above_composer.components.forEach(walk);
+  return spans;
+};
+const notices = calls => calls.filter(item => item.operation === 'terminal.notice').map(item => item.arguments);
+
+test('closing the usage dialog with Esc keeps it closed', () => {
+  const open = { ...start(), open: true };
+  const state = call(usageMod, { event: 'component_event', payload: { component: 'omd_usage_dialog', thread_id: 'lead', kind: 'close', origin: 'user' }, state: open, settings: hud }).state;
+  assert.equal(state.open, false);
+  assert.equal(call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value.sites.dialog, undefined);
+});
+
+test('the budget counts spend that left the rolling window or settled late, warns once per 80% and 100% crossing, retries a refused notice and tones the prompt row', () => {
+  const settings = { ...hud, budget_usd: 10 };
+  const run = (state, id, usd, at) => {
+    const out = call(usageMod, { event: 'model_response', payload: billed(id, usd, { timing: { started_at_ms: at, first_event_ms: 1, duration_ms: 1 } }), state, settings });
+    return { state: out.state, notes: notices(out.calls) };
+  };
+  let step = run(start(), 'b1', 8.5, NOW - 60_000);
+  assert.equal(step.notes.length, 1);
+  assert.match(step.notes[0].text, /80%/);
+  assert.equal(step.notes[0].placement, 'toast');
+  step = run(step.state, 'b2', 0.1, NOW - 50_000);
+  assert.deepEqual(step.notes, []);
+  const tone = rowText(step.state, settings).find(span => /^Budget/.test(span.text)).tone;
+  assert.equal(tone, 'attention');
+
+  for (let index = 0; index < 125; index++) step.state.hud.entries.push({ ...step.state.hud.entries[0], key: `x${index}#1`, request: `x${index}`, reported: null, cost: { microusd: 0, basis: 'included_subscription' }, at: NOW - 40_000 + index });
+  step = run(step.state, 'b3', 2.0, NOW - 1_000);
+  assert.ok(step.state.hud.dropped > 0);
+  assert.equal(step.notes.length, 1);
+  assert.match(step.notes[0].text, /100%/);
+  const over = rowText(step.state, settings).find(span => /^Budget/.test(span.text));
+  assert.equal(over.text, 'Budget $10.6 of $10.0 (soft)');
+  assert.equal(over.tone, 'failure');
+  assert.deepEqual(run(step.state, 'b4', 0.5, NOW).notes, []);
+  assert.equal(run(step.state, 'b1', 8.5, NOW - 60_000).state.hud.shed, step.state.hud.shed);
+
+  const refuse = hostCall => hostCall.operation === 'terminal.notice' ? new Error('ui_unavailable') : { delivered: 1, dropped: 0 };
+  const refused = call(usageMod, { event: 'model_response', payload: billed('n1', 9), state: start(), settings }, refuse);
+  assert.equal(refused.state.hud.alerted, null);
+  const retried = call(usageMod, { event: 'model_response', payload: billed('n2', 0.1), state: refused.state, settings });
+  assert.equal(notices(retried.calls).length, 1);
+  assert.equal(retried.state.hud.alerted.level, 80);
+
+  const pending = response('p7', { ledger_request: 7, cost: { microusd: null, basis: 'unsettled' }, route: 'api', credential: 'key', timing: { started_at_ms: NOW - 90_000, first_event_ms: 1, duration_ms: 1 } });
+  const state = call(usageMod, { event: 'model_response', payload: pending, state: start(), settings }).state;
+  for (let index = 0; index < 125; index++) state.hud.entries.push({ ...state.hud.entries[0], key: `x${index}#1`, request: `x${index}`, billing: null, cost: { microusd: 0, basis: 'included_subscription' }, at: NOW - 40_000 + index });
+  const dropped = call(usageMod, { event: 'model_response', payload: response('r9'), state, settings }).state;
+  assert.deepEqual(dropped.hud.owed.map(([id]) => id), [7]);
+  const settle = hostCall => hostCall.operation === 'task.status'
+    ? { ledger: { thread_id: 'lead', cost: { attempts: [{ request: 7, settled_microusd: 9_000_000 }] } }, limits: {}, worker_limits: {} } : { delivered: 1, dropped: 0 };
+  const settled = call(usageMod, { event: 'turn_end', payload: { turn_id: 't1' }, state: dropped, settings }, settle);
+  assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
+  assert.equal(notices(settled.calls).length, 1);
+  assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
+});

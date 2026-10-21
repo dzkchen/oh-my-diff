@@ -256,7 +256,12 @@ export default function activate(api: ModAPI) {
   const observeTurn = (event: TurnEnd, evidence: () => ReturnType<typeof read>) => {
     const watch = watching();
     if (!event.evidence || watch.sha256 === event.evidence.sha256) return;
-    if (watch.status === 'observing' && watch.handle) api.host.tryCall('agents.cancel', { handle: watch.handle });
+    const skipped = event.outcome !== 'completed' || sameModel() !== null;
+    if (watch.status === 'observing' && watch.handle) {
+      api.host.tryCall('agents.cancel', { handle: watch.handle });
+      if (skipped) keep({ status: 'superseded', reason: 'a later turn was not observed', handle: '' });
+    }
+    if (skipped) return;
     const settled = { handle: '', turn: event.turn_id, sha256: event.evidence.sha256, dropped: 0, cost: null };
     if (!route) return keep({ ...settled, status: 'unavailable', reason: unrouted() });
     const loaded = evidence();

@@ -51587,10 +51587,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124b6729b28
+index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef39a5aab9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2314 @@
+@@ -0,0 +1,2318 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -52263,16 +52263,9 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +    }
 +
 +    fn request_id(&self) -> String {
-+        static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-+        let process = PROCESS.get_or_init(|| {
-+            format!(
-+                "{}-{}",
-+                std::process::id(),
-+                chrono::Utc::now().timestamp_millis()
-+            )
-+        });
 +        format!(
-+            "req-{process}-{}",
++            "req-{}-{}",
++            process_id(),
 +            self.next_request.fetch_add(1, Ordering::Relaxed) + 1
 +        )
 +    }
@@ -53900,6 +53893,17 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +            self.fail(reason);
 +        }
 +    }
++}
++
++pub(crate) fn process_id() -> &'static str {
++    static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    PROCESS.get_or_init(|| {
++        format!(
++            "{}-{}",
++            std::process::id(),
++            chrono::Utc::now().timestamp_millis()
++        )
++    })
 +}
 +
 +#[cfg(test)]
@@ -77987,10 +77991,10 @@ index 0000000000000000000000000000000000000000..b7e24384928422189574c85bc45abb29
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163ce25a60da
+index 0000000000000000000000000000000000000000..7c203eb5cbbcd9a202300f979e75d969e181a817
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,768 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -78634,7 +78638,8 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
 +                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-+                "route": account.and_then(|account| account.route), "turns_started": turns}),
++                "route": account.and_then(|account| account.route), "turns_started": turns,
++                "process_id": crate::accounting::process_id()}),
 +            )
 +        }
 +        "task.status" => {
@@ -113967,7 +113972,7 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac33b8ea81
+index 0000000000000000000000000000000000000000..8591f5179c16d096ca0b6b38af0c831256c49866
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,218 @@
@@ -114091,7 +114096,7 @@ index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"$ref":"#/$defs/54"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/90"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/90"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },

@@ -45,8 +45,8 @@ export type FinalRequestPage = {
   segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[]; opaque_total: number;
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
-/** `turns_started` counts turns this process started in the thread. */
-export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
+/** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
