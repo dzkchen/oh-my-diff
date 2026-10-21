@@ -29,7 +29,8 @@
           "Code execution: output written after a cell ends no longer corrupts the result, and a cell's whole stdout and stderr is captured up to 64 KiB (#264, #265)",
           "Mods: a mod turned on mid-session starts at once, and a slash command retries once after a mod reload (#265)",
           "GitHub reader, `@` file search and `/preview --watch`: fewer false changes, fewer `git status` runs and no polling (#264)",
-          "Author guide and write-a-mod: ten fixes from a clean-checkout walkthrough (#264)"
+          "Author guide and write-a-mod: ten fixes from a clean-checkout walkthrough (#264)",
+          "Respect persistent Codex caching and preserve prompt prefixes” — handles subscription caching, API estimates and safe timeouts (#269)"
         ]
       }
     ],
@@ -40,7 +41,9 @@
       "2511e06",
       "c188fdc",
       "ff04f0b",
-      "70a2350"
+      "70a2350",
+      "0c3f974",
+      "61ffdb3"
     ]
   },
   {

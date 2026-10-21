@@ -26,6 +26,7 @@ Mods run on an embedded V8 runner instead of Node, with faster startup and a fra
 - Mods: a mod turned on mid-session starts at once, and a slash command retries once after a mod reload (#265)
 - GitHub reader, `@` file search and `/preview --watch`: fewer false changes, fewer `git status` runs and no polling (#264)
 - Author guide and write-a-mod: ten fixes from a clean-checkout walkthrough (#264)
+- Respect persistent Codex caching and preserve prompt prefixes” — handles subscription caching, API estimates and safe timeouts (#269)
 
 ## [1.0.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0) — 2026-10-19
 
