@@ -12,7 +12,7 @@ const KINDS: Record<string, Kind> = {
   'item/tool/requestUserInput': 'question',
   'mcpServer/elicitation/request': 'elicitation',
 };
-const ANSWER = 'No answer within the time limit (the user may be away). Proceed with your best judgment, preferring the recommended option, and state the assumption you made.';
+const ANSWER = 'No answer within the time limit (the user may be away). Continue with already-authorized work that does not depend on this answer. For optional choices, use your best judgment, preferring the recommended option, and state the assumption. This timeout is not consent for permissions, spending or a required decision.';
 const RETRY_MS = 10_000;
 const FINAL = /^app_(request_not_pending|request_not_subscribed|response_refused|request_id_invalid)/;
 const WHAT: Record<Kind, string> = { approval: 'the approval was declined', permission: 'the permission request was denied', question: 'the question was answered with "use your best judgment"', elicitation: 'the MCP request was declined' };
@@ -36,10 +36,12 @@ export default function activate(api: ModAPI) {
   api.on('app_server_request', event => {
     const kind = KINDS[event.method];
     if (!limit || !kind) return;
+    const thread = (event.params as { threadId?: unknown } | null)?.threadId;
+    if (typeof thread === 'string' && thread !== api.session().thread_id) return;
     const questions = event.phase === 'requested' && kind === 'question'
       ? ((event.params as { questions?: { id?: unknown }[] } | null)?.questions ?? []).map(question => question.id).filter((id): id is string => typeof id === 'string')
       : [];
-    api.host.tryCall('events.publish', { channel: CHANNEL, data: { request_id: event.request_id, phase: event.phase, kind, questions } });
+    api.host.tryCall('events.publish', { channel: CHANNEL, data: { request_id: event.request_id, phase: event.phase, kind, questions, deadline: Date.now() + limit } });
     if (event.phase === 'requested') {
       api.host.tryCall('terminal.notice', { text: `Auto-continues in ${Math.round(limit / 1000)} s if unanswered`, kind: 'info', placement: 'toast', ttl_ms: 8000 });
     }
@@ -54,9 +56,9 @@ export default function activate(api: ModAPI) {
   api.on('channel', event => {
     if (event.channel !== `omd_auto_continue/${CHANNEL}`) return;
     if (!limit) return reset();
-    const data = event.data as { request_id: Json; phase: string; kind: Kind; questions: string[] };
+    const data = event.data as { request_id: Json; phase: string; kind: Kind; questions: string[]; deadline: number };
     const state = load(), key = JSON.stringify(data.request_id);
-    if (data.phase === 'requested') state.pending[key] = { request_id: data.request_id, kind: data.kind, questions: data.questions, deadline: Date.now() + limit };
+    if (data.phase === 'requested') state.pending[key] ??= { request_id: data.request_id, kind: data.kind, questions: data.questions, deadline: data.deadline };
     else delete state.pending[key];
     api.state.set(state);
     arm(state);
@@ -75,7 +77,7 @@ export default function activate(api: ModAPI) {
       delete state.pending[key];
       if (!answered.ok) continue;
       api.host.tryCall('terminal.notice', { text: `No answer within ${Math.round(limit / 1000)} s (the user may be away), so ${WHAT[item.kind]} automatically. Continue with work that does not depend on it.`,
-        kind: 'info', placement: 'transcript', audience: 'model' });
+        kind: 'info', placement: 'transcript', audience: 'user' });
     }
     api.state.set(state);
     arm(state);

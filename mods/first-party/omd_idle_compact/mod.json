@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Summarizes a long conversation that has gone idle, just before the provider's prompt cache expires, so resuming later is faster and cheaper",
+  "description": "Summarizes a long idle conversation near an estimated prompt-cache deadline, trading the full context for a shorter summary",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_idle_compact"},
   "capabilities": ["store", "events", "lifecycle", "model", "threads", "approvals", "terminal", "inventory"],
@@ -16,7 +16,7 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120"], "default": "auto", "title": "Cache lifetime", "description": "Minutes the provider keeps the prompt cache; auto uses the provider's own lifetime"},
+      "cache_ttl_minutes": {"type": "string", "enum": ["auto", "5", "10", "30", "60", "120", "720"], "default": "auto", "title": "Estimated cache lifetime", "description": "Idle interval in minutes; auto skips OpenAI subscriptions and uses observed cache activity elsewhere"},
       "min_tokens": {"type": "number", "default": 100000, "title": "Minimum size", "description": "Only conversations with at least this many tokens are compacted"}
     },
     "additionalProperties": false
