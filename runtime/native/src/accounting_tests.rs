@@ -1230,10 +1230,17 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
         mod_id: "fixture_helper".into(),
     };
     let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
-    assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
+    assert_eq!(
+        codex_omd::plan_routes::add(&store, &other, &plan).unwrap(),
+        name
+    );
     let config = crate::config::HostConfig::load(&store, &repository).unwrap();
     let route = config
-        .route(&name, crate::config::RouteRole::Worker, Some("fixture_helper"))
+        .route(
+            &name,
+            crate::config::RouteRole::Worker,
+            Some("fixture_helper"),
+        )
         .unwrap();
     let grant = route.grant.as_ref().unwrap();
     let allowed = |repository: &std::path::Path| {

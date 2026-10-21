@@ -64,8 +64,18 @@ fn each_mod_gets_its_own_plan_route_listing_the_repositories_it_was_approved_in(
 fn a_plan_route_never_replaces_another_route_or_model_of_the_same_name() {
     let temp = tempfile::tempdir().unwrap();
     let store = temp.path().canonicalize().unwrap();
-    add(&store, Path::new("/one"), &plan("gpt-6.1", "fixture_helper")).unwrap();
-    let error = add(&store, Path::new("/one"), &plan("gpt-6-1", "fixture_helper")).unwrap_err();
+    add(
+        &store,
+        Path::new("/one"),
+        &plan("gpt-6.1", "fixture_helper"),
+    )
+    .unwrap();
+    let error = add(
+        &store,
+        Path::new("/one"),
+        &plan("gpt-6-1", "fixture_helper"),
+    )
+    .unwrap_err();
     assert_eq!(error.to_string(), "plan_route_name_taken");
     std::fs::write(
         store.join("host.json"),

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "3f8d5ec0223d96e6e0f7f4efbfa88b0666eb4d52ad97e7b6447c3bb9a598b1da"
+    "sha256": "354a2988932ca73fb05f3048ca4726e5a419501184a8d4e7ecc7fd18a83445f6"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -899,7 +899,7 @@
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
-      "after": "00460ebce5e62666180a526a845b4ea4de3688bd9de7996accd6fd5cd35cf735"
+      "after": "4883899d08cbe4291d7e1868158f589a7ac0c9d223d6fac1e1ff2b2c5c94c354"
     },
     "codex-rs/ext/omd/src/bin/omd-mod.rs": {
       "before": null,
@@ -1311,7 +1311,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "30a2a3e5b4aa2de7e5572c992d6f8368759eaffe655469d36af38b44d1607715"
+      "after": "50cf423ffccede139ecc7caf9702152231045844d508777376992a1e985cd34e"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1407,7 +1407,7 @@
     },
     "codex-rs/omd/src/plan_routes_tests.rs": {
       "before": null,
-      "after": "f6b29db344c63158a60113e63d51190c91f139e8e6d5eaffbf61f0c80dc6049b"
+      "after": "f462906b472decd1ef9d6cfebb76b2656346fc13845afb27bb7445036ad0a4f3"
     },
     "codex-rs/omd/src/plugin_component.rs": {
       "before": null,
@@ -1651,7 +1651,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "d8d721d251ddff89df6e0f88e3bc030c7e3e97617b914c2f01cda5fbf7cd8f6d"
+      "after": "6af43cd3c9d2cbec72083fd140f7a589e976b5d5220ef5523e1226ba944694cd"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "a10ad388f08d5f010002ea02d00399b9b45d7c2ac7257445a4b56a2aa3985590",
@@ -1955,7 +1955,7 @@
     },
     "codex-rs/tui/src/chatwidget/omd_extensions_tests.rs": {
       "before": null,
-      "after": "7b84229a98c5fabf3dccee002d05c993e90a464cb875beea46b009689bee62df"
+      "after": "d57107b332c1e07702320c1781be0400ce70ebc782bfe1c793187e9a0b30c81f"
     },
     "codex-rs/tui/src/chatwidget/protocol.rs": {
       "before": "662fa1028820a1f1769288c23f0f7bf0e333105384f32b1a88766b55f1f3940d",
@@ -2279,7 +2279,7 @@
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
-      "after": "a88368387be41445973679ab5e7e09b30cfac7b10a9d4415fe24bef31d6e3d29"
+      "after": "1caa7f350e0b4a070f758e0f35556942297db4d125b49272f811b4e25860b292"
     },
     "codex-rs/tui/src/mod_surface.rs": {
       "before": null,
@@ -2287,7 +2287,7 @@
     },
     "codex-rs/tui/src/mod_surface_tests.rs": {
       "before": null,
-      "after": "9846c50e2ed1c54a92e253b471d2e0845cf44683ce7b09897529c8c947b99701"
+      "after": "c6fa58cba3d2bdfd4a868ec5486fe83820a82a3d792428a1dc403be48b69b870"
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
