@@ -19,6 +19,7 @@ Mods run on an embedded V8 runner instead of Node, with faster startup and a fra
 - Mods: Logo, Mods and Update are required and stay on in `/mods` and `/omd`; `omd mods disable` still turns them off (#265)
 - Mod settings: every first-party setting has a title and description, and route settings list only routes the mod may use (#265)
 - Unsandboxed programs: a version-manager shim such as mise's or Volta's `node` runs the version it manages (#266)
+- Rustfmt the #265/#266 Rust (#268)
 
 ### Fixed
 
