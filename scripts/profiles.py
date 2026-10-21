@@ -374,6 +374,13 @@ def route(prefix, bin_dir, name, args):
     if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
         raise ValueError(f"the {name} route needs its mod enabled: omd-package mod enable {identifier}")
     models = json.loads(Path(provider["route"]).read_text())
+    host = Path(record["store"]) / "host.json"
+    written = [{"slug": route["model"], "family": route["name"]} for route in (json.loads(host.read_text()).get("routes", []) if host.is_file() else [])
+               if route.get("provider") == identifier]
+    if written:
+        models["models"] = written
+        if models.get("default") not in {item["slug"] for item in written}:
+            models["default"] = written[0]["slug"]
     wanted = args.model or models["default"]
     model = next((item["slug"] for item in models["models"] if wanted in (item["slug"], item.get("family"))), None)
     if model is None:

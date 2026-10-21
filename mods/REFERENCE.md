@@ -924,7 +924,8 @@ A route entry, with every field the host accepts:
 
 #### Choosing a route
 
-- `routes.list` returns the routes visible to the calling mod with `billing` and `available`.
+- `routes.list` returns the routes visible to the calling mod with `billing` and `available`, plus `data` on the
+  caller's own routes ([route writes](#route-writes-route_write_v1)).
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
@@ -947,6 +948,27 @@ and `routes.select` without restarting.
 - Services, secrets and protected paths stay as loaded at start.
 - An invalid edit keeps the previous routes and `routes.select` reports why.
 - `routes.select` also admits a lead route added after the thread started when it is on the thread's provider.
+
+#### Route writes (`route_write_v1`)
+
+`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own entries in
+`host.json` after the user confirms a dialog listing every change. It returns `{routes, services}` (the caller's
+route names and service ids afterwards), `{status: 'declined'}`, or `{unchanged: true}` without asking when
+nothing would change.
+
+- `routes` replaces every route without a `grant` whose `provider` is the caller's mod id. Each must name that
+  provider, have the single role `lead` and no `grant` or `credential`. A paid route (neither `included_subscription` nor
+  `provider_billed`) needs `limits.exposure_microusd` above zero (`routes_write_allowance_required`).
+- A route's `data` (any JSON, at most 2 KiB) is ignored by the host; `routes.list` returns it only to the route's
+  provider mod, and the mod's provider service can read it from `host.json`.
+- `services`, when given, lists the caller's service grants afterwards: each entry's fields replace those of the
+  caller's grant with the same `id`, an entry without one must be a complete grant with `mod_id` set to the caller,
+  and the caller's grants it leaves out are removed. Secrets may name only `secret_refs` the caller's grants already
+  use, and credentials must be existing profiles (a `secret` profile only when the caller owns it). The dialog lists
+  every grant field that changes with its new value.
+- The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
+  nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
+  through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
 
 #### Route grant files
 
@@ -4524,7 +4546,7 @@ Slash commands, buttons and keybindings run in the terminal as user actions and 
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the terminal operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -4534,7 +4556,7 @@ A service call works only while its provider needs no other host operation.
 Component input callbacks run there too but not as user actions, so `packages.apply`, `settings.write`,
 `builtins.invoke`, `credentials.request` and `terminal.import_file` are refused.
 
-Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
+Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
 `agents.*`) goes through `events.publish` to the mod's own `channel` handler, which runs with the session.
 
 #### Settings defaults

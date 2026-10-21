@@ -22,6 +22,7 @@ mod owner;
 pub mod package_controls;
 pub mod peers;
 pub mod plan_routes;
+pub mod route_writes;
 pub mod process_raster;
 pub mod resource_data;
 pub mod scoped_data;

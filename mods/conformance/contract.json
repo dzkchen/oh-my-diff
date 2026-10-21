@@ -197,6 +197,7 @@
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
     "operations:routes.add": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('routes.add'"},"decision":"coordination.packages"},
+    "operations:routes.write": {"status":"experimental","reason":"Added after 1.0.0 for mod-owned provider routes; experimental."},
     "operations:routes.list": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
     "operations:routes.select": {"status":"frozen","consumer":{"path":"mods/examples/profile_switcher/index.ts","snippet":"api.host.tryCall('routes.select'"},"decision":"coordination.credentials"},
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
@@ -1608,7 +1609,8 @@
           "packages.apply",
           "packages.reload",
           "settings.write",
-          "routes.add"
+          "routes.add",
+          "routes.write"
         ]
       },
       "replace_note": null

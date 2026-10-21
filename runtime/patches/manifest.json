@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "7aa848d148ad7b919f55aacab5a9d182381e550cb6c83b0cb23f0942ee3be954"
+    "sha256": "80f745df84f18c9c66144be273d414df2f0c344c553db15daa5c86409e0927fe"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -915,7 +915,11 @@
     },
     "codex-rs/ext/omd/src/config.rs": {
       "before": null,
-      "after": "60a7bde0abcbf6c3605046199493db476e5c1ac505b900d55e2d481935733c6c"
+      "after": "1f824f807c9c4e1d3bfbbf35d3ff6fd99c9b60c632a2a5ac6e33fbb69ae08820"
+    },
+    "codex-rs/ext/omd/src/config_tests.rs": {
+      "before": null,
+      "after": "112f40843be47b6f44ce67255c877e0cb1b3cd0e70ad4598ba8a74480ed09816"
     },
     "codex-rs/ext/omd/src/contract.rs": {
       "before": null,
@@ -943,7 +947,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "263c7f29f34fddaa64cfb4a6a05c9baa6265b904a669a90a92592f72fd4a1931"
+      "after": "5ab607630a19561fa560223e2b95a1675f99e5d916d822262ff94bfa5da0c303"
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
@@ -1027,7 +1031,7 @@
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
-      "after": "7e9e337466ac1fa3fff537917d36f2b283ed1a5f7005df18d4b1cf7c023a6b1f"
+      "after": "3e2c4f7aa7465dd01d6be0b3b1d14028ff0e49b57634ef98346109b68b25c2f5"
     },
     "codex-rs/ext/omd/src/mods/peering.rs": {
       "before": null,
@@ -1223,7 +1227,7 @@
     },
     "codex-rs/omd/src/client_surface.rs": {
       "before": null,
-      "after": "f873ea89a165877d8c49c33116f3e0dbf084e16f4edd32fbaecaf95701f5d7a3"
+      "after": "f354ff0d9ff6cec7398f58ec4bb4f3ec5d9cb43718cdedf6f31b3a3d87091a70"
     },
     "codex-rs/omd/src/client_surface_tests.rs": {
       "before": null,
@@ -1291,7 +1295,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "d5fbc2444bffab8e1d17d82e0b8324c16baf5e458d998eeebe3e5752c7cff497"
+      "after": "0482cf5bb0340f165ca85908152023570fa1086744e86eaa9aefbbcf3c50d110"
     },
     "codex-rs/omd/src/mod_limits.rs": {
       "before": null,
@@ -1311,7 +1315,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "50cf423ffccede139ecc7caf9702152231045844d508777376992a1e985cd34e"
+      "after": "cb9bc58d01f0c7b3538ec7e7d4aeceed20e35b2bf45e79969e9ff34fd85269d1"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1319,7 +1323,7 @@
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
-      "after": "13bf531d2333299aac47959a7cac320fd5f88d1bc4e675c1205723f928812857"
+      "after": "32d50a851c0a39506b50d48a2ce23108a56956e3736bfcf1772568841da146e8"
     },
     "codex-rs/omd/src/mods/chain.rs": {
       "before": null,
@@ -1327,7 +1331,7 @@
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
-      "after": "41c4a42052e688b34c65f53000ec6132d048a15a7bd8295e39ebd5ce58116c4d"
+      "after": "422fc5ffc771354ddd8ed4f776e1472d462d9becb7c43f0c672e627b6f235d60"
     },
     "codex-rs/omd/src/mods/operation_validation.rs": {
       "before": null,
@@ -1420,6 +1424,14 @@
     "codex-rs/omd/src/resource_data.rs": {
       "before": null,
       "after": "93b1843977638fcdcb3fa3523ae125291090c60e88b76b8b162aacc70d42f3ea"
+    },
+    "codex-rs/omd/src/route_writes.rs": {
+      "before": null,
+      "after": "65ad6a50c6baae65b2c1e96edbb3c69bce62e0f5449c40ec1309b7d7035ce06b"
+    },
+    "codex-rs/omd/src/route_writes_tests.rs": {
+      "before": null,
+      "after": "925d3b8a94b249a806336d63b23e659d90544d7fed2f6a5c114f1877c280aed7"
     },
     "codex-rs/omd/src/scoped_data.rs": {
       "before": null,
@@ -1651,7 +1663,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "6af43cd3c9d2cbec72083fd140f7a589e976b5d5220ef5523e1226ba944694cd"
+      "after": "a78fb915dc00fb459fcf6d083286f17b904c519e70c33f00abfa3e96431913fb"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "a10ad388f08d5f010002ea02d00399b9b45d7c2ac7257445a4b56a2aa3985590",

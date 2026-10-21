@@ -601,7 +601,15 @@ async fn run(
                 .0
                 .routes_for(caller.id)
                 .into_iter()
-                .map(|route| route_info(host, route))
+                .map(|route| {
+                    let mut info = route_info(host, route);
+                    if route.provider == caller.id
+                        && let Some(data) = &route.data
+                    {
+                        info["data"] = data.clone();
+                    }
+                    info
+                })
                 .collect::<Vec<_>>()
         )),
         "ledger.settle" => {

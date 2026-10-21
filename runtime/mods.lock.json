@@ -352,17 +352,19 @@
         "events",
         "terminal",
         "store",
-        "inventory"
+        "inventory",
+        "packages"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "462440d3f781abc851d19afcb58a0c3e9a1c048fb41efd90ddf3a1a9f46b8532",
-        "mod.json": "24c0658b464709b84aa3633b7ce454de194f9cc7c21e34e96b19505db674910a",
-        "router.mjs": "ae556f4f4e2ed3ae2c62def670e06d2c8d0406f732802b8d755cb7b600d5a9e7",
-        "setup.mjs": "2ab3e815ac725020a0b4253d8613464bf4deea530acfb20d453205e89e309a86"
+        "index.ts": "c94d98217d2ceb8735c0c673814ce68f4ae2ada747d014e8ce0c1c5190acac42",
+        "mod.json": "12ce99acc48131373524aa17d462313d4241105b57afb6513bdd8664e803169e",
+        "profiles.ts": "3ffac9b3cdced80e3cc58214dbdf75a359f62e04c5b433810f6d5a55ea264a8a",
+        "router.mjs": "8b9949358fa9ce0368a18351338fbeae388f4f965da1ac4a6b84926793262112",
+        "setup.mjs": "d66bdcd02a06ebb715dc96b9f768a4f97d4a680e3ee58af0577590c559c5bacf"
       },
       "id": "omd_profiles",
-      "package_sha256": "cbee1793a8d0f8c53d87ee260919ab662a44cfc4f388bf8ed1bfedba37e0362a",
+      "package_sha256": "ad1487320a7695dcd253c7687dc572d0080483f54723ddc5c9a8173e746f474d",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },

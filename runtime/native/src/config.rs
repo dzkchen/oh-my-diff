@@ -8,6 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub(crate) const HOST_CONFIG: &str = "host.json";
+const ROUTE_DATA_BYTES: usize = 2048;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +43,8 @@ pub(crate) struct Route {
     pub grant: Option<Grant>,
     #[serde(default)]
     pub credential: Option<String>,
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -159,6 +162,12 @@ impl HostConfig {
         Ok(config)
     }
 
+    pub(crate) fn check(repository: &Path, value: &serde_json::Value) -> Result<(), String> {
+        Self::deserialize(value)
+            .map_err(|error| error.to_string())?
+            .validate(repository)
+    }
+
     pub(crate) fn validate(&self, repository: &Path) -> Result<(), String> {
         let external = |path: &Path| {
             path.is_absolute()
@@ -211,6 +220,9 @@ impl HostConfig {
                     != (route.rates.included_subscription || route.rates.provider_billed)
                 || route.rates.included_subscription && route.rates.provider_billed
                 || route.roles.contains(&RouteRole::Worker) && route.grant.is_none()
+                || route.data.as_ref().is_some_and(|data| {
+                    serde_json::to_vec(data).map_or(true, |bytes| bytes.len() > ROUTE_DATA_BYTES)
+                })
             {
                 return Err(format!("{HOST_CONFIG} route {} is invalid", route.name));
             }
@@ -246,3 +258,7 @@ impl HostConfig {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

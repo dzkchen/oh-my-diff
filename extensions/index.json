@@ -335,9 +335,9 @@
       ],
       "support_status": "reviewed_candidate",
       "extension_type": "mod",
-      "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn",
+      "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn, with a usage meter, Alt+s cycling and in-session add and remove",
       "source": "mods/first-party/omd_profiles",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; credentials_v1, events_v1, route_reload_v1, route_write_v1, state_scopes_v1; Node 24.18.0"
     },
     {
       "id": "omd_lsp_sync",
