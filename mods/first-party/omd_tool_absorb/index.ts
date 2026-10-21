@@ -35,13 +35,13 @@ const GIT: Record<string, Spec> = {
   'rev-parse': { flags: /^(--show-toplevel|--abbrev-ref|--short|--git-dir|--is-inside-work-tree|--verify)$/, min: 0 },
 };
 const RECENT = 8;
-const CELL_BYTES = 32_768;
+const OUTPUT_BYTES = 16_384;
 const HASH_BYTES = 1_048_576;
-const POLL_MS = 50;
-const WAIT_POLLS = 48;
-const STALE_MS = 60_000;
+const BACKOFF_MS = [25, 50, 100, 200, 400, 400, 400, 400, 400];
+const STALE_MS = 600_000;
 const META_STALE_MS = 86_400_000;
-const SWEEP = 32;
+const LIST = 32;
+const SWEEP = 8;
 const MERGES = 32;
 const DISTINCT = 8;
 
@@ -142,10 +142,12 @@ function fnv(text: string, seed: number) {
   return hash.toString(16).padStart(8, '0');
 }
 
+const hash = (text: string) => `${fnv(text, 0x811c9dc5)}${fnv(text, 0x9e3779b9)}`;
+
 function sweep(api: ModAPI, thread: string, cell: string) {
   const now = Date.now();
   const stale = (family: string, age: number, keep: (key: string) => boolean) => {
-    const listed = api.host.tryCall('store.list', { prefix: family, limit: 256 });
+    const listed = api.host.tryCall('store.list', { prefix: family, limit: LIST });
     return listed.ok ? listed.value.keys.filter(entry => !keep(entry.key) && (entry.key.startsWith(`${family}${thread}:`) || now - entry.provenance.at > age)) : [];
   };
   [...stale('flight:', STALE_MS, key => key.startsWith(`flight:${thread}:${cell}:`)), ...stale('meta:', META_STALE_MS, key => key.startsWith(`meta:${thread}:`))]
@@ -165,16 +167,17 @@ function update(api: ModAPI, key: string, change: (value: Record<string, Json>) 
 const reuseKey = (thread: string) => `meta:${thread}:reuse`;
 
 function share(api: ModAPI, id: string, full: string): { output: string; value: Json } | null {
-  for (let poll = 0; poll <= WAIT_POLLS; poll++) {
+  for (const wait of [0, ...BACKOFF_MS]) {
+    if (wait && !api.host.tryCall('time.sleep', { ms: wait }).ok) return null;
     const got = api.host.tryCall('store.get', { key: id });
     if (!got.ok || !got.value) return null;
     const flight = got.value.value as Flight;
     if (!isObject(flight) || flight.key !== full) return null;
     if (flight.status === 'done') return { output: flight.output, value: flight.value };
-    if (poll === WAIT_POLLS || !api.host.tryCall('time.sleep', { ms: POLL_MS }).ok) {
-      api.host.tryCall('store.delete', { key: id, expected_revision: got.value.revision });
-      return null;
-    }
+  }
+  const last = api.host.tryCall('store.get', { key: id });
+  if (last.ok && last.value && isObject(last.value.value) && last.value.value.status === 'running') {
+    api.host.tryCall('store.delete', { key: id, expected_revision: last.value.revision });
   }
   return null;
 }
@@ -268,17 +271,19 @@ export default function activate(api: ModAPI) {
     const stat = api.host.tryCall('workspace.stat', { paths, hash: true });
     const revision = stat.ok ? paths.map(path => stat.value.files[path]?.sha256 ?? '') : [];
     if (!stat.ok || revision.some(sha => !sha)) return next(e);
-    const cell = String(next.origin.cell_id);
-    const thread = fnv(next.origin.thread_id ?? '', 0x811c9dc5);
+    if (!next.origin.thread_id) return next(e);
+    const cell = hash(String(next.origin.cell_id));
+    const thread = hash(next.origin.thread_id);
     const full = `${keyOf(e.tool, e.arguments)}\n${revision.join(',')}`;
-    const id = `flight:${thread}:${cell}:${fnv(full, 0x811c9dc5)}${fnv(full, 0x9e3779b9)}`;
-    const marker = api.host.tryCall('store.get', { key: `meta:${thread}:cell` });
-    if (marker.ok && marker.value?.value !== cell) {
-      sweep(api, thread, cell);
-      api.host.tryCall('store.put', { key: `meta:${thread}:cell`, value: cell, expected_revision: marker.value?.revision ?? null });
-    }
+    const id = `flight:${thread}:${cell}:${hash(full)}`;
     const claim = api.host.tryCall('store.put', { key: id, value: { key: full, status: 'running' }, expected_revision: null });
-    if (!claim.ok) {
+    if (claim.ok) {
+      const marker = api.host.tryCall('store.get', { key: `meta:${thread}:cell` });
+      if (marker.ok && marker.value?.value !== cell) {
+        sweep(api, thread, cell);
+        api.host.tryCall('store.put', { key: `meta:${thread}:cell`, value: cell, expected_revision: marker.value?.revision ?? null });
+      }
+    } else {
       const shared = share(api, id, full);
       if (shared) {
         update(api, reuseKey(thread), counts => ({ reused: Number(counts.reused ?? 0) + 1, saved_bytes: Number(counts.saved_bytes ?? 0) + bytes(shared.output) }));
@@ -286,25 +291,35 @@ export default function activate(api: ModAPI) {
       }
       return next(e);
     }
-    let result;
+    let published = false;
+    let suspended = false;
     try {
-      result = await next(e);
+      const result = await next(e);
+      const done = result.success && !result.truncated && result.value !== undefined && finished(result.value) && bytes(result.output) <= OUTPUT_BYTES;
+      const after = done ? api.host.tryCall('workspace.stat', { paths, hash: true }) : null;
+      if (after?.ok && paths.every((path, index) => after.value.files[path]?.sha256 === revision[index])) {
+        published = api.host.tryCall('store.put', { key: id, value: { key: full, status: 'done', output: result.output, value: result.value ?? null }, expected_revision: claim.value.revision }).ok;
+      }
+      return result;
     } catch (error) {
-      if (error instanceof Error) api.host.tryCall('store.delete', { key: id, expected_revision: claim.value.revision });
+      suspended = !(error instanceof Error);
       throw error;
+    } finally {
+      if (!published && !suspended) api.host.tryCall('store.delete', { key: id, expected_revision: claim.value.revision });
     }
-    const size = bytes(result.output) + bytes(JSON.stringify(result.value ?? null));
-    const done = result.success && !result.truncated && result.value !== undefined && finished(result.value) && size <= CELL_BYTES;
-    if (!done || !api.host.tryCall('store.put', { key: id, value: { key: full, status: 'done', output: result.output, value: result.value ?? null }, expected_revision: claim.value.revision }).ok) {
-      api.host.tryCall('store.delete', { key: id, expected_revision: claim.value.revision });
-    }
-    return result;
+  });
+
+  api.on('turn_end', () => {
+    const session = api.host.tryCall('session.info', null);
+    if (!session.ok) return;
+    const listed = api.host.tryCall('store.list', { prefix: `flight:${hash(session.value.thread_id)}:`, limit: LIST });
+    if (listed.ok) listed.value.keys.forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
   });
 
   api.command('absorb', () => {
     const state = load(api);
     const session = api.host.tryCall('session.info', null);
-    const counts = session.ok ? api.host.tryCall('store.get', { key: reuseKey(fnv(session.value.thread_id, 0x811c9dc5)) }) : null;
+    const counts = session.ok ? api.host.tryCall('store.get', { key: reuseKey(hash(session.value.thread_id)) }) : null;
     const reuse = counts?.ok && counts.value && isObject(counts.value.value) ? counts.value.value : {};
     const lines = [
       `Tool-call absorption: ${state.batches} merged batches · ${state.absorbed} calls · ${state.deduplicated} duplicate calls run once · ${Number(reuse.reused ?? 0)} repeated code-mode reads reused · ${state.overflowed} outputs too large to merge · about ${state.saved_bytes + Number(reuse.saved_bytes ?? 0)} bytes not repeated`,

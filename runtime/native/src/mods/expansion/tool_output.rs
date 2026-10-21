@@ -85,7 +85,7 @@ impl ToolOutputContributor for Mods {
             let mut executed = json!({"output": bounded(input.text), "success": input.success,
                 "truncated": input.text.len() > HEAD_BYTES});
             if let Some(value) = input.value
-                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 65_536)
+                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 32_768)
             {
                 executed["value"] = value.clone();
             }

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "56c04f39a3d84fa62b734dce3133a03f86d252122a225c486182ef74d2afabbf"
+    "sha256": "ff60f1691af66d15da3099a8a9b3a298fd5ad7c527ea97adedc42033c4657911"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -607,11 +607,11 @@
     },
     "codex-rs/core/src/tools/batch.rs": {
       "before": null,
-      "after": "3b505f15d49ba9d4c55a9c798a73ab6b1ca02a36fcf4c1382e298139823e795d"
+      "after": "67ca703594c7ded57e5a90f2aed00a9bbb880a1cb650cb35200b575f6359ee19"
     },
     "codex-rs/core/src/tools/batch_tests.rs": {
       "before": null,
-      "after": "29680661d39f6541d65ce0ba96eaeeda105a3f1bdba8ee923c8d1c4ac1291dee"
+      "after": "20366d997872aa12c439d8653d06cecfa638a4ea083368b468535c35a21d2595"
     },
     "codex-rs/core/src/tools/code_mode/delegate.rs": {
       "before": "515961dca924cc2772611e8c6c30eed9011ab3a3c4f61af2a61907677b5b5f49",
@@ -855,7 +855,7 @@
     },
     "codex-rs/ext/extension-api/src/contributors/tool_batch.rs": {
       "before": null,
-      "after": "4af0f984e8aea333e6221e0dde91dbad83c1c4cfc6c7f5b5459cbf19379309b8"
+      "after": "7f122c54d849b35fbb9c41be2617c681ff2ebe855a83021e0224ae249b249f97"
     },
     "codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs": {
       "before": "e14f62f03a8c9edf9d5fb1084f635412de5575e0109d39dbbec93209e5c76315",
@@ -995,11 +995,11 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_batch.rs": {
       "before": null,
-      "after": "b3b7e555fe0618a9f203d8622dfc2aff33e412e9fe1585bbe87a9f4e6ab14cfb"
+      "after": "5a01ca8527834b1f8f7485d0c04b5c73faed5b63d85923dc6d4963288eea2ddd"
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_output.rs": {
       "before": null,
-      "after": "e021f0699e9d2e3711d2e5b44383317ce066c484a2b57f9b0cdcb3eafdfcbdd7"
+      "after": "efd08626e4e5dccfb728914821c72c99335947e746f4ac74f6de554a97e9a72d"
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_specs.rs": {
       "before": null,
@@ -1007,7 +1007,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "3f4941689b254dc461f3da6013f8e9572ffacc09b1608c0a78caada59020d835"
+      "after": "6f36497d2b6c4138d71b9c57f54cb5e592041f49f256efcdc5fd5e3a4dcd9b14"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,

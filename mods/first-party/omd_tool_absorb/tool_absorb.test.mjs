@@ -87,7 +87,9 @@ const fnv = (text, seed) => {
   for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
   return hash.toString(16).padStart(8, '0');
 };
-const thread = fnv('t', 0x811c9dc5);
+const hash = text => `${fnv(text, 0x811c9dc5)}${fnv(text, 0x9e3779b9)}`;
+const thread = hash('t');
+const flightOf = (cellId = 'cell-1') => `flight:${thread}:${hash(cellId)}:`;
 
 function memoryStore() {
   const entries = new Map();
@@ -112,18 +114,19 @@ function memoryStore() {
   };
 }
 
-function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(64), next = () => native, state = null, cwd = '/repo', size = 1, store = memoryStore(), onSleep = () => {} } = {}) {
+function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(64), shaAfter = sha, next = () => native, state = null, cwd = '/repo', size = 1, store = memoryStore(), onSleep = () => {}, sleep = true } = {}) {
+  let hashed = 0;
   const input = { ...call, call_id: 'k', thread_id: 't', agent_id: null, schema: null, raw_arguments: JSON.stringify(call.arguments), batch: null };
   const host = {
     ...store.ops,
     'session.info': () => ({ thread_id: 't', root: '/repo', cwd, codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
-    'workspace.stat': ({ paths, hash }) => ({ files: Object.fromEntries(paths.map(path => [path, { kind: 'file', size, mtime_ms: 1, ...(hash ? { sha256: sha } : {}) }])) }),
-    'time.sleep': ({ ms }) => { onSleep(); return { slept_ms: ms, cancelled: false }; },
+    'workspace.stat': ({ paths, hash: withHash }) => ({ files: Object.fromEntries(paths.map(path => [path, { kind: 'file', size, mtime_ms: 1, ...(withHash ? { sha256: hashed++ ? shaAfter : sha } : {}) }])) }),
+    'time.sleep': ({ ms }) => { if (!sleep) throw new Error('time_sleep_unavailable'); onSleep(); return { slept_ms: ms, cancelled: false }; },
     'continuation.next': () => ({ result: next(), trace: [] }),
   };
   const origin = { caller, cell_id: cellId, thread_id: 't' };
   const out = run('intercept', '0', { surface: 'tool', input, original: input, origin }, { state, host });
-  return { ...out, store, ran: out.calls.some(entry => entry.operation === 'continuation.next'), stats: out.calls.filter(entry => entry.operation === 'workspace.stat' && entry.arguments.hash).map(entry => entry.arguments) };
+  return { ...out, store, ran: out.calls.some(entry => entry.operation === 'continuation.next'), stats: out.calls.filter(entry => entry.operation === 'workspace.stat' && entry.arguments.hash).map(entry => entry.arguments).slice(0, 1) };
 }
 const native = { output: 'Exit code: 0\nOutput:\nx', success: true, value: { chunk_id: 'c1', wall_time_seconds: 0.01, exit_code: 0, original_token_count: 1, output: 'x' } };
 const read = exec('sed -n 1,20p src/a.ts');
@@ -132,7 +135,7 @@ test('a code-mode cell reuses an identical read with its structured result while
   const first = cell(read);
   assert.ok(first.ran);
   assert.deepEqual(first.stats, [{ paths: ['src/a.ts'], hash: true }]);
-  assert.equal(first.store.entries.get([...first.store.entries.keys()].find(key => key.startsWith('flight:'))).value.status, 'done');
+  assert.equal(first.store.entries.get([...first.store.entries.keys()].find(key => key.startsWith(flightOf()))).value.status, 'done');
   const second = cell(read, { store: first.store, state: first.state });
   assert.equal(second.ran, false);
   assert.deepEqual(second.value.result, native, 'the cell gets the same structured value it got the first time');
@@ -173,12 +176,22 @@ test('a twin that waits too long runs itself, and failed or unfinished reads are
   cell(read, { store: stuck, next: () => {
     const late = cell(read, { store: stuck });
     assert.ok(late.ran, 'a claim that never finishes is dropped after the wait');
-    assert.equal(late.calls.filter(entry => entry.operation === 'time.sleep').length, 48);
+    assert.equal(late.calls.filter(entry => entry.operation === 'time.sleep').length, 9);
+    assert.ok(late.calls.length <= 30, `a waiter stays far below the 128-call limit (${late.calls.length})`);
     return native;
   } });
+  const asleep = memoryStore();
+  cell(read, { store: asleep, next: () => {
+    const twin = cell(read, { store: asleep, sleep: false });
+    assert.ok(twin.ran, 'without time.sleep the twin runs on its own');
+    assert.equal([...asleep.entries.values()].filter(entry => entry.value.status === 'running').length, 1, 'and leaves the first read\'s claim alone');
+    return native;
+  } });
+  const raced = cell(read, { shaAfter: 'b'.repeat(64) });
+  assert.ok(![...raced.store.entries.keys()].some(key => key.startsWith('flight:')), 'a file that changed during the read is not published');
   for (const result of [
     { ...native, value: { ...native.value, exit_code: 1 } }, { ...native, value: { chunk_id: 'c1', session_id: 3, output: '' } }, { ...native, truncated: true },
-    { ...native, output: 'x'.repeat(40_000) }, { output: 'Exit code: 0\nOutput:\nx', success: true }, { ...native, success: false },
+    { ...native, output: 'x'.repeat(17_000) }, { output: 'Exit code: 0\nOutput:\nx', success: true }, { ...native, success: false },
   ]) assert.ok(![...cell(exec('cat a'), { next: () => result }).store.entries.keys()].some(key => key.startsWith('flight:')), JSON.stringify(result).slice(0, 80));
   const cancelled = memoryStore();
   assert.throws(() => cell(exec('cat a'), { store: cancelled, next: () => { throw new Error('callback_cancelled'); } }));
@@ -190,18 +203,23 @@ test('a twin that waits too long runs itself, and failed or unfinished reads are
   }
 });
 
-test('a new cell sweeps this thread\'s older cells and other threads\' stale entries', () => {
+test('a new cell sweeps this thread\'s older cells and other threads\' stale entries, and a turn end clears this thread', () => {
   const store = memoryStore();
-  store.entries.set(`meta:${thread}:cell`, store.record('cell-0'));
-  store.entries.set(`flight:${thread}:cell-0:x`, store.record({ key: 'old', status: 'done', output: '', value: null }));
+  store.entries.set(`meta:${thread}:cell`, store.record(hash('cell-0')));
+  store.entries.set(`${flightOf('cell-0')}x`, store.record({ key: 'old', status: 'done', output: '', value: null }));
   store.entries.set('flight:00000000:cell-9:y', store.record({ key: 'stale', status: 'done', output: '', value: null }, 0));
   store.entries.set('flight:00000000:cell-9:z', store.record({ key: 'fresh', status: 'running' }));
   store.entries.set('meta:00000000:reuse', store.record({ reused: 1 }, 0));
   store.entries.set('meta:00000001:reuse', store.record({ reused: 1 }));
   cell(read, { store });
-  assert.deepEqual([...store.entries.keys()].filter(key => !key.startsWith(`flight:${thread}:cell-1:`)).sort(),
+  assert.deepEqual([...store.entries.keys()].filter(key => !key.startsWith(flightOf())).sort(),
     [`meta:${thread}:cell`, 'flight:00000000:cell-9:z', 'meta:00000001:reuse'].sort());
-  assert.equal(store.entries.get(`meta:${thread}:cell`).value, 'cell-1');
+  assert.equal(store.entries.get(`meta:${thread}:cell`).value, hash('cell-1'));
+  run('turn_end', '', { turn_id: 'turn-1', outcome: 'completed' }, { host: {
+    ...store.ops,
+    'session.info': () => ({ thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
+  } });
+  assert.deepEqual([...store.entries.keys()].filter(key => key.startsWith('flight:')), ['flight:00000000:cell-9:z'], 'file contents do not outlive the turn');
 });
 
 test('a cancelled merged step fails instead of returning partial results', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
@@ -217,7 +235,7 @@ test('/absorb reports merged calls and their host call IDs', () => {
   const state = { batches: 1, absorbed: 3, deduplicated: 1, overflowed: 0, saved_bytes: 120, recent: [{ batch: 'b1', calls: 3, ran: 2, invoked: { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2' } }] };
   const { value } = run('command', 'absorb', null, { state, host: {
     'session.info': () => ({ thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
-    'store.get': ({ key }) => key === `meta:${thread}:reuse` ? { value: { reused: 2, saved_bytes: 30 }, revision: 1, provenance: { mod: 'omd_tool_absorb', source_sha256: '', thread_id: 't', origin: 'tool', at: 0 } } : null,
+    'store.get': ({ key }) => key === `meta:${hash('t')}:reuse` ? { value: { reused: 2, saved_bytes: 30 }, revision: 1, provenance: { mod: 'omd_tool_absorb', source_sha256: '', thread_id: 't', origin: 'tool', at: 0 } } : null,
   } });
   assert.equal(value.display, 'Tool-call absorption: 1 merged batches · 3 calls · 1 duplicate calls run once · 2 repeated code-mode reads reused · 0 outputs too large to merge · about 150 bytes not repeated\nb1: 3 calls, 2 ran · c0→mod-omd_tool_absorb-1, c1→mod-omd_tool_absorb-2');
 });

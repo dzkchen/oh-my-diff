@@ -48704,10 +48704,10 @@ index 0000000000000000000000000000000000000000..4a36c112e12ff07559abd5eaa10e1c50
 +}
 diff --git a/codex-rs/core/src/tools/batch.rs b/codex-rs/core/src/tools/batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736d19f307f
+index 0000000000000000000000000000000000000000..87b5e4661cabfc0a8cbebabb8469cf51a5c35d1c
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch.rs
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,278 @@
 +use std::collections::BTreeSet;
 +use std::sync::Arc;
 +
@@ -48811,8 +48811,9 @@ index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736
 +        .collect()
 +}
 +
-+fn result(value: serde_json::Value, success: bool) -> (String, bool) {
-+    if let serde_json::Value::Object(fields) = &value
++fn result(value: serde_json::Value, success: bool, per_call: bool) -> (String, bool) {
++    if per_call
++        && let serde_json::Value::Object(fields) = &value
 +        && fields.len() == 2
 +        && let (Some(serde_json::Value::String(text)), Some(serde_json::Value::Bool(ok))) =
 +            (fields.get("output"), fields.get("success"))
@@ -48825,13 +48826,17 @@ index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736
 +    }
 +}
 +
-+pub(crate) fn fan_out(call_id: &str, merged: &Result<(String, bool), String>) -> ResponseInputItem {
++pub(crate) fn fan_out(
++    call_id: &str,
++    merged: &Result<(String, bool), String>,
++    per_call: bool,
++) -> ResponseInputItem {
 +    let (text, success) = match merged {
 +        Ok((text, success)) => match serde_json::from_str::<serde_json::Value>(text)
 +            .ok()
 +            .and_then(|value| value.get(call_id).cloned())
 +        {
-+            Some(value) => result(value, *success),
++            Some(value) => result(value, *success, per_call),
 +            None => (
 +                format!("error: the batched call returned no result for {call_id}"),
 +                false,
@@ -48949,21 +48954,23 @@ index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736
 +        }
 +        .boxed()
 +        .shared();
-+        shared.push((merge.call_ids.clone(), output));
++        shared.push((merge.call_ids.clone(), merge.success_per_call, output));
 +    }
 +    calls
 +        .into_iter()
 +        .map(|call| {
 +            match shared
 +                .iter()
-+                .find(|(ids, _)| ids.contains(&call.call_id))
-+                .map(|(_, output)| output.clone())
++                .find(|(ids, _, _)| ids.contains(&call.call_id))
++                .map(|(_, per_call, output)| (*per_call, output.clone()))
 +            {
-+                Some(output) => {
++                Some((per_call, output)) => {
 +                    let call_id = call.call_id;
 +                    Box::pin(async move {
 +                        let merged = output.await;
-+                        Ok(ResponseItemEnvelope::new(fan_out(&call_id, &merged).into()))
++                        Ok(ResponseItemEnvelope::new(
++                            fan_out(&call_id, &merged, per_call).into(),
++                        ))
 +                    }) as InFlightFuture<'static>
 +                }
 +                None => Box::pin(
@@ -48981,10 +48988,10 @@ index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736
 +mod tests;
 diff --git a/codex-rs/core/src/tools/batch_tests.rs b/codex-rs/core/src/tools/batch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b867ab3830548955130fd619c7f1ddcf31a66f79
+index 0000000000000000000000000000000000000000..065d02f30a2e639c04c632ba538a1d60525566f3
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch_tests.rs
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,52 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -48999,38 +49006,43 @@ index 0000000000000000000000000000000000000000..b867ab3830548955130fd619c7f1ddcf
 +fn merged_results_fan_out_by_call_id_and_missing_results_fail() {
 +    let merged = Ok((r#"{"a":"alpha","b":{"n":2}}"#.to_owned(), true));
 +    assert_eq!(
-+        text(fan_out("a", &merged)),
++        text(fan_out("a", &merged, false)),
 +        ("alpha".to_owned(), Some(true))
 +    );
 +    assert_eq!(
-+        text(fan_out("b", &merged)),
++        text(fan_out("b", &merged, false)),
 +        (r#"{"n":2}"#.to_owned(), Some(true))
 +    );
-+    let (missing, success) = text(fan_out("c", &merged));
++    let (missing, success) = text(fan_out("c", &merged, false));
 +    assert!(missing.contains("no result for c"));
 +    assert_eq!(success, Some(false));
-+    let (failed, success) = text(fan_out("a", &Err("denied".to_owned())));
++    let (failed, success) = text(fan_out("a", &Err("denied".to_owned()), false));
 +    assert!(failed.contains("denied"));
 +    assert_eq!(success, Some(false));
-+    let (unparsed, _) = text(fan_out("a", &Ok(("plain".to_owned(), true))));
++    let (unparsed, _) = text(fan_out("a", &Ok(("plain".to_owned(), true)), false));
 +    assert!(unparsed.contains("no result for a"));
 +}
 +
 +#[test]
-+fn merged_results_may_carry_a_success_flag_per_call() {
++fn merged_results_may_carry_a_success_flag_per_call_when_the_merge_asks() {
 +    let merged = Ok((
 +        r#"{"a":{"output":"read","success":true},"b":{"output":"missing","success":false},"c":{"output":"x","success":true,"extra":1}}"#
 +            .to_owned(),
 +        true,
 +    ));
-+    assert_eq!(text(fan_out("a", &merged)), ("read".to_owned(), Some(true)));
-+    assert_eq!(text(fan_out("b", &merged)), ("missing".to_owned(), Some(false)));
++    assert_eq!(text(fan_out("a", &merged, true)), ("read".to_owned(), Some(true)));
++    assert_eq!(text(fan_out("b", &merged, true)), ("missing".to_owned(), Some(false)));
 +    assert_eq!(
-+        text(fan_out("c", &merged)),
++        text(fan_out("c", &merged, true)),
 +        (r#"{"extra":1,"output":"x","success":true}"#.to_owned(), Some(true))
 +    );
++    assert_eq!(
++        text(fan_out("b", &merged, false)),
++        (r#"{"output":"missing","success":false}"#.to_owned(), Some(true)),
++        "without the flag the value stays text, as before"
++    );
 +    let failed = Ok((r#"{"a":{"output":"read","success":true}}"#.to_owned(), false));
-+    assert_eq!(text(fan_out("a", &failed)), ("read".to_owned(), Some(false)));
++    assert_eq!(text(fan_out("a", &failed, true)), ("read".to_owned(), Some(false)));
 +}
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
@@ -51542,10 +51554,10 @@ index 0000000000000000000000000000000000000000..2a07f4a1c82154d3729de35d5b66b12d
 +}
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_batch.rs b/codex-rs/ext/extension-api/src/contributors/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a693e1a49226da87920f48d552b71302292755f
+index 0000000000000000000000000000000000000000..963f26e4677e5ec7235a78311e3c904fbd2b304a
 --- /dev/null
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_batch.rs
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,52 @@
 +use std::collections::HashMap;
 +use std::sync::Mutex;
 +
@@ -51596,6 +51608,7 @@ index 0000000000000000000000000000000000000000..8a693e1a49226da87920f48d552b7130
 +    pub call_ids: Vec<String>,
 +    pub tool: String,
 +    pub arguments: String,
++    pub success_per_call: bool,
 +}
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
@@ -72384,10 +72397,10 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b9be0388e
+index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20a8148617
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,157 @@
 +use super::*;
 +use codex_extension_api::ToolBatchContributor;
 +use codex_extension_api::ToolBatchInput;
@@ -72432,10 +72445,15 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +    merges
 +        .into_iter()
 +        .map(|merge| {
-+            let object = merge
-+                .as_object()
-+                .filter(|object| object.len() == 3)
-+                .ok_or_else(invalid)?;
++            let object = merge.as_object().ok_or_else(invalid)?;
++            let success_per_call = match object.get("success_per_call") {
++                None => false,
++                Some(Value::Bool(flag)) => *flag,
++                Some(_) => return Err(invalid()),
++            };
++            if object.len() != 3 + usize::from(object.contains_key("success_per_call")) {
++                return Err(invalid());
++            }
 +            let call_ids = object
 +                .get("call_ids")
 +                .and_then(Value::as_array)
@@ -72461,6 +72479,7 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +                call_ids,
 +                tool: format!("mod_{owner}_{tool}"),
 +                arguments: arguments.to_string(),
++                success_per_call,
 +            })
 +        })
 +        .collect()
@@ -72541,7 +72560,7 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3760403f9bbeb8a13985c58f89e15da33b7ca57d
+index 0000000000000000000000000000000000000000..48866eb356bd6b67470505fae4e8848afb6b4d66
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 @@ -0,0 +1,225 @@
@@ -72632,7 +72651,7 @@ index 0000000000000000000000000000000000000000..3760403f9bbeb8a13985c58f89e15da3
 +            let mut executed = json!({"output": bounded(input.text), "success": input.success,
 +                "truncated": input.text.len() > HEAD_BYTES});
 +            if let Some(value) = input.value
-+                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 65_536)
++                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 32_768)
 +            {
 +                executed["value"] = value.clone();
 +            }
@@ -72984,10 +73003,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7de82c4d28a295025fe890ea5855c42dc32e6033
+index 0000000000000000000000000000000000000000..fd7b0106a52a11ac333ec697045aac450c6ce735
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4211 @@
+@@ -0,0 +1,4230 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77198,6 +77217,25 @@ index 0000000000000000000000000000000000000000..7de82c4d28a295025fe890ea5855c42d
 +            .await;
 +        assert_eq!(fragments.len(), expected, "{label}");
 +    }
++}
++
++#[test]
++fn tool_batch_merges_opt_into_per_call_success_explicitly() {
++    let known = ["a".to_owned(), "b".to_owned()];
++    let merge = |extra: Value| {
++        let mut merge = json!({"call_ids": ["a", "b"], "tool": "batch", "arguments": {}});
++        if let Value::Object(fields) = extra {
++            merge.as_object_mut().unwrap().extend(fields);
++        }
++        tool_batch::parse("owner", json!({"merge": [merge]}), &known)
++    };
++    let plain = merge(json!({})).unwrap();
++    assert_eq!(plain[0].tool, "mod_owner_batch");
++    assert!(!plain[0].success_per_call);
++    assert!(merge(json!({"success_per_call": true})).unwrap()[0].success_per_call);
++    assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
++    assert!(merge(json!({"success_per_call": "yes"})).is_err());
++    assert!(merge(json!({"other": true})).is_err());
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644

@@ -4209,3 +4209,22 @@ async fn mentioned_files_use_selected_turn_environment_authority() {
         assert_eq!(fragments.len(), expected, "{label}");
     }
 }
+
+#[test]
+fn tool_batch_merges_opt_into_per_call_success_explicitly() {
+    let known = ["a".to_owned(), "b".to_owned()];
+    let merge = |extra: Value| {
+        let mut merge = json!({"call_ids": ["a", "b"], "tool": "batch", "arguments": {}});
+        if let Value::Object(fields) = extra {
+            merge.as_object_mut().unwrap().extend(fields);
+        }
+        tool_batch::parse("owner", json!({"merge": [merge]}), &known)
+    };
+    let plain = merge(json!({})).unwrap();
+    assert_eq!(plain[0].tool, "mod_owner_batch");
+    assert!(!plain[0].success_per_call);
+    assert!(merge(json!({"success_per_call": true})).unwrap()[0].success_per_call);
+    assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
+    assert!(merge(json!({"success_per_call": "yes"})).is_err());
+    assert!(merge(json!({"other": true})).is_err());
+}
