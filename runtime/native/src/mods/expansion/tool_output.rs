@@ -67,6 +67,12 @@ impl ToolOutputContributor for Mods {
             || self.pending.lock().is_ok_and(|pending| !pending.is_empty())
     }
 
+    fn wants_value(&self, call_id: &str) -> bool {
+        self.pending
+            .lock()
+            .is_ok_and(|pending| pending.contains_key(call_id))
+    }
+
     fn replace_tool_output<'a>(
         &'a self,
         input: ToolOutputInput<'a>,
@@ -76,8 +82,13 @@ impl ToolOutputContributor for Mods {
                 self.views
                     .diagnostic(&self.host, "tool_output", Some(message));
             };
-            let executed = json!({"output": bounded(input.text), "success": input.success,
+            let mut executed = json!({"output": bounded(input.text), "success": input.success,
                 "truncated": input.text.len() > HEAD_BYTES});
+            if let Some(value) = input.value
+                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 65_536)
+            {
+                executed["value"] = value.clone();
+            }
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
             match self.resume(input.call_id, Ok(executed.clone())).await {

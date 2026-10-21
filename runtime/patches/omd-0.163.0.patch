@@ -27205,7 +27205,7 @@ index 25468f3749a974a2237721a45418d5c257aed4ed..af2abec3224b40406b7977c7bf8cd930
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf27ca9ca53 100644
+index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f26edfbd71 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -27232,7 +27232,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,193 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,212 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -27266,7 +27266,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +
 +pub(crate) async fn intercept_tool(
 +    invocation: &mut ToolInvocation,
-+) -> Result<Option<(String, bool)>, codex_tools::FunctionCallError> {
++) -> Result<Option<(String, bool, Option<serde_json::Value>)>, codex_tools::FunctionCallError> {
 +    let contributors = invocation
 +        .session
 +        .services
@@ -27332,8 +27332,12 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +                invocation.payload = payload;
 +            }
 +            codex_extension_api::ToolInterception::Continue(None) => {}
-+            codex_extension_api::ToolInterception::Respond { output, success } => {
-+                response = Some((output, success));
++            codex_extension_api::ToolInterception::Respond {
++                output,
++                success,
++                value,
++            } => {
++                response = Some((output, success, value));
 +                break;
 +            }
 +        }
@@ -27342,6 +27346,19 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +        facts.remove(&invocation.call_id);
 +    }
 +    Ok(response)
++}
++
++pub(crate) fn wants_value(invocation: &ToolInvocation) -> bool {
++    matches!(
++        invocation.source,
++        crate::tools::context::ToolCallSource::CodeMode { .. }
++    ) && invocation
++        .session
++        .services
++        .extensions
++        .tool_output_contributors()
++        .iter()
++        .any(|contributor| contributor.wants_value(&invocation.call_id))
 +}
 +
 +pub(crate) fn replaceable_tool_output(
@@ -27391,6 +27408,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +    invocation: &ToolInvocation,
 +    text: &str,
 +    success: bool,
++    value: Option<&serde_json::Value>,
 +) -> Option<String> {
 +    for contributor in invocation
 +        .session
@@ -27413,6 +27431,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +                },
 +                success,
 +                text,
++                value,
 +            })
 +            .await;
 +        if let Some(replacement) = replacement {
@@ -27426,7 +27445,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +300,33 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +319,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -27461,7 +27480,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +334,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +353,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -27470,7 +27489,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
      )
      .await;
  }
-@@ -133,10 +354,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +373,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -27484,7 +27503,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +368,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +387,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -27493,7 +27512,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,6 +382,8 @@ async fn notify_tool_finish_parts(
+@@ -156,6 +401,8 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -27502,7 +27521,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
              })
              .await;
      }
-@@ -169,6 +397,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +416,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -28086,7 +28105,7 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..1552e3ff264e38b54fb28756bf0a4550
          records: Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>,
          finish_started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e486811730264ef6 100644
+index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..d2b63bbcdf4a3bd50c5a4c8e53681acd5127dd19 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -46,12 +46,46 @@ use futures::future::BoxFuture;
@@ -28203,7 +28222,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
          {
              let mut active = invocation
                  .session
-@@ -646,6 +699,56 @@ impl ToolRegistry {
+@@ -646,6 +699,66 @@ impl ToolRegistry {
              }
          }
 
@@ -28218,11 +28237,21 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
 +                .await;
 +                return Err(error);
 +            }
-+            Ok(Some((output, success))) => {
++            Ok(Some((output, success, value))) => {
++                let text = FunctionToolOutput::from_text(output, Some(success));
 +                let result = AnyToolResult {
 +                    call_id: invocation.call_id.clone(),
 +                    payload: invocation.payload.clone(),
-+                    result: Box::new(FunctionToolOutput::from_text(output, Some(success))),
++                    result: match value {
++                        Some(value) => Box::new(PostToolUseFeedbackOutput {
++                            original: Box::new(codex_tools::JsonToolOutput::with_success(
++                                value,
++                                Some(success),
++                            )),
++                            model_visible: text,
++                        }),
++                        None => Box::new(text),
++                    },
 +                    post_tool_use_payload: None,
 +                };
 +                let result_sha256 = result_sha256(&invocation, &result);
@@ -28260,7 +28289,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -720,6 +823,7 @@ impl ToolRegistry {
+@@ -720,6 +833,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -28268,7 +28297,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                      )
                      .await;
                      return Err(err);
-@@ -742,6 +846,7 @@ impl ToolRegistry {
+@@ -742,6 +856,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -28276,7 +28305,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                          )
                          .await;
                          return Err(err);
-@@ -855,13 +960,19 @@ impl ToolRegistry {
+@@ -855,13 +970,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -28299,7 +28328,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -879,6 +990,28 @@ impl ToolRegistry {
+@@ -879,6 +1000,35 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -28307,10 +28336,17 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
 +                    &invocation,
 +                    result.result.as_ref(),
 +                );
++                let structured = (replaceable.is_some()
++                    && crate::tools::lifecycle::wants_value(&invocation))
++                .then(|| result.result.code_mode_result(&result.payload));
 +                if let Some(visible) = replaceable
-+                    && let Some(text) =
-+                        crate::tools::lifecycle::replace_tool_output(&invocation, &visible, success)
-+                            .await
++                    && let Some(text) = crate::tools::lifecycle::replace_tool_output(
++                        &invocation,
++                        &visible,
++                        success,
++                        structured.as_ref(),
++                    )
++                    .await
 +                {
 +                    result.result = Box::new(PostToolUseFeedbackOutput {
 +                        original: result.result,
@@ -28328,7 +28364,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -889,6 +1022,13 @@ impl ToolRegistry {
+@@ -889,6 +1039,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -28342,7 +28378,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -896,16 +1036,24 @@ impl ToolRegistry {
+@@ -896,16 +1053,24 @@ impl ToolRegistry {
      }
  }
 
@@ -28369,10 +28405,10 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
  }
 
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c2ce9950d 100644
+index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1d593794e 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -842,3 +842,162 @@ fn test_invocation(
+@@ -842,3 +842,167 @@ fn test_invocation(
          },
      }
  }
@@ -28396,6 +28432,7 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c
 +                "respond" => Ok(codex_extension_api::ToolInterception::Respond {
 +                    output: "cached".into(),
 +                    success: true,
++                    value: Some(serde_json::json!({"output": "cached", "exit_code": 0})),
 +                }),
 +                _ => Ok(codex_extension_api::ToolInterception::Continue(Some((
 +                    codex_tools::ToolName::plain("replacement"),
@@ -28442,6 +28479,10 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c
 +                output.result.to_response_item("mod-call", &output.payload),
 +                FunctionToolOutput::from_text("cached".into(), Some(true))
 +                    .to_response_item("mod-call", &output.payload)
++            );
++            assert_eq!(
++                output.result.code_mode_result(&output.payload),
++                serde_json::json!({"output": "cached", "exit_code": 0})
 +            );
 +            assert!(matches!(
 +                &records[..],
@@ -29757,7 +29798,7 @@ index d933738616189c8e8f5a65cf9d2336f18bd7d1f8..857e8752e1190857abda6d1f047baf7a
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787d5256915 100644
+index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..0df3cb31c8b1850c732dcbc349ab1f34dd84ebcc 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -12,17 +12,22 @@ use codex_tools::ToolExecutor;
@@ -30013,7 +30054,7 @@ index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -408,6 +573,129 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -408,6 +573,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -30132,6 +30173,10 @@ index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787
 +        true
 +    }
 +
++    fn wants_value(&self, _call_id: &str) -> bool {
++        false
++    }
++
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        _input: ToolOutputInput<'a>,
@@ -30169,10 +30214,10 @@ index b614d536f6318d8c50520d0995c96906b826deaf..63f6a4b60471aad8c642f1947d97ef41
  pub struct ThreadStartInput<'a, C> {
      /// Host configuration visible at thread start.
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735c3f7c800 100644
+index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..199d623dec71de00310f53ef1a0f57207cc3e659 100644
 --- a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-@@ -19,6 +19,16 @@ use crate::ExtensionData;
+@@ -19,6 +19,17 @@ use crate::ExtensionData;
  /// Future returned by one tool-lifecycle callback.
  pub type ToolLifecycleFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
@@ -30183,13 +30228,14 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
 +    Respond {
 +        output: String,
 +        success: bool,
++        value: Option<serde_json::Value>,
 +    },
 +}
 +
  /// Extension-facing outcome for a finished tool call.
  #[derive(Clone, Copy, Debug, Eq, PartialEq)]
  pub enum ToolCallOutcome {
-@@ -172,6 +182,15 @@ pub struct CommandStartInput<'a> {
+@@ -172,6 +183,15 @@ pub struct CommandStartInput<'a> {
      pub file_system: &'a dyn ExecutorFileSystem,
  }
 
@@ -30205,7 +30251,7 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
  /// Input supplied after an MCP server responds, before the host reports completion.
  pub struct McpToolResultInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -194,6 +213,18 @@ pub struct McpToolResultInput<'a> {
+@@ -194,6 +214,19 @@ pub struct McpToolResultInput<'a> {
      pub result: &'a mut CallToolResult,
  }
 
@@ -30219,12 +30265,13 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
 +    pub arguments: Option<&'a str>,
 +    pub success: bool,
 +    pub text: &'a str,
++    pub value: Option<&'a serde_json::Value>,
 +}
 +
  /// Input supplied when the host finishes executing one tool call.
  pub struct ToolFinishInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -212,6 +243,10 @@ pub struct ToolFinishInput<'a> {
+@@ -212,6 +245,10 @@ pub struct ToolFinishInput<'a> {
      pub source: ToolCallSource,
      /// Host-observed result of the tool call.
      pub outcome: ToolCallOutcome,
@@ -48657,10 +48704,10 @@ index 0000000000000000000000000000000000000000..4a36c112e12ff07559abd5eaa10e1c50
 +}
 diff --git a/codex-rs/core/src/tools/batch.rs b/codex-rs/core/src/tools/batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e39bd78b7b
+index 0000000000000000000000000000000000000000..acacd9f1b5c90852542416c37158e736d19f307f
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,271 @@
 +use std::collections::BTreeSet;
 +use std::sync::Arc;
 +
@@ -48764,14 +48811,27 @@ index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e3
 +        .collect()
 +}
 +
++fn result(value: serde_json::Value, success: bool) -> (String, bool) {
++    if let serde_json::Value::Object(fields) = &value
++        && fields.len() == 2
++        && let (Some(serde_json::Value::String(text)), Some(serde_json::Value::Bool(ok))) =
++            (fields.get("output"), fields.get("success"))
++    {
++        return (text.clone(), success && *ok);
++    }
++    match value {
++        serde_json::Value::String(text) => (text, success),
++        value => (value.to_string(), success),
++    }
++}
++
 +pub(crate) fn fan_out(call_id: &str, merged: &Result<(String, bool), String>) -> ResponseInputItem {
 +    let (text, success) = match merged {
 +        Ok((text, success)) => match serde_json::from_str::<serde_json::Value>(text)
 +            .ok()
 +            .and_then(|value| value.get(call_id).cloned())
 +        {
-+            Some(serde_json::Value::String(text)) => (text, *success),
-+            Some(value) => (value.to_string(), *success),
++            Some(value) => result(value, *success),
 +            None => (
 +                format!("error: the batched call returned no result for {call_id}"),
 +                false,
@@ -48921,10 +48981,10 @@ index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e3
 +mod tests;
 diff --git a/codex-rs/core/src/tools/batch_tests.rs b/codex-rs/core/src/tools/batch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4cfb2d98238b22c1101bc41dab39024d3fee991d
+index 0000000000000000000000000000000000000000..b867ab3830548955130fd619c7f1ddcf31a66f79
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch_tests.rs
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,47 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -48954,6 +49014,23 @@ index 0000000000000000000000000000000000000000..4cfb2d98238b22c1101bc41dab39024d
 +    assert_eq!(success, Some(false));
 +    let (unparsed, _) = text(fan_out("a", &Ok(("plain".to_owned(), true))));
 +    assert!(unparsed.contains("no result for a"));
++}
++
++#[test]
++fn merged_results_may_carry_a_success_flag_per_call() {
++    let merged = Ok((
++        r#"{"a":{"output":"read","success":true},"b":{"output":"missing","success":false},"c":{"output":"x","success":true,"extra":1}}"#
++            .to_owned(),
++        true,
++    ));
++    assert_eq!(text(fan_out("a", &merged)), ("read".to_owned(), Some(true)));
++    assert_eq!(text(fan_out("b", &merged)), ("missing".to_owned(), Some(false)));
++    assert_eq!(
++        text(fan_out("c", &merged)),
++        (r#"{"extra":1,"output":"x","success":true}"#.to_owned(), Some(true))
++    );
++    let failed = Ok((r#"{"a":{"output":"read","success":true}}"#.to_owned(), false));
++    assert_eq!(text(fan_out("a", &failed)), ("read".to_owned(), Some(false)));
 +}
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
@@ -63079,10 +63156,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21960e4431
+index 0000000000000000000000000000000000000000..f78442648c186c15a5fd4bba9db74e3158b0e5a4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2539 @@
+@@ -0,0 +1,2540 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65483,6 +65560,7 @@ index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21
 +                    .unwrap_or_default()
 +                    .to_owned(),
 +                success: chain.result["success"].as_bool().unwrap_or(false),
++                value: chain.result.get("value").filter(|value| !value.is_null()).cloned(),
 +            })
 +        })
 +    }
@@ -72463,10 +72541,10 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d001e857e95
+index 0000000000000000000000000000000000000000..3760403f9bbeb8a13985c58f89e15da33b7ca57d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,225 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -72536,6 +72614,12 @@ index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d00
 +            || self.pending.lock().is_ok_and(|pending| !pending.is_empty())
 +    }
 +
++    fn wants_value(&self, call_id: &str) -> bool {
++        self.pending
++            .lock()
++            .is_ok_and(|pending| pending.contains_key(call_id))
++    }
++
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: ToolOutputInput<'a>,
@@ -72545,8 +72629,13 @@ index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d00
 +                self.views
 +                    .diagnostic(&self.host, "tool_output", Some(message));
 +            };
-+            let executed = json!({"output": bounded(input.text), "success": input.success,
++            let mut executed = json!({"output": bounded(input.text), "success": input.success,
 +                "truncated": input.text.len() > HEAD_BYTES});
++            if let Some(value) = input.value
++                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 65_536)
++            {
++                executed["value"] = value.clone();
++            }
 +            let mut text = None;
 +            let mut replaced_by = "feedback".to_owned();
 +            match self.resume(input.call_id, Ok(executed.clone())).await {
@@ -72895,10 +72984,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4ec8a8e78
+index 0000000000000000000000000000000000000000..7de82c4d28a295025fe890ea5855c42dc32e6033
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4166 @@
+@@ -0,0 +1,4211 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73741,7 +73830,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            id: "cache",
 +            capabilities: &["interception"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true }));\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true, value: { output: 'from cache', exit_code: 0 } }));\n  api.intercept('tool', { match: { tool: 'huge' } }, () => ({ output: 'huge', success: true, value: 'x'.repeat(70000) }));\n  api.intercept('tool', { match: { tool: 'nullish' } }, () => ({ output: 'nullish', success: true, value: null }));\n}\n",
 +        },
 +        Package {
 +            id: "lint",
@@ -73793,6 +73882,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        arguments: Some(r#"{"path":"a.txt","checked":true}"#),
 +        success: true,
 +        text,
++        value: None,
 +    };
 +    let ToolInterception::Continue(Some((tool, codex_tools::ToolPayload::Function { arguments }))) =
 +        mods.intercept_tool(start("call-1", &READ)).await.unwrap()
@@ -73821,10 +73911,29 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
 +        ToolInterception::Respond {
 +            output: "trimmed 10 cached a.txt".into(),
-+            success: true
++            success: true,
++            value: Some(json!({"output": "from cache", "exit_code": 0}))
 +        }
 +    );
 +    assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
++    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
++    static NULLISH: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("nullish"));
++    assert!(
++        matches!(
++            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
++            ToolInterception::Continue(Some(_))
++        ),
++        "an answer whose value exceeds 64 KiB is invalid, so the call runs"
++    );
++    assert!(mods.wants_value("call-huge"));
++    assert!(!mods.wants_value("call-none"));
++    mods.replace_tool_output(output("call-huge", "ok")).await;
++    assert!(!mods.wants_value("call-huge"));
++    assert!(matches!(
++        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
++        ToolInterception::Respond { value: None, .. }
++    ));
 +
 +    let source = fixture
 +        .core
@@ -73899,7 +74008,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            id: "retry",
 +            capabilities: &["interception"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
 +        },
 +        Package {
 +            id: "probe",
@@ -73964,9 +74073,32 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            arguments: Some(r#"{"path":"a.txt"}"#),
 +            success: false,
 +            text: "first attempt failed",
++            value: None,
 +        })
 +        .await;
 +    assert_eq!(replaced.as_deref(), Some("second attempt"));
++    static CODED: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("coded"));
++    assert_eq!(
++        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let structured = json!({"exit_code": 0, "output": "x"});
++    let seen = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-coded",
++            tool_name: &CODED,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: true,
++            text: "Exit code: 0\nOutput:\nx",
++            value: Some(&structured),
++        })
++        .await;
++    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
 +    assert_eq!(
 +        invoker.0.lock().unwrap().clone(),
 +        vec![(
@@ -73996,7 +74128,8 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        probed,
 +        ToolInterception::Respond {
 +            output: "ask mod-probe-0 second attempt".into(),
-+            success: true
++            success: true,
++            value: None
 +        }
 +    );
 +    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
@@ -75904,6 +76037,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            arguments: None,
 +            success: true,
 +            text: r#"{"agent_id":"child","nickname":null}"#,
++            value: None,
 +        })
 +        .await,
 +        None
@@ -104283,10 +104417,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..022ce5aa7297c8e967a1d984e4fa25e3d3ec467f
+index 0000000000000000000000000000000000000000..b4d16eb584231526df96ba944ab5c0578b8428ec
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6174 @@
+@@ -0,0 +1,6176 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104617,6 +104751,8 @@ index 0000000000000000000000000000000000000000..022ce5aa7297c8e967a1d984e4fa25e3
 +    "binary_evidence_v1",
 +    "package_controls_v1",
 +    "package_index_paging_v1",
++    "tool_batch_success_v1",
++    "code_mode_values_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -112011,10 +112147,10 @@ index 0000000000000000000000000000000000000000..4492d6aff4d56d6bd7e4099fba47b5e1
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05cf504e7db
+index 0000000000000000000000000000000000000000..ff01135bfb0821dc3c83e85a01bb6552f47d7468
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1950 @@
+@@ -0,0 +1,1953 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -112631,8 +112767,11 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +                    .is_some_and(|output| output.len() <= RESULT_BYTES)
 +                    && result["success"].is_boolean()
 +                    && object.keys().all(|key| {
-+                        ["output", "success", "truncated", "call_id"].contains(&key.as_str())
++                        ["output", "success", "truncated", "call_id", "value"]
++                            .contains(&key.as_str())
 +                    })
++                    && serde_json::to_vec(&result["value"])
++                        .is_ok_and(|value| value.len() <= RESULT_BYTES)
 +            })
 +        }
 +        "host_operation" => {

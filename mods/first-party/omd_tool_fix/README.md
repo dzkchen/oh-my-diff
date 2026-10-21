@@ -26,7 +26,6 @@ It changes a call only when it doesn't match the tool's own schema, and only in 
 | `"true"` or `"false"` | `true` or `false`, if the schema wants a boolean |
 | An object or list written as JSON text | The object or list, if the schema wants one |
 | `"FAST"` where the schema lists `"fast"` | `"fast"`, if exactly one listed value matches ignoring case |
-| `null` for an optional field that doesn't allow it | The field left out, which a tool that read `null` as "clear it" would treat differently |
 | `maxOutputTokens` where the schema names `max_output_tokens` | The schema's name, if exactly one name matches |
 | JSON with a trailing comma, or wrapped in a ```` ```json ```` fence | The same JSON without them |
 
@@ -34,7 +33,7 @@ It changes a call only when it doesn't match the tool's own schema, and only in 
 
 - It never changes text the tool expects as text, so commands, paths and file contents are never rewritten. It
   never turns `"05"`, `"+5"`, `"5.0"` or `5.5` into an integer, `"1"` or `"yes"` into a boolean, a single value
-  into a list, or a number into text.
+  into a list, or a number into text, and never drops a field, even a `null` one.
 - Calls whose arguments already match, freeform tools such as `apply_patch` and tools without a schema pass
   through untouched.
 - The host checks every fixed call against the tool's registered schema again and applies its usual permissions

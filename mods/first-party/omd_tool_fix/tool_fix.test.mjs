@@ -49,11 +49,11 @@ test('a valid call passes through untouched and records nothing', () => {
 });
 
 test('representation errors are repaired against the schema and recorded with the original', () => {
-  const { next, state, evidence } = call({ cmd: 'ls', maxOutputTokens: '200', tty: 'false', yield_time_ms: '2.5e3', paths: '["a","b c"]', options: '{"depth":"2"}', mode: 'FAST', workdir: null });
+  const { next, state, evidence } = call({ cmd: 'ls', maxOutputTokens: '200', tty: 'false', yield_time_ms: '2.5e3', paths: '["a","b c"]', options: '{"depth":"2"}', mode: 'FAST' });
   assert.deepEqual(next.arguments, { cmd: 'ls', max_output_tokens: 200, tty: false, yield_time_ms: 2500, paths: ['a', 'b c'], options: { depth: 2 }, mode: 'fast' });
   assert.deepEqual(evidence[0].original.maxOutputTokens, '200');
   assert.deepEqual(evidence[0].changes.map(change => change.rule).sort(),
-    ['boolean_string', 'enum_case', 'integer_string', 'integer_string', 'json_string', 'json_string', 'key_name', 'null_optional', 'number_string']);
+    ['boolean_string', 'enum_case', 'integer_string', 'integer_string', 'json_string', 'json_string', 'key_name', 'number_string']);
   assert.equal(state.corrected, 1);
   assert.equal(state.ran, 1);
   assert.equal(state.recent[0].evidence, 'evidence:2', 'evidence is written after the call ran');
@@ -66,7 +66,7 @@ test('unsafe coercions are refused and the call reaches the tool unchanged', () 
   for (const args of [
     { cmd: 'ls', max_output_tokens: '5.0' }, { cmd: 'ls', max_output_tokens: '05' }, { cmd: 'ls', max_output_tokens: ' 5' }, { cmd: 'ls', max_output_tokens: '+5' },
     { cmd: 'ls', max_output_tokens: 5.5 }, { cmd: 'ls', max_output_tokens: '9007199254740993' }, { cmd: 'ls', yield_time_ms: '9007199254740993' }, { cmd: 5 }, { cmd: ['ls'] }, { cmd: 'ls', paths: 'a' },
-    { cmd: 'ls', tty: '1' }, { cmd: 'ls', tty: 'yes' }, { cmd: 'ls', mode: 'quick' }, { cmd: null }, { cmd: 'ls', extra: true },
+    { cmd: 'ls', tty: '1' }, { cmd: 'ls', tty: 'yes' }, { cmd: 'ls', mode: 'quick' }, { cmd: null }, { cmd: 'ls', workdir: null }, { cmd: 'ls', extra: true },
   ]) {
     const { next, state, evidence } = call(args);
     assert.deepEqual(next.arguments, args, JSON.stringify(args));

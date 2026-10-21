@@ -1,13 +1,14 @@
 import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 type Call = { call_id: string; tool: string; arguments: Json };
+type Flight = { key: string; status: 'running' } | { key: string; status: 'done'; output: string; value: Json };
 type Merge = { batch: string; calls: number; ran: number; invoked: Record<string, string> };
 type State = {
   batches: number; absorbed: number; deduplicated: number; overflowed: number; saved_bytes: number; recent: Merge[];
 };
 
-const READ_TOOLS = ['read_file', 'list_dir', 'grep_files'];
 const EXEC_KEYS = ['cmd', 'workdir', 'max_output_tokens', 'yield_time_ms'];
+const FILE_READERS = ['cat', 'head', 'tail', 'wc', 'sed'];
 const HISTORY = /^(--stat|--shortstat|--numstat|--name-only|--name-status|--cached|--staged|--oneline|--no-color|--no-ext-diff|--no-textconv|-p|--patch|--graph|--decorate|--all|-U\d+|--unified=\d+|-\d+|-n\d+|--max-count=\d+|--(format|pretty)=\S*)$/;
 type Spec = { flags: RegExp; valued?: string[]; min: number };
 const SPECS: Record<string, Spec> = {
@@ -34,6 +35,13 @@ const GIT: Record<string, Spec> = {
   'rev-parse': { flags: /^(--show-toplevel|--abbrev-ref|--short|--git-dir|--is-inside-work-tree|--verify)$/, min: 0 },
 };
 const RECENT = 8;
+const CELL_BYTES = 32_768;
+const HASH_BYTES = 1_048_576;
+const POLL_MS = 50;
+const WAIT_POLLS = 48;
+const STALE_MS = 60_000;
+const META_STALE_MS = 86_400_000;
+const SWEEP = 32;
 const MERGES = 32;
 const DISTINCT = 8;
 
@@ -73,10 +81,10 @@ function words(command: string): string[] | null {
 
 const unsafe = (word: string) => word === '-' || word.startsWith('/dev/');
 
-function isRead(arguments_: Json): boolean {
-  if (!isObject(arguments_) || typeof arguments_.cmd !== 'string' || Object.keys(arguments_).some(key => !EXEC_KEYS.includes(key))) return false;
+function readCommand(arguments_: Json): { program: string; operands: string[] } | null {
+  if (!isObject(arguments_) || typeof arguments_.cmd !== 'string' || Object.keys(arguments_).some(key => !EXEC_KEYS.includes(key))) return null;
   const argv = words(arguments_.cmd);
-  if (!argv?.length) return false;
+  if (!argv?.length) return null;
   const [program, ...rest] = argv;
   let args = rest;
   let spec = Object.hasOwn(SPECS, program) ? SPECS[program] : undefined;
@@ -85,11 +93,11 @@ function isRead(arguments_: Json): boolean {
     args = rest.slice(1);
   }
   if (program === 'sed') {
-    if (rest[0] !== '-n' || !/^\d+(,\d+)?p$/.test(rest[1] ?? '')) return false;
+    if (rest[0] !== '-n' || !/^\d+(,\d+)?p$/.test(rest[1] ?? '')) return null;
     args = rest.slice(2);
   }
-  if (!spec) return false;
-  let operands = 0;
+  if (!spec) return null;
+  const operands: string[] = [];
   let ended = false;
   for (let index = 0; index < args.length; index++) {
     const word = args[index];
@@ -98,21 +106,78 @@ function isRead(arguments_: Json): boolean {
     } else if (!ended && word.startsWith('-') && word !== '-') {
       if (spec.valued?.includes(word)) {
         const value = args[++index];
-        if (value === undefined || unsafe(value)) return false;
+        if (value === undefined || unsafe(value)) return null;
       } else if (!spec.flags.test(word)) {
-        return false;
+        return null;
       }
     } else if (unsafe(word)) {
-      return false;
+      return null;
     } else {
-      operands++;
+      operands.push(word);
     }
   }
-  return operands >= spec.min;
+  return operands.length >= spec.min ? { program, operands } : null;
 }
 
-const absorbable = (call: { tool: string; arguments: Json }) =>
-  READ_TOOLS.includes(call.tool) ? isObject(call.arguments) : call.tool === 'exec_command' && isRead(call.arguments);
+const absorbable = (call: { tool: string; arguments: Json }) => call.tool === 'exec_command' && readCommand(call.arguments) !== null;
+
+function sources(arguments_: Json): string[] | null {
+  if (!isObject(arguments_) || arguments_.workdir !== undefined) return null;
+  const read = readCommand(arguments_);
+  return read && FILE_READERS.includes(read.program) ? read.operands : null;
+}
+
+function relative(path: string, root: string, cwd: string): string | null {
+  if (path.split('/').includes('..')) return null;
+  if (path.startsWith('/')) return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+  if (cwd === root) return path.replace(/^\.\//, '');
+  return cwd.startsWith(`${root}/`) ? `${cwd.slice(root.length + 1)}/${path.replace(/^\.\//, '')}` : null;
+}
+
+const finished = (value: Json) => isObject(value) && value.exit_code === 0;
+
+function fnv(text: string, seed: number) {
+  let hash = seed;
+  for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0;
+  return hash.toString(16).padStart(8, '0');
+}
+
+function sweep(api: ModAPI, thread: string, cell: string) {
+  const now = Date.now();
+  const stale = (family: string, age: number, keep: (key: string) => boolean) => {
+    const listed = api.host.tryCall('store.list', { prefix: family, limit: 256 });
+    return listed.ok ? listed.value.keys.filter(entry => !keep(entry.key) && (entry.key.startsWith(`${family}${thread}:`) || now - entry.provenance.at > age)) : [];
+  };
+  [...stale('flight:', STALE_MS, key => key.startsWith(`flight:${thread}:${cell}:`)), ...stale('meta:', META_STALE_MS, key => key.startsWith(`meta:${thread}:`))]
+    .slice(0, SWEEP)
+    .forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
+}
+
+function update(api: ModAPI, key: string, change: (value: Record<string, Json>) => Record<string, Json>) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const got = api.host.tryCall('store.get', { key });
+    if (!got.ok) return;
+    const current = got.value && isObject(got.value.value) ? got.value.value : {};
+    if (api.host.tryCall('store.put', { key, value: change(current), expected_revision: got.value?.revision ?? null }).ok) return;
+  }
+}
+
+const reuseKey = (thread: string) => `meta:${thread}:reuse`;
+
+function share(api: ModAPI, id: string, full: string): { output: string; value: Json } | null {
+  for (let poll = 0; poll <= WAIT_POLLS; poll++) {
+    const got = api.host.tryCall('store.get', { key: id });
+    if (!got.ok || !got.value) return null;
+    const flight = got.value.value as Flight;
+    if (!isObject(flight) || flight.key !== full) return null;
+    if (flight.status === 'done') return { output: flight.output, value: flight.value };
+    if (poll === WAIT_POLLS || !api.host.tryCall('time.sleep', { ms: POLL_MS }).ok) {
+      api.host.tryCall('store.delete', { key: id, expected_revision: got.value.revision });
+      return null;
+    }
+  }
+  return null;
+}
 
 function load(api: ModAPI): State {
   const state = api.state.get();
@@ -129,12 +194,12 @@ export default function activate(api: ModAPI) {
     if (batch.calls.length < 2 || !batch.calls.every(absorbable)) return null;
     const groups = new Map<string, string[]>();
     for (const call of batch.calls) groups.set(keyOf(call.tool, call.arguments), [...(groups.get(keyOf(call.tool, call.arguments)) ?? []), call.call_id]);
-    const merges: { call_ids: string[]; tool: string; arguments: Json }[] = [];
+    const merges: { call_ids: string[]; tool: string; arguments: Json; success_per_call: boolean }[] = [];
     const keys = [...groups.keys()];
     for (let start = 0; start < keys.length && merges.length < MERGES; start += max()) {
       const ids = new Set(keys.slice(start, start + max()).flatMap(key => groups.get(key) ?? []));
       const calls = batch.calls.filter(call => ids.has(call.call_id));
-      if (calls.length >= 2) merges.push({ call_ids: calls.map(call => call.call_id), tool: 'batch', arguments: { batch: batch.batch_id, calls: calls as unknown as Json } });
+      if (calls.length >= 2) merges.push({ call_ids: calls.map(call => call.call_id), tool: 'batch', arguments: { batch: batch.batch_id, calls: calls as unknown as Json }, success_per_call: true });
     }
     return merges.length ? { merge: merges } : null;
   });
@@ -146,7 +211,7 @@ export default function activate(api: ModAPI) {
   }, input => {
     const request = input as { batch?: string; calls?: Call[] };
     const calls = Array.isArray(request.calls) ? request.calls : [];
-    const out: Record<string, string> = {};
+    const out: Record<string, { output: string; success: boolean }> = {};
     const first = new Map<string, string>();
     const invoked: Record<string, string> = {};
     let deduplicated = 0;
@@ -155,31 +220,31 @@ export default function activate(api: ModAPI) {
     for (const call of calls) {
       if (!isObject(call) || typeof call.call_id !== 'string' || typeof call.tool !== 'string') continue;
       if (!absorbable(call)) {
-        out[call.call_id] = `omd_tool_absorb did not run ${call.tool}: it only runs read-only calls. Call the tool directly.`;
+        out[call.call_id] = { output: `omd_tool_absorb did not run ${call.tool}: it only runs read-only calls. Call the tool directly.`, success: false };
         continue;
       }
       const key = keyOf(call.tool, call.arguments);
       const earlier = first.get(key);
       if (!earlier && first.size >= DISTINCT) {
-        out[call.call_id] = `omd_tool_absorb did not run this ${call.tool} call: a merged step runs at most ${DISTINCT} distinct reads. Call it again on its own.`;
+        out[call.call_id] = { output: `omd_tool_absorb did not run this ${call.tool} call: a merged step runs at most ${DISTINCT} distinct reads. Call it again on its own.`, success: false };
         continue;
       }
       if (earlier) {
-        out[call.call_id] = `Same call as ${earlier} in this response (same tool and arguments, nothing changed in between), so it ran once: see the output for ${earlier}.`;
-        saved += bytes(out[earlier] ?? '');
+        out[call.call_id] = { output: `Same call as ${earlier} in this response (same tool and arguments, nothing changed in between), so it ran once: see the output for ${earlier}.`, success: out[earlier]?.success ?? false };
+        saved += bytes(out[earlier]?.output ?? '');
         deduplicated++;
         continue;
       }
       first.set(key, call.call_id);
       const run = api.host.tryCall('tools.invoke', { tool: call.tool, arguments: call.arguments });
       if (run.ok) {
-        out[call.call_id] = run.value.output;
+        out[call.call_id] = { output: run.value.output, success: run.value.success };
         invoked[call.call_id] = run.value.call_id;
       } else if (run.error.startsWith('host_result_limit')) {
-        out[call.call_id] = `This ${call.tool} call ran, but its output did not fit in the merged result. Call it again on its own to read the output.`;
+        out[call.call_id] = { output: `This ${call.tool} call ran, but its output did not fit in the merged result. Call it again on its own to read the output.`, success: false };
         overflowed++;
       } else {
-        out[call.call_id] = `${call.tool} failed: ${run.error}`;
+        out[call.call_id] = { output: `${call.tool} failed: ${run.error}`, success: false };
       }
     }
     const state = load(api);
@@ -191,10 +256,58 @@ export default function activate(api: ModAPI) {
     return out;
   });
 
+  api.intercept('tool', { match: { tool: 'exec_command' } }, async (e, next) => {
+    const named = next.origin.caller === 'code_mode' && next.origin.cell_id ? sources(e.arguments) : null;
+    if (!named) return next(e);
+    const session = api.host.tryCall('session.info', null);
+    const files = session.ok ? named.map(path => relative(path, session.value.root, session.value.cwd)) : [null];
+    if (files.some(path => path === null)) return next(e);
+    const paths = files as string[];
+    const sizes = api.host.tryCall('workspace.stat', { paths });
+    if (!sizes.ok || paths.some(path => sizes.value.files[path]?.kind !== 'file' || (sizes.value.files[path]?.size ?? Infinity) > HASH_BYTES)) return next(e);
+    const stat = api.host.tryCall('workspace.stat', { paths, hash: true });
+    const revision = stat.ok ? paths.map(path => stat.value.files[path]?.sha256 ?? '') : [];
+    if (!stat.ok || revision.some(sha => !sha)) return next(e);
+    const cell = String(next.origin.cell_id);
+    const thread = fnv(next.origin.thread_id ?? '', 0x811c9dc5);
+    const full = `${keyOf(e.tool, e.arguments)}\n${revision.join(',')}`;
+    const id = `flight:${thread}:${cell}:${fnv(full, 0x811c9dc5)}${fnv(full, 0x9e3779b9)}`;
+    const marker = api.host.tryCall('store.get', { key: `meta:${thread}:cell` });
+    if (marker.ok && marker.value?.value !== cell) {
+      sweep(api, thread, cell);
+      api.host.tryCall('store.put', { key: `meta:${thread}:cell`, value: cell, expected_revision: marker.value?.revision ?? null });
+    }
+    const claim = api.host.tryCall('store.put', { key: id, value: { key: full, status: 'running' }, expected_revision: null });
+    if (!claim.ok) {
+      const shared = share(api, id, full);
+      if (shared) {
+        update(api, reuseKey(thread), counts => ({ reused: Number(counts.reused ?? 0) + 1, saved_bytes: Number(counts.saved_bytes ?? 0) + bytes(shared.output) }));
+        return { output: shared.output, success: true, value: shared.value };
+      }
+      return next(e);
+    }
+    let result;
+    try {
+      result = await next(e);
+    } catch (error) {
+      if (error instanceof Error) api.host.tryCall('store.delete', { key: id, expected_revision: claim.value.revision });
+      throw error;
+    }
+    const size = bytes(result.output) + bytes(JSON.stringify(result.value ?? null));
+    const done = result.success && !result.truncated && result.value !== undefined && finished(result.value) && size <= CELL_BYTES;
+    if (!done || !api.host.tryCall('store.put', { key: id, value: { key: full, status: 'done', output: result.output, value: result.value ?? null }, expected_revision: claim.value.revision }).ok) {
+      api.host.tryCall('store.delete', { key: id, expected_revision: claim.value.revision });
+    }
+    return result;
+  });
+
   api.command('absorb', () => {
     const state = load(api);
+    const session = api.host.tryCall('session.info', null);
+    const counts = session.ok ? api.host.tryCall('store.get', { key: reuseKey(fnv(session.value.thread_id, 0x811c9dc5)) }) : null;
+    const reuse = counts?.ok && counts.value && isObject(counts.value.value) ? counts.value.value : {};
     const lines = [
-      `Tool-call absorption: ${state.batches} merged batches · ${state.absorbed} calls · ${state.deduplicated} duplicate calls run once · ${state.overflowed} outputs too large to merge · about ${state.saved_bytes} bytes not repeated`,
+      `Tool-call absorption: ${state.batches} merged batches · ${state.absorbed} calls · ${state.deduplicated} duplicate calls run once · ${Number(reuse.reused ?? 0)} repeated code-mode reads reused · ${state.overflowed} outputs too large to merge · about ${state.saved_bytes + Number(reuse.saved_bytes ?? 0)} bytes not repeated`,
       ...state.recent.map(merge => `${merge.batch}: ${merge.calls} calls, ${merge.ran} ran · ${Object.entries(merge.invoked).map(([call, run]) => `${call}→${run}`).join(', ')}`),
     ];
     return { display: lines.join('\n') };

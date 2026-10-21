@@ -480,7 +480,7 @@
       "path": "mods/first-party/omd_tool_absorb",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns which parallel read calls merge through the exclusive tool_batch replacement and the merged tool that runs each distinct original once through tools.invoke; installed inactive in OMD+."
+      "why_mod": "Owns which parallel read calls merge through the exclusive tool_batch replacement, the merged tool that runs each distinct original once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_tool_fix",

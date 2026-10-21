@@ -63,7 +63,6 @@ function candidates(schema: Schema, value: string): { value: Json; rule: string 
 
 function repairObject(schema: Schema, value: Schema, path: string): Repair {
   const known = properties(schema);
-  const needed = required(schema);
   const out: [string, Json][] = [];
   const changes: Change[] = [];
   const ambiguous: string[] = [];
@@ -79,10 +78,6 @@ function repairObject(schema: Schema, value: Schema, path: string): Repair {
   for (const [name, member] of Object.entries(value)) {
     const target = renamed.get(name) ?? name;
     if (renamed.has(name)) changes.push({ path: pointer(path, name), rule: 'key_name', from: name, to: target });
-    if (member === null && Object.hasOwn(known, target) && !needed.includes(target) && !valid(known[target], null)) {
-      changes.push({ path: pointer(path, target), rule: 'null_optional', from: null, to: '(omitted)' });
-      continue;
-    }
     const nested = Object.hasOwn(known, target) ? known[target] : isObject(schema.additionalProperties) ? schema.additionalProperties : null;
     const inner = nested === null ? { value: member, changes: [], ambiguous: [] } : repair(nested, member, pointer(path, target));
     out.push([target, inner.value]);

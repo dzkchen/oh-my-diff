@@ -840,7 +840,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
             id: "cache",
             capabilities: &["interception"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true }));\n}\n",
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true, value: { output: 'from cache', exit_code: 0 } }));\n  api.intercept('tool', { match: { tool: 'huge' } }, () => ({ output: 'huge', success: true, value: 'x'.repeat(70000) }));\n  api.intercept('tool', { match: { tool: 'nullish' } }, () => ({ output: 'nullish', success: true, value: null }));\n}\n",
         },
         Package {
             id: "lint",
@@ -892,6 +892,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         arguments: Some(r#"{"path":"a.txt","checked":true}"#),
         success: true,
         text,
+        value: None,
     };
     let ToolInterception::Continue(Some((tool, codex_tools::ToolPayload::Function { arguments }))) =
         mods.intercept_tool(start("call-1", &READ)).await.unwrap()
@@ -920,10 +921,29 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
         ToolInterception::Respond {
             output: "trimmed 10 cached a.txt".into(),
-            success: true
+            success: true,
+            value: Some(json!({"output": "from cache", "exit_code": 0}))
         }
     );
     assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
+    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
+    static NULLISH: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("nullish"));
+    assert!(
+        matches!(
+            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
+            ToolInterception::Continue(Some(_))
+        ),
+        "an answer whose value exceeds 64 KiB is invalid, so the call runs"
+    );
+    assert!(mods.wants_value("call-huge"));
+    assert!(!mods.wants_value("call-none"));
+    mods.replace_tool_output(output("call-huge", "ok")).await;
+    assert!(!mods.wants_value("call-huge"));
+    assert!(matches!(
+        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
+        ToolInterception::Respond { value: None, .. }
+    ));
 
     let source = fixture
         .core
@@ -998,7 +1018,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             id: "retry",
             capabilities: &["interception"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n}\n",
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
         },
         Package {
             id: "probe",
@@ -1063,9 +1083,32 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             arguments: Some(r#"{"path":"a.txt"}"#),
             success: false,
             text: "first attempt failed",
+            value: None,
         })
         .await;
     assert_eq!(replaced.as_deref(), Some("second attempt"));
+    static CODED: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("coded"));
+    assert_eq!(
+        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    let structured = json!({"exit_code": 0, "output": "x"});
+    let seen = mods
+        .replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "call-coded",
+            tool_name: &CODED,
+            arguments: Some(r#"{"path":"a.txt"}"#),
+            success: true,
+            text: "Exit code: 0\nOutput:\nx",
+            value: Some(&structured),
+        })
+        .await;
+    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
     assert_eq!(
         invoker.0.lock().unwrap().clone(),
         vec![(
@@ -1095,7 +1138,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         probed,
         ToolInterception::Respond {
             output: "ask mod-probe-0 second attempt".into(),
-            success: true
+            success: true,
+            value: None
         }
     );
     assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
@@ -3003,6 +3047,7 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             arguments: None,
             success: true,
             text: r#"{"agent_id":"child","nickname":null}"#,
+            value: None,
         })
         .await,
         None

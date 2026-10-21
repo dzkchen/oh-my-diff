@@ -2082,6 +2082,10 @@ shape.
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
 - Output beyond 48 KiB arrives truncated with `truncated: true`.
+- For a code-mode call, `next` also resolves with `value`, the structured result the cell receives (omitted above
+  64 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
+  ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
   `tool_result` and in turn evidence, and the answer cannot attest that a file changed or a process ran.
 - Input handlers cannot answer for the engine, so an outer handler cannot bypass an inner required one.
@@ -2212,7 +2216,10 @@ added after any interceptor result at any output size.
 #### `replace('tool_batch')`
 
 `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of one response into one call of a tool the
-mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id.
+mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id: the
+merged tool returns an object keyed by call id whose values are the output text. A merge with
+`success_per_call: true` (`tool_batch_success_v1`) instead reads each value as `{output, success}`, giving that call
+its own success flag.
 
 #### `intercept('tool_specs')`
 
