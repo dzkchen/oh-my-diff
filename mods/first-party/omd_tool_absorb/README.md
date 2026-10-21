@@ -35,7 +35,8 @@ and which host call ran each read.
   this mod.
 - In a code-mode cell it reuses only `cat`, `head`, `tail`, `wc` or `sed -n` on named files inside the repository,
   each at most 1 MB, whose read finished with exit code 0 and at most 16 KB of output, only when every file's
-  SHA-256 is the same before and after the read, and only within the same cell. The cell gets the same structured
+  SHA-256 is the same before and after the read, and only within the same cell of the session's own thread (not in
+  sub-agents). The cell gets the same structured
   result the first read got, including its chunk ID and wall time. An identical read started while the first is
   still running, such as inside one `Promise.all`, waits up to about 2.4 seconds for it and runs on its own after
   that.
@@ -50,7 +51,8 @@ and which host call ran each read.
   directly. It saves repeated work and context, not time.
 - A merged step holds about 128 KB of output and at most 8 distinct reads. A read whose output doesn't fit still
   runs, and the model is told to run it again on its own.
-- A duplicate read is answered with a pointer to the first one's output rather than a second copy.
+- A duplicate read is answered with a pointer to the first one's output rather than a second copy; a duplicate of a
+  read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode
   already runs a cell's reads as one step. Models that work through code mode, as current GPT models do, get only
   the code-mode reuse, which added about 14 ms to each code-mode file read it checks in our runs.

@@ -42,7 +42,7 @@ test('a batch with any write, shell feature or unknown argument stays native', (
   for (const other of [
     exec('tail -1f log'), exec('tail --fol log'), exec('cat'), exec('cat -'), exec('cat /dev/zero'), exec('grep x'), exec('rg x'), exec('git blame --contents - f'),
     exec('git diff --ext x'), exec('git -c core.pager=x log'), exec('git log --output=x'), exec('ls --color=always'), exec('cat a', { shell: '/bin/zsh' }), exec('cat a', { login: true }),
-    exec('nl a'), exec('sed -n 1p'), exec('rg --pre-glob x y .'),
+    exec('nl a'), exec('sed -n 1p'), exec('rg --pre-glob x y .'), exec('rg --file=/dev/stdin x src'), exec('grep --file=- x src'),
   ]) assert.equal(batch(read, other), null, JSON.stringify(other));
   assert.equal(batch(read), null);
   for (const cmd of ['head -n 20 a', 'head -5 a', 'tail -n +5 a', 'wc -l a', 'git log --oneline -n 5', 'git diff --stat -- src', 'git status --short',
@@ -61,7 +61,7 @@ test('the merged step runs each read once through the host, in order, keeping ea
       return { call_id: `mod-omd_tool_absorb-${invoked.length}`, output: `Exit code: ${args.cmd === 'cat missing' ? 1 : 0}\nOutput:\n${args.cmd}`, success: true, truncated: false };
     },
   };
-  const calls = [exec('cat a'), exec('cat missing'), exec('cat big'), exec('cat a'), exec('cat denied'), exec('rm x')]
+  const calls = [exec('cat a'), exec('cat missing'), exec('cat big'), exec('cat a'), exec('cat denied'), exec('rm x'), exec('cat big')]
     .map((call, index) => ({ call_id: `c${index}`, ...call }));
   const { value, state } = run('tool', 'batch', { batch: 'b1', calls }, { host });
   assert.deepEqual(invoked.map(([, args]) => args.cmd), ['cat a', 'cat missing', 'cat big', 'cat denied']);
@@ -73,9 +73,10 @@ test('the merged step runs each read once through the host, in order, keeping ea
   assert.deepEqual(value.c4, { output: 'exec_command failed: mod_tool_denied: guard: no', success: false });
   assert.match(value.c5.output, /did not run exec_command: it only runs read-only calls/);
   assert.deepEqual([value.c2.success, value.c5.success], [false, false]);
-  assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5']);
+  assert.deepEqual(value.c6, value.c2, 'a duplicate of a read that did not fit gets its note, not a pointer');
+  assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']);
   assert.deepEqual(state.recent[0].invoked, { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2' });
-  assert.deepEqual([state.batches, state.absorbed, state.deduplicated, state.overflowed], [1, 6, 1, 1]);
+  assert.deepEqual([state.batches, state.absorbed, state.deduplicated, state.overflowed], [1, 7, 1, 1]);
   const many = Array.from({ length: 10 }, (_, index) => ({ call_id: `d${index}`, ...exec(`cat f${index}`) }));
   const capped = run('tool', 'batch', { batch: 'b2', calls: many }, { host: { 'tools.invoke': () => ({ call_id: 'x', output: 'ok', success: true, truncated: false }) } });
   assert.equal(capped.calls.length, 8);
@@ -109,12 +110,12 @@ function memoryStore() {
         entries.delete(key);
         return { deleted: true };
       },
-      'store.list': ({ prefix: start }) => ({ keys: [...entries].filter(([key]) => key.startsWith(start ?? '')).map(([key, entry]) => ({ key, revision: entry.revision, bytes: 1, provenance: entry.provenance })), cursor: null, generation: 1 }),
+      'store.list': ({ prefix: start, limit = 100 }) => ({ keys: [...entries].filter(([key]) => key.startsWith(start ?? '')).slice(0, limit).map(([key, entry]) => ({ key, revision: entry.revision, bytes: 1, provenance: entry.provenance })), cursor: null, generation: 1 }),
     },
   };
 }
 
-function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(64), shaAfter = sha, next = () => native, state = null, cwd = '/repo', size = 1, store = memoryStore(), onSleep = () => {}, sleep = true } = {}) {
+function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(64), shaAfter = sha, next = () => native, state = null, cwd = '/repo', size = 1, store = memoryStore(), onSleep = () => {}, sleep = true, originThread = 't' } = {}) {
   let hashed = 0;
   const input = { ...call, call_id: 'k', thread_id: 't', agent_id: null, schema: null, raw_arguments: JSON.stringify(call.arguments), batch: null };
   const host = {
@@ -124,7 +125,7 @@ function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(
     'time.sleep': ({ ms }) => { if (!sleep) throw new Error('time_sleep_unavailable'); onSleep(); return { slept_ms: ms, cancelled: false }; },
     'continuation.next': () => ({ result: next(), trace: [] }),
   };
-  const origin = { caller, cell_id: cellId, thread_id: 't' };
+  const origin = { caller, cell_id: cellId, thread_id: originThread };
   const out = run('intercept', '0', { surface: 'tool', input, original: input, origin }, { state, host });
   return { ...out, store, ran: out.calls.some(entry => entry.operation === 'continuation.next'), stats: out.calls.filter(entry => entry.operation === 'workspace.stat' && entry.arguments.hash).map(entry => entry.arguments).slice(0, 1) };
 }
@@ -203,6 +204,13 @@ test('a twin that waits too long runs itself, and failed or unfinished reads are
   }
 });
 
+test('reads from another thread, such as a sub-agent, are never shared', () => {
+  const out = cell(read, { originThread: 'sub' });
+  assert.ok(out.ran);
+  assert.deepEqual(out.stats, []);
+  assert.equal(out.store.entries.size, 0);
+});
+
 test('a new cell sweeps this thread\'s older cells and other threads\' stale entries, and a turn end clears this thread', () => {
   const store = memoryStore();
   store.entries.set(`meta:${thread}:cell`, store.record(hash('cell-0')));
@@ -215,6 +223,7 @@ test('a new cell sweeps this thread\'s older cells and other threads\' stale ent
   assert.deepEqual([...store.entries.keys()].filter(key => !key.startsWith(flightOf())).sort(),
     [`meta:${thread}:cell`, 'flight:00000000:cell-9:z', 'meta:00000001:reuse'].sort());
   assert.equal(store.entries.get(`meta:${thread}:cell`).value, hash('cell-1'));
+  for (let index = 0; index < 70; index++) store.entries.set(`${flightOf()}${index}`, store.record({ key: `r${index}`, status: 'done', output: '', value: null }));
   run('turn_end', '', { turn_id: 'turn-1', outcome: 'completed' }, { host: {
     ...store.ops,
     'session.info': () => ({ thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),

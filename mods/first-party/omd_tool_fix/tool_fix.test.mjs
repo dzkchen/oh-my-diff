@@ -139,6 +139,8 @@ test('a repeated ambiguous or host-rejected call stops being corrected after two
   }
   assert.equal(host.rejected, 2);
   assert.deepEqual(call({ cmd: 'ls', tty: 'true' }, { state: host }).next.arguments, { cmd: 'ls', tty: 'true' });
+  const quoted = call({ cmd: 'ls', tty: 'true' }, { inner: { output: 'Exit code: 1\nOutput:\nfound tool_arguments_invalid in src', success: false } }).state;
+  assert.deepEqual([quoted.failed, quoted.rejected], [1, 0]);
 });
 
 test('broken JSON is repaired only for trailing commas and a code fence', () => {

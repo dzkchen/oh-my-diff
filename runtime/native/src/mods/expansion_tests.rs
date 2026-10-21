@@ -1109,6 +1109,30 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         })
         .await;
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
+    let long = "y".repeat(48 * 1024 - 8);
+    assert_eq!(
+        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    let omitted = mods
+        .replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "call-coded-long",
+            tool_name: &CODED,
+            arguments: Some(r#"{"path":"a.txt"}"#),
+            success: true,
+            text: &long,
+            value: Some(&structured),
+        })
+        .await;
+    assert_eq!(
+        omitted.as_deref(),
+        Some("null"),
+        "a value that would push one result past 48 KiB is left out"
+    );
     assert_eq!(
         invoker.0.lock().unwrap().clone(),
         vec![(

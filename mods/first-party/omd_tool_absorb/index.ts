@@ -107,7 +107,7 @@ function readCommand(arguments_: Json): { program: string; operands: string[] } 
       if (spec.valued?.includes(word)) {
         const value = args[++index];
         if (value === undefined || unsafe(value)) return null;
-      } else if (!spec.flags.test(word)) {
+      } else if (!spec.flags.test(word) || (word.includes('=') && unsafe(word.slice(word.indexOf('=') + 1)))) {
         return null;
       }
     } else if (unsafe(word)) {
@@ -146,13 +146,24 @@ const hash = (text: string) => `${fnv(text, 0x811c9dc5)}${fnv(text, 0x9e3779b9)}
 
 function sweep(api: ModAPI, thread: string, cell: string) {
   const now = Date.now();
-  const stale = (family: string, age: number, keep: (key: string) => boolean) => {
-    const listed = api.host.tryCall('store.list', { prefix: family, limit: LIST });
-    return listed.ok ? listed.value.keys.filter(entry => !keep(entry.key) && (entry.key.startsWith(`${family}${thread}:`) || now - entry.provenance.at > age)) : [];
+  const listed = (prefix: string, drop: (entry: { key: string; provenance: { at: number } }) => boolean) => {
+    const got = api.host.tryCall('store.list', { prefix, limit: LIST });
+    return got.ok ? got.value.keys.filter(drop) : [];
   };
-  [...stale('flight:', STALE_MS, key => key.startsWith(`flight:${thread}:${cell}:`)), ...stale('meta:', META_STALE_MS, key => key.startsWith(`meta:${thread}:`))]
-    .slice(0, SWEEP)
-    .forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
+  [
+    ...listed(`flight:${thread}:`, entry => !entry.key.startsWith(`flight:${thread}:${cell}:`)),
+    ...listed('flight:', entry => !entry.key.startsWith(`flight:${thread}:`) && now - entry.provenance.at > STALE_MS),
+    ...listed('meta:', entry => !entry.key.startsWith(`meta:${thread}:`) && now - entry.provenance.at > META_STALE_MS),
+  ].slice(0, SWEEP).forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
+}
+
+function clear(api: ModAPI, thread: string) {
+  for (let round = 0; round < 3; round++) {
+    const listed = api.host.tryCall('store.list', { prefix: `flight:${thread}:`, limit: LIST });
+    if (!listed.ok) return;
+    listed.value.keys.forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
+    if (listed.value.keys.length < LIST) return;
+  }
 }
 
 function update(api: ModAPI, key: string, change: (value: Record<string, Json>) => Record<string, Json>) {
@@ -191,16 +202,18 @@ function load(api: ModAPI): State {
 const save = (api: ModAPI, state: State) => api.state.set(state as unknown as Json);
 
 export default function activate(api: ModAPI) {
-  const max = () => Math.min(8, Math.max(2, Number(api.settings.max_calls) || 4));
-
   api.replace('tool_batch', batch => {
     if (batch.calls.length < 2 || !batch.calls.every(absorbable)) return null;
+    const size = Math.min(8, Math.max(2, Number(api.settings.max_calls) || 4));
     const groups = new Map<string, string[]>();
-    for (const call of batch.calls) groups.set(keyOf(call.tool, call.arguments), [...(groups.get(keyOf(call.tool, call.arguments)) ?? []), call.call_id]);
+    for (const call of batch.calls) {
+      const key = keyOf(call.tool, call.arguments);
+      groups.set(key, [...(groups.get(key) ?? []), call.call_id]);
+    }
     const merges: { call_ids: string[]; tool: string; arguments: Json; success_per_call: boolean }[] = [];
     const keys = [...groups.keys()];
-    for (let start = 0; start < keys.length && merges.length < MERGES; start += max()) {
-      const ids = new Set(keys.slice(start, start + max()).flatMap(key => groups.get(key) ?? []));
+    for (let start = 0; start < keys.length && merges.length < MERGES; start += size) {
+      const ids = new Set(keys.slice(start, start + size).flatMap(key => groups.get(key) ?? []));
       const calls = batch.calls.filter(call => ids.has(call.call_id));
       if (calls.length >= 2) merges.push({ call_ids: calls.map(call => call.call_id), tool: 'batch', arguments: { batch: batch.batch_id, calls: calls as unknown as Json }, success_per_call: true });
     }
@@ -232,9 +245,13 @@ export default function activate(api: ModAPI) {
         out[call.call_id] = { output: `omd_tool_absorb did not run this ${call.tool} call: a merged step runs at most ${DISTINCT} distinct reads. Call it again on its own.`, success: false };
         continue;
       }
+      if (earlier && !invoked[earlier]) {
+        out[call.call_id] = out[earlier];
+        continue;
+      }
       if (earlier) {
-        out[call.call_id] = { output: `Same call as ${earlier} in this response (same tool and arguments, nothing changed in between), so it ran once: see the output for ${earlier}.`, success: out[earlier]?.success ?? false };
-        saved += bytes(out[earlier]?.output ?? '');
+        out[call.call_id] = { output: `Same call as ${earlier} in this response (same tool and arguments, nothing changed in between), so it ran once: see the output for ${earlier}.`, success: out[earlier].success };
+        saved += bytes(out[earlier].output);
         deduplicated++;
         continue;
       }
@@ -260,10 +277,11 @@ export default function activate(api: ModAPI) {
   });
 
   api.intercept('tool', { match: { tool: 'exec_command' } }, async (e, next) => {
-    const named = next.origin.caller === 'code_mode' && next.origin.cell_id ? sources(e.arguments) : null;
+    const named = next.origin.caller === 'code_mode' && next.origin.cell_id && next.origin.thread_id ? sources(e.arguments) : null;
     if (!named) return next(e);
     const session = api.host.tryCall('session.info', null);
-    const files = session.ok ? named.map(path => relative(path, session.value.root, session.value.cwd)) : [null];
+    if (!session.ok || session.value.thread_id !== next.origin.thread_id) return next(e);
+    const files = named.map(path => relative(path, session.value.root, session.value.cwd));
     if (files.some(path => path === null)) return next(e);
     const paths = files as string[];
     const sizes = api.host.tryCall('workspace.stat', { paths });
@@ -271,9 +289,8 @@ export default function activate(api: ModAPI) {
     const stat = api.host.tryCall('workspace.stat', { paths, hash: true });
     const revision = stat.ok ? paths.map(path => stat.value.files[path]?.sha256 ?? '') : [];
     if (!stat.ok || revision.some(sha => !sha)) return next(e);
-    if (!next.origin.thread_id) return next(e);
     const cell = hash(String(next.origin.cell_id));
-    const thread = hash(next.origin.thread_id);
+    const thread = hash(session.value.thread_id);
     const full = `${keyOf(e.tool, e.arguments)}\n${revision.join(',')}`;
     const id = `flight:${thread}:${cell}:${hash(full)}`;
     const claim = api.host.tryCall('store.put', { key: id, value: { key: full, status: 'running' }, expected_revision: null });
@@ -311,9 +328,7 @@ export default function activate(api: ModAPI) {
 
   api.on('turn_end', () => {
     const session = api.host.tryCall('session.info', null);
-    if (!session.ok) return;
-    const listed = api.host.tryCall('store.list', { prefix: `flight:${hash(session.value.thread_id)}:`, limit: LIST });
-    if (listed.ok) listed.value.keys.forEach(entry => api.host.tryCall('store.delete', { key: entry.key, expected_revision: entry.revision }));
+    if (session.ok) clear(api, hash(session.value.thread_id));
   });
 
   api.command('absorb', () => {

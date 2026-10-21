@@ -411,11 +411,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "5d35abcd810161da13906aaaf260c48c2a7dbcfe02bd9fdbebf8f1c79bcb7223",
+        "index.ts": "742ec617aec1a02f0676c121abb0cdb86e445a17d3fad5cfb18461ac6f1a83bc",
         "mod.json": "bf78b12a72df6a1865cc0956fdc3e4f5da9820a420912b80efab769ab0c5e8d3"
       },
       "id": "omd_tool_absorb",
-      "package_sha256": "95026ba70205b275353be8cab45d7cf3aef05ccb3f432a6e0496aa2fef1d6b41",
+      "package_sha256": "fe7aef2afa0068bfb061fa0048adcde0462e60bfd574005e3f493abd2ae8167b",
       "source": "mods/first-party/omd_tool_absorb",
       "version": "1.0.0"
     },
@@ -429,11 +429,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "9e9c8320359157040cef6a2227cbba0455dd39faaf275c9311da73f15e018d0f",
+        "index.ts": "386b1ed35939973882c715459f6c2cdf92f3954dbbb097e5bc200968720ec93c",
         "mod.json": "75255a451ce54843a95f61a9854725d78f55a5eebe2ad8b3ec1e5ff981ad4536"
       },
       "id": "omd_tool_fix",
-      "package_sha256": "5f95619ea5a67c4a2092c782dff569f17886591d9d00c02bb4caf79d1a67038a",
+      "package_sha256": "059fdf968b08086d6d2fd1523e165744ac5f2bcc31909dc9fcdec3b527a314ae",
       "source": "mods/first-party/omd_tool_fix",
       "version": "1.0.0"
     },

@@ -72560,10 +72560,10 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48866eb356bd6b67470505fae4e8848afb6b4d66
+index 0000000000000000000000000000000000000000..0273ff51ab7dcd6e6bfc83ecec0652731ec6b545
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,228 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -72648,10 +72648,13 @@ index 0000000000000000000000000000000000000000..48866eb356bd6b67470505fae4e8848a
 +                self.views
 +                    .diagnostic(&self.host, "tool_output", Some(message));
 +            };
-+            let mut executed = json!({"output": bounded(input.text), "success": input.success,
++            let head = bounded(input.text);
++            let mut executed = json!({"output": head, "success": input.success,
 +                "truncated": input.text.len() > HEAD_BYTES});
 +            if let Some(value) = input.value
-+                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 32_768)
++                && serde_json::to_vec(value).is_ok_and(|bytes| {
++                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
++                })
 +            {
 +                executed["value"] = value.clone();
 +            }
@@ -73003,10 +73006,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd7b0106a52a11ac333ec697045aac450c6ce735
+index 0000000000000000000000000000000000000000..70b5d02e2a21ae4149f3faf6335005d63c8c1f01
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4230 @@
+@@ -0,0 +1,4254 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -74118,6 +74121,30 @@ index 0000000000000000000000000000000000000000..fd7b0106a52a11ac333ec697045aac45
 +        })
 +        .await;
 +    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
++    let long = "y".repeat(48 * 1024 - 8);
++    assert_eq!(
++        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let omitted = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-coded-long",
++            tool_name: &CODED,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: true,
++            text: &long,
++            value: Some(&structured),
++        })
++        .await;
++    assert_eq!(
++        omitted.as_deref(),
++        Some("null"),
++        "a value that would push one result past 48 KiB is left out"
++    );
 +    assert_eq!(
 +        invoker.0.lock().unwrap().clone(),
 +        vec![(

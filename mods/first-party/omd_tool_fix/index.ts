@@ -200,7 +200,7 @@ export default function activate(api: ModAPI) {
     }
     const result = await next({ ...e, arguments: fix.value });
     const evidence = record(api, { stage: 'schema', tool: e.tool, call_id: e.call_id, original: e.arguments, raw: e.raw_arguments, corrected: fix.value, changes: fix.changes as unknown as Json }, e.tool);
-    const outcome = result.success ? 'ran' : /tool_arguments_invalid/.test(result.output) ? 'rejected' : 'failed';
+    const outcome = result.success ? 'ran' : /^tool_arguments_invalid: /.test(result.output) ? 'rejected' : 'failed';
     const after = load(api);
     save(api, {
       ...after, corrected: after.corrected + 1, [outcome]: after[outcome] + 1,

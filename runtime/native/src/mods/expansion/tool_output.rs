@@ -82,10 +82,13 @@ impl ToolOutputContributor for Mods {
                 self.views
                     .diagnostic(&self.host, "tool_output", Some(message));
             };
-            let mut executed = json!({"output": bounded(input.text), "success": input.success,
+            let head = bounded(input.text);
+            let mut executed = json!({"output": head, "success": input.success,
                 "truncated": input.text.len() > HEAD_BYTES});
             if let Some(value) = input.value
-                && serde_json::to_vec(value).is_ok_and(|bytes| bytes.len() <= 32_768)
+                && serde_json::to_vec(value).is_ok_and(|bytes| {
+                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
+                })
             {
                 executed["value"] = value.clone();
             }

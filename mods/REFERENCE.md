@@ -2083,7 +2083,7 @@ shape.
   batched calls all pass through the same chain with their own call IDs.
 - Output beyond 48 KiB arrives truncated with `truncated: true`.
 - For a code-mode call, `next` also resolves with `value`, the structured result the cell receives (omitted above
-  32 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  32 KiB or when it and `output` together exceed 48 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
   `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
   ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
