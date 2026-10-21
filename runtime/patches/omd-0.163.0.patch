@@ -53907,10 +53907,10 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aae4482e040529e3264f90cc72b79b07e53c113b
+index 0000000000000000000000000000000000000000..b927e3f10673e7e0a1d1ae95f2e26c13badeb410
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1252 @@
+@@ -0,0 +1,1259 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -55143,10 +55143,17 @@ index 0000000000000000000000000000000000000000..aae4482e040529e3264f90cc72b79b07
 +        mod_id: "fixture_helper".into(),
 +    };
 +    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
-+    assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
++    assert_eq!(
++        codex_omd::plan_routes::add(&store, &other, &plan).unwrap(),
++        name
++    );
 +    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
 +    let route = config
-+        .route(&name, crate::config::RouteRole::Worker, Some("fixture_helper"))
++        .route(
++            &name,
++            crate::config::RouteRole::Worker,
++            Some("fixture_helper"),
++        )
 +        .unwrap();
 +    let grant = route.grant.as_ref().unwrap();
 +    let allowed = |repository: &std::path::Path| {
@@ -104276,10 +104283,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e5882f88a52
+index 0000000000000000000000000000000000000000..022ce5aa7297c8e967a1d984e4fa25e3d3ec467f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6178 @@
+@@ -0,0 +1,6174 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104410,8 +104417,8 @@ index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e58
 +pub use package_manager::ModPackageSource;
 +pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
-+pub(crate) use store::lock as store_lock;
 +pub use store::Trust;
++pub(crate) use store::lock as store_lock;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
@@ -110136,11 +110143,7 @@ index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e58
 +                    .cloned()
 +                    .collect(),
 +                exec_environment: m.package.exec_environment.clone(),
-+                os_access: m
-+                    .package
-+                    .os_access
-+                    .clone()
-+                    .filter(|_| current),
++                os_access: m.package.os_access.clone().filter(|_| current),
 +                approves: m.package.approves.clone().filter(|_| current),
 +                http_access: m.package.http_access.clone().filter(|_| current),
 +                fs_access: m.package.fs_access.clone().filter(|_| current),
@@ -126123,10 +126126,10 @@ index 0000000000000000000000000000000000000000..2b5cb548aa42907b37e9f841412dcaec
 +mod tests;
 diff --git a/codex-rs/omd/src/plan_routes_tests.rs b/codex-rs/omd/src/plan_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d60ee130e3dd34b3ed6dfdbe71570109f016ad8f
+index 0000000000000000000000000000000000000000..693d0396c5098e16d6ad8714efb37d524e56a001
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes_tests.rs
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,89 @@
 +use super::*;
 +
 +fn plan(model: &str, mod_id: &str) -> PlanRoute {
@@ -126193,8 +126196,18 @@ index 0000000000000000000000000000000000000000..d60ee130e3dd34b3ed6dfdbe71570109
 +fn a_plan_route_never_replaces_another_route_or_model_of_the_same_name() {
 +    let temp = tempfile::tempdir().unwrap();
 +    let store = temp.path().canonicalize().unwrap();
-+    add(&store, Path::new("/one"), &plan("gpt-6.1", "fixture_helper")).unwrap();
-+    let error = add(&store, Path::new("/one"), &plan("gpt-6-1", "fixture_helper")).unwrap_err();
++    add(
++        &store,
++        Path::new("/one"),
++        &plan("gpt-6.1", "fixture_helper"),
++    )
++    .unwrap();
++    let error = add(
++        &store,
++        Path::new("/one"),
++        &plan("gpt-6-1", "fixture_helper"),
++    )
++    .unwrap_err();
 +    assert_eq!(error.to_string(), "plan_route_name_taken");
 +    std::fs::write(
 +        store.join("host.json"),
@@ -146169,10 +146182,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..85167c3d57ec72ff0a1fe81f3979a8e0f8664c0d
+index 0000000000000000000000000000000000000000..5d372f273b1efd2205910e0a544ad189e19f79c8
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2137 @@
+@@ -0,0 +1,2136 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -148040,8 +148053,7 @@ index 0000000000000000000000000000000000000000..85167c3d57ec72ff0a1fe81f3979a8e0
 +        std::fs::create_dir(&repository).unwrap();
 +        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "capture_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["composer"]})).unwrap()).unwrap();
 +        std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+        let store = codex_omd::ModStore::create(root.join("store"))
-+        .unwrap();
++        let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +        let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +        store
 +            .trust(
@@ -151039,10 +151051,10 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a221fc42d2836415cb7c4c0c3fc5f2e0e577224
+index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f22a85dde
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,70 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -151058,8 +151070,7 @@ index 0000000000000000000000000000000000000000..4a221fc42d2836415cb7c4c0c3fc5f2e
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "toggle_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": []})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
 +    let source = ModStore::inspect_package(&package).unwrap()["sha256"]
 +        .as_str()
 +        .unwrap()
@@ -158399,10 +158410,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478d383ddf7
+index 0000000000000000000000000000000000000000..46066754d10b490aed4128ed18394ca50b36f51e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,611 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -158419,8 +158430,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let data = root.join("store");
-+    let store = codex_omd::ModStore::create(data.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&data);
 +    let package = root.join("context");
 +    std::fs::create_dir(&package).unwrap();
@@ -158487,8 +158497,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let root = tempfile::tempdir().unwrap();
 +    let repository = root.path().canonicalize().unwrap();
 +    let store_path = repository.join("store");
-+    codex_omd::ModStore::create(store_path.clone())
-+    .unwrap();
++    codex_omd::ModStore::create(store_path.clone()).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    let previous = HOST.lock().unwrap().take();
 +    let runtime = shared_host().unwrap();
@@ -158961,8 +158970,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store_path = root.join("store");
-+    let store = codex_omd::ModStore::create(store_path.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(store_path.clone()).unwrap();
 +    let package = root.join("guard");
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(
@@ -160163,10 +160171,10 @@ index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede430d094e44
+index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608bf97b902
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,993 @@
+@@ -0,0 +1,990 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -160180,8 +160188,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "surface_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["packages"]})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = codex_omd::ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +    let source = inspected["sha256"].as_str().unwrap().to_owned();
 +    store
@@ -160544,8 +160551,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"m","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["sessions"]})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = codex_omd::ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +    let source = inspected["sha256"].as_str().unwrap();
 +    store
@@ -161078,8 +161084,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    let directory = tempfile::tempdir().unwrap();
 +    let root = directory.path().canonicalize().unwrap();
 +    let data = root.join("store");
-+    let store = codex_omd::ModStore::create(data.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
 +    for id in ["owner", "other"] {
 +        let package = root.join(id);
 +        std::fs::create_dir(&package).unwrap();
