@@ -397,6 +397,42 @@
       "source": "mods/first-party/omd_statusline",
       "version": "1.0.0"
     },
+    "omd_tool_absorb": {
+      "api": "1.0.0",
+      "capabilities": [
+        "interception",
+        "tools",
+        "store",
+        "commands"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "483b987d5a62861a8b4dd08b1551e83ae01c31853479053769ba0a7ae1e434e2",
+        "mod.json": "1adf3867b835f3a04348faa74d940e8af1d023ffedcac1c5a3775aa8410a4bf9"
+      },
+      "id": "omd_tool_absorb",
+      "package_sha256": "d966f4655ffcb780bf398555b54f0af04538e1d1b318fdb734540264c6efc7f3",
+      "source": "mods/first-party/omd_tool_absorb",
+      "version": "1.0.0"
+    },
+    "omd_tool_fix": {
+      "api": "1.0.0",
+      "capabilities": [
+        "interception",
+        "middleware",
+        "store",
+        "commands"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "71a353c31bfcc4abb524395a26645614c0bda98bb1f5dda1f44a4957afb7e7f7",
+        "mod.json": "75255a451ce54843a95f61a9854725d78f55a5eebe2ad8b3ec1e5ff981ad4536"
+      },
+      "id": "omd_tool_fix",
+      "package_sha256": "5f3f52817158bc6bd3d4bf9137a4dfacd972481022c4e4c430db5a9742cba79d",
+      "source": "mods/first-party/omd_tool_fix",
+      "version": "1.0.0"
+    },
     "omd_tool_lines": {
       "api": "1.0.0",
       "capabilities": [

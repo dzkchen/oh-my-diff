@@ -53,6 +53,8 @@ OMD Core includes only the first three.
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
+| `omd_tool_absorb` | Runs a response's parallel reads as one step and repeated reads once; `/absorb` | |
+| `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
