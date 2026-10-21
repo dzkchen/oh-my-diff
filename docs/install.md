@@ -42,7 +42,7 @@ Rerun the install command with the other `--profile`. Each profile keeps its own
 ## Uninstall
 
 ```sh
-sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall
+omd uninstall
 ```
 
 Removes OMD and its Codex plugins and restores commands it moved aside. Codex data stays. If you deployed the
@@ -69,5 +69,6 @@ delete it to remove them.
   `/update`.
 - **Locations:** `--root DIR` (default `~/.local/share/oh-my-diff`), `--bin-dir DIR` (default `~/.local/bin`). An
   existing command there becomes `NAME.before-omd` and comes back on uninstall.
-- **Without `omd`:** the uninstall command also takes `status` and `rollback`.
+- **Without `omd`:** `sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall` (the script also
+  takes `status` and `rollback`).
 - **From source:** [CONTRIBUTING.md](../CONTRIBUTING.md).
