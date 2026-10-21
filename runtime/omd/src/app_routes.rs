@@ -111,6 +111,16 @@ pub fn routes() -> Value {
     )
 }
 
+static THREAD_PROJECTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn bind_thread_projects() {
+    THREAD_PROJECTS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn thread_projects() -> bool {
+    THREAD_PROJECTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn unscoped_directory(directory: &Path) -> bool {
     directory.parent().is_none()
         || std::env::var_os("HOME")

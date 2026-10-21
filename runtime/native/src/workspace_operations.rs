@@ -95,7 +95,8 @@ impl WorkspaceAuthority {
         if environment.len() != 1
             || environment[0].environment_id != "local"
             || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
-            || config.cwd.as_path() != host.repository
+            || config.cwd.as_path().canonicalize().ok().as_deref()
+                != Some(host.repository.as_path())
         {
             return Err("workspace_operation_requires_local_repository".into());
         }
@@ -439,7 +440,7 @@ impl WorkspaceAuthority {
             .map_err(|error| error.to_string())?
             .config()
             .await;
-        if config.cwd.as_path() != host.repository {
+        if config.cwd.as_path().canonicalize().ok().as_deref() != Some(host.repository.as_path()) {
             return Err("workspace_operation_requires_local_repository".into());
         }
         let current = lead

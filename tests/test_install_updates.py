@@ -455,6 +455,62 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
 
+    def test_codex_app_step_points_the_app_and_editors_at_omd_and_reverts(self):
+        home = self.root / "home"
+        code = home / "Library/Application Support/Code/User/settings.json"
+        cursor = home / "Library/Application Support/Cursor/User/settings.json"
+        windsurf = home / "Library/Application Support/Windsurf/User/settings.json"
+        dotfile = home / "dotfiles/code.json"
+        for path, text in ((dotfile, '{"editor.tabSize": 2, "title": "café"}'), (cursor, '{\n  // mine\n}'),
+                           (windsurf, '{"chatgpt.cliExecutable": "/opt/codex"}')):
+            path.parent.mkdir(parents=True)
+            path.write_text(text)
+        code.parent.mkdir(parents=True)
+        code.symlink_to(dotfile)
+        (self.current / "bin").mkdir()
+        (self.current / "bin/codex").write_text('#!/bin/sh\npwd\n')
+        (self.current / "bin/codex").chmod(0o755)
+        launchd = {}
+
+        def run(arguments, **_):
+            command, *rest = [str(item) for item in arguments[1:]]
+            if command == "setenv":
+                launchd[rest[0]] = rest[1]
+            elif command == "unsetenv":
+                launchd.pop(rest[0])
+            return launchd.get(rest[0], "") + "\n" if command == "getenv" else ""
+
+        self.module.run = run
+        wrapper = self.root / "codex-app/codex"
+        agent = home / "Library/LaunchAgents/dev.ohmydiff.codex-app.plist"
+        with patch.dict(os.environ, {"HOME": str(home)}), patch("builtins.print"):
+            enable = types.SimpleNamespace(action="enable", json=False)
+            with self.assertRaisesRegex(ValueError, "OMD\\+"):
+                self.module.codex_app(enable, self.root, self.current)
+            receipt = json.loads((self.current / "receipt.json").read_text())
+            (self.current / "receipt.json").write_text(json.dumps(receipt | {"profile": "full"}))
+            self.module.codex_app(enable, self.root, self.current)
+            self.assertEqual(launchd, {"CODEX_CLI_PATH": str(wrapper)})
+            self.assertEqual(self.module.plistlib.loads(agent.read_bytes())["ProgramArguments"][-2:], ["CODEX_CLI_PATH", str(wrapper)])
+            self.assertTrue(code.is_symlink())
+            self.assertEqual(json.loads(dotfile.read_text()), {"editor.tabSize": 2, "title": "café", "chatgpt.cliExecutable": str(wrapper)})
+            self.assertIn("café", dotfile.read_text())
+            self.assertIn("// mine", cursor.read_text())
+            self.assertEqual(json.loads(windsurf.read_text()), {"chatgpt.cliExecutable": "/opt/codex"})
+            self.assertTrue(self.module.codex_app_enabled(self.root))
+            base = wrapper.parent / "cwd"
+            for argv, cwd, expected in ((["-c", "a=b", "app-server"], "/", base), (["app-server"], home, base),
+                                        (["exec", "app-server"], "/", Path("/")), (["app-server"], self.root, self.root)):
+                shown = subprocess.run([wrapper, *argv], cwd=cwd, capture_output=True, text=True, check=True).stdout
+                self.assertEqual(Path(shown.strip()), expected)
+            self.module.codex_app(types.SimpleNamespace(action="disable", json=False), self.root, self.current)
+        self.assertEqual(launchd, {})
+        self.assertFalse(agent.exists() or wrapper.parent.exists())
+        self.assertEqual(json.loads(dotfile.read_text()), {"editor.tabSize": 2, "title": "café"})
+        self.assertEqual(json.loads(windsurf.read_text()), {"chatgpt.cliExecutable": "/opt/codex"})
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertFalse(self.module.codex_app_enabled(self.root))
+
     def test_interrupted_uninstall_finishes_on_the_next_start(self):
         real_unlink, real_rmdir = Path.unlink, Path.rmdir
         for point in ("launcher", "receipt", "pointer"):

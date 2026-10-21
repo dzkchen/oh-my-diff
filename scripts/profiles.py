@@ -625,7 +625,7 @@ def install(args):
             launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
             if name == "omd":
                 update = record.get("update")
-                routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
+                routed = (f"case \"$1\" in update|uninstall|codex-app) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
                           f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n") if update else ""
                 launcher_text = (f"#!/bin/sh\n{routed}export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
