@@ -122,7 +122,7 @@ def run(artifact_dir, upstream, output, managed_policy=False):
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_mods", "omd_update"]
         assert platform["installed_tools"] == ["omd", "omd-contract", "omd-mod"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status", "--json"], env)["profile"] == "platform"
-        assert "omd COMMAND" in call([base / "platform-bin/omd", "--help"], env)["usage"]
+        assert "omd COMMAND" in call([base / "platform-bin/omd", "help", "--all"], env)["usage"]
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
         assert call([base / "platform-bin/codex", "--version"], env, False) == f"codex-cli {version}"
