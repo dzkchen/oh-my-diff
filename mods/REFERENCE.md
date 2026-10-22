@@ -29,9 +29,8 @@ Version and support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 
@@ -2605,7 +2604,7 @@ with a loopback `responses_url` defines its `route.provider` for the process (at
 at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
 thread resumed after its provider is gone continues on the configured provider.
 
-The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+`providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
@@ -2660,7 +2659,7 @@ thread from event, tool and terminal slash-command callbacks, recorded only whil
 
 #### `sessions.read`
 
-The experimental `sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
+`sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
 `local_visible_records`:
 
 | Record | Fields |
@@ -2723,7 +2722,7 @@ their original `index`.
 The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
 keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`, experimental)
+### Store-time history rewriting (`history_persist_v1`)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
 stored, for redaction: every text written to the thread's rollout and the prompt-recall file
@@ -3531,7 +3530,7 @@ delivered event reports the count as `dropped`.
 
 #### Component modules (`component_modules_v1`)
 
-Component modules are experimental and need the feature `component_modules_v1`, which `mod_host_check.py --static`
+Component modules need the feature `component_modules_v1`, which `mod_host_check.py --static`
 requires of any package that calls `api.component`.
 
 `api.component(module, {init?, view, key?, pointer?, every?})` is registered during activation under the `terminal`
@@ -3791,7 +3790,7 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
 tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
@@ -3889,7 +3888,7 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-The `above_composer` and `below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
+The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
 focused control. Both are hidden while an approval or popup replaces the composer.

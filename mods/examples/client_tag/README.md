@@ -1,6 +1,6 @@
 # Client tag
 
-A component module (experimental, `component_modules_v1`) that draws the text its node's props carry. A click
+A component module (`component_modules_v1`) that draws the text its node's props carry. A click
 posts its cell to the mod; `component_post` stores it and the view shows the last click.
 
 It ports the `Tag` `ClientModule` example from Claude Code's mod type declarations
