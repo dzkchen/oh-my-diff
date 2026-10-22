@@ -20,16 +20,18 @@ Run `/profile add` (or pick **+ Add an account…** in `/profile`) and choose wh
 
 | Choice | What happens |
 | --- | --- |
-| ChatGPT account | Asks a name, then the ChatGPT sign-in runs in the session. The first ChatGPT profile also asks its model and context window. |
+| ChatGPT account | Asks a name, then the ChatGPT sign-in runs in the session. The first ChatGPT profile also asks its model. |
 | Claude account | Asks a name and plan or Console API credits, then runs `omd_claude_cli`'s sign-in (`/claude login`). |
 | Cursor account | Asks a name, then runs `omd_cursor`'s setup (`/cursor setup`). |
-| OpenAI API key | Asks a name, model, context window and price, then the key. |
+| OpenAI API key | Asks a name, model and price, then the key. The context window is asked only for a model Codex's catalog doesn't list. |
 | Anthropic API key | The same, for `api.anthropic.com`. |
 | Other provider (URL) | The same, plus the endpoint URL and its protocol. |
 
-Everything happens in the session, the first profile included; paid keys also ask for an allowance (USD) the first
-time. Running another mod's command and every credential or route change ask you to confirm. Claude and Cursor
-accounts need `omd_claude_cli` or `omd_cursor` turned on and appear once their sign-in finishes.
+Everything happens in the session, the first profile included; paid keys also ask for an allowance (USD, `20` or
+`$20`) the first time. Running another mod's command and every credential, route or allowance change ask you to
+confirm. A sign-in from an add you cancelled or that failed is reused when you add the same name again. Account names
+start with a letter. Claude and Cursor accounts need `omd_claude_cli` or `omd_cursor` turned on and appear once their
+sign-in finishes.
 
 Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic NAME` and `/profile add provider NAME HTTPS_URL`.
 
@@ -58,7 +60,7 @@ and weekly windows for ChatGPT and Claude accounts, and plan usage for Cursor ac
 ## Needs and limits
 
 - A thread on a profile fails its requests while the mod is disabled or broken, until you re-enable it.
-- Setup and the profile router run on Node.js 22.18 or later: the Node.js given to the installer's `--node`, else `node` on PATH.
+- Setup and the profile router run on Node.js 22.18 or later: the Node.js given to the installer's `--node`, else `node` on PATH. Without `node`, adding a profile says what to install.
 - Switching keeps the thread, attachments and tool history. Earlier reasoning is not sent to another account, even if you switch back.
 - Limits are what each account reported on its last request in any thread; nothing probes an idle account. A window whose reset time has passed shows `reset`. API-key profiles report none.
 - The meter shows on threads whose provider holds a listed account: started with `omd-package profiles`, or on a Claude or Cursor model. `/profile` switches from any thread.

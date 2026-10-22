@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, readFile, readdir, readlink, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,29 @@ const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 const LINK = 'OMD_CURSOR_LINK';
 const RESULT = 'OMD_CURSOR_RESULT';
 const FAILURE = 'OMD_CURSOR_ERROR';
+
+// O_EXLOCK (macOS open(2)) takes the flock the host holds on store.lock while it writes host.json; Node has no flock.
+const O_EXLOCK = 0x20;
+export async function updateHost(store, change) {
+  let lock;
+  for (const deadline = Date.now() + 5000; !lock;) {
+    try { lock = await open(join(store, 'store.lock'), constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK | O_EXLOCK, 0o600); }
+    catch (error) {
+      if (error.code !== 'EAGAIN' || Date.now() > deadline) throw new Error(`host_config_locked: ${error.code}`);
+      await new Promise(done => setTimeout(done, 20));
+    }
+  }
+  try {
+    const path = join(store, 'host.json');
+    let host = {};
+    try { host = JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const result = change(host);
+    const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`;
+    await writeFile(temp, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    try { await rename(temp, path); } catch (error) { await rm(temp, { force: true }); throw error; }
+    return result;
+  } finally { await lock.close(); }
+}
 
 async function codeDigest(root) {
   const rows = [];
@@ -125,7 +148,7 @@ const publish = model => {
 };
 
 async function setup(name, sdkPath) {
-  if (!ACCOUNT.test(name ?? '')) throw new Error('cursor_account_name_invalid: lowercase letters, digits, _ or - (at most 24)');
+  if (!ACCOUNT.test(name ?? '')) throw new Error('cursor_account_name_invalid: a letter, then lowercase letters, digits, _ or - (at most 24)');
   const mod = await realpath(source);
   const store = dirname(dirname(mod));
   if (basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
@@ -152,8 +175,7 @@ async function finish(sdk, credential, { name, mod, store, directory, entry, cod
   const discovered = models(await sdk.Cursor.models.list({ apiKey: credential.apiKey }), name);
   const backend = new URL(credential.backendUrl ?? 'https://api2.cursor.sh').origin;
   const directoryState = await prepare(directory);
-  const host = await readHost(store);
-  const others = (host.routes ?? []).filter(route => route.provider !== PROVIDER);
+  const others = ((await readHost(store)).routes ?? []).filter(route => route.provider !== PROVIDER);
   const accounts = directoryState.previous.accounts?.filter(account => account.name !== name) ?? [];
   accounts.splice(name === 'default' ? 0 : accounts.length, 0, { name, backend_url: backend, credential_expires_at_ms: credential.apiKeyExpiresAtMs ?? null,
     account: credential.email ?? null, discovered_at_ms: Date.now(), default: discovered[0].slug,
@@ -161,7 +183,7 @@ async function finish(sdk, credential, { name, mod, store, directory, entry, cod
   check(others, accounts);
   const secret = storeSecret(omdMod, store, credential, name);
   accounts.find(account => account.name === name).secret_profile = secret.id;
-  return write({ mod, store, directory, entry, codeRoot, host, others, accounts, ...directoryState });
+  return write({ mod, store, directory, entry, codeRoot, accounts, ...directoryState });
 }
 
 async function prepare(directory) {
@@ -188,7 +210,7 @@ function check(others, accounts) {
   if (others.length + accounts.length > 32) throw new Error('host_route_limit: host.json holds at most 32 routes');
 }
 
-async function write({ mod, store, directory, entry, codeRoot, host, others, accounts, data, routePath, tokenPath, port }) {
+async function write({ mod, store, directory, entry, codeRoot, accounts, data, routePath, tokenPath, port }) {
   const node = await realpath(process.execPath);
   const readPaths = [];
   for (const path of [mod, directory, resolve(dirname(node), '..'), '/System', '/usr/lib',
@@ -200,18 +222,21 @@ async function write({ mod, store, directory, entry, codeRoot, host, others, acc
     responses_url: `${url}/responses`, rates: { input_microusd_per_million: 0, cached_microusd_per_million: 0,
       output_microusd_per_million: 0, reservation_microusd: 0, max_output_tokens: 128000, input_token_ceiling: WINDOW,
       included_subscription: false, provider_billed: true } });
-  await writeFile(routePath, `${JSON.stringify({ port, sdk: entry, sdk_version: SDK_VERSION, code_root: codeRoot, data, accounts }, null, 2)}\n`);
-  host.schema = 1;
-  host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
-    seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
-  host.secret_refs = { ...host.secret_refs, cursor_local_token: tokenPath };
-  host.routes = [...others, ...accounts.map(route)];
-  host.services = [...(host.services ?? []).filter(item => item.id !== 'cursor'), ...accounts.length ? [{
-    id: 'cursor', mod_id: PROVIDER, program: node, program_sha256: sha(await readFile(node)),
+  const grant = accounts.length ? [{ id: 'cursor', mod_id: PROVIDER, program: node, program_sha256: sha(await readFile(node)),
     arguments: [join(mod, 'transport.mjs'), 'serve', routePath],
     secrets: { OMD_CURSOR_LOCAL_TOKEN: 'cursor_local_token' },
-    network: true, read_paths: readPaths, code_roots: { [codeRoot]: await codeDigest(codeRoot) }, route: route(accounts[0]) }] : []];
-  await writeFile(join(store, 'host.json'), `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
+    network: true, read_paths: readPaths, code_roots: { [codeRoot]: await codeDigest(codeRoot) }, route: route(accounts[0]) }] : [];
+  await updateHost(store, host => {
+    const others = (host.routes ?? []).filter(item => item.provider !== PROVIDER);
+    check(others, accounts);
+    host.schema = 1;
+    host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
+      seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
+    host.secret_refs = { ...host.secret_refs, cursor_local_token: tokenPath };
+    host.routes = [...others, ...accounts.map(route)];
+    host.services = [...(host.services ?? []).filter(item => item.id !== 'cursor'), ...grant];
+  });
+  await writeFile(routePath, `${JSON.stringify({ port, sdk: entry, sdk_version: SDK_VERSION, code_root: codeRoot, data, accounts }, null, 2)}\n`);
   return { sdk: SDK_VERSION, data, accounts: accounts.map(account => ({ name: account.name, account: account.account, expires: account.credential_expires_at_ms,
     default: account.default, route: label(account.name), secret: account.secret_profile, models: account.models.length })),
     models: publishable(accounts).map(publish) };
@@ -224,10 +249,8 @@ async function remove(name) {
   const directory = join(store, 'routes', 'cursor');
   const state = await prepare(directory);
   if (!state.previous.accounts?.some(account => account.name === name)) throw new Error(`cursor_account_unknown: ${name}`);
-  const host = await readHost(store);
-  const others = (host.routes ?? []).filter(route => route.provider !== PROVIDER);
   const accounts = state.previous.accounts.filter(account => account.name !== name);
-  return write({ mod, store, directory, entry: state.previous.sdk, codeRoot: state.previous.code_root, host, others, accounts, ...state });
+  return write({ mod, store, directory, entry: state.previous.sdk, codeRoot: state.previous.code_root, accounts, ...state });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

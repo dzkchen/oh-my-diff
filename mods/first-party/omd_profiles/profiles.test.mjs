@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -332,15 +333,46 @@ test('the session setup writes a first profile with its router grant and local t
   }
 });
 
+test('the session setup waits for the host store lock and reads catalog models from the Codex cache', async () => {
+  const store = realpathSync(mkdtempSync(join(tmpdir(), 'omd-profiles-lock-')));
+  try {
+    mkdirSync(join(store, 'sources'));
+    cpSync(fileURLToPath(new URL('.', import.meta.url)), join(store, 'sources', 'omd_profiles'), { recursive: true, filter: path => !path.includes('node_modules') });
+    const setup = join(store, 'sources', 'omd_profiles', 'setup.mjs');
+    const held = openSync(join(store, 'store.lock'), constants.O_WRONLY | constants.O_CREAT | 0x20);
+    const child = spawn(process.execPath, [setup, 'session'], { stdio: ['pipe', 'ignore', 'pipe'] });
+    child.stdin.end(JSON.stringify({ profiles: [{ ...profileData('home', false), router: undefined }], allowance: null }));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(existsSync(join(store, 'host.json')), false);
+    closeSync(held);
+    const [code] = await once(child, 'close');
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(readFileSync(join(store, 'host.json'), 'utf8')).routes.map(route => route.name), ['home']);
+    assert.deepEqual(readdirSync(store).filter(name => name.endsWith('.tmp')), []);
+    mkdirSync(join(store, 'codex'));
+    writeFileSync(join(store, 'codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'up', context_window: 5000, default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }] }));
+    const lookup = model => JSON.parse(spawnSync(process.execPath, [setup, 'catalog', model], { encoding: 'utf8', env: { ...process.env, CODEX_HOME: join(store, 'codex') } }).stdout);
+    assert.deepEqual([lookup('up'), lookup('other')], [{ window: 5000, effort: 'high', efforts: ['low', 'high'] }, null]);
+  } finally {
+    rmSync(store, { recursive: true, force: true });
+  }
+});
+
 test('/profile add opens one picker; accounts sign in through their own mods and a first profile is added in the session', () => {
   const calls = [];
   const answers = [];
   let setup = [];
   let routes = [];
+  let credentials = [];
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
-    if (operation === 'terminal.prompt') return args.kind === 'choice' ? { status: 'accepted', values: [answers.shift()] } : { status: 'accepted', value: answers.shift() };
-    if (operation === 'exec.run') return setup.shift();
+    if (operation === 'terminal.prompt') return args.kind === 'choice' ? { status: 'accepted', values: [answers.shift()] } : args.kind === 'confirm' ? { status: answers.shift() } : { status: 'accepted', value: answers.shift() };
+    if (operation === 'exec.run') {
+      const next = setup.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    }
+    if (operation === 'credentials.list') return credentials;
     if (operation === 'commands.invoke') return args.command === 'omd_cursor:cursor' ? (() => { throw new Error('unknown_command: omd_cursor:cursor'); })()
       : { command: args.command, result: { display: 'Starting Claude login for account work (subscription); progress shows below' } };
     return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
@@ -370,16 +402,38 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   invoke(state, 'command', 'add claude team', 'profile');
   assert.deepEqual(calls.filter(call => call.operation === 'commands.invoke').at(-1).args, { command: 'omd_claude_cli:claude', args: 'login api team' });
   assert.match(invoke(state, 'command', 'add cursor main', 'profile').value.display, /^Cursor sign-in did not start: unknown_command: omd_cursor:cursor\. Turn on omd_cursor in \/mods first\.$/);
-  answers.push('gpt-6.1-sol', '272000', '1.25:10', '20');
+  const prompted = () => calls.filter(call => call.operation === 'terminal.prompt').map(call => call.args);
+  const catalogued = { exit_code: 0, stdout: JSON.stringify({ window: 272000, effort: 'medium', efforts: ['low', 'medium', 'xhigh'] }), stderr: '' };
+  answers.push('gpt-6.1-sol', 'declined');
+  setup = [{ exit_code: 0, stdout: 'null', stderr: '' }];
+  let asked = prompted().length;
+  assert.equal(invoke(state, 'command', 'add chatgpt work', 'profile').value.display, 'Cancelled: the context window is a whole number of tokens.');
+  assert.deepEqual(prompted().slice(asked).map(prompt => prompt.title), ['Upstream model', 'Context window']);
+  answers.length = 0;
+  answers.push('gpt-6.1-sol', '1.25:10', 'declined');
+  setup = [catalogued];
+  asked = prompted().length;
+  assert.equal(invoke(state, 'command', 'add api_key key1', 'profile').value.display,
+    'Profiles unchanged. The sign-in "key1" was kept: /profile add reuses it, /profile remove key1 drops it.');
+  assert.deepEqual(prompted().slice(asked).map(prompt => prompt.title), ['Upstream model', 'Price', 'Change model routes']);
+  assert.match(prompted().at(-1).message, /^Add model route key1: gpt-6\.1-sol, paid API, per request\nAdd service omd_profiles: /);
+  credentials = [{ id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com' }];
+  const enrolls = calls.filter(call => call.operation === 'credentials.request').length;
+  answers.push('gpt-6.1-sol', '1.25:10', 'accepted', 'twenty', '$20', 'accepted');
   const routed = { ...profileData('key1', true), credential: 'cred-k', router: 'http://127.0.0.1:41000/v1' };
-  setup = [{ exit_code: 1, stdout: '', stderr: 'profile_allowance_required: paid API profiles need an allowance (--allowance USD)' },
+  setup = [catalogued, { exit_code: 1, stdout: '', stderr: 'profile_allowance_required: paid API profiles need an allowance (--allowance USD)' },
     { exit_code: 0, stdout: JSON.stringify({ profiles: [routed] }), stderr: '' }];
+  const runsBefore = calls.filter(call => call.operation === 'exec.run').length;
   const added = invoke(state, 'command', 'add api_key key1', 'profile');
   assert.match(added.value.display, /^Added key1\./);
-  const runs = calls.filter(call => call.operation === 'exec.run').map(call => call.args);
-  assert.deepEqual(runs.map(run => [run.program, run.argv, run.sandbox, JSON.parse(run.stdin).allowance]),
-    [['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', null], ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', '20']]);
-  assert.deepEqual([JSON.parse(runs[0].stdin).profiles[0].name, JSON.parse(runs[0].stdin).profiles[0].window, JSON.parse(runs[0].stdin).profiles[0].paid], ['key1', 272000, [1.25, 10]]);
+  assert.equal(calls.filter(call => call.operation === 'credentials.request').length, enrolls);
+  assert.match(prompted().at(-1).message, /\nLet paid API profiles spend at most \$20 per thread$/);
+  const runs = calls.filter(call => call.operation === 'exec.run').slice(runsBefore).map(call => call.args);
+  assert.deepEqual(runs.map(run => [run.program, run.argv, run.sandbox, run.stdin === undefined ? undefined : JSON.parse(run.stdin).allowance]),
+    [['node', ['/store/sources/omd_profiles/setup.mjs', 'catalog', 'gpt-6.1-sol'], 'none', undefined],
+      ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', null], ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', 20]]);
+  const sent = JSON.parse(runs[1].stdin).profiles[0];
+  assert.deepEqual([sent.name, sent.window, sent.paid, sent.effort, sent.efforts], ['key1', 272000, [1.25, 10], 'medium', ['low', 'medium', 'xhigh']]);
   assert.equal(calls.some(call => call.operation === 'routes.write'), false);
   assert.deepEqual(added.state.accounts.map(account => [account.name, account.profile.router]), [['key1', 'http://127.0.0.1:41000/v1']]);
   assert.ok(calls.some(call => call.operation === 'events.publish' && call.args.channel === 'added'));
@@ -388,6 +442,11 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   invoke(added.state, 'channel', { channel: 'omd_profiles/added', data: {} });
   const after = calls.slice(before).map(call => call.operation);
   assert.ok(after.includes('routes.list') && after.includes('providers.register') && after.includes('providers.models'), after.join(','));
+  answers.length = 0;
+  answers.push('gpt-6.1-sol');
+  setup = [new Error('exec_program_unavailable')];
+  assert.match(invoke(state, 'command', 'add api_key key2', 'profile').value.display, /^Node\.js was not found on PATH\. Install it \(brew install node/);
+  assert.equal(answers.length, 0);
 });
 
 test('a profile URL matches the origin its credential was enrolled for however it is written', () => {
@@ -417,6 +476,7 @@ test('profile switches stay on the thread, ask before paid routes and report ref
   let state = invoke(null, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'paid', provider: 'omd_profiles', reasoning: 'high' }).state;
   assert.equal(state.current, 'paid');
   assert.deepEqual(invoke(state, 'routing', { routes: [], model: 'gpt', provider: 'openai', reasoning: null }).value, null);
+  assert.equal(invoke(state, 'routing', { routes: [route('work', 'included_subscription'), route('paid', 'explicit_paid_api_grant')], model: 'gone', provider: 'omd_profiles', reasoning: 'high' }).value, null);
   state = invoke(state, 'start', {}).state;
   assert.deepEqual(state.accounts.map(account => account.name), ['work', 'paid', 'other']);
   assert.match(invoke(state, 'command', 'list', 'profile').value.display, /^○ work · ChatGPT · up · quota not seen yet\n● paid · OpenAI API · up · paid API, per request\n○ other · openai · other · quota not seen yet$/);
@@ -494,8 +554,10 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
     [['● work', 'ChatGPT · up · 5h 42% · wk 93% · seen just now'], ['○ spare', 'ChatGPT · up · quota not seen yet']]);
   assert.deepEqual(panel.action, { command: 'omd_profiles:profile', args: 'panel' });
   written = { routes: ['work', 'spare', 'home'], services: ['omd_profiles'] };
+  const adding = calls.length;
   const added = invoke(state, 'command', 'panel add:chatgpt', 'profile');
   assert.equal(added.value, null);
+  assert.ok(calls.slice(adding).some(call => call.operation === 'events.publish' && call.args.channel === 'added'));
   assert.match(calls.filter(call => call.operation === 'terminal.panel').at(-1).args.subtitle, /^Added home\./);
   const write = calls.filter(call => call.operation === 'routes.write').at(-1).args;
   assert.deepEqual(write.routes.map(route => [route.name, route.model, route.data.credential, route.responses_url]),
@@ -541,7 +603,7 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
     }
     if (operation === 'terminal.prompt') { prompts.push(args); return { status: 'accepted', value: ['claude-sonnet-4-5', '200000', '3:15'][prompts.filter(item => item.kind === 'text').length - 1] }; }
     return { 'packages.list': installed, 'routes.list': routes, 'session.info': session, 'events.publish': { delivered: 1, dropped: 0 }, 'app.request': {}, 'routes.write': { routes: ['work', 'api1'], services: ['omd_profiles'] },
-      'sidecars.status': { running: true, started_at_ms: 2_000_000 },
+      'sidecars.status': { running: true, started_at_ms: 2_000_000 }, 'credentials.list': [], 'exec.run': { exit_code: 0, stdout: 'null', stderr: '' },
       'credentials.request': { status: 'completed', profile: { id: 'cred-a', label: 'api1', kind: 'provider', origin: 'https://api.anthropic.com' } } }[operation];
   });
   let state = invoke(null, 'start', {}).state;

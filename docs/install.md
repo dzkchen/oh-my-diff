@@ -6,7 +6,8 @@
 - Codex `0.163.x` (`codex --version`). Install: `npm install -g @openai/codex@0.163`. Don't update Codex until OMD
   supports the new version.
 - Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
-- Only to write mods: Node 24.18+ (24.x) on `PATH` for `omd-mod-author`.
+- Node on `PATH` for the account mods `omd_profiles`, `omd_claude_cli` and `omd_cursor`, which run their sign-in and
+  routing helpers on Node 22.18 or later (`brew install node`). Writing mods (`omd-mod-author`) needs Node 24.18+ (24.x).
 
 ## Install
 

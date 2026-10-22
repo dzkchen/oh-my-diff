@@ -3,11 +3,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createServer as createNet } from 'node:net';
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACCOUNT, CLI_VERSION } from './index.ts';
+import { ACCOUNT } from './index.ts';
 import { accountEnv, checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +19,29 @@ async function unusedPort() {
   const port = server.address().port;
   await new Promise(done => server.close(done));
   return port;
+}
+
+// O_EXLOCK (macOS open(2)) takes the flock the host holds on store.lock while it writes host.json; Node has no flock.
+const O_EXLOCK = 0x20;
+export async function updateHost(store, change) {
+  let lock;
+  for (const deadline = Date.now() + 5000; !lock;) {
+    try { lock = await open(join(store, 'store.lock'), constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK | O_EXLOCK, 0o600); }
+    catch (error) {
+      if (error.code !== 'EAGAIN' || Date.now() > deadline) throw new Error(`host_config_locked: ${error.code}`);
+      await new Promise(done => setTimeout(done, 20));
+    }
+  }
+  try {
+    const path = join(store, 'host.json');
+    let host = {};
+    try { host = JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const result = change(host);
+    const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`;
+    await writeFile(temp, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    try { await rename(temp, path); } catch (error) { await rm(temp, { force: true }); throw error; }
+    return result;
+  } finally { await lock.close(); }
 }
 
 async function findCli() {
@@ -99,7 +122,7 @@ async function setup(name, action, login) {
   const mod = await realpath(source);
   const store = dirname(dirname(mod));
   if (basename(dirname(mod)) !== 'sources') throw new Error('setup_must_run_from_installed_mod');
-  if (!ACCOUNT.test(name ?? '') || name === 'api') throw new Error('claude_account_name_invalid: lowercase letters, digits, _ or - (at most 24)');
+  if (!ACCOUNT.test(name ?? '') || name === 'api') throw new Error('claude_account_name_invalid: a letter, then lowercase letters, digits, _ or - (at most 24)');
   const directory = join(store, 'routes', 'claude');
   const routePath = join(directory, 'route.json');
   const tokenPath = join(directory, 'local-token');
@@ -109,28 +132,31 @@ async function setup(name, action, login) {
   const accounts = (previous.accounts ?? []).filter(account => account.name !== name);
   const home = homedir();
   const username = userInfo().username;
-  const hostPath = join(store, 'host.json');
   let host = {};
-  try { host = JSON.parse(await readFile(hostPath, 'utf8')); }
+  try { host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const others = (host.routes ?? []).filter(route => route.provider !== PROVIDER);
+  const taken = (routes, adding = 0) => {
+    const others = (routes ?? []).filter(route => route.provider !== PROVIDER);
+    if (action !== 'remove' && others.some(other => other.name === routeName(name))) throw new Error(`claude_route_name_taken: another route is named ${routeName(name)}`);
+    if (others.length + accounts.length + adding > 32) throw new Error('host_route_limit: host.json holds at most 32 routes');
+    return others;
+  };
+  const signOut = (cli, dir) => cli !== null && spawnSync(cli, ['auth', 'logout'], { encoding: 'utf8', timeout: 10000,
+    env: cliEnv({ HOME: home, USER: username, LOGNAME: username, ...accountEnv({ config_dir: dir }) }) }).status === 0;
   const owned = async dir => relative(await realpath(join(directory, 'accounts')), await realpath(dir)) === name;
   let signedOut = null;
   let claude = previous.claude ?? null;
   if (action === 'remove') {
     if (!known) throw new Error(`claude_account_unknown: ${name}`);
     if (known.config_dir && await owned(known.config_dir).catch(() => false)) {
-      const cli = await findCli().catch(() => null);
-      signedOut = cli !== null && spawnSync(cli, ['auth', 'logout'], { encoding: 'utf8', timeout: 10000,
-        env: cliEnv({ HOME: home, USER: username, LOGNAME: username, ...accountEnv(known) }) }).status === 0;
+      signedOut = signOut(await findCli().catch(() => null), known.config_dir);
       await rm(known.config_dir, { recursive: true, force: true });
     }
   } else {
     if (!['subscription', 'api'].includes(action)) throw new Error('claude_billing_must_be_subscription_or_api');
     const config = name === 'default' ? null : login || join(directory, 'accounts', name);
     try {
-      if (others.some(other => other.name === routeName(name))) throw new Error(`claude_route_name_taken: another route is named ${routeName(name)}`);
-      if (others.length + accounts.length + 1 > 32) throw new Error('host_route_limit: host.json holds at most 32 routes');
+      taken(host.routes, 1);
       if (config) {
         await mkdir(join(directory, 'accounts', name), { recursive: true, mode: 0o700 });
         if (!await owned(config).catch(() => false)) throw new Error('claude_account_directory_outside_store');
@@ -145,7 +171,10 @@ async function setup(name, action, login) {
       accounts.splice(name === 'default' ? 0 : accounts.length, 0, { ...account, plan: status.subscriptionType ?? null,
         email: status.email ?? null, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] });
     } catch (error) {
-      if (config && !known) await rm(join(directory, 'accounts', name), { recursive: true, force: true });
+      if (config && !known) {
+        signOut(await findCli().catch(() => null), config);
+        await rm(join(directory, 'accounts', name), { recursive: true, force: true });
+      }
       throw error;
     }
   }
@@ -165,20 +194,22 @@ async function setup(name, action, login) {
   }
   const route = account => ({ name: routeName(account.name), roles: ['lead'], provider: PROVIDER, model: account.default, reasoning_effort: 'high',
     responses_url: `${url}/responses`, rates: rates(account.billing, account.models[0].window) });
-  host.schema = 1;
-  host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
-  host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
-    seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
-  host.secret_refs = { ...host.secret_refs, claude_local_token: tokenPath };
-  host.routes = [...others, ...accounts.map(route)];
-  host.services = [...(host.services ?? []).filter(grant => grant.id !== 'claude_cli'), ...accounts.length ? [{
-    id: 'claude_cli', mod_id: PROVIDER, program: node, program_sha256: sha(await readFile(node)),
-    arguments: [join(mod, 'transport.mjs'), 'serve', routePath, home, username],
-    secrets: { OMD_CLAUDE_LOCAL_TOKEN: 'claude_local_token' }, network: true, read_paths: readPaths,
-    route: { ...route(accounts[0]), rates: rates(accounts.some(account => account.billing === 'api') ? 'api' : 'subscription', accounts[0].models[0].window) } }] : []];
-  await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
+  const programSha = sha(await readFile(node));
+  await updateHost(store, host => {
+    host.schema = 1;
+    host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
+    host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
+      seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
+    host.secret_refs = { ...host.secret_refs, claude_local_token: tokenPath };
+    host.routes = [...taken(host.routes), ...accounts.map(route)];
+    host.services = [...(host.services ?? []).filter(grant => grant.id !== 'claude_cli'), ...accounts.length ? [{
+      id: 'claude_cli', mod_id: PROVIDER, program: node, program_sha256: programSha,
+      arguments: [join(mod, 'transport.mjs'), 'serve', routePath, home, username],
+      secrets: { OMD_CLAUDE_LOCAL_TOKEN: 'claude_local_token' }, network: true, read_paths: readPaths,
+      route: { ...route(accounts[0]), rates: rates(accounts.some(account => account.billing === 'api') ? 'api' : 'subscription', accounts[0].models[0].window) } }] : []];
+  });
   const published = publishable(accounts);
-  return { cli: CLI_VERSION, signed_out: signedOut, accounts: accounts.map(account => ({ name: account.name, billing: account.billing, plan: account.plan,
+  return { signed_out: signedOut, accounts: accounts.map(account => ({ name: account.name, billing: account.billing, plan: account.plan,
     email: account.email, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),
     models: published.map(model => ({ slug: model.slug, display: model.name, context_window: model.window, efforts: model.efforts,
       ...model.efforts.includes('high') ? { default_effort: 'high' } : {} })) };

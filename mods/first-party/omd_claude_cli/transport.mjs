@@ -6,15 +6,14 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLI_VERSION, translateRequest, responseEvents, reasoningItem } from './index.ts';
+import { CLI_ENV_OVERRIDE, CLI_INSTALL, CLI_MINIMUM, cliSupported, translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-const override = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 
 export function cliEnv(values = {}) {
-  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !override.test(name))), ...values };
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !CLI_ENV_OVERRIDE.test(name))), ...values };
 }
 
 export const accountEnv = account => account?.config_dir ? { CLAUDE_CONFIG_DIR: account.config_dir } : {};
@@ -27,8 +26,8 @@ export function checkCli(claude, billing = 'subscription', home = process.env.HO
 
 function checkVersion(claude) {
   const version = spawnSync(claude, ['--version'], { encoding: 'utf8', timeout: 10000 });
-  if (version.status !== 0 || version.stdout.trim() !== CLI_VERSION) {
-    throw new Error(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`);
+  if (version.status !== 0 || !cliSupported(version.stdout)) {
+    throw new Error(`claude_cli_unsupported: ${CLI_MINIMUM} or a newer 2.x is required; run claude update (or ${CLI_INSTALL})`);
   }
 }
 

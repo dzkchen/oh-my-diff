@@ -5,12 +5,14 @@ import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
-import { CLI_VERSION, translateRequest, responseEvents } from './index.ts';
+import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
 import { publishable } from './setup.mjs';
 import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
+
+const CLI_VERSION = `${CLI_MINIMUM} (Claude Code)`;
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -47,7 +49,8 @@ test('Claude mod translates host requests and replays host tool results', () => 
   const credits = responseEvents({ id: 'msg_api', usage: { input_tokens: 1, output_tokens: 1 }, content: [] },
     {}, model, first.reverse, false, 0.001, 'api').at(-1).response.usage;
   assert.equal('omd_subscription_charge' in credits, false);
-  assert.deepEqual(credits.omd_reported_cost, { usd: 0.001, basis: 'client_list_estimate' });
+  assert.deepEqual([credits.omd_reported_cost, credits.cost_microusd], [{ usd: 0.001, basis: 'client_list_estimate' }, 1000]);
+  assert.equal('cost_microusd' in response.at(-1).response.usage, false);
   const names = ['constructor', 'toString', '__proto__'];
   const prototypeTools = translateRequest({ ...prompt, tools: names.map(name => ({ type: 'function', name })) }, model);
   assert.deepEqual(prototypeTools.manifest.map(tool => tool.name), names);
@@ -348,6 +351,11 @@ else if (argv[0] === 'auth') {
     assert.match(setup('spare', 'api').stderr, /claude_route_name_taken: another route is named claude-spare/);
     await writeFile(join(store, 'host.json'), JSON.stringify(written));
     assert.match(setup('Work', 'subscription').stderr, /claude_account_name_invalid/);
+    assert.match(setup('1work', 'subscription').stderr, /claude_account_name_invalid/);
+    const failed = setup('team', 'subscription', join(store, 'routes/claude/accounts/team'));
+    assert.match(failed.stderr, /claude_ai_subscription_login_required/);
+    await assert.rejects(stat(join(store, 'routes/claude/accounts/team')));
+    assert.match(await readFile(join(root, 'auth.log'), 'utf8'), new RegExp(`logout ${join(store, 'routes/claude/accounts/team')}\n$`));
     assert.match(setup('stray', 'api', join(root, 'elsewhere')).stderr, /claude_account_directory_outside_store/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/stray')));
     const removed = setup('work', 'remove');
@@ -429,7 +437,7 @@ test('login runs as a background process that says the sign-in link once and rep
   const answer = (data = '', alive = true, process = '4242-1700000000000', packages = mod) => call => {
     if (call.operation === 'process.status' && !alive) throw new Error('process_not_found');
     return { 'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] }, 'process.exchange': { messages: data ? [{ stream: 'stdout', data }] : [], running: true },
-      'session.info': { process_id: process }, 'packages.list': { packages } }[call.operation] ?? {};
+      'session.info': { process_id: process }, 'packages.list': { packages }, 'exec.run': { exit_code: 0, stdout: JSON.stringify({ version: '2.1.420 (Claude Code)', auth: [] }), stderr: '' } }[call.operation] ?? {};
   };
   const channel = (name, data, state, alive, process) => modEvent('channel', { channel: `omd_claude_cli/${name}`, data }, state, answer('', alive, process));
   const started = channel('login', { billing: 'api', account: 'work' }, null);
@@ -439,6 +447,22 @@ test('login runs as a background process that says the sign-in link once and rep
   assert.equal(channel('login', { billing: 'api', account: 'work' }, null).calls.find(call => call.operation === 'process.start').arguments.session, session);
   assert.deepEqual(start, { name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
   assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3]), argv[4]], ['--input-type=module', '-e', ['auth', 'login', '--console'], '/store/routes/claude/accounts/work']);
+  const root = mkdtempSync(join(tmpdir(), 'omd-claude-login-'));
+  try {
+    writeFileSync(join(root, 'claude'), '#!/bin/sh\necho "$1|$ANTHROPIC_API_KEY|$CLAUDE_SECURESTORAGE_CONFIG_DIR|$CLAUDE_CODE_OAUTH_TOKEN|$CLAUDE_CONFIG_DIR|$KEEP"\n', { mode: 0o755 });
+    const env = { PATH: `${root}:/usr/bin:/bin`, ANTHROPIC_API_KEY: 'k', CLAUDE_SECURESTORAGE_CONFIG_DIR: '/elsewhere', CLAUDE_CODE_OAUTH_TOKEN: 't', CLAUDE_CONFIG_DIR: '/inherited', KEEP: 'kept' };
+    const login = spawnSync(process.execPath, [argv[0], argv[1], argv[2], JSON.stringify(['auth']), '/store/routes/claude/accounts/work'], { encoding: 'utf8', env });
+    assert.equal(login.stdout, 'auth||||/store/routes/claude/accounts/work|kept\n');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+  const refused = (version, error) => modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'subscription', account: 'default' } }, null, call =>
+    call.operation === 'exec.run' ? (error ? (() => { throw new Error(error); })() : { exit_code: 0, stdout: JSON.stringify({ version, auth: [] }), stderr: '' }) : answer()(call));
+  for (const [version, error, text] of [[null, null, /the Claude CLI was not found on PATH; install it with curl -fsSL https:\/\/claude\.ai\/install\.sh \| bash$/],
+    ['2.1.306 (Claude Code)', null, /Claude CLI 2\.1\.306 \(Claude Code\) is installed, but omd_claude_cli needs 2\.1\.307 or a newer 2\.x; update it with claude update/],
+    [null, 'exec_program_unavailable', /Node\.js was not found on PATH\. Install it \(brew install node/]]) {
+    const run = refused(version, error);
+    assert.equal(run.calls.some(call => call.operation === 'process.start'), false);
+    assert.match(notices(run.calls).at(-1), text);
+  }
   const link = 'https://claude.ai/oauth/authorize?code=true&state=x';
   const event = (kind, data, state) => modEvent('process_event', { session, kind, bytes: 1 }, state, answer(data));
   const output = event('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`, started.state);
@@ -481,9 +505,11 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   const status = (answer, args = '') => modEvent('command', args, null, answer, 'claude').value.display;
   const probe = version => () => ({ exit_code: 0, stdout: JSON.stringify({ version, auth: null }), stderr: '' });
   assert.match(status(() => { throw new Error('exec_program_too_large'); }), /^CLI: check failed: exec_program_too_large/);
-  assert.match(status(probe(null), 'status'), /^CLI: not found on PATH/);
+  assert.match(status(probe(null), 'status'), /^CLI: the Claude CLI was not found on PATH; install it with /);
   assert.match(status(probe(null), 'bogus'), /^Usage:/);
-  assert.match(status(probe('2.1.999 (Claude Code)')), /^CLI: 2\.1\.999 \(Claude Code\) is installed but omd_claude_cli needs 2\.1\.307 \(Claude Code\).*auto-update/);
+  assert.ok(status(probe('2.1.999 (Claude Code)')).startsWith('CLI: 2.1.999 (Claude Code)\nAccounts: none'));
+  assert.match(status(probe('3.0.0 (Claude Code)')), /^CLI: Claude CLI 3\.0\.0 \(Claude Code\) is installed, but omd_claude_cli needs 2\.1\.307 or a newer 2\.x.*refused until then/);
+  assert.deepEqual(['2.1.307 (Claude Code)', '2.2.0 (Claude Code)', '2.1.306 (Claude Code)', '1.9.999 (Claude Code)', '2.1.307', null].map(cliSupported), [true, true, false, false, false, false]);
   assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\nAccounts: none`));
   const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, models: 3 }, { name: 'work', billing: 'api', config_dir: '/accounts/work', models: 2 }];
   const signedIn = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' });
@@ -495,7 +521,7 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
   assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });
-  for (const bad of ['login Work', 'login api work extra', 'login work extra']) assert.match(login(bad).value.display, /^Account names use/, bad);
+  for (const bad of ['login Work', 'login api work extra', 'login work extra', 'login 1']) assert.match(login(bad).value.display, /^Account names start with a letter/, bad);
   assert.equal(login('remove work').value.display, 'Unknown Claude account work');
   assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
 });
