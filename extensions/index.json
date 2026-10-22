@@ -442,6 +442,75 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_source_knowledge",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in source-backed facts, task evidence and approved lessons with exact file hashes, refreshed against the workspace for reuse in later tasks",
+      "source": "mods/first-party/omd_source_knowledge",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; workspace_fs_v1, workspace_fingerprint_v1, store_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_programmable_context",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in Python context variables, child agents and a refinable session harness over the omd-code-execution kernel bridge",
+      "source": "mods/first-party/omd_programmable_context",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; history_v1, store_thread_v1, routes_v1, model_complete_v2, terminal_prompt_v1; Node 24.18.0; the omd-code-execution python kernel",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_mini",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in scrollback-first interface launched by `omd mini`: hidden inline sites, a simple prompt, one status segment and switching to the full UI at quit",
+      "source": "mods/first-party/omd_mini",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1, render_hooks_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_cursor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in Cursor models in /model through your Cursor account and the official Cursor SDK, with OMD tools only; verified against a fake SDK, not a live account",
+      "source": "mods/first-party/omd_cursor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; @cursor/sdk 1.0.35 installed by /cursor setup; a Cursor account",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0",
+        "@cursor/sdk 1.0.35 (fake SDK fixture)"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "burn_meter",
       "version": "0.2.0",
       "extension_type": "mod",

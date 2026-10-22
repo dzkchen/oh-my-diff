@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "omd_cursor",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "description": "Cursor models through your Cursor account and the official Cursor SDK as a Codex provider, with /cursor setup in the session. Experimental",
+  "license": "MIT",
+  "subscriptions": { "channels": ["omd_cursor/setup"] },
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_cursor"
+  },
+  "capabilities": [
+    "commands",
+    "lifecycle",
+    "model",
+    "exec",
+    "os",
+    "terminal",
+    "events",
+    "packages",
+    "inventory",
+    "credentials",
+    "store"
+  ],
+  "os_access": {
+    "programs": [
+      "node"
+    ],
+    "network": true
+  },
+  "assets": [
+    "setup.mjs",
+    "transport.mjs"
+  ],
+  "compatibility": {
+    "required_features": [
+      "package_text_assets_v1",
+      "unrestricted_process_v1",
+      "framed_process_v1",
+      "process_streams_v1",
+      "ui_controls_v1",
+      "events_v1",
+      "timers_v1",
+      "package_controls_v1",
+      "credentials_v1",
+      "secrets_v1",
+      "provider_billing_v1"
+    ]
+  }
+}
