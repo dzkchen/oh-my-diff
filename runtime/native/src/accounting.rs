@@ -409,8 +409,7 @@ impl Accounts {
             .and_then(|notifier| notifier.clone())
     }
 
-    /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
-    /// request would deadlock on its own in-flight callback.
+    /// Whether `surface` has interceptors (`Some(required)`); waits for a busy runtime unless a mod-owned request would self-deadlock.
     fn intercepting(
         mods: &Mutex<codex_omd::ModHost>,
         holders: &AtomicUsize,

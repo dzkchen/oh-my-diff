@@ -5589,8 +5589,7 @@ impl ModHost {
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
-                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
-                // reloads; the last view stands without a fault.
+                // Interrupted turns cancel in-flight renders and selection changes reject them until reload; the last view stands.
                 let error_text = error.to_string();
                 if ![
                     "callback_cancelled",

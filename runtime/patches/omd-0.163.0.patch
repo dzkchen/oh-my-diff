@@ -51995,10 +51995,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..28a9661c9f0254ab23e494ab9de13ab4781d9c4a
+index 0000000000000000000000000000000000000000..0ee0943c8f580ed7565842c8d79145e5529890aa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2324 @@
+@@ -0,0 +1,2323 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -52410,8 +52410,7 @@ index 0000000000000000000000000000000000000000..28a9661c9f0254ab23e494ab9de13ab4
 +            .and_then(|notifier| notifier.clone())
 +    }
 +
-+    /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
-+    /// request would deadlock on its own in-flight callback.
++    /// Whether `surface` has interceptors (`Some(required)`); waits for a busy runtime unless a mod-owned request would self-deadlock.
 +    fn intercepting(
 +        mods: &Mutex<codex_omd::ModHost>,
 +        holders: &AtomicUsize,
@@ -63593,10 +63592,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e4483702602d11c6bf3dd707276a9c00d47170e
+index 0000000000000000000000000000000000000000..d45fb6508e626dc73d489a003ac89968284f3aa7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2549 @@
+@@ -0,0 +1,2548 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65406,8 +65405,7 @@ index 0000000000000000000000000000000000000000..0e4483702602d11c6bf3dd707276a9c0
 +    }
 +}
 +
-+/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
-+/// "Mods are off" directory warning; only a thread the user opened does.
++/// Only a thread the user opened sets or clears the "Mods are off" warning; internal and sub-agent threads (memory runs in CODEX_HOME) don't.
 +fn reports_directory(
 +    source: &SessionSource,
 +    cwd: &std::path::Path,
@@ -94176,10 +94174,10 @@ index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c274293ad7b3f1313c56b50658df26d991dc5ed
+index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04c34aa15e
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,1004 @@
+@@ -0,0 +1,1003 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -94610,8 +94608,7 @@ index 0000000000000000000000000000000000000000..7c274293ad7b3f1313c56b50658df26d
 +            *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
 +            return Ok(Value::String(nonce));
 +        }
-+        // Store and anchor state is keyed by path, so only the path's owner may name it; a stream not
-+        // written yet belongs to its directory's owner.
++        // State is keyed by path, so only its owner (or, for an unwritten stream, its directory's owner) may name it.
 +        for (field, refused) in [
 +            ("store", "authority_store_unowned"),
 +            ("stream", "authority_stream_unowned"),
@@ -95888,10 +95885,10 @@ index 0000000000000000000000000000000000000000..320c013e6b46dccc8f0ffa8d360bafd5
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..988031f37776c4e46ed4c36924c8d396befb3071
+index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c846bfac4e9
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1525 @@
+@@ -0,0 +1,1524 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -96807,8 +96804,7 @@ index 0000000000000000000000000000000000000000..988031f37776c4e46ed4c36924c8d396
 +    scrub_secrets(config, "");
 +}
 +
-+/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines;
-+/// `env_key` stays readable only while it looks like an upper-case variable name with an underscore.
++/// Redacts secret-bearing maps, arguments, strings and lines; `env_key` stays readable only while it looks like an `UPPER_CASE` name.
 +fn scrub_secrets(value: &mut Value, name: &str) {
 +    match value {
 +        Value::Object(map) => {
@@ -101316,10 +101312,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddb6cad9f60cc12aab71cae0d14c0d8493b1727c
+index 0000000000000000000000000000000000000000..a1e023461cc6e0915a33137d6ff4151a1d166efe
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1795 @@
+@@ -0,0 +1,1792 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -101800,10 +101796,7 @@ index 0000000000000000000000000000000000000000..ddb6cad9f60cc12aab71cae0d14c0d84
 +    })
 +}
 +
-+/// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
-+/// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
-+/// Checks use the canonical target, but a link outside the repository runs as the link (directory
-+/// canonical) so a multicall shim, such as a version manager's `node`, dispatches by its name.
++/// The agent can write the repository, so programs there need an `os_access` path; outside links run as the link so multicall shims dispatch.
 +pub fn unrestricted_program(
 +    access: &crate::ModOsAccess,
 +    name: &str,
@@ -105143,10 +105136,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..413ea724018159e46b20a37113b081b818d246d2
+index 0000000000000000000000000000000000000000..b037b7ba0278de36bbd40fc2d3cff95108cbef0f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6226 @@
+@@ -0,0 +1,6225 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -110738,8 +110731,7 @@ index 0000000000000000000000000000000000000000..413ea724018159e46b20a37113b081b8
 +                Err(error) => Err(error),
 +            };
 +            let parsed = parsed.or_else(|error| {
-+                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
-+                // reloads; the last view stands without a fault.
++                // Interrupted turns cancel in-flight renders and selection changes reject them until reload; the last view stands.
 +                let error_text = error.to_string();
 +                if ![
 +                    "callback_cancelled",
@@ -112923,10 +112915,10 @@ index 0000000000000000000000000000000000000000..7699f0130036e5fad4f3d37f21d3c99b
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7d6d4d6e0
+index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2d9106ccb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1968 @@
+@@ -0,0 +1,1967 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -113126,8 +113118,7 @@ index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7
 +    Ok(())
 +}
 +
-+/// Outermost first: explicit `before`/`after`, then consumers outside their dependencies, then ID.
-+/// A cycle fails only the mods that declared its edges, never one that is merely their target.
++/// Outermost first: `before`/`after`, then consumers outside dependencies, then ID; a cycle fails only the mods declaring its edges.
 +pub(super) fn order(
 +    loaded: &BTreeMap<String, Loaded>,
 +) -> std::result::Result<Vec<String>, Vec<String>> {
@@ -119345,10 +119336,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..98a167c141df313f98b6b7453e5037dc3aa4cb0e
+index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e986baaf4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,742 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -119419,8 +119410,7 @@ index 0000000000000000000000000000000000000000..98a167c141df313f98b6b7453e5037dc
 +
 +const MEMORY_LIMIT: u64 = 512 << 20;
 +const MEMORY_POLL: Duration = Duration::from_millis(50);
-+/// Live runner processes: `(exceeded, reaped)`. The watchdog signals only under this lock and never a reaped
-+/// pid, and every reap marks or untracks its pid under it, so a reused pid is never killed.
++/// Live runner pids `(exceeded, reaped)`; signals and reaps both happen under this lock, so a reused pid is never killed.
 +static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
 +
 +fn untrack(pid: u32) -> bool {
@@ -119469,8 +119459,7 @@ index 0000000000000000000000000000000000000000..98a167c141df313f98b6b7453e5037dc
 +    None
 +}
 +
-+/// Whether a live runner's peak physical footprint has passed `MEMORY_LIMIT`; checked on every reply because a
-+/// callback can allocate and answer between two watchdog polls.
++/// Checked on every reply because a callback can allocate and answer between two watchdog polls.
 +fn overran(child: &Child) -> bool {
 +    footprint(child.id()).is_some_and(|bytes| bytes > MEMORY_LIMIT)
 +}
@@ -119575,9 +119564,7 @@ index 0000000000000000000000000000000000000000..98a167c141df313f98b6b7453e5037dc
 +    Ok(bytes)
 +}
 +
-+/// Request fields fixed by a package identity. A reused runner keeps the last ones it was sent, and a request whose
-+/// fields match goes without them: a request larger than the pipe buffer blocks the host until the runner drains it,
-+/// which costs a wake-up of milliseconds on an idle machine.
++/// Package-identity fields a reused runner keeps, so matching requests omit them and stay under the pipe buffer.
 +const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 +
 +fn kept_digest<R>(request: &R) -> Result<[u8; 32]>
@@ -125073,10 +125060,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ffc87f7e5d0a107e5bae74dd2d988c6ab8ec3085
+index 0000000000000000000000000000000000000000..6dd8520673f0514d79b9821146eac5fbb94d7adc
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,752 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -125303,8 +125290,7 @@ index 0000000000000000000000000000000000000000..ffc87f7e5d0a107e5bae74dd2d988c6a
 +    Ok(listed)
 +}
 +
-+/// Read on every call because `host.json` and plan grants change outside the listing cache. Without a repository,
-+/// plan routes are offered regardless of their grant.
++/// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
 +fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
 +    let here = repository.map(|repository| {
 +        Value::from(crate::resource_data::hash(
@@ -126951,10 +126937,10 @@ index 0000000000000000000000000000000000000000..dbf1f542f1154706c947a0454ddc3659
 +}
 diff --git a/codex-rs/omd/src/plan_routes.rs b/codex-rs/omd/src/plan_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b5cb548aa42907b37e9f841412dcaec8eb57d13
+index 0000000000000000000000000000000000000000..7f553361ec62dacc87dbf4acb5078493afd5af28
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes.rs
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,111 @@
 +//! Worker routes on the user's ChatGPT plan, added from a confirmed client request.
 +
 +use serde_json::Value;
@@ -126992,8 +126978,7 @@ index 0000000000000000000000000000000000000000..2b5cb548aa42907b37e9f841412dcaec
 +    format!("plan-{slug}-{mod_id}")
 +}
 +
-+/// Lets `plan.mod_id` run workers on its plan route for `plan.model` and adds `repository` to the route's grant,
-+/// which lists every repository where the user approved that mod.
++/// Lets `plan.mod_id` run workers on its plan route, adding `repository` to the grant's list of approved repositories.
 +pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<String> {
 +    let name = route_name(&plan.model, &plan.mod_id);
 +    if name.starts_with("plan--") {
@@ -154512,10 +154497,10 @@ index 0000000000000000000000000000000000000000..339180bbbdcc606262ac0c628c75609d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..227cc200e57cdfbe88301b07191ff7cddfdcc13d
+index 0000000000000000000000000000000000000000..2bdec776420890098a6aa26482f76dbd8bb9e091
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,130 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +use std::path::PathBuf;
@@ -154596,57 +154581,6 @@ index 0000000000000000000000000000000000000000..227cc200e57cdfbe88301b07191ff7cd
 +                .collect()
 +        })
 +        .collect()
-+}
-+
-+#[test]
-+#[serial_test::serial]
-+fn cached_resource_content_is_not_visible_without_current_authority() {
-+    let reference = codex_omd::resource_data::ResourceRef {
-+        reference: "unavailable".into(),
-+        sha256: "a".repeat(64),
-+    };
-+    let key = format!("{}:8:4", reference.sha256);
-+    IMAGES
-+        .lock()
-+        .unwrap()
-+        .insert("img".into(), (key, vec![Line::from("private image")]));
-+    IMAGES.lock().unwrap().insert(
-+        "img".into(),
-+        (
-+            format!("{}:8:4:", reference.sha256),
-+            vec![Line::from("private image")],
-+        ),
-+    );
-+    let images = text(&image_rows("img", &reference, "image", 8, 4, &[], ""));
-+    assert!(!images.iter().any(|line| line.contains("private image")));
-+    documents().insert(
-+        "revoked".into(),
-+        Document {
-+            key: Key::None,
-+            lines: Arc::new(vec!["private document".into()]),
-+            spans: Arc::new(vec![vec![Span::raw("private document")]]),
-+            anchors: Arc::new(vec![None]),
-+            ..Default::default()
-+        },
-+    );
-+    let rendered = text(&rows(
-+        "revoked",
-+        Content::Source(&reference),
-+        &[],
-+        None,
-+        None,
-+        Some(4),
-+        &[],
-+        false,
-+        false,
-+        "",
-+    ));
-+    assert!(
-+        !rendered
-+            .iter()
-+            .any(|line| line.contains("private document"))
-+    );
-+    assert!(rendered.iter().any(|line| line.contains("unavailable")));
 +}
 +
 +#[test]
@@ -160548,10 +160482,10 @@ index 0000000000000000000000000000000000000000..4ac81f3fd9fd744ee640308be6307f03
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a46ff4849
+index 0000000000000000000000000000000000000000..7911f81a639d3e10376b224c72f7ae23511e49bf
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1138 @@
+@@ -0,0 +1,1136 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -160713,8 +160647,7 @@ index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a
 +        return Err("client_context_changed".into());
 +    }
 +    let binding = call_binding(&call.caller);
-+    // The terminal's host and the session's host (which writes `mod-status.json`) reload at different times, so an
-+    // admission from either is current. The terminal host's lock can be busy, so it is consulted only when needed.
++    // Terminal and session hosts reload at different times, so either's admission is current; the terminal host is asked only when needed.
 +    let session_admits = binding["source"].is_string()
 +        && call
 +            .lifetime
@@ -161135,8 +161068,7 @@ index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a
 +
 +const EVENT_QUEUE: usize = 256;
 +
-+/// Delivers events in order on one worker thread. Beyond `EVENT_QUEUE` waiting events new ones are
-+/// dropped, and `with_dropped` reports the count on the next delivered event.
++/// In-order delivery on one worker; beyond `EVENT_QUEUE` new events drop and `with_dropped` reports the count on the next.
 +struct EventQueue<T> {
 +    sender: std::sync::mpsc::SyncSender<T>,
 +    dropped: Arc<AtomicUsize>,
@@ -162688,10 +162620,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea417495ba
+index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead92a5e34f3
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4861 @@
+@@ -0,0 +1,4856 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -163746,8 +163678,7 @@ index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea
 +    .map(|slot| slot.map(color))
 +}
 +
-+// Hashes presentation content, not the lifecycle revision, so ordinary terminal events don't
-+// invalidate retained transcript layouts.
++// Hashes presentation content, not the revision, so ordinary terminal events don't invalidate retained transcript layouts.
 +fn presentation(snapshot: &ModViewSnapshot) -> u64 {
 +    use std::hash::Hash;
 +    use std::hash::Hasher;
@@ -163779,8 +163710,7 @@ index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea
 +    if preview.input["event"] == "startup" {
 +        return bootstrap;
 +    }
-+    // A host view that has never rendered (a fresh session's first write) has nothing to draw yet;
-+    // a missing or unreadable `mod-view.json` reads as the default snapshot, which is not one.
++    // A never-rendered host view (a fresh session's first write) has nothing to draw; the default snapshot (epoch 0) is not one.
 +    if bootstrap && incoming.epoch != 0 && incoming.revision == 0 && incoming.rendered_ms == 0 {
 +        return true;
 +    }
@@ -164061,8 +163991,7 @@ index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea
 +    let context = crate::mod_runtime::active_context();
 +    let matches_context = matches_context(&snapshot, context.as_ref());
 +    *BLOCKED_SNAPSHOT.locked() = (!matches_context).then_some((snapshot.epoch, snapshot.revision));
-+    // `refresh` draws nothing until a publication matches the new context, so the startup preview
-+    // of the same repository stays up until then, also when the thread attaches first.
++    // `refresh` draws nothing until a publication matches the new context, so the same repository's startup preview stays up.
 +    if !matches_context
 +        && context.is_some_and(|context| {
 +            with_cache(|cache| {
@@ -165817,8 +165746,7 @@ index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea
 +            .retain(|hitbox| dialog_ids.contains(&hitbox.id));
 +        interaction.dialog_area = Some(dialog_area);
 +        if interaction.dialog.as_ref() != Some(&key) {
-+            // A shown dialog whose content changed keeps its focused control; a newly shown one starts at its
-+            // autofocus control or its first.
++            // A changed dialog keeps its focused control; a newly shown one starts at its autofocus control or its first.
 +            let kept = interaction.dialog.is_some()
 +                && interaction
 +                    .focused
@@ -166758,8 +166686,7 @@ index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea
 +    true
 +}
 +
-+/// Up/Down past a control's edge focus the previous or next control, entering a list at its near end; key panes
-+/// and terminals, which keep every key, are reached only with Tab or a click. False when no control lies that way.
++/// Up/Down past a control's edge focus its neighbour (key panes and terminals only by Tab or click); false when there is none.
 +fn move_focus(interaction: &mut Interaction, focused: &str, forward: bool) -> bool {
 +    let Some(index) = interaction.order.iter().position(|id| id == focused) else {
 +        return false;
@@ -169983,10 +169910,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a21e7dc0cc36ce6ecb1a38a6ef47b1ced086e40
+index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7a253b774
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,755 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -170075,8 +170002,7 @@ index 0000000000000000000000000000000000000000..1a21e7dc0cc36ce6ecb1a38a6ef47b1c
 +    snapshot
 +}
 +
-+/// The host's identity stamp (device, inode, length, mtime and ctime in ns): a same-length rewrite
-+/// still changes the ctime the writer cannot set.
++/// Device, inode, length, mtime and ctime (ns); a same-length rewrite still changes the ctime the writer cannot set.
 +pub(crate) fn file_stamp(path: &Path) -> Option<FileStamp> {
 +    std::fs::symlink_metadata(path)
 +        .ok()

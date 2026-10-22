@@ -1807,8 +1807,7 @@ impl codex_extension_api::TokenUsageContributor for Mods {
     }
 }
 
-/// Codex's internal and sub-agent threads (memory consolidation runs in CODEX_HOME) neither set nor clear the
-/// "Mods are off" directory warning; only a thread the user opened does.
+/// Only a thread the user opened sets or clears the "Mods are off" warning; internal and sub-agent threads (memory runs in CODEX_HOME) don't.
 fn reports_directory(
     source: &SessionSource,
     cwd: &std::path::Path,
