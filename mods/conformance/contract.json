@@ -253,7 +253,7 @@
     "operations:workspace.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('workspace.snapshot'"},"decision":"tool.workspace"},
     "operations:workspace.stat": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.stat'"},"decision":"tool.workspace"},
     "operations:workspace.transaction": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.transaction'"},"decision":"tool.workspace"},
-    "operations:workspace.unwatch": {"status":"experimental","reason":"Used by omd_preview to replace its file watch; experimental in 1.0.0."},
+    "operations:workspace.unwatch": {"status":"experimental","reason":"Used by omd_preview to stop its keyed file watch; experimental in 1.0.0."},
     "operations:workspace.watch": {"status":"frozen","consumer":{"path":"mods/examples/watch_notify/index.ts","snippet":"api.host.call('workspace.watch'"},"decision":"context.events"},
     "components:box": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'box'"},"decision":"terminal.box_model"},
     "components:button": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'button'"},"decision":"terminal.controls"},
@@ -1413,7 +1413,7 @@
       "replace": "tool_batch (exclusive)",
       "timing": "after the response's calls are known, before dispatch",
       "ownership": "mod: which calls merge; host: admission, approvals, per-call results and attribution",
-      "limits": "merged calls run once under a synthetic id; results fan out by call id and missing results become errors; dispatch is unchanged without an owner",
+      "limits": "merged calls run once under a synthetic id; results fan out by call id, with a per-call success flag when the merge sets success_per_call, and missing results become errors; dispatch is unchanged without an owner",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],

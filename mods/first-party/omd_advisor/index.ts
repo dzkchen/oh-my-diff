@@ -186,8 +186,8 @@ export default function activate(api: ModAPI) {
     return { append: clip(`Independent advisor (${trigger}, advisory): ${advice}`, 4000) };
   });
   const hide = () => { const receipt = prior(); if (receipt) save({ ...receipt, present: false }); };
-  const reviewTurn = (event: TurnEnd, evidence: () => ReturnType<typeof read>) => {
-    if (event.outcome !== 'completed' || !event.evidence || sameModel()) return;
+  const reviewTurn = (event: TurnEnd, evidence: () => ReturnType<typeof read>, same: () => string | null) => {
+    if (event.outcome !== 'completed' || !event.evidence || same()) return;
     if (!everyTurn) {
       const activity = api.host.tryCall('turns.activity', { turn_id: event.turn_id });
       if (!activity.ok || !activity.value.turns[0]?.files.length) return;
@@ -253,10 +253,15 @@ export default function activate(api: ModAPI) {
     api.host.tryCall('agents.cancel', { handle: event.handle });
     save(receipt);
   };
-  const observeTurn = (event: TurnEnd, evidence: () => ReturnType<typeof read>) => {
+  const observeTurn = (event: TurnEnd, evidence: () => ReturnType<typeof read>, same: () => string | null) => {
     const watch = watching();
     if (!event.evidence || watch.sha256 === event.evidence.sha256) return;
-    if (watch.status === 'observing' && watch.handle) api.host.tryCall('agents.cancel', { handle: watch.handle });
+    const skipped = event.outcome !== 'completed' || same() !== null;
+    if (watch.status === 'observing' && watch.handle) {
+      api.host.tryCall('agents.cancel', { handle: watch.handle });
+      if (skipped) keep({ status: 'superseded', reason: 'a later turn was not observed', handle: '' });
+    }
+    if (skipped) return;
     const settled = { handle: '', turn: event.turn_id, sha256: event.evidence.sha256, dropped: 0, cost: null };
     if (!route) return keep({ ...settled, status: 'unavailable', reason: unrouted() });
     const loaded = evidence();
@@ -337,9 +342,11 @@ export default function activate(api: ModAPI) {
     });
     api.on('turn_end', event => {
       let loaded: ReturnType<typeof read> | undefined;
+      let model: string | null | undefined;
       const evidence = () => loaded ??= read(event.evidence!);
-      if (observe) observeTurn(event, evidence);
-      if (review) reviewTurn(event, evidence);
+      const same = () => model === undefined ? model = sameModel() : model;
+      if (observe) observeTurn(event, evidence, same);
+      if (review) reviewTurn(event, evidence, same);
     });
     api.on('agent_end', async event => {
       if (observe && watching().status === 'observing' && watching().handle === event.handle) return observed(event);

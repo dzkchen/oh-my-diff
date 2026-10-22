@@ -16,13 +16,13 @@
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.302",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.307",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 1.0.0-rc.2",
         "mod API 1.0.0",
         "Node 24.18.0",
-        "Claude CLI 2.1.302"
+        "Claude CLI 2.1.307"
       ],
       "support_status": "reviewed_candidate"
     },
@@ -256,6 +256,40 @@
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; completion_v1, exec_v1, store_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_tool_absorb",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in tool-call absorption: a response's parallel read-only calls run as one merged step through tools.invoke with per-call results and success, identical reads in it run once, and unchanged file reads, including concurrent ones, are reused with their structured result inside a code-mode cell",
+      "source": "mods/first-party/omd_tool_absorb",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; tool_batch_v1, tool_batch_success_v1, code_mode_values_v1, continuation_middleware_v1, tool_continuation_v2, store_v1, store_thread_v1, state_scopes_v1, events_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_tool_fix",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in schema-aware tool-call correction: clear-cut argument representation and JSON syntax errors are fixed before the call runs and recorded as evidence; ambiguous calls go back to the model",
+      "source": "mods/first-party/omd_tool_fix",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; continuation_middleware_v1, tool_continuation_v2, model_turn_interception_v1, store_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 1.0.0-rc.2",

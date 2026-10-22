@@ -3,7 +3,8 @@
   "settings": {
     "omd_advisor": {
       "observe": true,
-      "route": "astra"
+      "route": "astra",
+      "skip_same_model": false
     }
   },
   "host_operations": {

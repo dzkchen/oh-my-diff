@@ -7,7 +7,8 @@ import { access, chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/pro
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLI_VERSION, checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
+import { CLI_VERSION } from './index.ts';
+import { checkCli, cliArgs, cliEnv, eventQueue } from './transport.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

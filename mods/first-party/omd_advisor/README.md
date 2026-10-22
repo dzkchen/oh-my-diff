@@ -30,7 +30,7 @@ It runs on the worker route you set in `route`, which has no default. Pick one i
 | `every_turn` | `false` | Review every completed lead turn |
 | `mode` | `advisory` | `blocking` also needs a workflow contract with an advisor review gate |
 | `share` | `conversation`, `diff`, `files` | What the advisor may see |
-| `skip_same_model` | `true` | Skip when the advisor and the lead use the same model |
+| `skip_same_model` | `true` | Skip reviews and observation when the advisor and the lead use the same model |
 | `observe` | `false` | Flag behavior changes, unresolved failures and decisions needed in the lead's output |
 
 ## Needs and limits
@@ -38,6 +38,7 @@ It runs on the worker route you set in `route`, which has no default. Pick one i
 - Advice is a second opinion, not an approval. Review and verify yourself.
 - The prompt is capped at 8 KB. Keys, tokens and credentials are redacted first, but that is a pattern filter, not a guarantee.
 - A finding whose quoted evidence isn't found is dropped.
+- The observer, like reviews, runs only after turns that completed.
 - Observer notes are for you only. They never reach the lead or block anything.
 
 Credit: ask and trigger modes based on [pi-advisor-flow](https://pi.dev/packages/pi-advisor-flow) by Philip Brembeck (MIT); the observer follows the "You should know" behavior of Claude Code 2.1.287. No code copied.

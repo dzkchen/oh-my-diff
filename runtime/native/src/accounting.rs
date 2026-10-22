@@ -670,16 +670,9 @@ impl Accounts {
     }
 
     fn request_id(&self) -> String {
-        static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        let process = PROCESS.get_or_init(|| {
-            format!(
-                "{}-{}",
-                std::process::id(),
-                chrono::Utc::now().timestamp_millis()
-            )
-        });
         format!(
-            "req-{process}-{}",
+            "req-{}-{}",
+            process_id(),
             self.next_request.fetch_add(1, Ordering::Relaxed) + 1
         )
     }
@@ -2307,6 +2300,17 @@ impl Drop for Attempt {
             self.fail(reason);
         }
     }
+}
+
+pub(crate) fn process_id() -> &'static str {
+    static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PROCESS.get_or_init(|| {
+        format!(
+            "{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_millis()
+        )
+    })
 }
 
 #[cfg(test)]

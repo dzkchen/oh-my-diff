@@ -56,6 +56,25 @@ class ProfileModeTests(unittest.TestCase):
                           "activation": {"selection": selection}}
                 self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
+    def test_omd_launcher_routes_uninstall_to_the_installer_that_owns_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for name in ("tool", "control", "installer"):
+                (base / name).write_text(f"echo {name} \"$@\" \"$OMD_MOD_STORE\"\n")
+                (base / name).chmod(0o755)
+            record = {"store": "/omd/store"}
+            managed = {**record, "update": {"python": "python3", "installer": str(base / "installer"), "root": "/omd/root"}}
+            for current, argv, expected in (
+                    (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
+                    (managed, ["update"], "installer update --root /omd/root"),
+                    (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
+                    (record, ["update"], "tool update /omd/store")):
+                with self.subTest(managed="update" in current, argv=argv):
+                    launcher = base / "omd"
+                    launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
+                    run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
+                    self.assertEqual(run.stdout.strip(), expected)
+
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
             with self.subTest(unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:

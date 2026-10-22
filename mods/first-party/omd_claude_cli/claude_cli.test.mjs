@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
-import { translateRequest, responseEvents } from './index.ts';
-import { CLI_VERSION, Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
+import { CLI_VERSION, translateRequest, responseEvents } from './index.ts';
+import { Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -203,6 +203,20 @@ test('CLI-added environment and account context never reach the model', () => {
   assert.equal(JSON.stringify(body).includes('user@example.com'), false);
 });
 
+test('large whitespace blocks and repeated reminder headers are stripped in linear time', () => {
+  const blank = ' '.repeat(80 * 1024);
+  const header = '<system-reminder>\nAs you answer the user\'s questions, you can use the following context:\n';
+  const flood = header.repeat(8000);
+  const closing = 'Claude Code attached this context automatically;\n</system-reminder>';
+  const started = performance.now();
+  const body = withoutCliContext({ model, messages: [
+    { role: 'user', content: [{ type: 'text', text: blank }, { type: 'tool_result', tool_use_id: 'call_1', content: `${blank}\n` }] },
+    { role: 'user', content: blank }, { role: 'user', content: flood }, { role: 'user', content: `ok ${flood}${closing} \n` }] });
+  assert.ok(performance.now() - started < 200, `took ${performance.now() - started} ms`);
+  assert.equal(body.messages[0].content[0].text, blank);
+  assert.deepEqual(body.messages.slice(2).map(message => message.content), [flood, 'ok']);
+});
+
 test('the extra-usage opt-out is read from the store per request and fails safe', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-settings-'));
   const store = join(root, 'mods.json');
@@ -300,9 +314,11 @@ test('the transport shows a foreign holder of its port neither the local token n
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 
+const clock = 1_800_000_000_000;
+
 function modEvent(event, payload, state, answer, name) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id }, state, event, payload, name }, call => {
+  const output = callback({ virtual_time_ms: clock, source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings: {}, package: { id: manifest.id }, state, event, payload, name }, call => {
     calls.push(call);
     return answer(call);
   });
@@ -312,32 +328,47 @@ function modEvent(event, payload, state, answer, name) {
 const notices = calls => calls.filter(call => call.operation === 'terminal.notice').map(call => call.arguments.text);
 
 test('login runs as a background process that says the sign-in link once and reports through setup', () => {
-  const started = modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'api' } }, null, call => ({
-    'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] }, 'process.start': { session: 'claude_login', running: true } })[call.operation]);
+  const answer = (data = '', alive = true, process = '4242-1700000000000') => call => {
+    if (call.operation === 'process.status' && !alive) throw new Error('process_not_found');
+    return { 'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] }, 'process.exchange': { messages: data ? [{ stream: 'stdout', data }] : [], running: true },
+      'session.info': { process_id: process }, 'packages.list': { packages: [] } }[call.operation] ?? {};
+  };
+  const channel = (name, data, state, alive, process) => modEvent('channel', { channel: `omd_claude_cli/${name}`, data }, state, answer('', alive, process));
+  const started = channel('login', { billing: 'api' }, null);
   assert.deepEqual(started.calls[0].arguments, { names: ['node'], sandbox: 'none' });
-  const { arguments: argv, ...start } = started.calls[1].arguments;
-  assert.deepEqual(start, { session: 'claude_login', name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
+  const { arguments: argv, session, ...start } = started.calls.find(call => call.operation === 'process.start').arguments;
+  assert.equal(session, `claude_login_4242-1700000000000_${clock}`);
+  assert.equal(channel('login', { billing: 'api' }, null).calls.find(call => call.operation === 'process.start').arguments.session, session);
+  assert.deepEqual(start, { name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
   assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3])], ['--input-type=module', '-e', ['auth', 'login', '--console']]);
   const link = 'https://claude.ai/oauth/authorize?code=true&state=x';
-  const process = (kind, data) => {
-    let reads = 0;
-    return state => modEvent('process_event', { session: 'claude_login', kind, bytes: 1 }, state, call => call.operation === 'process.exchange'
-      ? { messages: reads++ || !data ? [] : [{ stream: 'stdout', data }], running: true }
-      : call.operation === 'packages.list' ? { packages: [] } : {});
-  };
-  const output = process('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`)(started.state);
+  const event = (kind, data, state) => modEvent('process_event', { session, kind, bytes: 1 }, state, answer(data));
+  const output = event('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`, started.state);
   assert.deepEqual(notices(output.calls), ['Your browser should open; if not, open this link:', link, 'If the page shows a code, run /claude code CODE']);
-  const code = state => modEvent('channel', { channel: 'omd_claude_cli/code', data: { code: 'abc' } }, state, () => ({ messages: [], running: true }));
   assert.ok(manifest.subscriptions.channels.includes('omd_claude_cli/code'));
-  assert.deepEqual(code(output.state).calls[0].arguments, { session: 'claude_login', wait_ms: 0, send: ['abc\n'] });
-  assert.deepEqual(notices(code(null).calls), ['No Claude login is waiting for a code; run /claude login']);
-  const exited = process('exit', 'Login failed\n')(output.state);
+  const code = (state, alive) => channel('code', { code: 'abc' }, state, alive);
+  assert.deepEqual(code(output.state).calls.find(call => call.operation === 'process.exchange').arguments, { session, wait_ms: 0, send: ['abc\n'] });
+  const none = ['No Claude login is waiting for a code; run /claude login'];
+  assert.deepEqual([notices(code(null).calls), notices(code(output.state, false).calls)], [none, none]);
+  assert.deepEqual(notices(channel('login', { billing: 'api' }, output.state).calls), ['A Claude login is already running; finish it or wait for it to end']);
+  const entry = started => ({ billing: 'api', out: '', shown: false, started });
+  const crashed = { claude_login_1_old: entry(clock - 31 * 60_000), claude_login_2_other: entry(clock) };
+  const second = channel('login', { billing: 'subscription' }, { login: { ...output.state.login, ...crashed } }, false, '77-1700000000001');
+  const ids = Object.keys(second.state.login);
+  assert.equal(ids.length, 3);
+  assert.deepEqual(ids.filter(id => id.includes('_old')), []);
+  assert.deepEqual(second.calls.filter(call => call.operation === 'process.stop').map(call => call.arguments.session), ['claude_login_1_old']);
+  const exited = event('exit', 'Login failed\n', second.state);
   assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login again']);
-  assert.equal(exited.state.login, null);
+  assert.deepEqual(Object.keys(exited.state.login), ids.filter(id => id !== session));
 });
 
-test('the status probe names a host error instead of reporting a missing CLI', () => {
-  const status = answer => modEvent('command', '', null, answer, 'claude').value.display;
+test('/claude and /claude status name a host error, a missing CLI and a CLI version the mod does not accept', () => {
+  const status = (answer, args = '') => modEvent('command', args, null, answer, 'claude').value.display;
+  const probe = version => () => ({ exit_code: 0, stdout: JSON.stringify({ version, auth: null }), stderr: '' });
   assert.match(status(() => { throw new Error('exec_program_too_large'); }), /^CLI: check failed: exec_program_too_large/);
-  assert.match(status(() => ({ exit_code: 0, stdout: '{"version":null,"auth":null}', stderr: '' })), /^CLI: not found on PATH/);
+  assert.match(status(probe(null), 'status'), /^CLI: not found on PATH/);
+  assert.match(status(probe(null), 'bogus'), /^Usage:/);
+  assert.match(status(probe('2.1.999 (Claude Code)')), /^CLI: 2\.1\.999 \(Claude Code\) is installed but omd_claude_cli needs 2\.1\.307 \(Claude Code\).*auto-update/);
+  assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\n`));
 });
