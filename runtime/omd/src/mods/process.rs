@@ -68,8 +68,7 @@ fn stop(mut child: Child) -> bool {
 
 const MEMORY_LIMIT: u64 = 512 << 20;
 const MEMORY_POLL: Duration = Duration::from_millis(50);
-/// Live runner processes: `(exceeded, reaped)`. The watchdog signals only under this lock and never a reaped
-/// pid, and every reap marks or untracks its pid under it, so a reused pid is never killed.
+/// Live runner pids `(exceeded, reaped)`; signals and reaps both happen under this lock, so a reused pid is never killed.
 static TRACKED: Mutex<BTreeMap<u32, (bool, bool)>> = Mutex::new(BTreeMap::new());
 
 fn untrack(pid: u32) -> bool {
@@ -118,8 +117,7 @@ fn footprint(_pid: u32) -> Option<u64> {
     None
 }
 
-/// Whether a live runner's peak physical footprint has passed `MEMORY_LIMIT`; checked on every reply because a
-/// callback can allocate and answer between two watchdog polls.
+/// Checked on every reply because a callback can allocate and answer between two watchdog polls.
 fn overran(child: &Child) -> bool {
     footprint(child.id()).is_some_and(|bytes| bytes > MEMORY_LIMIT)
 }
@@ -224,9 +222,7 @@ fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Request fields fixed by a package identity. A reused runner keeps the last ones it was sent, and a request whose
-/// fields match goes without them: a request larger than the pipe buffer blocks the host until the runner drains it,
-/// which costs a wake-up of milliseconds on an idle machine.
+/// Package-identity fields a reused runner keeps, so matching requests omit them and stay under the pipe buffer.
 const KEPT_FIELDS: [&str; 4] = ["source", "assets", "surface", "field_policies"];
 
 fn kept_digest<R>(request: &R) -> Result<[u8; 32]>

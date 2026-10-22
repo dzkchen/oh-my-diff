@@ -913,8 +913,7 @@ fn redact_config(config: &mut Value) {
     scrub_secrets(config, "");
 }
 
-/// Redacts header, environment and query maps, launch arguments, secret-named strings and secret-looking lines;
-/// `env_key` stays readable only while it looks like an upper-case variable name with an underscore.
+/// Redacts secret-bearing maps, arguments, strings and lines; `env_key` stays readable only while it looks like an `UPPER_CASE` name.
 fn scrub_secrets(value: &mut Value, name: &str) {
     match value {
         Value::Object(map) => {

@@ -224,8 +224,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     Ok(listed)
 }
 
-/// Read on every call because `host.json` and plan grants change outside the listing cache. Without a repository,
-/// plan routes are offered regardless of their grant.
+/// Read per call since `host.json` and plan grants change outside the listing cache; without a repository plan routes are always offered.
 fn with_route_choices(root: &Path, mut listed: Value, repository: Option<&Path>) -> Value {
     let here = repository.map(|repository| {
         Value::from(crate::resource_data::hash(
