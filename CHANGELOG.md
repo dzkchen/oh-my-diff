@@ -2,6 +2,34 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.0.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.1) — 2026-10-20
+
+Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.
+
+### New
+
+- Mod runtime: mods run in `omd-runner`, an embedded V8 runner that ships with Oh My Diff, so Node.js is no longer needed to run mods; each runner uses about 6–15 MB instead of about 43 MB and starts about twice as fast (#266)
+- Package controls: `packages.index` pages with `cursor` and `limit`, and the `/mods` Directory reads large indexes in pages (#265)
+- Advisor: `routes.add` adds a ChatGPT-plan helper route for a mod after a confirmation, granted per repository (#265)
+- Claude CLI: `/claude login` runs in the background and `/claude code CODE` sends a pasted sign-in code (#265)
+- Uninstall: `omd uninstall` removes Oh My Diff (#267)
+
+### Changed
+
+- Installer: the default curl command installs the newest stable release (#262), and the PATH line goes in the profile for your shell (#265)
+- Mods: Logo, Mods and Update are required and stay on in `/mods` and `/omd`; `omd mods disable` still turns them off (#265)
+- Mod settings: every first-party setting has a title and description, and route settings list only routes the mod may use (#265)
+- Unsandboxed programs: a version-manager shim such as mise's or Volta's `node` runs the version it manages (#266)
+
+### Fixed
+
+- Code execution: output written after a cell ends no longer corrupts the result, and a cell's whole stdout and stderr is captured up to 64 KiB (#264, #265)
+- Mods: a mod turned on mid-session starts at once, and a slash command retries once after a mod reload (#265)
+- GitHub reader, `@` file search and `/preview --watch`: fewer false changes, fewer `git status` runs and no polling (#264)
+- Author guide and write-a-mod: ten fixes from a clean-checkout walkthrough (#264)
+- Idle compact: OpenAI subscription sessions are no longer compacted, other providers are compacted only after observed cache activity, and a 12-hour cache lifetime can be chosen (#269)
+- Auto-continue: answers only requests from its own thread, keeps each request's first deadline, and its timeout answer is no longer consent for permissions, spending or a required decision (#269)
+
 ## [1.0.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.0) — 2026-10-19
 
 First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the stable mod API 1.0.0.

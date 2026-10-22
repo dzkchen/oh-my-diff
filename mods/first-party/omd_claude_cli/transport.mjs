@@ -6,10 +6,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { translateRequest, responseEvents, reasoningItem } from './index.ts';
+import { CLI_VERSION, translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-export const CLI_VERSION = '2.1.307 (Claude Code)';
 const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -53,13 +52,23 @@ export function usingOverage(headers) {
 }
 
 const cliEnvironment = /^# Environment\nYou have been invoked in the following environment: /;
-const cliReminder = /\s*<system-reminder>\nAs you answer the user's questions, you can use the following context:\n(?:(?!<\/system-reminder>)[\s\S])*Claude Code attached this context automatically;(?:(?!<\/system-reminder>)[\s\S])*<\/system-reminder>\s*$/;
+const reminderOpen = '<system-reminder>\nAs you answer the user\'s questions, you can use the following context:\n';
+const reminderMark = 'Claude Code attached this context automatically;';
+const reminderClose = '</system-reminder>';
 
 // The CLI adds its own temp-directory environment and account context; OMD's history already carries the session's.
 export function withoutCliContext(body) {
+  const cut = text => {
+    const close = text.lastIndexOf(reminderClose);
+    if (close < 0 || text.slice(close + reminderClose.length).trim()) return text;
+    const previous = close ? text.lastIndexOf(reminderClose, close - 1) : -1;
+    const start = text.indexOf(reminderOpen, previous < 0 ? 0 : previous + reminderClose.length);
+    const mark = text.lastIndexOf(reminderMark, close - reminderMark.length);
+    return start >= 0 && mark >= start + reminderOpen.length ? text.slice(0, start).trimEnd() : text;
+  };
   const strip = block => {
-    if (typeof block.text === 'string') block.text = block.text.replace(cliReminder, '');
-    if (typeof block.content === 'string') block.content = block.content.replace(cliReminder, '');
+    if (typeof block.text === 'string') block.text = cut(block.text);
+    if (typeof block.content === 'string') block.content = cut(block.content);
     else if (Array.isArray(block.content)) {
       block.content.forEach(strip);
       block.content = block.content.filter(child => child.type !== 'text' || child.text);

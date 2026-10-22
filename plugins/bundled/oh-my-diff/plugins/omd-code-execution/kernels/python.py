@@ -8,17 +8,19 @@ import sys
 import threading
 
 
-class LimitedOutput(io.StringIO):
+class LimitedOutput(io.TextIOBase):
     def __init__(self):
         super().__init__()
         self.bytes = 0
 
     def write(self, value):
-        size = len(value.encode("utf-8"))
-        if self.bytes + size > 65536:
+        data = memoryview(value.encode("utf-8"))
+        if self.bytes + len(data) > 65536:
             raise ValueError("kernel output limit exceeded")
-        self.bytes += size
-        return super().write(value)
+        self.bytes += len(data)
+        while data:
+            data = data[os.write(1, data):]
+        return len(value)
 
 
 bridge_context = contextvars.ContextVar("omd_bridge", default=None)
@@ -118,11 +120,11 @@ for line in sys.stdin:
         condition.wait_for(lambda: captured["ended"], 5)
         extra = bytes(captured["data"])
         overflow = captured["overflow"]
-    room = 65536 - output.bytes
-    if overflow or len(extra) > room:
-        extra = extra[:room]
-        response = {"ok": False, "error": "ValueError: kernel output limit exceeded"}
-    response["output"] = output.getvalue() + extra.decode("utf-8", "replace")
+    notice = "ValueError: kernel output limit exceeded"
+    if overflow and notice not in response.get("error", ""):
+        response["error"] = f"{response['error']}\n{notice}" if "error" in response else notice
+        response["ok"] = False
+    response["output"] = extra.decode("utf-8", "replace")
     response["bridge_failed"] = bridge_failed
     protocol.write("CODE_KERNEL_RESULT:" + json.dumps(response, separators=(",", ":")) + "\n")
     protocol.flush()

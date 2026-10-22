@@ -128,8 +128,8 @@ pub use package_manager::ModPackagePlan;
 pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
-pub(crate) use store::lock as store_lock;
 pub use store::Trust;
+pub(crate) use store::lock as store_lock;
 
 pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
@@ -328,6 +328,9 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "binary_evidence_v1",
     "package_controls_v1",
     "package_index_paging_v1",
+    "tool_batch_success_v1",
+    "code_mode_values_v1",
+    "workspace_watch_key_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",
@@ -5854,11 +5857,7 @@ impl ModHost {
                     .cloned()
                     .collect(),
                 exec_environment: m.package.exec_environment.clone(),
-                os_access: m
-                    .package
-                    .os_access
-                    .clone()
-                    .filter(|_| current),
+                os_access: m.package.os_access.clone().filter(|_| current),
                 approves: m.package.approves.clone().filter(|_| current),
                 http_access: m.package.http_access.clone().filter(|_| current),
                 fs_access: m.package.fs_access.clone().filter(|_| current),

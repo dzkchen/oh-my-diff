@@ -42,10 +42,15 @@ pub(super) fn parse(
     merges
         .into_iter()
         .map(|merge| {
-            let object = merge
-                .as_object()
-                .filter(|object| object.len() == 3)
-                .ok_or_else(invalid)?;
+            let object = merge.as_object().ok_or_else(invalid)?;
+            let success_per_call = match object.get("success_per_call") {
+                None => false,
+                Some(Value::Bool(flag)) => *flag,
+                Some(_) => return Err(invalid()),
+            };
+            if object.len() != 3 + usize::from(object.contains_key("success_per_call")) {
+                return Err(invalid());
+            }
             let call_ids = object
                 .get("call_ids")
                 .and_then(Value::as_array)
@@ -71,6 +76,7 @@ pub(super) fn parse(
                 call_ids,
                 tool: format!("mod_{owner}_{tool}"),
                 arguments: arguments.to_string(),
+                success_per_call,
             })
         })
         .collect()

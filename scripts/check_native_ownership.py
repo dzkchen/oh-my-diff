@@ -6,9 +6,9 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWED_IDENTIFIERS = {"claude", "anthropic", "lsp", "git"}
-HOST_WORDS = {"artifact", "auto", "cli", "code", "compact", "continue", "edit", "execution", "idle", "lines", "model",
-              "mods", "panel", "picker", "plan", "preview", "read", "reading", "removal", "sync", "tool", "update",
-              "usage", "view"}
+HOST_WORDS = {"artifact", "auto", "cli", "code", "compact", "continue", "edit", "execution", "fix", "idle", "lines",
+              "model", "mods", "panel", "picker", "plan", "preview", "read", "reading", "removal", "sync", "tool",
+              "update", "usage", "view"}
 GENERIC_LITERALS = {
     "git": "Git executable used for tracked-path discovery",
     "github_pat_": "GitHub token prefix redacted from mod output",

@@ -27205,7 +27205,7 @@ index 25468f3749a974a2237721a45418d5c257aed4ed..af2abec3224b40406b7977c7bf8cd930
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf27ca9ca53 100644
+index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f26edfbd71 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -27232,7 +27232,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,193 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,212 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -27266,7 +27266,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +
 +pub(crate) async fn intercept_tool(
 +    invocation: &mut ToolInvocation,
-+) -> Result<Option<(String, bool)>, codex_tools::FunctionCallError> {
++) -> Result<Option<(String, bool, Option<serde_json::Value>)>, codex_tools::FunctionCallError> {
 +    let contributors = invocation
 +        .session
 +        .services
@@ -27332,8 +27332,12 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +                invocation.payload = payload;
 +            }
 +            codex_extension_api::ToolInterception::Continue(None) => {}
-+            codex_extension_api::ToolInterception::Respond { output, success } => {
-+                response = Some((output, success));
++            codex_extension_api::ToolInterception::Respond {
++                output,
++                success,
++                value,
++            } => {
++                response = Some((output, success, value));
 +                break;
 +            }
 +        }
@@ -27342,6 +27346,19 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +        facts.remove(&invocation.call_id);
 +    }
 +    Ok(response)
++}
++
++pub(crate) fn wants_value(invocation: &ToolInvocation) -> bool {
++    matches!(
++        invocation.source,
++        crate::tools::context::ToolCallSource::CodeMode { .. }
++    ) && invocation
++        .session
++        .services
++        .extensions
++        .tool_output_contributors()
++        .iter()
++        .any(|contributor| contributor.wants_value(&invocation.call_id))
 +}
 +
 +pub(crate) fn replaceable_tool_output(
@@ -27391,6 +27408,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +    invocation: &ToolInvocation,
 +    text: &str,
 +    success: bool,
++    value: Option<&serde_json::Value>,
 +) -> Option<String> {
 +    for contributor in invocation
 +        .session
@@ -27413,6 +27431,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
 +                },
 +                success,
 +                text,
++                value,
 +            })
 +            .await;
 +        if let Some(replacement) = replacement {
@@ -27426,7 +27445,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +300,33 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +319,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -27461,7 +27480,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +334,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +353,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -27470,7 +27489,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
      )
      .await;
  }
-@@ -133,10 +354,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +373,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -27484,7 +27503,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +368,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +387,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -27493,7 +27512,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,6 +382,8 @@ async fn notify_tool_finish_parts(
+@@ -156,6 +401,8 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -27502,7 +27521,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..21a30bc674d64c3e5e4282365cc1ccf2
              })
              .await;
      }
-@@ -169,6 +397,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +416,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -28086,7 +28105,7 @@ index e0b50c48dd7ed4558b4423d25bae6e62d99ccea5..1552e3ff264e38b54fb28756bf0a4550
          records: Arc<std::sync::Mutex<Vec<ToolCallOutcome>>>,
          finish_started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e486811730264ef6 100644
+index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..d2b63bbcdf4a3bd50c5a4c8e53681acd5127dd19 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -46,12 +46,46 @@ use futures::future::BoxFuture;
@@ -28203,7 +28222,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
          {
              let mut active = invocation
                  .session
-@@ -646,6 +699,56 @@ impl ToolRegistry {
+@@ -646,6 +699,66 @@ impl ToolRegistry {
              }
          }
 
@@ -28218,11 +28237,21 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
 +                .await;
 +                return Err(error);
 +            }
-+            Ok(Some((output, success))) => {
++            Ok(Some((output, success, value))) => {
++                let text = FunctionToolOutput::from_text(output, Some(success));
 +                let result = AnyToolResult {
 +                    call_id: invocation.call_id.clone(),
 +                    payload: invocation.payload.clone(),
-+                    result: Box::new(FunctionToolOutput::from_text(output, Some(success))),
++                    result: match value {
++                        Some(value) => Box::new(PostToolUseFeedbackOutput {
++                            original: Box::new(codex_tools::JsonToolOutput::with_success(
++                                value,
++                                Some(success),
++                            )),
++                            model_visible: text,
++                        }),
++                        None => Box::new(text),
++                    },
 +                    post_tool_use_payload: None,
 +                };
 +                let result_sha256 = result_sha256(&invocation, &result);
@@ -28260,7 +28289,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
          let dispatch_trace = ToolDispatchTrace::start(&invocation);
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
-@@ -720,6 +823,7 @@ impl ToolRegistry {
+@@ -720,6 +833,7 @@ impl ToolRegistry {
                          &invocation,
                          call_state.as_deref(),
                          ToolCallOutcome::Blocked,
@@ -28268,7 +28297,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                      )
                      .await;
                      return Err(err);
-@@ -742,6 +846,7 @@ impl ToolRegistry {
+@@ -742,6 +856,7 @@ impl ToolRegistry {
                              ToolCallOutcome::Failed {
                                  handler_executed: false,
                              },
@@ -28276,7 +28305,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                          )
                          .await;
                          return Err(err);
-@@ -855,13 +960,19 @@ impl ToolRegistry {
+@@ -855,13 +970,19 @@ impl ToolRegistry {
                  handler_executed: true,
              },
          };
@@ -28299,7 +28328,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -879,6 +990,28 @@ impl ToolRegistry {
+@@ -879,6 +1000,35 @@ impl ToolRegistry {
                          });
                      }
                  }
@@ -28307,10 +28336,17 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
 +                    &invocation,
 +                    result.result.as_ref(),
 +                );
++                let structured = (replaceable.is_some()
++                    && crate::tools::lifecycle::wants_value(&invocation))
++                .then(|| result.result.code_mode_result(&result.payload));
 +                if let Some(visible) = replaceable
-+                    && let Some(text) =
-+                        crate::tools::lifecycle::replace_tool_output(&invocation, &visible, success)
-+                            .await
++                    && let Some(text) = crate::tools::lifecycle::replace_tool_output(
++                        &invocation,
++                        &visible,
++                        success,
++                        structured.as_ref(),
++                    )
++                    .await
 +                {
 +                    result.result = Box::new(PostToolUseFeedbackOutput {
 +                        original: result.result,
@@ -28328,7 +28364,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -889,6 +1022,13 @@ impl ToolRegistry {
+@@ -889,6 +1039,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -28342,7 +28378,7 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -896,16 +1036,24 @@ impl ToolRegistry {
+@@ -896,16 +1053,24 @@ impl ToolRegistry {
      }
  }
 
@@ -28369,10 +28405,10 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..72f04f8ea8cb1d6cc1a4b622e4868117
  }
 
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c2ce9950d 100644
+index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1d593794e 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -842,3 +842,162 @@ fn test_invocation(
+@@ -842,3 +842,167 @@ fn test_invocation(
          },
      }
  }
@@ -28396,6 +28432,7 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c
 +                "respond" => Ok(codex_extension_api::ToolInterception::Respond {
 +                    output: "cached".into(),
 +                    success: true,
++                    value: Some(serde_json::json!({"output": "cached", "exit_code": 0})),
 +                }),
 +                _ => Ok(codex_extension_api::ToolInterception::Continue(Some((
 +                    codex_tools::ToolName::plain("replacement"),
@@ -28442,6 +28479,10 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..355a002c45529af002eda69af7662d8c
 +                output.result.to_response_item("mod-call", &output.payload),
 +                FunctionToolOutput::from_text("cached".into(), Some(true))
 +                    .to_response_item("mod-call", &output.payload)
++            );
++            assert_eq!(
++                output.result.code_mode_result(&output.payload),
++                serde_json::json!({"output": "cached", "exit_code": 0})
 +            );
 +            assert!(matches!(
 +                &records[..],
@@ -29757,7 +29798,7 @@ index d933738616189c8e8f5a65cf9d2336f18bd7d1f8..857e8752e1190857abda6d1f047baf7a
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787d5256915 100644
+index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..0df3cb31c8b1850c732dcbc349ab1f34dd84ebcc 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -12,17 +12,22 @@ use codex_tools::ToolExecutor;
@@ -30013,7 +30054,7 @@ index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -408,6 +573,129 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -408,6 +573,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -30132,6 +30173,10 @@ index 44160e2b17e13a4bd19cc748e0e7f39fd05c8f93..5f85c19e6e9da71849f9e6c6b4c00787
 +        true
 +    }
 +
++    fn wants_value(&self, _call_id: &str) -> bool {
++        false
++    }
++
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        _input: ToolOutputInput<'a>,
@@ -30169,10 +30214,10 @@ index b614d536f6318d8c50520d0995c96906b826deaf..63f6a4b60471aad8c642f1947d97ef41
  pub struct ThreadStartInput<'a, C> {
      /// Host configuration visible at thread start.
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735c3f7c800 100644
+index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..199d623dec71de00310f53ef1a0f57207cc3e659 100644
 --- a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-@@ -19,6 +19,16 @@ use crate::ExtensionData;
+@@ -19,6 +19,17 @@ use crate::ExtensionData;
  /// Future returned by one tool-lifecycle callback.
  pub type ToolLifecycleFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
@@ -30183,13 +30228,14 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
 +    Respond {
 +        output: String,
 +        success: bool,
++        value: Option<serde_json::Value>,
 +    },
 +}
 +
  /// Extension-facing outcome for a finished tool call.
  #[derive(Clone, Copy, Debug, Eq, PartialEq)]
  pub enum ToolCallOutcome {
-@@ -172,6 +182,15 @@ pub struct CommandStartInput<'a> {
+@@ -172,6 +183,15 @@ pub struct CommandStartInput<'a> {
      pub file_system: &'a dyn ExecutorFileSystem,
  }
 
@@ -30205,7 +30251,7 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
  /// Input supplied after an MCP server responds, before the host reports completion.
  pub struct McpToolResultInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -194,6 +213,18 @@ pub struct McpToolResultInput<'a> {
+@@ -194,6 +214,19 @@ pub struct McpToolResultInput<'a> {
      pub result: &'a mut CallToolResult,
  }
 
@@ -30219,12 +30265,13 @@ index 3b31eaaf56dc3cde30f79ac56b5793be90f7e7af..c3906baf0b9afd9fd12086ff9ea12735
 +    pub arguments: Option<&'a str>,
 +    pub success: bool,
 +    pub text: &'a str,
++    pub value: Option<&'a serde_json::Value>,
 +}
 +
  /// Input supplied when the host finishes executing one tool call.
  pub struct ToolFinishInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -212,6 +243,10 @@ pub struct ToolFinishInput<'a> {
+@@ -212,6 +245,10 @@ pub struct ToolFinishInput<'a> {
      pub source: ToolCallSource,
      /// Host-observed result of the tool call.
      pub outcome: ToolCallOutcome,
@@ -48657,10 +48704,10 @@ index 0000000000000000000000000000000000000000..4a36c112e12ff07559abd5eaa10e1c50
 +}
 diff --git a/codex-rs/core/src/tools/batch.rs b/codex-rs/core/src/tools/batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e39bd78b7b
+index 0000000000000000000000000000000000000000..87b5e4661cabfc0a8cbebabb8469cf51a5c35d1c
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,278 @@
 +use std::collections::BTreeSet;
 +use std::sync::Arc;
 +
@@ -48764,14 +48811,32 @@ index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e3
 +        .collect()
 +}
 +
-+pub(crate) fn fan_out(call_id: &str, merged: &Result<(String, bool), String>) -> ResponseInputItem {
++fn result(value: serde_json::Value, success: bool, per_call: bool) -> (String, bool) {
++    if per_call
++        && let serde_json::Value::Object(fields) = &value
++        && fields.len() == 2
++        && let (Some(serde_json::Value::String(text)), Some(serde_json::Value::Bool(ok))) =
++            (fields.get("output"), fields.get("success"))
++    {
++        return (text.clone(), success && *ok);
++    }
++    match value {
++        serde_json::Value::String(text) => (text, success),
++        value => (value.to_string(), success),
++    }
++}
++
++pub(crate) fn fan_out(
++    call_id: &str,
++    merged: &Result<(String, bool), String>,
++    per_call: bool,
++) -> ResponseInputItem {
 +    let (text, success) = match merged {
 +        Ok((text, success)) => match serde_json::from_str::<serde_json::Value>(text)
 +            .ok()
 +            .and_then(|value| value.get(call_id).cloned())
 +        {
-+            Some(serde_json::Value::String(text)) => (text, *success),
-+            Some(value) => (value.to_string(), *success),
++            Some(value) => result(value, *success, per_call),
 +            None => (
 +                format!("error: the batched call returned no result for {call_id}"),
 +                false,
@@ -48889,21 +48954,23 @@ index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e3
 +        }
 +        .boxed()
 +        .shared();
-+        shared.push((merge.call_ids.clone(), output));
++        shared.push((merge.call_ids.clone(), merge.success_per_call, output));
 +    }
 +    calls
 +        .into_iter()
 +        .map(|call| {
 +            match shared
 +                .iter()
-+                .find(|(ids, _)| ids.contains(&call.call_id))
-+                .map(|(_, output)| output.clone())
++                .find(|(ids, _, _)| ids.contains(&call.call_id))
++                .map(|(_, per_call, output)| (*per_call, output.clone()))
 +            {
-+                Some(output) => {
++                Some((per_call, output)) => {
 +                    let call_id = call.call_id;
 +                    Box::pin(async move {
 +                        let merged = output.await;
-+                        Ok(ResponseItemEnvelope::new(fan_out(&call_id, &merged).into()))
++                        Ok(ResponseItemEnvelope::new(
++                            fan_out(&call_id, &merged, per_call).into(),
++                        ))
 +                    }) as InFlightFuture<'static>
 +                }
 +                None => Box::pin(
@@ -48921,10 +48988,10 @@ index 0000000000000000000000000000000000000000..b55507e0fdace775babda9d113ca87e3
 +mod tests;
 diff --git a/codex-rs/core/src/tools/batch_tests.rs b/codex-rs/core/src/tools/batch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4cfb2d98238b22c1101bc41dab39024d3fee991d
+index 0000000000000000000000000000000000000000..065d02f30a2e639c04c632ba538a1d60525566f3
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch_tests.rs
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,52 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -48939,21 +49006,43 @@ index 0000000000000000000000000000000000000000..4cfb2d98238b22c1101bc41dab39024d
 +fn merged_results_fan_out_by_call_id_and_missing_results_fail() {
 +    let merged = Ok((r#"{"a":"alpha","b":{"n":2}}"#.to_owned(), true));
 +    assert_eq!(
-+        text(fan_out("a", &merged)),
++        text(fan_out("a", &merged, false)),
 +        ("alpha".to_owned(), Some(true))
 +    );
 +    assert_eq!(
-+        text(fan_out("b", &merged)),
++        text(fan_out("b", &merged, false)),
 +        (r#"{"n":2}"#.to_owned(), Some(true))
 +    );
-+    let (missing, success) = text(fan_out("c", &merged));
++    let (missing, success) = text(fan_out("c", &merged, false));
 +    assert!(missing.contains("no result for c"));
 +    assert_eq!(success, Some(false));
-+    let (failed, success) = text(fan_out("a", &Err("denied".to_owned())));
++    let (failed, success) = text(fan_out("a", &Err("denied".to_owned()), false));
 +    assert!(failed.contains("denied"));
 +    assert_eq!(success, Some(false));
-+    let (unparsed, _) = text(fan_out("a", &Ok(("plain".to_owned(), true))));
++    let (unparsed, _) = text(fan_out("a", &Ok(("plain".to_owned(), true)), false));
 +    assert!(unparsed.contains("no result for a"));
++}
++
++#[test]
++fn merged_results_may_carry_a_success_flag_per_call_when_the_merge_asks() {
++    let merged = Ok((
++        r#"{"a":{"output":"read","success":true},"b":{"output":"missing","success":false},"c":{"output":"x","success":true,"extra":1}}"#
++            .to_owned(),
++        true,
++    ));
++    assert_eq!(text(fan_out("a", &merged, true)), ("read".to_owned(), Some(true)));
++    assert_eq!(text(fan_out("b", &merged, true)), ("missing".to_owned(), Some(false)));
++    assert_eq!(
++        text(fan_out("c", &merged, true)),
++        (r#"{"extra":1,"output":"x","success":true}"#.to_owned(), Some(true))
++    );
++    assert_eq!(
++        text(fan_out("b", &merged, false)),
++        (r#"{"output":"missing","success":false}"#.to_owned(), Some(true)),
++        "without the flag the value stays text, as before"
++    );
++    let failed = Ok((r#"{"a":{"output":"read","success":true}}"#.to_owned(), false));
++    assert_eq!(text(fan_out("a", &failed, true)), ("read".to_owned(), Some(false)));
 +}
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
@@ -51465,10 +51554,10 @@ index 0000000000000000000000000000000000000000..2a07f4a1c82154d3729de35d5b66b12d
 +}
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_batch.rs b/codex-rs/ext/extension-api/src/contributors/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a693e1a49226da87920f48d552b71302292755f
+index 0000000000000000000000000000000000000000..963f26e4677e5ec7235a78311e3c904fbd2b304a
 --- /dev/null
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_batch.rs
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,52 @@
 +use std::collections::HashMap;
 +use std::sync::Mutex;
 +
@@ -51519,6 +51608,7 @@ index 0000000000000000000000000000000000000000..8a693e1a49226da87920f48d552b7130
 +    pub call_ids: Vec<String>,
 +    pub tool: String,
 +    pub arguments: String,
++    pub success_per_call: bool,
 +}
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
@@ -51587,10 +51677,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124b6729b28
+index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef39a5aab9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2314 @@
+@@ -0,0 +1,2318 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -52263,16 +52353,9 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +    }
 +
 +    fn request_id(&self) -> String {
-+        static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-+        let process = PROCESS.get_or_init(|| {
-+            format!(
-+                "{}-{}",
-+                std::process::id(),
-+                chrono::Utc::now().timestamp_millis()
-+            )
-+        });
 +        format!(
-+            "req-{process}-{}",
++            "req-{}-{}",
++            process_id(),
 +            self.next_request.fetch_add(1, Ordering::Relaxed) + 1
 +        )
 +    }
@@ -53902,15 +53985,26 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +    }
 +}
 +
++pub(crate) fn process_id() -> &'static str {
++    static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    PROCESS.get_or_init(|| {
++        format!(
++            "{}-{}",
++            std::process::id(),
++            chrono::Utc::now().timestamp_millis()
++        )
++    })
++}
++
 +#[cfg(test)]
 +#[path = "accounting_tests.rs"]
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aae4482e040529e3264f90cc72b79b07e53c113b
+index 0000000000000000000000000000000000000000..b927e3f10673e7e0a1d1ae95f2e26c13badeb410
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1252 @@
+@@ -0,0 +1,1259 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -55143,10 +55237,17 @@ index 0000000000000000000000000000000000000000..aae4482e040529e3264f90cc72b79b07
 +        mod_id: "fixture_helper".into(),
 +    };
 +    let name = codex_omd::plan_routes::add(&store, &repository, &plan).unwrap();
-+    assert_eq!(codex_omd::plan_routes::add(&store, &other, &plan).unwrap(), name);
++    assert_eq!(
++        codex_omd::plan_routes::add(&store, &other, &plan).unwrap(),
++        name
++    );
 +    let config = crate::config::HostConfig::load(&store, &repository).unwrap();
 +    let route = config
-+        .route(&name, crate::config::RouteRole::Worker, Some("fixture_helper"))
++        .route(
++            &name,
++            crate::config::RouteRole::Worker,
++            Some("fixture_helper"),
++        )
 +        .unwrap();
 +    let grant = route.grant.as_ref().unwrap();
 +    let allowed = |repository: &std::path::Path| {
@@ -63072,10 +63173,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21960e4431
+index 0000000000000000000000000000000000000000..ed02ef69956f034158404bad007a64a32099be51
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2539 @@
+@@ -0,0 +1,2545 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63263,6 +63364,7 @@ index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21
 +    thread: String,
 +    result: std::sync::mpsc::Sender<Result<Value, String>>,
 +    chain: tokio::task::JoinHandle<Result<codex_omd::ModChain, String>>,
++    values: bool,
 +    _cancellation: Cancellation,
 +}
 +
@@ -65275,11 +65377,14 @@ index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21
 +                let _thread = codex_omd::StateThread::enter(Some(thread));
 +                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +                let _ = runtime.event_guarded("tool_call", observed, || true);
-+                Ok::<_, String>(runtime.intercepts(surface))
++                Ok::<_, String>((
++                    runtime.intercepts(surface),
++                    runtime.intercepts_with(surface, "code_mode_values_v1"),
++                ))
 +            })
 +            .await
 +            .map_err(|e| e.to_string())??;
-+            let Some(required) = intercepting else {
++            let (Some(required), values) = intercepting else {
 +                self.cleanup_failed(Some(&lead)).await;
 +                if !spawn {
 +                    self.expansion.validate_call(
@@ -65423,6 +65528,7 @@ index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21
 +                            thread: lead_thread_id.clone(),
 +                            result,
 +                            chain,
++                            values,
 +                            _cancellation: cancellation,
 +                        },
 +                    );
@@ -65476,6 +65582,7 @@ index 0000000000000000000000000000000000000000..5ac96a94561e8d622e305d914c90fa21
 +                    .unwrap_or_default()
 +                    .to_owned(),
 +                success: chain.result["success"].as_bool().unwrap_or(false),
++                value: chain.result.get("value").filter(|value| !value.is_null()).cloned(),
 +            })
 +        })
 +    }
@@ -71584,10 +71691,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759d3eb7ec9
+index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a1705295830007
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,709 @@
+@@ -0,0 +1,723 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -72039,11 +72146,17 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +        debounce_ms: Option<u64>,
 +        #[serde(default)]
 +        include_ignored: bool,
++        #[serde(default)]
++        key: Option<String>,
 +    }
 +    fn recursive() -> bool {
 +        true
 +    }
++    let shape = format!("{}:{arguments}", lead.thread);
 +    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++    if input.key.as_deref().is_some_and(invalid_watch_key) {
++        return Err("watch_arguments_invalid".into());
++    }
 +    let watches = {
 +        let mut watches = core
 +            .expansion
@@ -72092,17 +72205,22 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +                );
 +            }
 +        });
-+    let id = watches
++    let (id, _) = watches
 +        .watch(
 +            caller.id,
 +            caller.source,
 +            &input.paths,
 +            input.recursive,
 +            input.debounce_ms,
++            input.key.as_deref().map(|key| (key, shape.as_str())),
 +            sink,
 +        )
 +        .map_err(|error| error.to_string())?;
 +    Ok(json!({"watch_id": id}))
++}
++
++fn invalid_watch_key(key: &str) -> bool {
++    key.is_empty() || key.len() > 64
 +}
 +
 +pub(in crate::mods) fn unwatch(
@@ -72110,21 +72228,24 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +    caller: &str,
 +    arguments: &Value,
 +) -> Result<Value, String> {
-+    let id = arguments["watch_id"]
-+        .as_str()
-+        .filter(|_| {
-+            arguments
-+                .as_object()
-+                .is_some_and(|object| object.len() == 1)
-+        })
-+        .ok_or("watch_arguments_invalid")?;
++    let single = arguments
++        .as_object()
++        .is_some_and(|object| object.len() == 1);
++    let (id, key) = (arguments["watch_id"].as_str(), arguments["key"].as_str());
++    if !single || id.is_none() && key.is_none_or(invalid_watch_key) {
++        return Err("watch_arguments_invalid".into());
++    }
 +    let stopped = core
 +        .expansion
 +        .watches
 +        .lock()
 +        .map_err(|_| "watch_state_poisoned")?
 +        .as_ref()
-+        .is_some_and(|watches| watches.unwatch(caller, id));
++        .is_some_and(|watches| match (id, key) {
++            (Some(id), _) => watches.unwatch(caller, id),
++            (None, Some(key)) => watches.unwatch_key(caller, key),
++            (None, None) => false,
++        });
 +    Ok(json!({"stopped": stopped}))
 +}
 +
@@ -72299,10 +72420,10 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b9be0388e
+index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20a8148617
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_batch.rs
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,157 @@
 +use super::*;
 +use codex_extension_api::ToolBatchContributor;
 +use codex_extension_api::ToolBatchInput;
@@ -72347,10 +72468,15 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +    merges
 +        .into_iter()
 +        .map(|merge| {
-+            let object = merge
-+                .as_object()
-+                .filter(|object| object.len() == 3)
-+                .ok_or_else(invalid)?;
++            let object = merge.as_object().ok_or_else(invalid)?;
++            let success_per_call = match object.get("success_per_call") {
++                None => false,
++                Some(Value::Bool(flag)) => *flag,
++                Some(_) => return Err(invalid()),
++            };
++            if object.len() != 3 + usize::from(object.contains_key("success_per_call")) {
++                return Err(invalid());
++            }
 +            let call_ids = object
 +                .get("call_ids")
 +                .and_then(Value::as_array)
@@ -72376,6 +72502,7 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +                call_ids,
 +                tool: format!("mod_{owner}_{tool}"),
 +                arguments: arguments.to_string(),
++                success_per_call,
 +            })
 +        })
 +        .collect()
@@ -72456,10 +72583,10 @@ index 0000000000000000000000000000000000000000..440571a15b0dded39ee02339a572b34b
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d001e857e95
+index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8259b16ba
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,228 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -72529,6 +72656,12 @@ index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d00
 +            || self.pending.lock().is_ok_and(|pending| !pending.is_empty())
 +    }
 +
++    fn wants_value(&self, call_id: &str) -> bool {
++        self.pending
++            .lock()
++            .is_ok_and(|pending| pending.get(call_id).is_some_and(|pending| pending.values))
++    }
++
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: ToolOutputInput<'a>,
@@ -72538,8 +72671,16 @@ index 0000000000000000000000000000000000000000..a58181ec0a7014aa21b4c7109e5d6d00
 +                self.views
 +                    .diagnostic(&self.host, "tool_output", Some(message));
 +            };
-+            let executed = json!({"output": bounded(input.text), "success": input.success,
++            let head = bounded(input.text);
++            let mut executed = json!({"output": head, "success": input.success,
 +                "truncated": input.text.len() > HEAD_BYTES});
++            if let Some(value) = input.value
++                && serde_json::to_vec(value).is_ok_and(|bytes| {
++                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
++                })
++            {
++                executed["value"] = value.clone();
++            }
 +            let mut text = None;
 +            let mut replaced_by = "feedback".to_owned();
 +            match self.resume(input.call_id, Ok(executed.clone())).await {
@@ -72888,10 +73029,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4ec8a8e78
+index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16521020a7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4166 @@
+@@ -0,0 +1,4318 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73232,6 +73373,46 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        .unwrap_err(),
 +        "callback_cancelled"
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn session_info_reports_the_threads_current_cwd() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["inventory"],
++        manifest: Value::Null,
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let manager = attach_thread(&mut fixture).await;
++    let repository = fixture.lead.host.repository.clone();
++    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
++    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
++    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
++    std::fs::create_dir_all(&sub).unwrap();
++    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
++    manager
++        .get_thread(fixture.lead.thread)
++        .await
++        .unwrap()
++        .update_thread_settings(codex_protocol::protocol::ThreadSettingsOverrides {
++            environments: Some(codex_protocol::protocol::TurnEnvironmentRequests::new(
++                sub.clone(),
++                vec![codex_protocol::protocol::TurnEnvironmentRequest {
++                    environment_id: "local".into(),
++                    cwd: uri.clone(),
++                    workspace_roots: vec![uri],
++                    config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
++                }],
++            )),
++            ..Default::default()
++        })
++        .await
++        .unwrap();
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
++    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -73733,8 +73914,8 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        Package {
 +            id: "cache",
 +            capabilities: &["interception"],
-+            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true }));\n}\n",
++            manifest: json!({"compatibility": {"required_features": ["code_mode_values_v1"]}}),
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true, value: { output: 'from cache', exit_code: 0 } }));\n  api.intercept('tool', { match: { tool: 'huge' } }, () => ({ output: 'huge', success: true, value: 'x'.repeat(70000) }));\n  api.intercept('tool', { match: { tool: 'nullish' } }, () => ({ output: 'nullish', success: true, value: null }));\n}\n",
 +        },
 +        Package {
 +            id: "lint",
@@ -73786,6 +73967,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        arguments: Some(r#"{"path":"a.txt","checked":true}"#),
 +        success: true,
 +        text,
++        value: None,
 +    };
 +    let ToolInterception::Continue(Some((tool, codex_tools::ToolPayload::Function { arguments }))) =
 +        mods.intercept_tool(start("call-1", &READ)).await.unwrap()
@@ -73814,10 +73996,53 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
 +        ToolInterception::Respond {
 +            output: "trimmed 10 cached a.txt".into(),
-+            success: true
++            success: true,
++            value: Some(json!({"output": "from cache", "exit_code": 0}))
 +        }
 +    );
 +    assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
++    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
++    static NULLISH: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("nullish"));
++    assert!(
++        matches!(
++            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
++            ToolInterception::Continue(Some(_))
++        ),
++        "an answer whose value exceeds 64 KiB is invalid, so the call runs"
++    );
++    assert!(mods.wants_value("call-huge"));
++    assert!(!mods.wants_value("call-none"));
++    mods.replace_tool_output(output("call-huge", "ok")).await;
++    assert!(!mods.wants_value("call-huge"));
++    assert!(matches!(
++        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
++        ToolInterception::Respond { value: None, .. }
++    ));
++    let Some(plain) = self::fixture(&[Package {
++        id: "plain",
++        capabilities: &["interception"],
++        manifest: Value::Null,
++        source: "export default api => { api.intercept('tool', (e, next) => next(e)); }",
++    }]) else {
++        return;
++    };
++    *plain.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&plain.lead.host, &[]);
++    let unread = self::mods(&plain.core);
++    let plain_thread = ExtensionData::new("thread".to_owned());
++    plain_thread.insert(plain.lead.clone());
++    unread
++        .intercept_tool(ToolStartInput {
++            thread_store: &plain_thread,
++            ..start("call-plain", &READ)
++        })
++        .await
++        .unwrap();
++    assert!(
++        !unread.wants_value("call-plain"),
++        "only an interceptor whose mod requires code_mode_values_v1 gets the value"
++    );
 +
 +    let source = fixture
 +        .core
@@ -73892,7 +74117,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            id: "retry",
 +            capabilities: &["interception"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
 +        },
 +        Package {
 +            id: "probe",
@@ -73957,9 +74182,56 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            arguments: Some(r#"{"path":"a.txt"}"#),
 +            success: false,
 +            text: "first attempt failed",
++            value: None,
 +        })
 +        .await;
 +    assert_eq!(replaced.as_deref(), Some("second attempt"));
++    static CODED: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("coded"));
++    assert_eq!(
++        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let structured = json!({"exit_code": 0, "output": "x"});
++    let seen = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-coded",
++            tool_name: &CODED,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: true,
++            text: "Exit code: 0\nOutput:\nx",
++            value: Some(&structured),
++        })
++        .await;
++    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
++    let long = "y".repeat(48 * 1024 - 8);
++    assert_eq!(
++        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let omitted = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-coded-long",
++            tool_name: &CODED,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: true,
++            text: &long,
++            value: Some(&structured),
++        })
++        .await;
++    assert_eq!(
++        omitted.as_deref(),
++        Some("null"),
++        "a value that would push one result past 48 KiB is left out"
++    );
 +    assert_eq!(
 +        invoker.0.lock().unwrap().clone(),
 +        vec![(
@@ -73989,7 +74261,8 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        probed,
 +        ToolInterception::Respond {
 +            output: "ask mod-probe-0 second attempt".into(),
-+            success: true
++            success: true,
++            value: None
 +        }
 +    );
 +    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
@@ -75897,6 +76170,7 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +            arguments: None,
 +            success: true,
 +            text: r#"{"agent_id":"child","nickname":null}"#,
++            value: None,
 +        })
 +        .await,
 +        None
@@ -77058,6 +77332,25 @@ index 0000000000000000000000000000000000000000..a7e5f693ddac2ef340fe0fd81e8cdca4
 +        assert_eq!(fragments.len(), expected, "{label}");
 +    }
 +}
++
++#[test]
++fn tool_batch_merges_opt_into_per_call_success_explicitly() {
++    let known = ["a".to_owned(), "b".to_owned()];
++    let merge = |extra: Value| {
++        let mut merge = json!({"call_ids": ["a", "b"], "tool": "batch", "arguments": {}});
++        if let Value::Object(fields) = extra {
++            merge.as_object_mut().unwrap().extend(fields);
++        }
++        tool_batch::parse("owner", json!({"merge": [merge]}), &known)
++    };
++    let plain = merge(json!({})).unwrap();
++    assert_eq!(plain[0].tool, "mod_owner_batch");
++    assert!(!plain[0].success_per_call);
++    assert!(merge(json!({"success_per_call": true})).unwrap()[0].success_per_call);
++    assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
++    assert!(merge(json!({"success_per_call": "yes"})).is_err());
++    assert!(merge(json!({"other": true})).is_err());
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f3616bf60
@@ -77980,10 +78273,10 @@ index 0000000000000000000000000000000000000000..b7e24384928422189574c85bc45abb29
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163ce25a60da
+index 0000000000000000000000000000000000000000..3b363037604ed8d4941961629c8797f64a463686
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,779 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -78614,6 +78907,17 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                .get(&lead.thread.to_string())
 +                .cloned();
 +            let config = super::agents::parent_config(lead).await?;
++            let cwd = host
++                .manager
++                .upgrade()
++                .ok_or("native_thread_manager_stopped")?
++                .get_thread(lead.thread)
++                .await
++                .map_err(|e| e.to_string())?
++                .config_snapshot()
++                .await
++                .cwd()
++                .clone();
 +            let turns = core
 +                .expansion
 +                .turns
@@ -78624,10 +78928,11 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                .unwrap_or(0);
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
-+                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
++                "cwd": cwd, "codex_version": env!("CARGO_PKG_VERSION"),
 +                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-+                "route": account.and_then(|account| account.route), "turns_started": turns}),
++                "route": account.and_then(|account| account.route), "turns_started": turns,
++                "process_id": crate::accounting::process_id()}),
 +            )
 +        }
 +        "task.status" => {
@@ -82510,10 +82815,10 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42fb4bb59b
+index 0000000000000000000000000000000000000000..7c93d96847f613c39e187ce7f4eacc489ba77ead
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,223 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -82533,6 +82838,7 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +
 +struct Watch {
 +    source: String,
++    key: Option<(String, String)>,
 +    _registration: WatchRegistration,
 +    task: tokio::task::JoinHandle<()>,
 +}
@@ -82558,6 +82864,15 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +        return None;
 +    }
 +    relative.to_str().map(str::to_owned)
++}
++
++fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
++    watches
++        .iter()
++        .find(|((mod_id, _), watch)| {
++            mod_id == owner && watch.key.as_ref().is_some_and(|(kept, _)| kept == key)
++        })
++        .map(|((_, id), _)| id.clone())
 +}
 +
 +impl WorkspaceWatches {
@@ -82612,8 +82927,9 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +        paths: &[String],
 +        recursive: bool,
 +        debounce_ms: Option<u64>,
++        key: Option<(&str, &str)>,
 +        sink: ChangeSink,
-+    ) -> io::Result<String> {
++    ) -> io::Result<(String, Option<String>)> {
 +        if paths.is_empty() || paths.len() > self.limits.paths_per_watch {
 +            return Err(io::Error::other("watch_paths_invalid"));
 +        }
@@ -82629,8 +82945,20 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +            .watches
 +            .lock()
 +            .map_err(|_| io::Error::other("watch_state_poisoned"))?;
-+        if watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
-+            >= self.limits.watches_per_mod
++        let replaced = key.and_then(|(key, _)| keyed(&watches, owner, key));
++        if let (Some(previous), Some((_, shape))) = (&replaced, key)
++            && watches
++                .get(&(owner.to_owned(), previous.clone()))
++                .is_some_and(|watch| {
++                    watch.source == source
++                        && watch.key.as_ref().is_some_and(|(_, kept)| kept == shape)
++                })
++        {
++            return Ok((previous.clone(), None));
++        }
++        if replaced.is_none()
++            && watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
++                >= self.limits.watches_per_mod
 +        {
 +            return Err(io::Error::other("watch_limit"));
 +        }
@@ -82668,15 +82996,26 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +                }
 +            }
 +        });
++        if let Some(previous) = &replaced {
++            watches.remove(&(owner.to_owned(), previous.clone()));
++        }
 +        watches.insert(
 +            (owner.to_owned(), id.clone()),
 +            Watch {
 +                source: source.to_owned(),
++                key: key.map(|(key, shape)| (key.to_owned(), shape.to_owned())),
 +                _registration: registration,
 +                task,
 +            },
 +        );
-+        Ok(id)
++        Ok((id, replaced))
++    }
++
++    pub(crate) fn unwatch_key(&self, owner: &str, key: &str) -> bool {
++        self.watches.lock().is_ok_and(|mut watches| {
++            keyed(&watches, owner, key)
++                .is_some_and(|id| watches.remove(&(owner.to_owned(), id)).is_some())
++        })
 +    }
 +
 +    pub(crate) fn unwatch(&self, owner: &str, id: &str) -> bool {
@@ -82705,10 +83044,10 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9a5f9c2bf
+index 0000000000000000000000000000000000000000..f9ca43129c83316bb039bf050499026743444a06
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,131 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -82744,8 +83083,8 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +async fn external_changes_are_reported_relative_to_the_root() {
 +    let (dir, watches) = fixture();
 +    let (sink, rx) = channel_sink();
-+    let id = watches
-+        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
++    let (id, _) = watches
++        .watch("m", "sha", &["src".to_owned()], true, Some(50), None, sink)
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
 +    let file = dir.path().join("src/a.txt");
@@ -82777,7 +83116,7 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +        let (sink, _rx) = channel_sink();
 +        assert!(
 +            watches
-+                .watch("m", "sha", &[path.to_owned()], false, None, sink)
++                .watch("m", "sha", &[path.to_owned()], false, None, None, sink)
 +                .is_err(),
 +            "{path}"
 +        );
@@ -82785,11 +83124,11 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, Some(10), sink)
++            .watch("m", "sha", &["src".to_owned()], false, Some(10), None, sink)
 +            .is_err()
 +    );
 +    let (sink, _rx) = channel_sink();
-+    assert!(watches.watch("m", "sha", &[], false, None, sink).is_err());
++    assert!(watches.watch("m", "sha", &[], false, None, None, sink).is_err());
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -82798,18 +83137,18 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +    for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
 +        let (sink, _rx) = channel_sink();
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, sink)
++            .watch("m", "sha", &["src".to_owned()], false, None, None, sink)
 +            .unwrap();
 +    }
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, sink.clone())
++            .watch("m", "sha", &["src".to_owned()], false, None, None, sink.clone())
 +            .is_err()
 +    );
 +    assert!(
 +        watches
-+            .watch("other", "sha", &["src".to_owned()], false, None, sink)
++            .watch("other", "sha", &["src".to_owned()], false, None, None, sink)
 +            .is_ok()
 +    );
 +    watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
@@ -82817,6 +83156,28 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +        (watches.unwatch_all("m"), watches.unwatch_all("other")),
 +        (0, 1)
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_keyed_watch_is_kept_when_unchanged_and_replaced_within_the_limit_otherwise() {
++    let (_dir, watches) = fixture();
++    let watch = |key: Option<(&str, &str)>| {
++        let (sink, _rx) = channel_sink();
++        watches.watch("m", "sha", &["src".to_owned()], false, None, key, sink)
++    };
++    let (first, replaced) = watch(Some(("k", "a"))).unwrap();
++    assert_eq!(replaced, None);
++    assert_eq!(watch(Some(("k", "a"))).unwrap(), (first.clone(), None));
++    for _ in 1..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
++        watch(None).unwrap();
++    }
++    let (second, replaced) = watch(Some(("k", "b"))).unwrap();
++    assert_eq!(replaced.as_deref(), Some(first.as_str()));
++    assert!(watch(Some(("other", "a"))).is_err());
++    assert!(!watches.unwatch("m", &first));
++    assert!(!watches.unwatch_key("other", "k"));
++    assert!(watches.unwatch_key("m", "k"));
++    assert!(!watches.unwatch("m", &second));
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
@@ -104276,10 +104637,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e5882f88a52
+index 0000000000000000000000000000000000000000..9766077dbd34ba9c1715c91f998e27af825efda2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6178 @@
+@@ -0,0 +1,6177 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104410,8 +104771,8 @@ index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e58
 +pub use package_manager::ModPackageSource;
 +pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
-+pub(crate) use store::lock as store_lock;
 +pub use store::Trust;
++pub(crate) use store::lock as store_lock;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
@@ -104610,6 +104971,9 @@ index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e58
 +    "binary_evidence_v1",
 +    "package_controls_v1",
 +    "package_index_paging_v1",
++    "tool_batch_success_v1",
++    "code_mode_values_v1",
++    "workspace_watch_key_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -110136,11 +110500,7 @@ index 0000000000000000000000000000000000000000..efde09863af4d55921d7933723b57e58
 +                    .cloned()
 +                    .collect(),
 +                exec_environment: m.package.exec_environment.clone(),
-+                os_access: m
-+                    .package
-+                    .os_access
-+                    .clone()
-+                    .filter(|_| current),
++                os_access: m.package.os_access.clone().filter(|_| current),
 +                approves: m.package.approves.clone().filter(|_| current),
 +                http_access: m.package.http_access.clone().filter(|_| current),
 +                fs_access: m.package.fs_access.clone().filter(|_| current),
@@ -112008,10 +112368,10 @@ index 0000000000000000000000000000000000000000..4492d6aff4d56d6bd7e4099fba47b5e1
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05cf504e7db
+index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7d6d4d6e0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1950 @@
+@@ -0,0 +1,1968 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -112628,8 +112988,11 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +                    .is_some_and(|output| output.len() <= RESULT_BYTES)
 +                    && result["success"].is_boolean()
 +                    && object.keys().all(|key| {
-+                        ["output", "success", "truncated", "call_id"].contains(&key.as_str())
++                        ["output", "success", "truncated", "call_id", "value"]
++                            .contains(&key.as_str())
 +                    })
++                    && serde_json::to_vec(&result["value"])
++                        .is_ok_and(|value| value.len() <= RESULT_BYTES)
 +            })
 +        }
 +        "host_operation" => {
@@ -113751,6 +114114,21 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +            .max()
 +    }
 +
++    pub fn intercepts_with(&self, surface: &str, feature: &str) -> bool {
++        self.loaded.values().any(|loaded| {
++            loaded
++                .package
++                .compatibility
++                .required_features
++                .iter()
++                .any(|required| required == feature)
++                && loaded.registrations.interceptors.iter().any(|interceptor| {
++                    (loaded.error.is_none() || interceptor.required)
++                        && granted(loaded, &interceptor.pattern, surface)
++                })
++        })
++    }
++
 +    /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
 +    pub fn intercept_held(
 +        &mut self,
@@ -113964,7 +114342,7 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac33b8ea81
+index 0000000000000000000000000000000000000000..78b61d61d8316f6ebfe77b3e8141ffeb45e73cc7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,218 @@
@@ -114037,8 +114415,8 @@ index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/33"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/58"}},
-+    "workspace.unwatch": {"arguments":{"$ref":"#/$defs/58"},"result":{"$ref":"#/$defs/56"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"}},"required":["paths"]},"result":{"$ref":"#/$defs/58"}},
++    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/58"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/56"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
 +    "events.schedule": {"arguments":{"$ref":"#/$defs/59"},"result":{"$ref":"#/$defs/59"}},
 +    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/44"}},
@@ -114088,7 +114466,7 @@ index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"$ref":"#/$defs/54"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/90"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/90"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
@@ -126123,10 +126501,10 @@ index 0000000000000000000000000000000000000000..2b5cb548aa42907b37e9f841412dcaec
 +mod tests;
 diff --git a/codex-rs/omd/src/plan_routes_tests.rs b/codex-rs/omd/src/plan_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d60ee130e3dd34b3ed6dfdbe71570109f016ad8f
+index 0000000000000000000000000000000000000000..693d0396c5098e16d6ad8714efb37d524e56a001
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes_tests.rs
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,89 @@
 +use super::*;
 +
 +fn plan(model: &str, mod_id: &str) -> PlanRoute {
@@ -126193,8 +126571,18 @@ index 0000000000000000000000000000000000000000..d60ee130e3dd34b3ed6dfdbe71570109
 +fn a_plan_route_never_replaces_another_route_or_model_of_the_same_name() {
 +    let temp = tempfile::tempdir().unwrap();
 +    let store = temp.path().canonicalize().unwrap();
-+    add(&store, Path::new("/one"), &plan("gpt-6.1", "fixture_helper")).unwrap();
-+    let error = add(&store, Path::new("/one"), &plan("gpt-6-1", "fixture_helper")).unwrap_err();
++    add(
++        &store,
++        Path::new("/one"),
++        &plan("gpt-6.1", "fixture_helper"),
++    )
++    .unwrap();
++    let error = add(
++        &store,
++        Path::new("/one"),
++        &plan("gpt-6-1", "fixture_helper"),
++    )
++    .unwrap_err();
 +    assert_eq!(error.to_string(), "plan_route_name_taken");
 +    std::fs::write(
 +        store.join("host.json"),
@@ -146169,10 +146557,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..85167c3d57ec72ff0a1fe81f3979a8e0f8664c0d
+index 0000000000000000000000000000000000000000..5d372f273b1efd2205910e0a544ad189e19f79c8
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2137 @@
+@@ -0,0 +1,2136 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -148040,8 +148428,7 @@ index 0000000000000000000000000000000000000000..85167c3d57ec72ff0a1fe81f3979a8e0
 +        std::fs::create_dir(&repository).unwrap();
 +        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "capture_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["composer"]})).unwrap()).unwrap();
 +        std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+        let store = codex_omd::ModStore::create(root.join("store"))
-+        .unwrap();
++        let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +        let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +        store
 +            .trust(
@@ -151039,10 +151426,10 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a221fc42d2836415cb7c4c0c3fc5f2e0e577224
+index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f22a85dde
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,70 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -151058,8 +151445,7 @@ index 0000000000000000000000000000000000000000..4a221fc42d2836415cb7c4c0c3fc5f2e
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&serde_json::json!({"schema": 1, "id": "toggle_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": []})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
 +    let source = ModStore::inspect_package(&package).unwrap()["sha256"]
 +        .as_str()
 +        .unwrap()
@@ -158399,10 +158785,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478d383ddf7
+index 0000000000000000000000000000000000000000..4ac81f3fd9fd744ee640308be6307f03f9c3d89a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,616 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -158419,8 +158805,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let data = root.join("store");
-+    let store = codex_omd::ModStore::create(data.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&data);
 +    let package = root.join("context");
 +    std::fs::create_dir(&package).unwrap();
@@ -158487,8 +158872,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let root = tempfile::tempdir().unwrap();
 +    let repository = root.path().canonicalize().unwrap();
 +    let store_path = repository.join("store");
-+    codex_omd::ModStore::create(store_path.clone())
-+    .unwrap();
++    codex_omd::ModStore::create(store_path.clone()).unwrap();
 +    let _environment = crate::omd::tests::omd_environment(&store_path);
 +    let previous = HOST.lock().unwrap().take();
 +    let runtime = shared_host().unwrap();
@@ -158961,8 +159345,7 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store_path = root.join("store");
-+    let store = codex_omd::ModStore::create(store_path.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(store_path.clone()).unwrap();
 +    let package = root.join("guard");
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(
@@ -159009,7 +159392,12 @@ index 0000000000000000000000000000000000000000..8161ab9f48321ddd8badfa84a1051478
 +    };
 +    let _ = press();
 +    let holder = hold(std::time::Duration::from_millis(5));
-+    assert_eq!(press(), Ok(None));
++    // A slow runner can spend the rest of the budget in the callback, which cancels it; what this asserts is the wait.
++    let pressed = press();
++    assert!(
++        pressed == Ok(None) || pressed == Err("callback_cancelled".to_owned()),
++        "{pressed:?}"
++    );
 +    holder.join().unwrap();
 +    let holder = hold(std::time::Duration::from_millis(400));
 +    let started = Instant::now();
@@ -160163,10 +160551,10 @@ index 0000000000000000000000000000000000000000..788e993d813e881bacb99e2658ddd66a
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede430d094e44
+index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608bf97b902
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,993 @@
+@@ -0,0 +1,990 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -160180,8 +160568,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "surface_fixture", "version": "1.0.0", "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": ["packages"]})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = codex_omd::ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +    let source = inspected["sha256"].as_str().unwrap().to_owned();
 +    store
@@ -160544,8 +160931,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    std::fs::create_dir(&package).unwrap();
 +    std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema":1,"id":"m","version":"1.0.0","api":codex_omd::MOD_API_VERSION,"state_version":1,"capabilities":["sessions"]})).unwrap()).unwrap();
 +    std::fs::write(package.join("index.ts"), "export default () => {};").unwrap();
-+    let store = codex_omd::ModStore::create(root.join("store"))
-+    .unwrap();
++    let store = codex_omd::ModStore::create(root.join("store")).unwrap();
 +    let inspected = codex_omd::ModStore::inspect_package(&package).unwrap();
 +    let source = inspected["sha256"].as_str().unwrap();
 +    store
@@ -161078,8 +161464,7 @@ index 0000000000000000000000000000000000000000..8fafbd40b118a035101d9215eb7ede43
 +    let directory = tempfile::tempdir().unwrap();
 +    let root = directory.path().canonicalize().unwrap();
 +    let data = root.join("store");
-+    let store = codex_omd::ModStore::create(data.clone())
-+    .unwrap();
++    let store = codex_omd::ModStore::create(data.clone()).unwrap();
 +    for id in ["owner", "other"] {
 +        let package = root.join(id);
 +        std::fs::create_dir(&package).unwrap();

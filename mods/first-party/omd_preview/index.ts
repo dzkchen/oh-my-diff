@@ -7,6 +7,7 @@ const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
 const MAX_WATCHES = 8;
 const RETRY_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
 const MAX_IMAGES = 16;
 const TILE_ROWS = [2, 8];
 const TILE_MIN = 7;
@@ -14,7 +15,7 @@ const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview
 
 type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
 type Picture = { id: string; label: string; owner: string; image: ResourceRef | null; aspect: number };
-type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number };
+type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number; retry?: number };
 type Watches = { watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
@@ -169,6 +170,7 @@ export default function activate(api: ModAPI) {
   };
 
   const previewFile = (path: string, inline: boolean, watched: boolean): CommandResult => {
+    if (inline && watched) return { display: '/preview: --watch re-renders the browser page; drop --inline to watch it' };
     const file = api.host.call('workspace.stat', { paths: [path], hash: watched }).files[path];
     if (file?.kind !== 'file') return { display: `No file ${path} in the workspace` };
     if (inline) {
@@ -190,30 +192,37 @@ export default function activate(api: ModAPI) {
     return result;
   };
 
-  // Watches are per process and thread, so this thread's watch id lives in thread scope; `rewatch` replaces it with one over the current list.
-  const poll = (rewatch = false, retry = false) => {
+  const poll = (rewatch = false, force = true) => {
+    const retry = () => {
+      const delay = force ? RETRY_MS : Math.min((load().retry ?? RETRY_MS) * 2, RETRY_MAX_MS);
+      save({ retry: delay });
+      api.host.tryCall('events.schedule', { key: 'poll', delay_ms: delay });
+    };
     const stored = api.host.tryCall('store.get', { key: 'watch' });
-    const { revision, watch, hashes } = watches(stored.ok ? stored.value : null);
-    if (!watch.length && retry) api.host.tryCall('events.schedule', { key: 'poll', delay_ms: RETRY_MS });
+    if (!stored.ok) return retry();
+    const { revision, watch, hashes } = watches(stored.value);
     const stat = watch.length ? api.host.tryCall('workspace.stat', { paths: watch, hash: true }) : null;
-    if (stat?.ok) {
-      const next = { ...hashes };
-      for (const path of watch) {
-        const hash = stat.value.files[path]?.sha256;
-        if (!hash || hash === hashes[path]) continue;
-        render(outputFor(path), path, path, undefined, true);
-        next[path] = hash;
-      }
-      if (watch.some(path => next[path] !== hashes[path])) keep(revision, { watch, hashes: next });
+    if (stat && !stat.ok) return retry();
+    const files = stat?.ok ? stat.value.files : {};
+    const next = { ...hashes };
+    for (const path of watch) {
+      const hash = files[path]?.sha256;
+      if (!hash || hash === hashes[path]) continue;
+      render(outputFor(path), path, path, undefined, true);
+      next[path] = hash;
     }
-    if (!rewatch) return;
-    const own = api.host.tryCall('store.get', { key: 'watch_id', scope: 'thread' });
-    const previous = own.ok ? own.value : null;
-    if (previous) api.host.tryCall('workspace.unwatch', { watch_id: String(previous.value) });
-    const present = stat?.ok ? watch.filter(path => stat.value.files[path]) : [];
-    const started = present.length ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true }) : null;
-    if (started?.ok) api.host.tryCall('store.put', { key: 'watch_id', value: started.value.watch_id, expected_revision: previous?.revision ?? null, scope: 'thread' });
-    else if (previous) api.host.tryCall('store.delete', { key: 'watch_id', expected_revision: previous.revision, scope: 'thread' });
+    const rendered = watch.some(path => next[path] !== hashes[path]);
+    if (rendered) keep(revision, { watch, hashes: next });
+    const present = watch.filter(path => files[path]);
+    let placed = present.length === watch.length;
+    if (rewatch) {
+      const watched = present.length
+        ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true, key: 'files' })
+        : api.host.tryCall('workspace.unwatch', { key: 'files' });
+      placed &&= watched.ok;
+    }
+    if (!placed) retry();
+    else if (load().retry !== undefined && load().retry !== RETRY_MS) save({ retry: RETRY_MS });
   };
 
   const refresh = (attachments?: number) => {
@@ -232,12 +241,12 @@ export default function activate(api: ModAPI) {
     }
   }, { description: 'Render a response or file as HTML (--inline shows it here), inspect Mermaid diagrams or preview draft images' });
 
-  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true, true); });
-  api.on('timer', () => poll(true));
+  api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
+  api.on('timer', () => poll(true, false));
   api.on('workspace_change', event => {
     const stored = api.host.tryCall('store.get', { key: 'watch' });
     const { watch } = watches(stored.ok ? stored.value : null);
-    if (event.changes.some(change => watch.includes(change.path))) poll();
+    if (event.changes.some(change => watch.includes(change.path))) poll(false, false);
   });
   for (const event of ['start', 'resume'] as const) api.on(event, () => {
     if (event === 'resume' && load().inline) save({ inline: null });

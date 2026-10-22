@@ -185,6 +185,7 @@ struct PendingTool {
     thread: String,
     result: std::sync::mpsc::Sender<Result<Value, String>>,
     chain: tokio::task::JoinHandle<Result<codex_omd::ModChain, String>>,
+    values: bool,
     _cancellation: Cancellation,
 }
 
@@ -2197,11 +2198,14 @@ impl ToolLifecycleContributor for Mods {
                 let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
                 let _ = runtime.event_guarded("tool_call", observed, || true);
-                Ok::<_, String>(runtime.intercepts(surface))
+                Ok::<_, String>((
+                    runtime.intercepts(surface),
+                    runtime.intercepts_with(surface, "code_mode_values_v1"),
+                ))
             })
             .await
             .map_err(|e| e.to_string())??;
-            let Some(required) = intercepting else {
+            let (Some(required), values) = intercepting else {
                 self.cleanup_failed(Some(&lead)).await;
                 if !spawn {
                     self.expansion.validate_call(
@@ -2345,6 +2349,7 @@ impl ToolLifecycleContributor for Mods {
                             thread: lead_thread_id.clone(),
                             result,
                             chain,
+                            values,
                             _cancellation: cancellation,
                         },
                     );
@@ -2398,6 +2403,7 @@ impl ToolLifecycleContributor for Mods {
                     .unwrap_or_default()
                     .to_owned(),
                 success: chain.result["success"].as_bool().unwrap_or(false),
+                value: chain.result.get("value").filter(|value| !value.is_null()).cloned(),
             })
         })
     }

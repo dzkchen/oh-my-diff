@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "omd_tool_fix",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Fixes tool calls whose arguments are malformed in a clear-cut way, records each fix and sends ambiguous calls back to the model",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_tool_fix"},
+  "capabilities": ["interception", "middleware", "store", "commands"],
+  "compatibility": {"required_features": ["continuation_middleware_v1", "tool_continuation_v2", "model_turn_interception_v1", "store_v1", "store_thread_v1", "state_scopes_v1"]}
+}
