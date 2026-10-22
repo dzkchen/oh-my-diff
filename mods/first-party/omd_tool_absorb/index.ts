@@ -41,7 +41,6 @@ const BACKOFF_MS = [25, 50, 100, 200, 400, 800, ...Array<number>(24).fill(1000)]
 const LIST = 32;
 const SWEEP = 8;
 const MERGES = 32;
-const DISTINCT = 8;
 const REUSE = 'meta:reuse';
 const scope = 'thread';
 
@@ -191,21 +190,15 @@ const save = (api: ModAPI, state: State) => api.state.set(state as unknown as Js
 
 export default function activate(api: ModAPI) {
   api.replace('tool_batch', batch => {
-    if (batch.calls.length < 2 || !batch.calls.every(absorbable)) return null;
-    const size = Math.min(8, Math.max(2, Number(api.settings.max_calls) || 4));
-    const groups = new Map<string, string[]>();
+    if (!batch.calls.every(absorbable)) return null;
+    const groups = new Map<string, Call[]>();
     for (const call of batch.calls) {
       const key = keyOf(call.tool, call.arguments);
-      groups.set(key, [...(groups.get(key) ?? []), call.call_id]);
+      groups.set(key, [...(groups.get(key) ?? []), call]);
     }
-    const merges: { call_ids: string[]; tool: string; arguments: Json; success_per_call: boolean }[] = [];
-    const keys = [...groups.keys()];
-    for (let start = 0; start < keys.length && merges.length < MERGES; start += size) {
-      const ids = new Set(keys.slice(start, start + size).flatMap(key => groups.get(key) ?? []));
-      const calls = batch.calls.filter(call => ids.has(call.call_id));
-      if (calls.length >= 2) merges.push({ call_ids: calls.map(call => call.call_id), tool: 'batch', arguments: { batch: batch.batch_id, calls: calls as unknown as Json }, success_per_call: true });
-    }
-    return merges.length ? { merge: merges } : null;
+    const merge = [...groups.values()].filter(calls => calls.length >= 2).slice(0, MERGES)
+      .map(calls => ({ call_ids: calls.map(call => call.call_id), tool: 'batch', arguments: { batch: batch.batch_id, calls: calls as unknown as Json }, success_per_call: true }));
+    return merge.length ? { merge } : null;
   });
 
   api.tool({
@@ -229,10 +222,6 @@ export default function activate(api: ModAPI) {
       }
       const key = keyOf(call.tool, call.arguments);
       const earlier = first.get(key);
-      if (!earlier && first.size >= DISTINCT) {
-        out[call.call_id] = { output: `omd_tool_absorb did not run this ${call.tool} call: a merged step runs at most ${DISTINCT} distinct reads. Call it again on its own.`, success: false };
-        continue;
-      }
       if (earlier && !invoked[earlier]) {
         out[call.call_id] = out[earlier];
         continue;

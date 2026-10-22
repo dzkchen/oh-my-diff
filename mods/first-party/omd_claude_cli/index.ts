@@ -4,19 +4,30 @@ const service = 'claude_cli';
 const delegate = 'mod_omd_claude_cli_ask_claude';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
-export const CLI_VERSION = '2.1.307 (Claude Code)';
-export const ACCOUNT = /^[a-z0-9][a-z0-9_-]{0,23}$/;
+// Oldest tested CLI; newer 2.x keep the transport, and each request rechecks auth, billing, model and window.
+export const CLI_MINIMUM = '2.1.307';
+export const cliSupported = (version: string | null | undefined) => {
+  const [major, minor, patch] = /^(\d+)\.(\d+)\.(\d+) \(Claude Code\)$/.exec(version?.trim() ?? '')?.slice(1).map(Number) ?? [];
+  const [, wantMinor, wantPatch] = CLI_MINIMUM.split('.').map(Number);
+  return major === 2 && (minor > wantMinor || minor === wantMinor && patch >= wantPatch);
+};
+export const CLI_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
+// Variables that would make the CLI sign in, store or bill somewhere other than the account OMD selected.
+export const CLI_ENV_OVERRIDE = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
+export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
+const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again';
+const nodeError = (error: string) => error.startsWith('exec_program_unavailable') ? NODE_MISSING : error;
 const ansi = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const cliEnvSource = `const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !${CLI_ENV_OVERRIDE}.test(name)));`;
 const probe = `const { spawnSync } = await import('node:child_process');
-const run = (argv, dir) => { const env = { ...process.env }; delete env.CLAUDE_CONFIG_DIR; if (dir) env.CLAUDE_CONFIG_DIR = dir;
+const run = (argv, dir) => { ${cliEnvSource} if (dir) env.CLAUDE_CONFIG_DIR = dir;
   return spawnSync('claude', argv, { encoding: 'utf8', timeout: 10000, env }); };
 const version = run(['--version']);
 const auth = JSON.parse(process.argv[2]).map(dir => version.status === 0 ? run(['auth', 'status'], dir) : null);
 console.log(JSON.stringify({ version: version.status === 0 ? version.stdout.trim() : null, auth: auth.map(run => run?.status === 0 ? run.stdout : null) }));`;
 // The Claude CLI binary is larger than the host's program hash limit, so the login runs it under node.
 const loginScript = `const { spawn } = await import('node:child_process');
-const env = { ...process.env };
-delete env.CLAUDE_CONFIG_DIR;
+${cliEnvSource}
 if (process.argv[2]) env.CLAUDE_CONFIG_DIR = process.argv[2];
 const child = spawn('claude', JSON.parse(process.argv[1]), { stdio: ['pipe', 'pipe', 'pipe'], env });
 process.stdin.pipe(child.stdin);
@@ -244,9 +255,13 @@ export function responseEvents(assistant: Row, admission: Row, model: string,
              total_tokens: inputTokens + usage.output_tokens, omd_native_usage: usage,
              omd_native_admission: admission, ...billing === 'api' ? {} : { omd_subscription_charge: 'unknown' },
              ...ttl ? { omd_cache_ttl_seconds: ttl } : {},
-             ...Number.isFinite(listCostUsd) ? { omd_reported_cost: { usd: listCostUsd, basis: 'client_list_estimate' } } : {} } } });
+             ...Number.isFinite(listCostUsd) ? { omd_reported_cost: { usd: listCostUsd, basis: 'client_list_estimate' },
+               ...billing === 'api' ? { cost_microusd: Math.round(listCostUsd! * 1_000_000) } : {} } : {} } } });
   return events;
 }
+
+const cliProblem = (version: string | null | undefined) => !version ? `the Claude CLI was not found on PATH; install it with ${CLI_INSTALL}`
+  : cliSupported(version) ? null : `Claude CLI ${version.trim()} is installed, but ${provider} needs ${CLI_MINIMUM} or a newer 2.x; update it with claude update (or ${CLI_INSTALL})`;
 
 export default function activate(api: ModAPI): void {
   const saved = (): Row => plain(api.state.get()) ? api.state.get() as Row : {};
@@ -270,7 +285,7 @@ export default function activate(api: ModAPI): void {
   };
   const cli = (dirs: string[]): Row => {
     const run = api.host.tryCall('exec.run', { program: 'node', argv: ['--input-type=module', '-', JSON.stringify(dirs)], stdin: probe, sandbox: 'none' });
-    if (!run.ok) return { error: run.error };
+    if (!run.ok) return { error: nodeError(run.error) };
     if (run.value.exit_code !== 0) return { error: `node exited ${run.value.exit_code}: ${run.value.stderr.trim()}` };
     try { return JSON.parse(run.value.stdout); } catch { return { error: 'unreadable probe output' }; }
   };
@@ -282,7 +297,7 @@ export default function activate(api: ModAPI): void {
   };
   const setup = (mod: string, args: string[]): Row | string => {
     const run = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, ...args], sandbox: 'none', timeout_ms: 120_000 });
-    if (!run.ok || run.value.exit_code !== 0) return run.ok ? run.value.stderr.trim() : run.error;
+    if (!run.ok || run.value.exit_code !== 0) return run.ok ? run.value.stderr.trim() : nodeError(run.error);
     try { return JSON.parse(run.value.stdout); } catch { return 'setup returned no result'; }
   };
   const adopt = (result: Row) => {
@@ -354,7 +369,10 @@ export default function activate(api: ModAPI): void {
     if (mod === null) return void say('Claude setup could not find the installed mod; enable it in /mods and try again', true);
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
-    if (!node) return void say(`Claude login did not start: ${found.ok ? 'node is unavailable' : found.error}`, true);
+    if (!node) return void say(`Claude login did not start: ${found.ok ? NODE_MISSING : found.error}`, true);
+    const checked = cli([]);
+    const unusable = checked.error ?? cliProblem(checked.version);
+    if (unusable) return void say(`Claude login did not start: ${unusable}`, true);
     const argv = billing === 'api' ? ['auth', 'login', '--console'] : ['auth', 'login'];
     const id = `claude_login_${api.session().process_id.replace(/[^\w-]/g, '_').slice(0, 32)}_${Date.now()}`;
     const dir = mod && `${mod.replace(/\/sources\/[^/]+\/?$/, '')}/routes/claude/accounts/${account}`;
@@ -370,7 +388,7 @@ export default function activate(api: ModAPI): void {
     if (action === 'login') {
       const billing = mode === 'api' ? 'api' : 'subscription';
       const [account = 'default', surplus] = mode === 'api' ? [extra, ...more] : [mode, extra];
-      if (surplus !== undefined || !ACCOUNT.test(account) || account === 'api') return { display: `Account names use lowercase letters, digits, _ or - (at most 24). ${usage}` };
+      if (surplus !== undefined || !ACCOUNT.test(account) || account === 'api') return { display: `Account names start with a letter and use lowercase letters, digits, _ or - (at most 24). ${usage}` };
       const hop = api.host.tryCall('events.publish', { channel: 'login', data: { billing, account } });
       if (!hop.ok || hop.value.delivered === 0) return { display: 'Claude login could not be started; run /claude login again' };
       return { display: `Starting Claude login for account ${account} (${billing === 'api' ? 'Console API credits' : 'subscription'}); progress shows below` };
@@ -388,17 +406,17 @@ export default function activate(api: ModAPI): void {
     const accounts = (saved().accounts ?? []) as Row[];
     const { version, auth, error } = cli(accounts.map(account => account.config_dir ?? ''));
     const { models, published } = saved();
-    const wrong = !error && version && version !== CLI_VERSION;
+    const wrong = !error && version ? cliProblem(version) : null;
     const login = (index: number) => {
       let status: Row = {};
       try { status = JSON.parse(auth?.[index] ?? '{}'); } catch {}
       return status.loggedIn === true ? `${status.authMethod}${status.subscriptionType ? ` (${status.subscriptionType})` : ''}${status.email ? ` ${status.email}` : ''}` : 'not signed in';
     };
     return { display: [
-      `CLI: ${error ? `check failed: ${error}` : wrong ? `${version} is installed but ${provider} needs ${CLI_VERSION}; Claude Code auto-update may have replaced it. Install ${CLI_VERSION.split(' ')[0]} and turn off Claude Code auto-update; /claude login and Claude requests are refused until then` : version ?? 'not found on PATH'}`,
+      `CLI: ${error ? `check failed: ${error}` : wrong ? `${wrong}; /claude login and Claude requests are refused until then` : version ?? cliProblem(null)}`,
       ...accounts.length ? accounts.map((account, index) => `Account ${account.name}: ${login(index)} · ${account.billing === 'api' ? 'Console API credits' : 'subscription'} · ${account.models} models`)
         : ['Accounts: none; run /claude login [api] [NAME]'],
-      `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI version matches' : ''}` : 'none published'}`].join('\n') };
+      `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI is updated' : ''}` : 'none published'}`].join('\n') };
   }, { description: 'Sign in to Claude accounts (login [api] [NAME] | remove NAME | code CODE) or show their status', args_hint: '[login [api] [NAME] | remove NAME | code CODE]' });
   if (api.settings.ask_claude !== true) return;
   api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',

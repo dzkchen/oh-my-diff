@@ -684,14 +684,20 @@ pub fn install_profile(value: &str) -> &'static str {
     }
 }
 
-pub fn mod_ui_allowlist() -> Option<Vec<String>> {
-    std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
-        ids.split(',')
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(str::to_owned)
-            .collect()
-    })
+/// `OMD_TUI_MOD_UI`, read once: the TUI consults it on every frame.
+pub fn mod_ui_allowlist() -> Option<&'static [String]> {
+    static ALLOWLIST: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    ALLOWLIST
+        .get_or_init(|| {
+            std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
+                ids.split(',')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+        })
+        .as_deref()
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -2715,14 +2721,22 @@ mod reload_tests {
         ModStore::create(root.clone()).unwrap();
         let mut host = ModHost::open(root).unwrap();
         host.ui_mods = Some(vec!["b".into()]);
-        let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+        let text =
+            |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
         let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
-        let composed = host.compose_terminal(vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))], "terminal", None);
+        let composed = host.compose_terminal(
+            vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))],
+            "terminal",
+            None,
+        );
         assert_eq!(composed.view.status, ["b"]);
         assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
         assert_eq!(
             view::site_component_ids(&composed.view.sites),
-            ["a_dialog", "b_above", "b_below", "b_header"].map(String::from).into_iter().collect()
+            ["a_dialog", "b_above", "b_below", "b_header"]
+                .map(String::from)
+                .into_iter()
+                .collect()
         );
     }
 
@@ -3355,7 +3369,7 @@ impl ModHost {
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
             clock_reads: BTreeSet::new(),
-            ui_mods: mod_ui_allowlist(),
+            ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -5575,8 +5589,7 @@ impl ModHost {
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
-                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
-                // reloads; the last view stands without a fault.
+                // Interrupted turns cancel in-flight renders and selection changes reject them until reload; the last view stands.
                 let error_text = error.to_string();
                 if ![
                     "callback_cancelled",

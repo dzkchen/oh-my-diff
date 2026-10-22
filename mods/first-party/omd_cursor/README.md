@@ -4,7 +4,8 @@ Experimental. Lets a session use Cursor models through your Cursor account and t
 
 ## Turn it on
 
-It needs Node and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
+It needs Node (`brew install node`) and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
+Account names start with a letter.
 
 1. Enable `omd_cursor` in `/mods` and approve its trust dialog. It asks to run `node` outside the sandbox (`os`): setup installs the SDK, reaches the network and writes the mod store.
 2. Run `/cursor setup`. A background `setup.mjs` installs `@cursor/sdk@1.0.35` with pnpm into `<store>/routes/cursor/sdk` (the SDK is not bundled; Cursor's license applies), then starts Cursor's browser login. The sign-in link appears in the transcript. Approve "Oh My Diff" there.
@@ -18,7 +19,7 @@ A denied or abandoned login leaves any existing enrollment and grant untouched. 
 | Command | What it does |
 | --- | --- |
 | `/cursor setup [NAME]` | Install the SDK, enroll in the browser, list models and publish them to `/model` (`/cursor login` is the same); `NAME` adds another account |
-| `/cursor remove NAME` | Drop an account's models and route, and asks to remove its key |
+| `/cursor remove NAME` | Drop an account's models and route, and asks to remove OMD's copy of its key. The key itself stays valid at Cursor until you revoke "Oh My Diff" under API keys in your Cursor dashboard |
 | `/cursor` | Show the SDK version, each account and its key expiry, published models and posture |
 | `/cursor usage` | Show each recent run's raw list cost and charged cost, runs still unsettled, and the plan snapshot |
 | `/model` | Pick a Cursor model; the thread switches provider from its next turn and keeps its history |

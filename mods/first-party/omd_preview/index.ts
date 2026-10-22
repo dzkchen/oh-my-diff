@@ -216,10 +216,16 @@ export default function activate(api: ModAPI) {
     const present = watch.filter(path => files[path]);
     let placed = present.length === watch.length;
     if (rewatch) {
-      const watched = present.length
-        ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true, key: 'files' })
+      // A missing file is awaited through its parent directory; one in the repository root can't be (the host refuses that watch) and keeps polling.
+      const dir = (path: string) => path.split('/').slice(0, -1).join('/');
+      const parents = [...new Set(watch.filter(path => !files[path]).map(dir))].filter(Boolean);
+      const found = parents.length ? api.host.tryCall('workspace.stat', { paths: parents }) : null;
+      const covered = parents.filter(path => found?.ok && found.value.files[path]?.kind === 'dir');
+      const paths = [...present, ...covered];
+      const watched = paths.length
+        ? api.host.tryCall('workspace.watch', { paths, recursive: false, include_ignored: true, key: 'files' })
         : api.host.tryCall('workspace.unwatch', { key: 'files' });
-      placed &&= watched.ok;
+      placed = watched.ok && watch.every(path => files[path] || covered.includes(dir(path)));
     }
     if (!placed) retry();
     else if (load().retry !== undefined && load().retry !== RETRY_MS) save({ retry: RETRY_MS });

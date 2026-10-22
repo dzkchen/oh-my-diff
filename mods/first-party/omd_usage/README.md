@@ -31,7 +31,7 @@ Changes apply from your next message.
 
 - Costs come from what each provider reports. Requests on your ChatGPT plan count as included; Extra-usage credits spent past the plan's limit aren't reported per request. A cost the provider doesn't report shows as unknown, not zero.
 - Totals cover the last 120 requests in the session, not lifetime spend. The budget also counts what older requests cost before they left that window.
-- Quota windows belong to the signed-in Codex account, not to another provider you switch to.
+- Quota windows are listed per account (Codex, Claude, Cursor), each under the account that reported it; none is tied to the route you are on now.
 - Cache expiry shows only when the provider reports how long its cache lasts.
 - The budget is a warning. OMD's spending limits still decide what runs.
 - Claude and OpenRouter usage need `omd_claude_cli` or `omd_profiles`.

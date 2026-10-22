@@ -10,7 +10,10 @@ fn route_data_is_bounded() {
                 "reservation_microusd": 0, "max_output_tokens": 10, "input_token_ceiling": 100, "included_subscription": true}}]})
     };
     let repository = Path::new("/repo");
-    assert_eq!(HostConfig::check(repository, &route(json!({"upstream": "gpt-6.1"}))), Ok(()));
+    assert_eq!(
+        HostConfig::check(repository, &route(json!({"upstream": "gpt-6.1"}))),
+        Ok(())
+    );
     assert_eq!(
         HostConfig::check(repository, &route(json!("x".repeat(2048)))),
         Err("host.json route work is invalid".into())

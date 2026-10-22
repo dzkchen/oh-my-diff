@@ -428,8 +428,7 @@ impl Broker {
             *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
             return Ok(Value::String(nonce));
         }
-        // Store and anchor state is keyed by path, so only the path's owner may name it; a stream not
-        // written yet belongs to its directory's owner.
+        // State is keyed by path, so only its owner (or, for an unwritten stream, its directory's owner) may name it.
         for (field, refused) in [
             ("store", "authority_store_unowned"),
             ("stream", "authority_stream_unowned"),

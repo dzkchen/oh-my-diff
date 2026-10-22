@@ -54,6 +54,7 @@ export default function activate(api: ModAPI) {
     const minutes = Math.max(0, Math.round(ms / 60000));
     return minutes < 60 ? `${minutes}m` : minutes < 2880 ? `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m` : `${Math.round(minutes / 1440)}d`;
   };
+  const account = (scope: string) => `${visible(scope.charAt(0).toUpperCase() + scope.slice(1), 24)} account`;
   const windowName = (minutes: number | null) => minutes === null ? 'window' : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
   const text = (id: string, label: string, body: string): TerminalComponent => ({ type: 'text', id, label, text: visible(body, 4000) });
   const multiline = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.map(line => line.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')).join('\n').slice(0, 4000) });
@@ -129,8 +130,8 @@ export default function activate(api: ModAPI) {
     return ttl !== null && used ? used.at + ttl * 1000 : null;
   };
   const quota = (hud: Hud, now: number) => {
-    const groups = new Map<number | null, Sample[]>();
-    for (const sample of hud.samples.filter(item => item.scope === 'codex-account')) groups.set(sample.minutes, [...groups.get(sample.minutes) ?? [], sample]);
+    const groups = new Map<string, Sample[]>();
+    for (const sample of hud.samples) groups.set(`${sample.scope}/${sample.minutes}`, [...groups.get(`${sample.scope}/${sample.minutes}`) ?? [], sample]);
     return [...groups.values()].map(samples => {
       const current = samples.at(-1)!;
       const passed = current.resets !== null && now > current.resets;
@@ -139,24 +140,8 @@ export default function activate(api: ModAPI) {
       const horizon = Math.max(300000, (current.minutes ?? 0) * 6000);
       const rate = period.length > 1 && current.at - first.at >= horizon ? (current.used - first.used) / (current.at - first.at) : null;
       const projected = rate !== null && current.resets !== null && !passed ? Math.round(current.used + rate * (current.resets - now)) : null;
-      return { name: `Codex account ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
-    }).sort((a, b) => (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
-  };
-
-  // Published data must not depend on the clock: a replayed callback has to repeat the same host-call arguments.
-  const publish = () => {
-    const state = saved(); const current = context(state.hud);
-    const sum = totals(state.hud.entries);
-    const tight = quota(state.hud, 0).sort((a, b) => b.current.used - a.current.used)[0];
-    const spent = sum.billed + sum.estimate;
-    const last = current?.last;
-    api.host.tryCall('events.publish', { channel: 'hud', data: {
-      thread: state.hud.thread ?? last?.thread ?? null,
-      cache: last && last.tokens?.input ? { ratio: (last.tokens.cached ?? 0) / last.tokens.input, expires: cacheTtl(state.hud, last) } : null,
-      spend: { usd: spent || null, kind: sum.billed && sum.estimate ? 'mixed' : sum.billed ? 'billed' : sum.estimate ? 'estimate' : sum.included ? 'included' : 'none', uncertain: sum.unknown + sum.pending > 0, list: sum.list || null },
-      quota: tight ? { name: tight.name, used: tight.current.used, resets: tight.current.resets, observed: tight.current.seen } : null,
-      budget: ({ 0: null, 80: 'warn', 100: 'over' } as const)[level(outlay(state.hud))],
-    } });
+      return { name: `${account(current.scope)} ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
+    }).sort((a, b) => a.current.scope.localeCompare(b.current.scope) || (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
   };
 
   const record = (hud: Hud, entry: Entry) => {
@@ -189,7 +174,7 @@ export default function activate(api: ModAPI) {
 
   const limits = (hud: Hud, params: Record<string, any>, now: number) => {
     const snapshot = object(params.rateLimits);
-    const scope = 'codex-account';
+    const scope = typeof snapshot.limitId === 'string' && snapshot.limitId ? snapshot.limitId : 'codex';
     for (const name of ['primary', 'secondary']) {
       const slot = object(snapshot[name]);
       const used = number(slot.usedPercent);
@@ -203,7 +188,7 @@ export default function activate(api: ModAPI) {
       else hud.samples.push({ scope, minutes, used, resets, at: now, seen: now });
     }
     const credits = object(snapshot.credits);
-    if (Object.keys(credits).length) hud.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? `balance ${visible(String(credits.balance ?? '?'), 24)}` : 'none';
+    if (scope === 'codex' && Object.keys(credits).length) hud.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? `balance ${visible(String(credits.balance ?? '?'), 24)}` : 'none';
     const kept: Sample[] = [];
     for (const sample of [...hud.samples].reverse()) {
       const peers = kept.filter(item => item.scope === sample.scope && item.minutes === sample.minutes).length;
@@ -341,7 +326,6 @@ export default function activate(api: ModAPI) {
   api.on('channel', ({ channel }) => {
     if (channel !== 'omd_usage/refresh') return;
     save(capture(saved()));
-    publish();
     if (expiry() !== null) ticker.start();
   });
   api.on('terminal', input => view(input.ledger));
@@ -363,7 +347,6 @@ export default function activate(api: ModAPI) {
     });
     const read = api.usage.rateLimits();
     if (read.available) hud(state => limits(state, object(read.value), Date.now()));
-    publish();
   };
   api.on('start', configure);
   api.on('resume', configure);
@@ -389,7 +372,6 @@ export default function activate(api: ModAPI) {
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
     }));
     warn();
-    publish();
     if (expiry() !== null) ticker.start();
   });
   api.on('turn_start', ({ turn_id }) => hud(state => { state.turn = turn_id; }));
@@ -398,7 +380,6 @@ export default function activate(api: ModAPI) {
     state.hud.tools = {};
     save(state);
     warn();
-    publish();
   });
   api.on('compaction_start', ({ trigger }) => hud(state => { state.compaction = { ...state.compaction, started: state.compaction.started + 1, start: Date.now(), trigger }; }));
   api.on('compaction_end', () => hud(state => { state.compaction = { ...state.compaction, installed: state.compaction.installed + 1, end: Date.now() }; }));
@@ -417,12 +398,10 @@ export default function activate(api: ModAPI) {
     const thread = thread_id ?? update.threadId ?? null;
     if (method === 'account/updated') {
       hud(state => { state.samples = []; state.credits = null; });
-      publish();
       return;
     }
     if (method === 'account/rateLimits/updated') {
       hud(state => limits(state, update, Date.now()));
-      publish();
       return;
     }
     const state = saved();

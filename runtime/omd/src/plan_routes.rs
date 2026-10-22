@@ -35,8 +35,7 @@ pub fn route_name(model: &str, mod_id: &str) -> String {
     format!("plan-{slug}-{mod_id}")
 }
 
-/// Lets `plan.mod_id` run workers on its plan route for `plan.model` and adds `repository` to the route's grant,
-/// which lists every repository where the user approved that mod.
+/// Lets `plan.mod_id` run workers on its plan route, adding `repository` to the grant's list of approved repositories.
 pub fn add(store: &Path, repository: &Path, plan: &PlanRoute) -> io::Result<String> {
     let name = route_name(&plan.model, &plan.mod_id);
     if name.starts_with("plan--") {
