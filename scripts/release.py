@@ -54,7 +54,7 @@ def notes(entries, version):
         raise SystemExit(f"changelog.json has no {version} entry")
     channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
-                      "OMD 1.0 is labeled beta: not every planned capability is included yet. The label does not mean "
+                      "OMD is labeled beta: not every planned capability is included yet. The label does not mean "
                       "unstable.", "", "```sh",
                       f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{REPOSITORY}/releases/download/v{version}"
                       f"/install.sh | sh -s --{channel} --profile full", "```", "",

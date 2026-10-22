@@ -4,7 +4,7 @@ What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
 - **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
-- **Beta:** OMD `1.0.0` is labeled beta: not every planned capability is included yet. Mod API surfaces marked
+- **Beta:** OMD is labeled beta: not every planned capability is included yet. Mod API surfaces marked
   experimental can change between releases.
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
@@ -55,7 +55,7 @@ OMD Core includes only the first three.
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
 | `omd_source_knowledge` | Keeps file-backed facts, test evidence and approved lessons for later tasks in this repository | |
 | `omd_programmable_context` | Python helpers for kept context, child agents and a session harness; `/refine` | The `omd-code-execution` plugin's Python kernel |
-| `omd_mini` | `omd mini`: a scrollback-first session with a short prompt and one status segment; `/omd_mini:switch` | A terminal |
+| `omd_mini` | `omd mini`: a scrollback-first session with a bare prompt and one status line; `/omd_mini:switch` | A terminal |
 | `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account and `pnpm`; not yet verified on a live account |
 | `omd_tool_absorb` | Runs a response's parallel reads as one step and repeated reads once; `/absorb` | |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
@@ -69,7 +69,8 @@ Measured on one Apple Silicon Mac with a scripted model, October 2026. Your numb
 - Codex alone was ready to type in about 0.5 s and used about 30 MB of memory.
 - Mods run in `omd-runner` processes of about 6–15 MB each. OMD+ as installed runs nine, about 80 MB together.
 - Turning on `omd_preview`, `omd_usage`, `omd_lsp_view`, `omd_claude_cli`, `omd_profiles` or `omd_advisor` adds one
-  such process each. The other off-by-default mods added no measurable memory or startup time.
+  such process each. The other off-by-default mods measured added no measurable memory or startup time; `omd_source_knowledge`,
+  `omd_programmable_context`, `omd_mini`, `omd_cursor`, `omd_tool_absorb` and `omd_tool_fix` were not measured.
 
 ## Use Claude or another provider
 

@@ -18,7 +18,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/rele
   with `/mods`.
 - `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
 
-OMD `1.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
+OMD is labeled beta: not every planned capability is included yet. The label does not mean unstable.
 
 Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
 sign-in and sessions aren't touched.

@@ -20,7 +20,7 @@ Run `/profile add` (or pick **+ Add an account…** in `/profile`) and choose wh
 
 | Choice | What happens |
 | --- | --- |
-| ChatGPT account | Asks a name, then the ChatGPT sign-in runs in the session. |
+| ChatGPT account | Asks a name, then the ChatGPT sign-in runs in the session. The first ChatGPT profile also asks its model and context window. |
 | Claude account | Asks a name and plan or Console API credits, then runs `omd_claude_cli`'s sign-in (`/claude login`). |
 | Cursor account | Asks a name, then runs `omd_cursor`'s setup (`/cursor setup`). |
 | OpenAI API key | Asks a name, model, context window and price, then the key. |
@@ -65,11 +65,9 @@ and weekly windows for ChatGPT and Claude accounts, and plan usage for Cursor ac
 - Switching to a Claude or Cursor account moves the thread to that provider and the account's default model; its other models are in `/model`.
 - Alt+s needs Option-as-Alt in Kitty (`macos_option_as_alt`) and Ghostty (`macos-option-as-alt`) on macOS; `/profile next` works everywhere.
 - The selected model appears in the footer and `/status`. A failed or unsettled switch blocks requests and shows its reason above the prompt; each turn restarts a stopped router.
-- Paid profiles bill per request against the allowance you set, which all profiles in a thread share. ChatGPT profiles report no charge.
-- Paid profiles share one allowance (USD), asked the first time you add one.
+- Paid profiles bill per request against one allowance (USD) that all profiles in a thread share, asked the first time you add one. ChatGPT profiles report no charge.
 - Chat Completions and Anthropic profiles get no hosted tools (web search, tool search).
 - A thread larger than a profile's context window is refused before the provider is called.
-- Profiles set up with OMD 1.0.1 or earlier are not carried over: run setup with `--add` again.
 - Claude subscription accounts come from `omd_claude_cli` (`/claude login NAME`) and Cursor accounts from `omd_cursor` (`/cursor setup NAME`); each mod owns its accounts and routes, and `omd_profiles` only lists and switches them.
 
 Credit: inspired by [Crush](https://github.com/charmbracelet/crush) provider setup and model switching; no code copied.

@@ -1,6 +1,6 @@
 # omd_programmable_context
 
-Opt-in OMD+ mod for programmable context and a continual session harness. Its behavior is inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (`e75f59efc6f7`, read 2026-09-29: `prime-agent-runtime/src/rlm/repl.md` and `skills/refine/SKILL.md`; the roadmap's earlier `docs/rlm.md` links no longer resolve). No code is copied. It comes with OMD+ but starts off; turn it on in `/mods` or with `omd-package mod enable omd_programmable_context`.
+Opt-in OMD+ mod for programmable context and a continual session harness. Its behavior is inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (`e75f59efc6f7`, read 2026-09-29: `prime-agent-runtime/src/rlm/repl.md` and `skills/refine/SKILL.md`). No code is copied. It comes with OMD+ but starts off; turn it on in `/mods` or with `omd-package mod enable omd_programmable_context`.
 
 ## Python REPL
 

@@ -3892,7 +3892,7 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-A launcher can narrow one session's TUI with two environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
+A launcher can narrow one session's TUI with three environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
 panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
 `render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
 `/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
