@@ -2,7 +2,8 @@ import type { HostRoute, Json, ProviderModel, ServiceGrant } from '../../api.d.t
 
 export const PROVIDER = 'omd_profiles';
 export const PROTOCOLS = ['responses', 'chat', 'anthropic'];
-export const URLS: Record<string, string> = { chatgpt: 'https://chatgpt.com/backend-api/codex/responses', api_key: 'https://api.openai.com/v1/responses' };
+export const URLS: Record<string, string> = { chatgpt: 'https://chatgpt.com/backend-api/codex/responses', api_key: 'https://api.openai.com/v1/responses',
+  anthropic: 'https://api.anthropic.com/v1/messages' };
 
 type Credential = { id: string; label: string; kind: string; origin?: string | null };
 export type Options = { name?: string; credential?: string; protocol?: string; url?: string; model?: string; window?: unknown; paid?: unknown;

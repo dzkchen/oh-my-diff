@@ -196,14 +196,25 @@ class Turn {
   }
 }
 
+export function planHeaders(plan) {
+  const spent = Number(plan?.plan_usage?.totalSpend);
+  const included = Number(plan?.plan_usage?.includedSpend);
+  if (!Number.isFinite(spent) || !(included > 0)) return {};
+  const [start, end] = [Number(plan.billing_cycle_start), Number(plan.billing_cycle_end)];
+  return { 'x-cursor-limit-name': 'Cursor', 'x-cursor-primary-used-percent': String(Math.round(spent / included * 10000) / 100),
+    ...start > 0 && end > start ? { 'x-cursor-primary-window-minutes': String(Math.round((end - start) / 60_000)) } : {},
+    ...end > 0 ? { 'x-cursor-primary-reset-at': String(Math.round(end / 1000)) } : {} };
+}
+
 export class Router {
-  constructor(route, apiKey) {
+  constructor(route, account, apiKey) {
     this.route = route;
+    this.account = account;
     this.apiKey = apiKey;
     this.sdk = null;
     this.store = null;
     this.state = { agents: {} };
-    this.statePath = join(route.data, 'omd-agents.json');
+    this.statePath = join(route.data, `omd-agents-${account.name}.json`);
     this.agents = new Map();
     this.turns = new Map();
     this.charged = new Map();
@@ -214,16 +225,17 @@ export class Router {
     this.planAt = 0;
   }
   async ready() {
-    if (!this.apiKey) throw new Error('cursor_not_enrolled:run /cursor setup');
-    if (this.route.credential_expires_at_ms && this.route.credential_expires_at_ms <= Date.now()) {
-      throw new Error('cursor_credential_expired:run /cursor setup');
+    const setup = `run /cursor setup${this.account.name === 'default' ? '' : ` ${this.account.name}`}`;
+    if (!this.apiKey) throw new Error(`cursor_not_enrolled:${setup}`);
+    if (this.account.credential_expires_at_ms && this.account.credential_expires_at_ms <= Date.now()) {
+      throw new Error(`cursor_credential_expired:${setup}`);
     }
     if (this.sdk) return;
     const root = process.env.OMD_SERVICE_ROOT;
     if (!root || !this.route.sdk?.startsWith('/') || this.route.sdk.split('/').includes('..')) throw new Error('cursor_sdk_snapshot_unavailable');
     const sdk = await loadSdk(`${root}${this.route.sdk}`);
     await mkdir(join(this.route.data, 'workspace'), { recursive: true, mode: 0o700 });
-    this.store = new sdk.JsonlLocalAgentStore(join(this.route.data, 'agents'));
+    this.store = new sdk.JsonlLocalAgentStore(join(this.route.data, 'agents', this.account.name));
     try { this.state = JSON.parse(await readFile(this.statePath, 'utf8')); } catch {}
     this.sdk = sdk;
   }
@@ -363,7 +375,7 @@ export class Router {
     this.planAt = Date.now();
     const base = { source: 'cursor_private_dashboard_rpc', undocumented: true, observed_at: Date.now() };
     try {
-      const response = await fetch(`${this.route.backend_url ?? 'https://api2.cursor.sh'}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, {
+      const response = await fetch(`${this.account.backend_url ?? 'https://api2.cursor.sh'}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`, {
         method: 'POST', body: '{}', signal: AbortSignal.timeout(10_000),
         headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json', 'connect-protocol-version': '1', 'x-cursor-client-type': 'sdk' } });
       if (!response.ok) throw new Error(`http_${response.status}`);
@@ -374,7 +386,7 @@ export class Router {
     } catch (error) {
       this.plan = { ...base, unavailable: String(error?.message ?? error).slice(0, 200) };
     }
-    await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'plan', ...this.plan })}\n`).catch(() => {});
+    await appendFile(join(this.route.data, 'usage.jsonl'), `${JSON.stringify({ at: Date.now(), kind: 'plan', account: this.account.name, ...this.plan })}\n`).catch(() => {});
   }
   // Cursor settles billed cost some time after a run ends. The run's new usage entries are settled once all are priced (or at the last poll) against the OMD request that ended the run, and a charge is announced on the next response.
   settle(agentId, model, target) {
@@ -522,13 +534,16 @@ export async function serve(routePath) {
   const token = process.env.OMD_CURSOR_LOCAL_TOKEN ?? '';
   const ready = process.env.OMD_READY_TOKEN ?? '';
   if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
-  let apiKey = '';
-  try { apiKey = String(JSON.parse(process.env.OMD_SECRETS ?? '[]').find(secret => secret.id === route.secret_profile)?.value ?? ''); } catch {}
+  if (!Array.isArray(route.accounts)) throw new Error('cursor_not_enrolled:run /cursor setup');
+  let secrets = [];
+  try { secrets = JSON.parse(process.env.OMD_SECRETS ?? '[]'); } catch {}
+  const keys = route.accounts.map(account => String(secrets.find(secret => secret.id === account.secret_profile)?.value ?? ''));
   await privateDirectory(route.data);
   process.env.HOME = route.data;
   process.env.TMPDIR = route.data;
-  const router = new Router(route, apiKey);
-  const identity = digest([route, apiKey]);
+  const routers = new Map(route.accounts.map((account, index) => [account.name, new Router(route, account, keys[index])]));
+  const models = route.accounts.flatMap(account => account.models.map(model => ({ ...model, account: account.name })));
+  const identity = digest([route, keys]);
   let nonce = ready;
   let active = 0;
   let stopping = false;
@@ -564,7 +579,7 @@ export async function serve(routePath) {
     let entry;
     try {
       payload = JSON.parse(Buffer.concat(chunks));
-      entry = route.models.find(model => model.slug === payload.model);
+      entry = models.find(model => model.slug === payload.model);
       if (!entry || payload.stream !== true) throw new Error('unsupported_cursor_request');
     } catch (error) {
       response.writeHead(400).end(String(error.message));
@@ -573,7 +588,8 @@ export async function serve(routePath) {
     const controller = new AbortController();
     active++;
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
-    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
+    const router = routers.get(entry.account);
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', ...planHeaders(router.plan) });
     const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
     try {
       const { key, turn } = router.resume(payload) ?? await router.start(payload, entry, String(request.headers['thread-id'] ?? ''));

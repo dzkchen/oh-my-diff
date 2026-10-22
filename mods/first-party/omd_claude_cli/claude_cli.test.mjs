@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_VERSION, translateRequest, responseEvents } from './index.ts';
-import { Capture, Relay, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
+import { publishable } from './setup.mjs';
+import { Capture, Relay, accountLogins, checkCli, cliEnv, extraUsageAllowed, runClaude, upstreamFailure, withoutCliContext } from './transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -71,8 +72,8 @@ async function fakeCli(script) {
   return root;
 }
 
-const run = (claude, signal = new AbortController().signal, translated = null) => runClaude(prompt, { slug: model, cli: model,
-  efforts: [], thinking: false, window: 200000 }, claude, signal, () => {}, { translated }).then(() => null, error => error);
+const entry = { slug: model, model, cli: model, efforts: [], thinking: false, window: 200000 };
+const run = (claude, signal = new AbortController().signal, translated = null) => runClaude(prompt, entry, claude, signal, () => {}, { translated }).then(() => null, error => error);
 
 test('cancelling at any point before the CLI starts never launches it and leaves nothing behind', async () => {
   const scratch = async () => (await readdir('/private/tmp')).filter(name => name.startsWith('omd-claude-'));
@@ -267,6 +268,102 @@ test('an expired login and a missing entitlement tell the user to run /claude lo
   assert.match(upstreamFailure(404, {}, 'model not found', 'api').message, /`\/claude login api`/);
 });
 
+test('each Claude account signs in and runs through its own config directory, and a missing login fails only that account', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-accounts-'));
+  const fake = join(root, 'claude');
+  const account = (name, config_dir) => ({ name, billing: 'subscription', config_dir, models: [] });
+  process.env.CLAUDE_CONFIG_DIR = '/inherited';
+  try {
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$1" = "auth" ] && { [ -z "$CLAUDE_CONFIG_DIR" ] || [ "$CLAUDE_CONFIG_DIR" = /accounts/work ]; }; then echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"max"}'; elif [ "$1" = "auth" ]; then echo '{"loggedIn":false}'; else echo "$CLAUDE_CONFIG_DIR" > "$(dirname "$0")/dir"; fi\n`);
+    await chmod(fake, 0o700);
+    const logins = accountLogins({ claude: fake, accounts: [account('default', null), account('work', '/accounts/work'), account('spare', '/accounts/spare')] });
+    assert.deepEqual([...logins], [['default', { plan: 'max' }], ['work', { plan: 'max' }], ['spare', { error: 'claude_ai_subscription_login_required: run `/claude login spare`' }]]);
+    assert.throws(() => accountLogins({ claude: fake, accounts: [account('spare', '/accounts/spare')] }), /run `\/claude login spare`/);
+    await runClaude(prompt, entry, fake, new AbortController().signal, () => {}, { account: account('work', '/accounts/work') }).catch(() => {});
+    assert.equal((await readFile(join(root, 'dir'), 'utf8')).trim(), '/accounts/work');
+    assert.match(upstreamFailure(401, {}, '', 'api', account('work', '/accounts/work')).message, /run `\/claude login api work`/);
+  } finally {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the 16-model list keeps every account\'s default model and account order', () => {
+  const accounts = ['a', 'b', 'c'].map(name => ({ name, models: Array.from({ length: 8 }, (_, index) => `${name}${index}`) }));
+  const listed = publishable(accounts);
+  assert.equal(listed.length, 16);
+  assert.deepEqual(listed.filter(slug => slug.endsWith('0')), ['a0', 'b0', 'c0']);
+  assert.deepEqual(listed.slice(0, 8), accounts[0].models);
+  assert.equal(listed.indexOf('b0') < listed.indexOf('c0'), true);
+});
+
+test('setup adds each signed-in account with its own route and suffixed models, refuses taken route names and removes an account', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'omd-claude-setup-')));
+  const store = join(root, 'store');
+  const bin = join(root, 'bin');
+  try {
+    await mkdir(join(store, 'sources'), { recursive: true });
+    await cp(new URL('.', import.meta.url).pathname, join(store, 'sources/omd_claude_cli'), { recursive: true });
+    await mkdir(bin);
+    await writeFile(join(bin, 'claude'), `#!${process.execPath}
+import { appendFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+const argv = process.argv.slice(2);
+const dir = process.env.CLAUDE_CONFIG_DIR ?? '';
+if (argv[0] === '--version') console.log('${CLI_VERSION}');
+else if (argv[0] === 'auth') {
+  appendFileSync('${root}/auth.log', argv[1] + ' ' + dir + '\\n');
+  console.log(JSON.stringify({ loggedIn: true, apiProvider: 'firstParty', ...dir ? { authMethod: 'api_key', apiKeySource: '/login managed key', email: 'work@example.com' } : { authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' } }));
+} else for await (const line of createInterface({ input: process.stdin })) {
+  const row = JSON.parse(line);
+  if (row.type === 'control_request') console.log(JSON.stringify({ type: 'control_response', response: { response: { models: [
+    { value: 'default', resolvedModel: 'claude-opus-5' }, { value: 'sonnet', resolvedModel: 'claude-sonnet-5', description: 'Sonnet 5 · fast', supportsEffort: true, supportedEffortLevels: ['low', 'high'] },
+    { value: 'opus', resolvedModel: 'claude-opus-5', description: 'Opus 5', supportsEffort: true, supportedEffortLevels: ['high'] }] } } }));
+  else console.log(JSON.stringify({ type: 'result', modelUsage: { [argv[argv.indexOf('--model') + 1]]: { contextWindow: 200000 } } }));
+}
+`, { mode: 0o755 });
+    const setup = (...args) => spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), ...args],
+      { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CLAUDE_CONFIG_DIR: '/inherited' } });
+    const host = async () => JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
+    const first = setup('default', 'subscription');
+    assert.equal(first.status, 0, first.stderr);
+    const added = setup('work', 'api', join(store, 'routes/claude/accounts/work'));
+    assert.equal(added.status, 0, added.stderr);
+    const result = JSON.parse(added.stdout);
+    const dir = await realpath(join(store, 'routes/claude/accounts/work'));
+    assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
+      [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
+    assert.deepEqual(result.models.map(model => [model.slug, model.display]), [['claude-opus-5', 'Claude Opus 5'], ['claude-sonnet-5', 'Claude Sonnet 5'],
+      ['claude-opus-5.work', 'Claude Opus 5 · work'], ['claude-sonnet-5.work', 'Claude Sonnet 5 · work']]);
+    const written = await host();
+    assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
+      [['claude', 'omd_claude_cli', 'claude-opus-5', true, undefined], ['claude-work', 'omd_claude_cli', 'claude-opus-5.work', undefined, true]]);
+    const grant = written.services.find(service => service.id === 'claude_cli');
+    assert.ok(grant.read_paths.includes(dir));
+    assert.equal(grant.route.rates.provider_billed, true);
+    const route = JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8'));
+    assert.deepEqual(route.accounts[1].models[0], { slug: 'claude-opus-5.work', model: 'claude-opus-5', cli: 'claude-opus-5', family: 'opus', name: 'Claude Opus 5 · work',
+      description: 'Opus 5', efforts: ['high'], thinking: false, window: 200000 });
+    await writeFile(join(store, 'host.json'), JSON.stringify({ ...written, routes: [...written.routes, { ...written.routes[0], name: 'claude-spare', provider: 'omd_profiles' }] }));
+    assert.match(setup('spare', 'api').stderr, /claude_route_name_taken: another route is named claude-spare/);
+    await writeFile(join(store, 'host.json'), JSON.stringify(written));
+    assert.match(setup('Work', 'subscription').stderr, /claude_account_name_invalid/);
+    assert.match(setup('stray', 'api', join(root, 'elsewhere')).stderr, /claude_account_directory_outside_store/);
+    await assert.rejects(stat(join(store, 'routes/claude/accounts/stray')));
+    const removed = setup('work', 'remove');
+    assert.equal(removed.status, 0, removed.stderr);
+    assert.deepEqual((await host()).routes.map(route => route.name), ['claude']);
+    await assert.rejects(stat(dir));
+    assert.match(await readFile(join(root, 'auth.log'), 'utf8'), new RegExp(`logout ${dir}\n$`));
+    const logouts = (await readFile(join(root, 'auth.log'), 'utf8')).match(/^logout/gm).length;
+    const kept = setup('default', 'remove');
+    assert.equal(JSON.parse(kept.stdout).signed_out, null);
+    assert.equal((await readFile(join(root, 'auth.log'), 'utf8')).match(/^logout/gm).length, logouts);
+    const empty = await host();
+    assert.deepEqual([empty.routes, empty.services.filter(service => service.id === 'claude_cli')], [[], []]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('official CLI auth probe uses the approved user identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-home-'));
   const fake = join(root, 'claude');
@@ -294,7 +391,7 @@ test('the transport shows a foreign holder of its port neither the local token n
   await writeFile(claude, `#!/bin/sh\nif [ "$1" = --version ]; then echo '${CLI_VERSION}'; else echo '{"loggedIn":true,"apiProvider":"firstParty","authMethod":"claude.ai","subscriptionType":"pro"}'; fi\n`);
   await chmod(claude, 0o755);
   const routePath = join(directory, 'route.json');
-  await writeFile(routePath, JSON.stringify({ port: squatter.address().port, claude, billing: 'subscription', models: [] }));
+  await writeFile(routePath, JSON.stringify({ port: squatter.address().port, claude, accounts: [{ name: 'default', billing: 'subscription', config_dir: null, models: [] }] }));
   try {
     const child = spawn(process.execPath, [fileURLToPath(new URL('./transport.mjs', import.meta.url)), 'serve', routePath, directory, 'user'],
       { env: { OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'nonce-a' }, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -328,19 +425,20 @@ function modEvent(event, payload, state, answer, name) {
 const notices = calls => calls.filter(call => call.operation === 'terminal.notice').map(call => call.arguments.text);
 
 test('login runs as a background process that says the sign-in link once and reports through setup', () => {
-  const answer = (data = '', alive = true, process = '4242-1700000000000') => call => {
+  const mod = [{ id: 'omd_claude_cli', path: '/store/sources/omd_claude_cli' }];
+  const answer = (data = '', alive = true, process = '4242-1700000000000', packages = mod) => call => {
     if (call.operation === 'process.status' && !alive) throw new Error('process_not_found');
     return { 'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] }, 'process.exchange': { messages: data ? [{ stream: 'stdout', data }] : [], running: true },
-      'session.info': { process_id: process }, 'packages.list': { packages: [] } }[call.operation] ?? {};
+      'session.info': { process_id: process }, 'packages.list': { packages } }[call.operation] ?? {};
   };
   const channel = (name, data, state, alive, process) => modEvent('channel', { channel: `omd_claude_cli/${name}`, data }, state, answer('', alive, process));
-  const started = channel('login', { billing: 'api' }, null);
-  assert.deepEqual(started.calls[0].arguments, { names: ['node'], sandbox: 'none' });
+  const started = channel('login', { billing: 'api', account: 'work' }, null);
+  assert.deepEqual(started.calls.find(call => call.operation === 'process.which').arguments, { names: ['node'], sandbox: 'none' });
   const { arguments: argv, session, ...start } = started.calls.find(call => call.operation === 'process.start').arguments;
   assert.equal(session, `claude_login_4242-1700000000000_${clock}`);
-  assert.equal(channel('login', { billing: 'api' }, null).calls.find(call => call.operation === 'process.start').arguments.session, session);
+  assert.equal(channel('login', { billing: 'api', account: 'work' }, null).calls.find(call => call.operation === 'process.start').arguments.session, session);
   assert.deepEqual(start, { name: 'node', path: '/bin/node', sha256: 'a', sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
-  assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3])], ['--input-type=module', '-e', ['auth', 'login', '--console']]);
+  assert.deepEqual([argv[0], argv[1], JSON.parse(argv[3]), argv[4]], ['--input-type=module', '-e', ['auth', 'login', '--console'], '/store/routes/claude/accounts/work']);
   const link = 'https://claude.ai/oauth/authorize?code=true&state=x';
   const event = (kind, data, state) => modEvent('process_event', { session, kind, bytes: 1 }, state, answer(data));
   const output = event('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`, started.state);
@@ -353,14 +451,30 @@ test('login runs as a background process that says the sign-in link once and rep
   assert.deepEqual(notices(channel('login', { billing: 'api' }, output.state).calls), ['A Claude login is already running; finish it or wait for it to end']);
   const entry = started => ({ billing: 'api', out: '', shown: false, started });
   const crashed = { claude_login_1_old: entry(clock - 31 * 60_000), claude_login_2_other: entry(clock) };
-  const second = channel('login', { billing: 'subscription' }, { login: { ...output.state.login, ...crashed } }, false, '77-1700000000001');
+  const second = channel('login', { billing: 'subscription', account: 'default' }, { login: { ...output.state.login, ...crashed } }, false, '77-1700000000001');
+  assert.equal(second.calls.find(call => call.operation === 'process.start').arguments.arguments[4], '');
+  assert.equal(second.calls.some(call => call.operation === 'packages.list'), false);
   const ids = Object.keys(second.state.login);
   assert.equal(ids.length, 3);
   assert.deepEqual(ids.filter(id => id.includes('_old')), []);
   assert.deepEqual(second.calls.filter(call => call.operation === 'process.stop').map(call => call.arguments.session), ['claude_login_1_old']);
-  const exited = event('exit', 'Login failed\n', second.state);
-  assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login again']);
+  const exit = (state, setup) => modEvent('process_event', { session, kind: 'exit', bytes: 1 }, state, call =>
+    call.operation === 'exec.run' ? setup : answer('', true, undefined, setup ? mod : [])(call));
+  const exited = exit(second.state);
+  assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login api work again']);
   assert.deepEqual(Object.keys(exited.state.login), ids.filter(id => id !== session));
+  const models = [{ slug: 'claude-opus-5.work', display: 'Claude Opus 5 · work', context_window: 1000000, efforts: ['high'] }];
+  const accounts = [{ name: 'work', billing: 'api', email: 'work@example.com', config_dir: '/store/routes/claude/accounts/work', route: 'claude-work', models: 1 }];
+  const ready = exit(second.state, { exit_code: 0, stdout: JSON.stringify({ accounts, models }), stderr: '' });
+  assert.deepEqual(ready.calls.find(call => call.operation === 'exec.run').arguments.argv, ['/store/sources/omd_claude_cli/setup.mjs', 'work', 'api', '/store/routes/claude/accounts/work']);
+  assert.deepEqual(ready.calls.find(call => call.operation === 'providers.models').arguments, { provider: 'omd_claude_cli', name: 'Claude', models });
+  assert.deepEqual([ready.state.accounts, ready.state.models], [accounts, models]);
+  assert.match(notices(ready.calls).at(-1), /^Claude account work \(work@example\.com\) is ready on Console API credits/);
+  const removed = modEvent('channel', { channel: 'omd_claude_cli/remove', data: { account: 'work' } }, ready.state, call =>
+    call.operation === 'exec.run' ? { exit_code: 0, stdout: JSON.stringify({ accounts: [], models: [], signed_out: true }), stderr: '' } : answer()(call));
+  assert.deepEqual(removed.calls.find(call => call.operation === 'exec.run').arguments.argv, ['/store/sources/omd_claude_cli/setup.mjs', 'work', 'remove']);
+  assert.deepEqual([removed.state.accounts, removed.state.published, notices(removed.calls)], [[], false, ['Removed Claude account work and signed it out']]);
+  assert.ok(removed.calls.some(call => call.operation === 'providers.unregister') && !removed.calls.some(call => call.operation === 'providers.register'));
 });
 
 test('/claude and /claude status name a host error, a missing CLI and a CLI version the mod does not accept', () => {
@@ -370,5 +484,18 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   assert.match(status(probe(null), 'status'), /^CLI: not found on PATH/);
   assert.match(status(probe(null), 'bogus'), /^Usage:/);
   assert.match(status(probe('2.1.999 (Claude Code)')), /^CLI: 2\.1\.999 \(Claude Code\) is installed but omd_claude_cli needs 2\.1\.307 \(Claude Code\).*auto-update/);
-  assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\n`));
+  assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\nAccounts: none`));
+  const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, models: 3 }, { name: 'work', billing: 'api', config_dir: '/accounts/work', models: 2 }];
+  const signedIn = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' });
+  const listed = modEvent('command', '', { accounts, models: [], published: true }, call => {
+    assert.deepEqual(JSON.parse(call.arguments.argv[2]), ['', '/accounts/work']);
+    return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
+  }, 'claude').value.display;
+  assert.match(listed, /\nAccount default: claude\.ai \(max\) me@example\.com · subscription · 3 models\nAccount work: not signed in · Console API credits · 2 models\n/);
+  const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
+  assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
+  assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });
+  for (const bad of ['login Work', 'login api work extra', 'login work extra']) assert.match(login(bad).value.display, /^Account names use/, bad);
+  assert.equal(login('remove work').value.display, 'Unknown Claude account work');
+  assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
 });
