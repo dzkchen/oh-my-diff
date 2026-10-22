@@ -31,10 +31,11 @@ The deadline starts when the request appears. Delayed delivery or a repeated not
 | --- | --- | --- |
 | `timeout_seconds` | `120` | Wait before answering (1 to 86,400). `0` turns the timer off, including for requests already waiting. |
 
-From this checkout, using your mod store path for `STORE`:
+Change settings in `/mods`, or from a shell (this replaces the mod's saved settings):
 
 ```sh
-omd-mod settings STORE mods/first-party/omd_auto_continue '{"timeout_seconds": 300}'
+STORE=~/.local/share/oh-my-diff/stores/full
+omd-mod settings "$STORE" "$STORE/sources/omd_auto_continue" '{"timeout_seconds": 300}'
 ```
 
 ## Prompt caching

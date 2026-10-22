@@ -4,7 +4,7 @@ What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
 - **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
-- **Experimental:** mod API surfaces marked experimental can change between releases. There may be missing API capabilities, just open a issue for it to be added!
+- **Experimental:** mod API surfaces marked experimental can change between releases. There may be missing API capabilities, just open an issue for it to be added!
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
 
@@ -48,7 +48,7 @@ OMD Core includes only the first three.
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
-| `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI `2.1.307`. See [Claude](#claude). |
+| `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or newer. See [Claude](#claude). |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
@@ -56,7 +56,7 @@ OMD Core includes only the first three.
 | `omd_programmable_context` | Python helpers for kept context, child agents and a session harness; `/refine` | The `omd-code-execution` plugin's Python kernel |
 | `omd_mini` | `omd mini`: a scrollback-first session with a short prompt and one status segment; `/omd_mini:switch` | A terminal |
 | `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account and `pnpm`; not yet verified on a live account |
-| `omd_tool_absorb` | Runs a response's parallel reads as one step and repeated reads once; `/absorb` | |
+| `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.

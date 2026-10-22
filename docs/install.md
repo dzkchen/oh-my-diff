@@ -7,6 +7,8 @@
   supports the new version.
 - Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
 - Only to write mods: Node 24.18+ (24.x) on `PATH` for `omd-mod-author`.
+- Only for the account mods (`omd_profiles`, `omd_claude_cli`, `omd_cursor`): Node on `PATH`, 22.18+ for
+  `omd_profiles`.
 
 ## Install
 

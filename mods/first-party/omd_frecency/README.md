@@ -16,7 +16,7 @@ Type `@` and a few letters in the prompt. There is no command to run and nothing
 
 | What you see | Why |
 | --- | --- |
-| Files whose name starts with your letters come first. | Then names or paths that contain them, then looser matches. |
+| Files whose name starts with your letters rank highest. | Then names or paths that contain them, then looser matches. Use and Git status can lift a close match above a better one. |
 | A query with a capital letter matches case exactly. | Otherwise case is ignored. |
 | A small typo still finds the file. | `parsre` finds `parser.ts` once the query has four or more characters. |
 | Files you mention often, and recently, rank higher. | A file path in a submitted prompt counts as a use. |
@@ -24,7 +24,7 @@ Type `@` and a few letters in the prompt. There is no command to run and nothing
 
 ## Needs and limits
 
-- Usage is kept per project, for the 512 strongest files. Ignored and missing files are not learned.
+- Usage is kept per project for the strongest files, up to 512 or 32 KB of paths (about 400 typical paths). Ignored and missing files are not learned.
 - Outside a Git repository you lose only the Git boost.
 - It changes `@` ranking only. The agent's own search tools are unchanged.
 - Turn it off and Codex's own ranking returns.

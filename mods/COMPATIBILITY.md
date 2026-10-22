@@ -88,6 +88,6 @@ Not tested:
 - Linux or Intel macOS.
 - Terminals other than those above.
 - Third-party mods combined with the OMD+ collection.
-- Upgrading from an earlier OMD release (there is none yet).
+- Upgrading from an earlier OMD release.
 - Artifact reading and code execution together in one live task.
 - Every combination of mods, plugins and options.
