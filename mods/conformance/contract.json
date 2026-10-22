@@ -1413,7 +1413,7 @@
       "replace": "tool_batch (exclusive)",
       "timing": "after the response's calls are known, before dispatch",
       "ownership": "mod: which calls merge; host: admission, approvals, per-call results and attribution",
-      "limits": "merged calls run once under a synthetic id; results fan out by call id and missing results become errors; dispatch is unchanged without an owner",
+      "limits": "merged calls run once under a synthetic id; results fan out by call id, with a per-call success flag when the merge sets success_per_call, and missing results become errors; dispatch is unchanged without an owner",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],

@@ -614,8 +614,11 @@ fn validate_result(
                     .is_some_and(|output| output.len() <= RESULT_BYTES)
                     && result["success"].is_boolean()
                     && object.keys().all(|key| {
-                        ["output", "success", "truncated", "call_id"].contains(&key.as_str())
+                        ["output", "success", "truncated", "call_id", "value"]
+                            .contains(&key.as_str())
                     })
+                    && serde_json::to_vec(&result["value"])
+                        .is_ok_and(|value| value.len() <= RESULT_BYTES)
             })
         }
         "host_operation" => {
@@ -1735,6 +1738,21 @@ impl ModHost {
                     .map(|interceptor| interceptor.required)
             })
             .max()
+    }
+
+    pub fn intercepts_with(&self, surface: &str, feature: &str) -> bool {
+        self.loaded.values().any(|loaded| {
+            loaded
+                .package
+                .compatibility
+                .required_features
+                .iter()
+                .any(|required| required == feature)
+                && loaded.registrations.interceptors.iter().any(|interceptor| {
+                    (loaded.error.is_none() || interceptor.required)
+                        && granted(loaded, &interceptor.pattern, surface)
+                })
+        })
     }
 
     /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
