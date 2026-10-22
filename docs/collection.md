@@ -45,7 +45,7 @@ OMD Core includes only the first three.
 | `omd_preview` | Previews HTML and files, draws Mermaid diagrams | |
 | `omd_frecency` | Ranks `@` file mentions by fuzzy match and how often you use them | |
 | `omd_privacy` | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
-| `omd_usage` | A usage display: context, cache, cost and quota (Alt+a) | |
+| `omd_usage` | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |

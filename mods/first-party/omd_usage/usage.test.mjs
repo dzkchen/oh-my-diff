@@ -42,10 +42,14 @@ const start = (session = { thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'o
     : operation === 'app.request' && args.method === 'config/read' ? { config: { model_context_window: 272_000, model_auto_compact_token_limit: 240_000 } }
       : operation === 'app.request' ? (limits ? { rateLimits: limits } : new Error('unavailable')) : { delivered: 1, dropped: 0 }).state;
 
-test('an unpriced native ChatGPT-plan response is included, an unpriced key is unknown', () => {
-  const unpriced = patch => response('u1', { cost: { microusd: null, basis: 'unpriced' }, ...patch });
-  assert.match(dialog(feed(start(), [['model_response', unpriced({})]])).text, /1 included/);
-  assert.match(dialog(feed(start(), [['model_response', unpriced({ route: 'api', credential: 'key' })]])).text, /1 unknown cost/);
+test('costs follow the ledger basis: an unpriced native response stays unknown', () => {
+  assert.match(dialog(feed(start(), [['model_response', response('i1')]])).text, /Lead: 1 included/);
+  assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /Lead: 1 unknown cost/);
+});
+
+test('usage draws nothing above the prompt; the status line shows it', () => {
+  const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state: feed(start(), [['model_response', response('r1')]]), settings: hud }).value;
+  assert.deepEqual(view, { keybindings: { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } } });
 });
 
 test('usage ledger is request-idempotent, keeps lead context apart from workers and orders by observation time', () => {
@@ -85,23 +89,16 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
 
 
 const billed = (id, usd, patch = {}) => response(id, { cost: { microusd: null, basis: 'unpriced' }, usage: { input_tokens: 10_000, output_tokens: 500, omd_reported_cost: { usd, basis: 'provider_billed' } }, ...patch });
-const rowText = (state, settings) => {
-  const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings, virtual_time_ms: NOW }).value;
-  const spans = [];
-  const walk = node => { for (const span of node.spans ?? []) spans.push(span); for (const child of node.children ?? []) walk(child); };
-  view.sites.above_composer.components.forEach(walk);
-  return spans;
-};
 const notices = calls => calls.filter(item => item.operation === 'terminal.notice').map(item => item.arguments);
 
 test('closing the usage dialog with Esc keeps it closed', () => {
   const open = { ...start(), open: true };
   const state = call(usageMod, { event: 'component_event', payload: { component: 'omd_usage_dialog', thread_id: 'lead', kind: 'close', origin: 'user' }, state: open, settings: hud }).state;
   assert.equal(state.open, false);
-  assert.equal(call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value.sites.dialog, undefined);
+  assert.equal(call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value.sites, undefined);
 });
 
-test('the budget counts spend that left the rolling window or settled late, warns once per 80% and 100% crossing, retries a refused notice and tones the prompt row', () => {
+test('the budget counts spend that left the rolling window or settled late, warns once per 80% and 100% crossing, and retries a refused notice', () => {
   const settings = { ...hud, budget_usd: 10 };
   const run = (state, id, usd, at) => {
     const out = call(usageMod, { event: 'model_response', payload: billed(id, usd, { timing: { started_at_ms: at, first_event_ms: 1, duration_ms: 1 } }), state, settings });
@@ -113,17 +110,13 @@ test('the budget counts spend that left the rolling window or settled late, warn
   assert.equal(step.notes[0].placement, 'toast');
   step = run(step.state, 'b2', 0.1, NOW - 50_000);
   assert.deepEqual(step.notes, []);
-  const tone = rowText(step.state, settings).find(span => /^Budget/.test(span.text)).tone;
-  assert.equal(tone, 'attention');
 
   for (let index = 0; index < 125; index++) step.state.hud.entries.push({ ...step.state.hud.entries[0], key: `x${index}#1`, request: `x${index}`, reported: null, cost: { microusd: 0, basis: 'included_subscription' }, at: NOW - 40_000 + index });
   step = run(step.state, 'b3', 2.0, NOW - 1_000);
   assert.ok(step.state.hud.dropped > 0);
   assert.equal(step.notes.length, 1);
   assert.match(step.notes[0].text, /100%/);
-  const over = rowText(step.state, settings).find(span => /^Budget/.test(span.text));
-  assert.equal(over.text, 'Budget $10.6 of $10.0 (soft)');
-  assert.equal(over.tone, 'failure');
+  assert.match(dialog(step.state, settings).text, /Soft budget \$10\.0: \$10\.6 spent/);
   assert.deepEqual(run(step.state, 'b4', 0.5, NOW).notes, []);
   assert.equal(run(step.state, 'b1', 8.5, NOW - 60_000).state.hud.shed, step.state.hud.shed);
 

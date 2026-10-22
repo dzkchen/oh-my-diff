@@ -1,6 +1,6 @@
 # omd_usage
 
-Shows what your session is using: context, cache, cost and quota, in a row above the prompt and a Usage dialog.
+Shows what your session is using in a Usage dialog: context, cache, cost, quota, tasks and workers, request by request. The status line below the prompt (`omd_statusline`) shows the summary.
 
 ## Turn it on
 
@@ -15,7 +15,7 @@ omd-package mod enable omd_usage
 | Command or key | What it does |
 | --- | --- |
 | `Alt+a` or `/omd_usage:hud` | Open or close the Usage dialog. Its expanded view lists recent requests. |
-| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD: the budget row turns amber, then red, and a notice appears once at each. `0` removes the budget. |
+| `/omd_usage:budget 5` | Warn when spend reaches 80% and 100% of 5 USD: a notice appears once at each, and the dialog shows spend against the budget. `0` removes the budget. |
 | `/omd_usage:categories on` | Split each request by role (system, context, user, tool output). `off` turns it back off. |
 
 Changes apply from your next message.
@@ -29,7 +29,7 @@ Changes apply from your next message.
 
 ## Needs and limits
 
-- Costs come from what each provider reports. A cost the provider doesn't report shows as unknown, not zero.
+- Costs come from what each provider reports. Requests on your ChatGPT plan count as included; Extra-usage credits spent past the plan's limit aren't reported per request. A cost the provider doesn't report shows as unknown, not zero.
 - Totals cover the last 120 requests in the session, not lifetime spend. The budget also counts what older requests cost before they left that window.
 - Quota windows belong to the signed-in Codex account, not to another provider you switch to.
 - Cache expiry shows only when the provider reports how long its cache lasts.

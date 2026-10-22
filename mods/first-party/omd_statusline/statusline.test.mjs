@@ -57,12 +57,13 @@ const settled = (answer = host()) => {
 };
 const started = () => settled();
 
-test('the native route on a ChatGPT plan shows as included, not unpriced', () => {
+test('cost follows the ledger basis: included on the ChatGPT plan, unknown when unpriced', () => {
   const settings = { preset: 'custom', layout: 'provider cost' };
-  const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
   const plan = host({ 'app.request': args => args.method === 'config/read' ? { config: {} } : { rateLimits: { planType: 'plus' } } });
-  assert.deepEqual(lines(view(feed(settled(plan), unpriced), settings)), ['openai subscription · included']);
-  assert.deepEqual(lines(view(feed(started(), unpriced), settings)), ['openai unpriced · cost unknown'], 'an API key without rates stays unpriced');
+  const included = [['model_response', response('r1', { cost: { microusd: 0, basis: 'included_subscription' } })]];
+  const unpriced = [['model_response', response('r1', { cost: { microusd: null, basis: 'unpriced' } })]];
+  assert.deepEqual(lines(view(feed(started(), included), settings)), ['openai subscription · included']);
+  assert.deepEqual(lines(view(feed(settled(plan), unpriced), settings)), ['openai unpriced · cost unknown'], 'a plan type does not make an unpriced request included');
 });
 
 test('user scripts get session JSON on stdin and only safe styled text reaches the view', () => {
