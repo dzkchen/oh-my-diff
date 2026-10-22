@@ -2,7 +2,7 @@
   "schema": 1,
   "virtual_time_ms": 1800000000000,
   "host_operations": {
-    "session.info": [{"result": {"thread_id": "status-fixture", "root": "/repo", "cwd": "/repo", "codex_version": "0.163.0", "model": "gpt-6.1-sol", "provider": "openai", "route": null, "turns_started": 0}}],
+    "session.info": [{"result": {"thread_id": "status-fixture", "root": "/repo", "cwd": "/repo", "codex_version": "0.163.0", "model": "gpt-6.1-sol", "provider": "openai", "route": null, "turns_started": 0, "process_id": "status-process"}}],
     "app.request": [
       {"result": {"config": {"model_reasoning_effort": "high", "model_context_window": 272000}}},
       {"result": {"rateLimits": {"primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1800007200}}}}
