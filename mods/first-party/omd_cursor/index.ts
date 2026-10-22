@@ -8,6 +8,7 @@ const settleKey = 'settle';
 const LOG_TAIL_BYTES = 32_768;
 const SETTLE_POLLS = 6;
 const OUTPUT_BYTES = 12_288;
+export const ACCOUNT = /^[a-z0-9][a-z0-9_-]{0,23}$/;
 
 type Row = Record<string, any>;
 type Settle = { thread: string; applied: string[]; polls: number };
@@ -25,9 +26,8 @@ function leaves(value: unknown, prefix: string): string[] {
   return value === null || value === undefined || value === '' ? [] : [`${prefix}: ${value}`];
 }
 
-function planReport(plan: Row | undefined): string[] {
-  if (!plan) return [];
-  const heading = `Plan (undocumented Cursor dashboard RPC, ${new Date(plan.observed_at).toISOString()})`;
+function planReport(plan: Row): string[] {
+  const heading = `Plan of account ${plan.account} (undocumented Cursor dashboard RPC, ${new Date(plan.observed_at).toISOString()})`;
   if (plan.unavailable) return [heading, `  unavailable: ${plan.unavailable}`, ''];
   return [heading, ...leaves({ billing_cycle: [plan.billing_cycle_start, plan.billing_cycle_end].filter(Boolean).join(' – '),
     plan_usage: plan.plan_usage, spend_limit_usage: plan.spend_limit_usage, message: plan.message,
@@ -43,12 +43,13 @@ export function pendingSettlements(log: string, thread: string, applied: string[
 
 export function usageReport(log: string): string {
   const settlements: Row[] = [];
-  let plan: Row | undefined;
+  const plans = new Map<string, Row>();
   for (const row of lines(log)) {
-    if (row.kind === 'plan') plan = row;
+    if (row.kind === 'plan') plans.set(row.account, row);
     else if (row.kind === 'settlement') settlements.push(row);
   }
-  if (!settlements.length) return [...planReport(plan), 'No Cursor usage recorded yet.'].join('\n');
+  const plan = [...plans.values()].flatMap(planReport);
+  if (!settlements.length) return [...plan, 'No Cursor usage recorded yet.'].join('\n');
   let raw = 0;
   let charged = 0;
   let pending = 0;
@@ -61,7 +62,7 @@ export function usageReport(log: string): string {
     charged += row.cost.charged_cents;
     return `${where}  raw ${cents(row.cost.raw_cents)}, charged ${cents(row.cost.charged_cents)}  (${new Date(row.at).toISOString()})`;
   });
-  return [...planReport(plan), ...rows, '',
+  return [...plan, ...rows, '',
     `Recent runs: raw list cost ${cents(raw)}, charged ${cents(charged)}${pending ? `; ${pending} run(s) unsettled after 5 minutes` : ''}. Charges reach the OMD ledger as provider_reported costs.`,
     'Charged is what Cursor bills beyond included usage. Zero charge can mean plan-included, BYOK or credit-grant usage; the SDK does not say which pool paid a run. Plan pools and spend limits come only from the undocumented dashboard RPC above, and no Cursor source reports cache expiry or context windows.'].join('\n');
 }
@@ -76,7 +77,8 @@ export default function activate(api: ModAPI): void {
     if (status.ok) api.host.tryCall('providers.unregister', { id: service });
     const models = saved().models;
     const profiles = api.host.tryCall('credentials.list', null);
-    const secrets = profiles.ok ? profiles.value.filter(profile => profile.kind === 'secret' && profile.label === 'cursor' && profile.status === 'ready')
+    const owned = new Set(((saved().accounts ?? []) as Row[]).map(account => account.secret));
+    const secrets = profiles.ok ? profiles.value.filter(profile => profile.kind === 'secret' && owned.has(profile.id) && profile.status === 'ready')
       .map(profile => profile.id) : [];
     const published = Array.isArray(models) && api.host.tryCall('providers.register', { id: service, secrets }).ok &&
       api.host.tryCall('providers.models', { provider, name: 'Cursor', models: models as ProviderModel[] }).ok;
@@ -125,7 +127,7 @@ export default function activate(api: ModAPI): void {
     if (kind !== 'exit') {
       const link = run.shown ? null : /^OMD_CURSOR_LINK (\S+)$/m.exec(out)?.[1];
       if (link) { say('Approve Oh My Diff in your browser to enroll Cursor; if it does not open, open this link:'); say(link); }
-      return void api.state.set({ ...saved(), setup: { out, shown: run.shown || !!link } });
+      return void api.state.set({ ...saved(), setup: { ...run, out, shown: run.shown || !!link } });
     }
     api.host.tryCall('process.stop', { session });
     api.state.set({ ...saved(), setup: null });
@@ -138,9 +140,17 @@ export default function activate(api: ModAPI): void {
     try { done = JSON.parse(result); } catch { return void say('Cursor setup returned an unreadable result; run /cursor setup again', true); }
     api.state.set({ ...saved(), ...done });
     if (!ensure(true)) return void say('Cursor setup finished, but the provider did not start; restart OMD+ and run /cursor', true);
-    say(`Cursor is ready${done.account ? ` for ${done.account}` : ''}; pick a Cursor model with /model`);
+    const account = (done.accounts as Row[]).find(item => item.name === run.account);
+    say(`Cursor account ${run.account} is ready${account?.account ? ` for ${account.account}` : ''}; pick its models with /model or switch with /profile`);
   });
-  api.on('channel', ({ channel }) => {
+  api.on('channel', ({ channel, data }) => {
+    const name = String((data as Row | null)?.account ?? 'default');
+    if (channel === `${api.package.id}/removed`) {
+      api.state.set({ ...saved(), ...(data as Row).result });
+      if ((data as Row).result.accounts.length) return void ensure(true);
+      api.host.tryCall('providers.unregister', { id: service });
+      return void api.state.set({ ...saved(), published: false });
+    }
     if (channel !== `${api.package.id}/setup`) return;
     const installed = api.host.tryCall('packages.list', { fields: ['id', 'path'] });
     const mod = installed.ok ? installed.value.packages.find(item => item.id === api.package.id)?.path : null;
@@ -150,9 +160,9 @@ export default function activate(api: ModAPI): void {
     if (!node) return void say(`Cursor setup did not start: ${found.ok ? 'node is unavailable' : found.error}`, true);
     api.host.tryCall('process.stop', { session });
     const started = api.host.tryCall('process.start', { session, name: 'node', path: node.path, sha256: node.sha256,
-      arguments: [`${mod}/setup.mjs`], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
+      arguments: [`${mod}/setup.mjs`, name], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
     if (!started.ok) return void say(`Cursor setup did not start: ${started.error}`, true);
-    api.state.set({ ...saved(), setup: { out: '', shown: false } });
+    api.state.set({ ...saved(), mod, setup: { out: '', shown: false, account: name } });
   });
   api.on('start', () => {
     if (plain(saved().setup)) api.state.set({ ...saved(), setup: null });
@@ -169,25 +179,42 @@ export default function activate(api: ModAPI): void {
     if (key === settleKey) settle(true);
   });
   api.command('cursor', (args): Json => {
-    const action = String(args ?? '').trim() || 'doctor';
-    if (action === 'setup' || action === 'login') {
-      const hop = api.host.tryCall('events.publish', { channel: 'setup', data: {} });
-      if (!hop.ok || hop.value.delivered === 0) return { display: 'Cursor setup could not be started; run /cursor setup again' };
-      return { display: 'Starting Cursor setup: it installs the Cursor SDK, then asks you to approve Oh My Diff in the browser; progress shows below' };
-    }
-    if (action !== 'usage' && action !== 'doctor') return { display: 'Usage: /cursor (doctor) | /cursor setup | /cursor usage' };
+    const [action = 'doctor', name, extra] = String(args ?? '').trim().split(/\s+/).filter(Boolean);
+    const usage = 'Usage: /cursor (doctor) | /cursor setup [NAME] | /cursor remove NAME | /cursor usage';
     const state = saved();
+    if (action === 'setup' || action === 'login') {
+      const account = name ?? 'default';
+      if (extra !== undefined || !ACCOUNT.test(account)) return { display: `Account names use lowercase letters, digits, _ or - (at most 24). ${usage}` };
+      const hop = api.host.tryCall('events.publish', { channel: 'setup', data: { account } });
+      if (!hop.ok || hop.value.delivered === 0) return { display: 'Cursor setup could not be started; run /cursor setup again' };
+      return { display: `Starting Cursor setup for account ${account}: it installs the Cursor SDK, then asks you to approve Oh My Diff in the browser; progress shows below` };
+    }
+    if (action === 'remove' && name && extra === undefined) {
+      const account = ((state.accounts ?? []) as Row[]).find(item => item.name === name);
+      const mod = state.mod;
+      if (!account || typeof mod !== 'string') return { display: account ? 'Run /cursor setup once in this OMD install, then try again' : `Unknown Cursor account ${name}` };
+      const run = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, name, '--remove'], sandbox: 'none', timeout_ms: 120_000 });
+      const result = run.ok ? /^OMD_CURSOR_RESULT (.+)$/m.exec(run.value.stdout)?.[1] : undefined;
+      if (!result) return { display: `Cursor account ${name} was not removed: ${run.ok ? /^OMD_CURSOR_ERROR (.+)$/m.exec(run.value.stdout)?.[1] ?? 'no result' : run.error}` };
+      api.host.tryCall('events.publish', { channel: 'removed', data: { result: JSON.parse(result) } });
+      const forgot = api.host.tryCall('credentials.request', { action: 'remove', profile: String(account.secret) });
+      return { display: `Removed Cursor account ${name}${forgot.ok && forgot.value.status === 'completed' ? ' and its key' : '; its key was kept'}` };
+    }
+    if (action !== 'usage' && action !== 'doctor') return { display: usage };
     if (typeof state.data !== 'string') return { display: 'Cursor is not set up; run /cursor setup.' };
     if (action === 'usage') return { display: usageReport(tail(`${state.data}/usage.jsonl`) ?? '') };
     const models = Array.isArray(state.models) ? state.models as ProviderModel[] : [];
-    const expired = typeof state.expires === 'number' && state.expires < Date.now();
+    const accounts = (state.accounts ?? []) as Row[];
     return { display: [
       `Cursor SDK ${state.sdk}`,
-      `account: ${state.account ?? 'not reported'}; enrollment key expires ${typeof state.expires === 'number' ? new Date(state.expires).toISOString() : 'not reported'}${expired ? ' (expired; run /cursor setup)' : ''}`,
-      `models: ${state.published === true ? `${models.length} published to /model` : 'none published'}: ${models.map(model => model.slug).join(', ')}; default ${state.default}`,
+      ...accounts.map(account => {
+        const expired = typeof account.expires === 'number' && account.expires < Date.now();
+        return `account ${account.name}: ${account.account ?? 'not reported'}; key expires ${typeof account.expires === 'number' ? new Date(account.expires).toISOString() : 'not reported'}${expired ? ` (expired; run /cursor setup${account.name === 'default' ? '' : ` ${account.name}`})` : ''}; default ${account.default}`;
+      }),
+      `models: ${state.published === true ? `${models.length} published to /model` : 'none published'}: ${models.map(model => model.slug).join(', ')}`,
       'tools: Cursor built-ins, ambient settings and MCP servers disabled; only OMD tools under OMD approvals',
       'billing: provider-billed route; charges settle into the OMD ledger as provider_reported costs',
       'context window: not reported by Cursor; the catalog assumes 200K and Cursor manages its own context',
       'usage and settled cost: /cursor usage'].join('\n') };
-  }, { description: 'Set up Cursor (setup), show its status (doctor) or usage', args_hint: '[setup | usage]' });
+  }, { description: 'Set up Cursor accounts (setup [NAME] | remove NAME), show their status (doctor) or usage', args_hint: '[setup [NAME] | remove NAME | usage]' });
 }

@@ -5,7 +5,7 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Switch ChatGPT accounts, API keys and compatible providers at the next request, with a usage meter and Alt+s cycling",
+  "description": "Add and switch ChatGPT, Claude and Cursor accounts, API keys and compatible providers at the next request, with a usage meter and Alt+s",
   "license": "MIT",
   "provenance": {
     "maintainer": "Oh My Diff",
@@ -23,9 +23,20 @@
     "terminal",
     "store",
     "inventory",
-    "packages"
+    "packages",
+    "os",
+    "builtins"
   ],
+  "os_access": {
+    "programs": [
+      "node"
+    ],
+    "network": true
+  },
   "subscriptions": {
+    "channels": [
+      "omd_profiles/added"
+    ],
     "app": [
       "account/rateLimits/updated"
     ]
@@ -33,6 +44,7 @@
   "compatibility": {
     "required_features": [
       "app_v1",
+      "builtins_v1",
       "credentials_v1",
       "events_v1",
       "package_imports_v1",
@@ -43,7 +55,9 @@
       "store_v1",
       "terminal_panel_v1",
       "terminal_render_sites_v1",
-      "terminal_rich_line_v1"
+      "terminal_rich_line_v1",
+      "timers_v1",
+      "unrestricted_process_v1"
     ]
   },
   "assets": [

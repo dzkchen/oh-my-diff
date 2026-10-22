@@ -8,7 +8,7 @@ import { dirname, join, relative } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { pendingSettlements, usageReport } from './index.ts';
-import { Router } from './transport.mjs';
+import { Router, planHeaders } from './transport.mjs';
 import { callback } from '../../../tests/mod_runner.mjs';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -70,14 +70,17 @@ test('Cursor reads its usage log through a sandboxed tail and settles nothing ou
 
 test('/cursor setup runs the installed setup script in the background, says the sign-in link once and publishes the models', () => {
   const hop = modEvent('command', 'setup', null, () => ({ delivered: 1, dropped: 0 }), 'cursor');
-  assert.deepEqual(hop.calls[0].arguments, { channel: 'setup', data: {} });
+  assert.deepEqual(hop.calls[0].arguments, { channel: 'setup', data: { account: 'default' } });
+  const named = modEvent('command', 'setup work', null, () => ({ delivered: 1, dropped: 0 }), 'cursor');
+  assert.deepEqual(named.calls[0].arguments, { channel: 'setup', data: { account: 'work' } });
+  assert.match(modEvent('command', 'setup Work', null, () => ({ delivered: 1 }), 'cursor').value.display, /^Account names use/);
   assert.ok(manifest.subscriptions.channels.includes('omd_cursor/setup'));
   const started = modEvent('channel', { channel: 'omd_cursor/setup', data: {} }, null, call => ({
     'packages.list': { packages: [{ id: 'omd_cursor', path: '/store/sources/omd_cursor' }] },
     'process.which': { found: [{ name: 'node', path: '/bin/node', sha256: 'a' }] },
     'process.stop': { stopped: false }, 'process.start': { session: 'cursor_setup', running: true } })[call.operation]);
   assert.deepEqual(started.calls.at(-1).arguments, { session: 'cursor_setup', name: 'node', path: '/bin/node', sha256: 'a',
-    arguments: ['/store/sources/omd_cursor/setup.mjs'], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
+    arguments: ['/store/sources/omd_cursor/setup.mjs', 'default'], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
   const link = 'https://cursor.com/loginDeepControl?fixture';
   const event = (kind, data, state) => {
     let reads = 0;
@@ -90,14 +93,30 @@ test('/cursor setup runs the installed setup script in the background, says the 
   assert.deepEqual(notices(shown.calls), ['Approve Oh My Diff in your browser to enroll Cursor; if it does not open, open this link:', link]);
   assert.deepEqual(notices(event('output', 'waiting\n', shown.state).calls), []);
   const models = [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] }];
-  const done = { sdk: '1.0.35', account: 'dev@example.com', expires: 9e12, data: '/data/omd-cursor', default: 'cursor-auto', models };
+  const accounts = [{ name: 'default', account: 'dev@example.com', expires: 9e12, default: 'cursor-auto', route: 'cursor', secret: 'p7', models: 1 }];
+  const done = { sdk: '1.0.35', data: '/data/omd-cursor', accounts, models };
   const finished = event('exit', `OMD_CURSOR_RESULT ${JSON.stringify(done)}\n`, shown.state);
   assert.deepEqual(finished.calls.map(call => call.operation), ['process.exchange', 'process.exchange', 'process.stop',
     'sidecars.status', 'providers.unregister', 'credentials.list', 'providers.register', 'providers.models', 'terminal.notice']);
   assert.deepEqual(finished.calls.find(call => call.operation === 'providers.register').arguments, { id: 'cursor', secrets: ['p7'] });
   assert.deepEqual(finished.calls.find(call => call.operation === 'providers.models').arguments, { provider: 'omd_cursor', name: 'Cursor', models });
-  assert.deepEqual(notices(finished.calls), ['Cursor is ready for dev@example.com; pick a Cursor model with /model']);
-  assert.deepEqual([finished.state.setup, finished.state.published, finished.state.data, finished.state.models], [null, true, '/data/omd-cursor', models]);
+  assert.deepEqual(notices(finished.calls), ['Cursor account default is ready for dev@example.com; pick its models with /model or switch with /profile']);
+  assert.deepEqual([finished.state.setup, finished.state.published, finished.state.data, finished.state.models, finished.state.accounts], [null, true, '/data/omd-cursor', models, accounts]);
+  const doctor = modEvent('command', '', finished.state, () => null, 'cursor').value.display;
+  assert.match(doctor, /\naccount default: dev@example\.com; key expires [^\n]+; default cursor-auto\n/);
+  assert.equal(started.state.mod, '/store/sources/omd_cursor');
+  const emptied = { sdk: '1.0.35', data: '/data/omd-cursor', accounts: [], models: [] };
+  const remover = run => call => call.operation === 'exec.run' ? run : call.operation === 'events.publish' ? { delivered: 1 } : { status: 'completed' };
+  const state = { ...finished.state, mod: '/store/sources/omd_cursor' };
+  const failed = modEvent('command', 'remove default', state, remover({ exit_code: 1, stdout: 'OMD_CURSOR_ERROR host_json_unreadable\n', stderr: '' }), 'cursor');
+  assert.deepEqual([failed.value.display, failed.calls.map(call => call.operation)], ['Cursor account default was not removed: host_json_unreadable', ['exec.run']]);
+  const removing = modEvent('command', 'remove default', state, remover({ exit_code: 0, stdout: `OMD_CURSOR_RESULT ${JSON.stringify(emptied)}\n`, stderr: '' }), 'cursor');
+  assert.deepEqual(removing.calls.map(call => [call.operation, call.arguments.argv ?? call.arguments]), [['exec.run', ['/store/sources/omd_cursor/setup.mjs', 'default', '--remove']],
+    ['events.publish', { channel: 'removed', data: { result: emptied } }], ['credentials.request', { action: 'remove', profile: 'p7' }]]);
+  assert.equal(removing.value.display, 'Removed Cursor account default and its key');
+  const applied = modEvent('channel', { channel: 'omd_cursor/removed', data: { result: emptied } }, state, () => ({}));
+  assert.deepEqual([applied.state.accounts, applied.state.published, applied.calls.map(call => call.operation)], [[], false, ['providers.unregister']]);
+  assert.equal(modEvent('command', 'remove work', finished.state, () => null, 'cursor').value.display, 'Unknown Cursor account work');
   const declined = event('exit', 'OMD_CURSOR_ERROR cursor_enrollment_declined: login denied\n', shown.state);
   assert.deepEqual(notices(declined.calls), ['Cursor setup failed: cursor_enrollment_declined: login denied']);
   assert.ok(!declined.calls.some(call => call.operation === 'providers.register'));
@@ -191,7 +210,10 @@ export const Cursor = {
 };
 `;
 
-async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'https://api2.cursor.sh', value: 'crsr_fixture' }], route = {}, root } = {}) {
+const defaultAccount = { name: 'default', secret_profile: 'p1', backend_url: 'http://127.0.0.1:9', default: model,
+  models: [{ slug: model, id: 'auto', effort: { id: 'reasoning', values: ['low', 'high'] } }] };
+
+async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'https://api2.cursor.sh', value: 'crsr_fixture' }], route = {}, account = {}, accounts = [{ ...defaultAccount, ...account }], root } = {}) {
   let cleanup = fixtures.get(t);
   if (!cleanup) {
     cleanup = { children: [], roots: [] };
@@ -215,8 +237,7 @@ async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'htt
   const port = reserve.address().port;
   await new Promise(resolve => reserve.close(resolve));
   const routePath = join(root, 'route.json');
-  await writeFile(routePath, JSON.stringify({ port, sdk: '/sdk.mjs', data: join(root, 'data'), default: model,
-    models: [{ slug: model, id: 'auto', effort: { id: 'reasoning', values: ['low', 'high'] } }], backend_url: 'http://127.0.0.1:9', secret_profile: 'p1', ...route }));
+  await writeFile(routePath, JSON.stringify({ port, sdk: '/sdk.mjs', data: join(root, 'data'), accounts, ...route }));
   const child = spawn(process.execPath, [new URL('./transport.mjs', import.meta.url).pathname, 'serve', routePath],
     { cwd: root, env: { PATH: '/usr/bin:/bin', OMD_SERVICE_ROOT: root, OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready',
       OMD_SECRETS: JSON.stringify(secrets) }, stdio: 'ignore' });
@@ -225,9 +246,10 @@ async function fixture(t, { secrets = [{ id: 'p1', label: 'cursor', origin: 'htt
     try { if ((await fetch(`http://127.0.0.1:${port}/_omd/ready`)).ok) break; } catch {}
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  const call = async (input, { tools = exec, thread = 't1', signal, reasoning, request = 'req-0' } = {}) => {
+  const call = async (input, { tools = exec, thread = 't1', signal, reasoning, request = 'req-0', slug = model, headers } = {}) => {
     const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST', signal,
-      headers: { authorization: `Bearer ${token}`, 'thread-id': thread, 'x-omd-request-id': request }, body: JSON.stringify({ model, stream: true, input, tools, reasoning }) });
+      headers: { authorization: `Bearer ${token}`, 'thread-id': thread, 'x-omd-request-id': request }, body: JSON.stringify({ model: slug, stream: true, input, tools, reasoning }) });
+    if (headers) Object.assign(headers, Object.fromEntries(response.headers));
     return (await response.text()).split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
   };
   const calls = async () => (await readFile(join(root, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -375,7 +397,7 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   });
   await new Promise(resolve => dashboard.listen(0, '127.0.0.1', resolve));
   t.after(() => dashboard.close());
-  const { call, calls, root, child } = await fixture(t, { route: { backend_url: `http://127.0.0.1:${dashboard.address().port}` } });
+  const { call, calls, root, child } = await fixture(t, { account: { backend_url: `http://127.0.0.1:${dashboard.address().port}` } });
   assert.equal(text(await call([user('one')], { thread: 'h' })), 'Answer.');
   const controller = new AbortController();
   const hung = [user('one'), assistant('Answer.'), user('HANG')];
@@ -424,8 +446,34 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.match((await calls()).filter(row => row.op === 'send').at(-1).text, /## User\nlist\n\[called exec_command \{"cmd":"ls"\}\]\n\[result a\.txt\][\s\S]*continue from the tool results/);
   const missing = await fixture(t, { secrets: [] });
   assert.equal((await missing.call([user('hi')])).at(-1).response.error.code, 'cursor_not_enrolled');
-  const expired = await fixture(t, { route: { credential_expires_at_ms: 1 } });
+  const expired = await fixture(t, { account: { credential_expires_at_ms: 1 } });
   assert.equal((await expired.call([user('hi')])).at(-1).response.error.code, 'cursor_credential_expired');
+});
+
+test('each Cursor account runs on its own key and reports its plan usage as a rate-limit family', async t => {
+  const dashboard = createServer((request, response) => {
+    const ok = request.headers.authorization === 'Bearer crsr_work';
+    response.writeHead(ok ? 200 : 403, { 'content-type': 'application/json' }).end(JSON.stringify({ billingCycleStart: '1759276800000',
+      billingCycleEnd: '1761868800000', planUsage: { totalSpend: 1250, includedSpend: 2000 } }));
+  });
+  await new Promise(resolve => dashboard.listen(0, '127.0.0.1', resolve));
+  t.after(() => dashboard.close());
+  const backend = `http://127.0.0.1:${dashboard.address().port}`;
+  const work = { ...defaultAccount, name: 'work', secret_profile: 'p2', backend_url: backend, default: `${model}.work`,
+    models: [{ ...defaultAccount.models[0], slug: `${model}.work` }] };
+  const { call, calls } = await fixture(t, { accounts: [{ ...defaultAccount, backend_url: backend }, work], secrets: [{ id: 'p1', value: 'crsr_fixture' }, { id: 'p2', value: 'crsr_work' }] });
+  assert.equal(text(await call([user('hi')], { thread: 'w', slug: `${model}.work` })), 'Answer.');
+  assert.equal(text(await call([user('hi')], { thread: 'd' })), 'Answer.');
+  assert.deepEqual((await calls()).filter(row => row.op === 'create').map(row => [row.options.apiKey, row.options.model.id]), [['crsr_work', 'auto'], ['crsr_fixture', 'auto']]);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const headers = {};
+  await call([user('again')], { thread: 'w2', slug: `${model}.work`, headers });
+  assert.deepEqual([headers['x-cursor-limit-name'], headers['x-cursor-primary-used-percent'], headers['x-cursor-primary-window-minutes'], headers['x-cursor-primary-reset-at']],
+    ['Cursor', '62.5', '43200', '1761868800']);
+  const other = {};
+  await call([user('again')], { thread: 'd2', headers: other });
+  assert.equal(other['x-cursor-primary-used-percent'], undefined);
+  assert.deepEqual(planHeaders({ unavailable: 'http_403' }), {});
 });
 
 test('Cursor transport survives aborted uploads and yields the port to a transport with a new key or route', async t => {
@@ -444,7 +492,7 @@ test('Cursor transport survives aborted uploads and yields the port to a transpo
   assert.equal((await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: 'next other-identity' })).status, 401);
   assert.equal((await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', body: 'x'.repeat(1 << 20) }).then(reply => reply.status, () => 413)), 413);
   assert.equal(child.exitCode, null);
-  await writeFile(join(root, 'next.json'), JSON.stringify({ ...route, backend_url: 'http://127.0.0.1:8' }));
+  await writeFile(join(root, 'next.json'), JSON.stringify({ ...route, accounts: [{ ...route.accounts[0], backend_url: 'http://127.0.0.1:8' }] }));
   const next = spawn(process.execPath, [new URL('./transport.mjs', import.meta.url).pathname, 'serve', join(root, 'next.json')],
     { cwd: root, env: { PATH: '/usr/bin:/bin', OMD_SERVICE_ROOT: root, OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'next' }, stdio: 'ignore' });
   t.after(() => next.kill('SIGKILL'));
@@ -496,9 +544,9 @@ test('Cursor setup enrolls through the SDK login, hands the key to the broker an
     await writeFile(join(bin, 'omd-mod'), `#!${process.execPath}
 import { appendFileSync, readFileSync } from 'node:fs';
 appendFileSync('${root}/secrets.jsonl', JSON.stringify({ argv: process.argv.slice(2), value: readFileSync(0, 'utf8') }) + '\\n');
-console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: process.argv.at(-1), status: 'ready' }));
+console.log(JSON.stringify({ id: process.argv.at(-2) === 'cursor' ? 'p7' : 'p8', label: process.argv.at(-2), kind: 'secret', origin: process.argv.at(-1), status: 'ready' }));
 `, { mode: 0o755 });
-    const setup = env => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), sdkEntry],
+    const setup = (env, name = 'default') => spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), name, sdkEntry],
       { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env } });
     const marked = (run, marker) => run.stdout.split('\n').find(line => line.startsWith(`${marker} `))?.slice(marker.length + 1);
     const absent = setup({ PATH: '/usr/bin:/bin' });
@@ -516,7 +564,7 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     const result = JSON.parse(marked(done, 'OMD_CURSOR_RESULT'));
     assert.deepEqual(result.models, [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] },
       { slug: 'cursor-gpt-6', display: 'Cursor GPT-6', context_window: 200000, efforts: ['low', 'medium', 'high'], default_effort: 'medium' }]);
-    assert.deepEqual([result.default, result.account, result.sdk], ['cursor-auto', 'dev@example.com', '1.0.35']);
+    assert.deepEqual([result.accounts[0].default, result.accounts[0].account, result.sdk], ['cursor-auto', 'dev@example.com', '1.0.35']);
     const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
     const grant = host.services.find(service => service.id === 'cursor');
     assert.deepEqual(grant.secrets, { OMD_CURSOR_LOCAL_TOKEN: 'cursor_local_token' });
@@ -526,19 +574,35 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
       { argv: ['credentials', store, 'add-secret', 'omd_cursor', 'cursor', 'https://api2.cursor.sh'], value: 'crsr_fixture' });
     const routePath = join(store, 'routes/cursor/route.json');
     const route = JSON.parse(await readFile(routePath, 'utf8'));
-    assert.equal(route.secret_profile, 'p7');
+    assert.equal(route.accounts[0].secret_profile, 'p7');
     assert.ok(!JSON.stringify(route).includes('crsr_fixture'));
     assert.ok(!`${done.stdout}${done.stderr}`.includes('crsr_fixture'));
     for (const entry of await readdir(store, { recursive: true, withFileTypes: true })) {
       if (entry.isFile() && !entry.parentPath.startsWith(join(store, 'sources'))) assert.ok(!(await readFile(join(entry.parentPath, entry.name), 'utf8')).includes('crsr_fixture'), entry.name);
     }
-    assert.deepEqual(route.models[1], { slug: 'cursor-gpt-6', id: 'gpt-6', effort: { id: 'reasoning', values: ['low', 'medium', 'high'] } });
+    assert.deepEqual(route.accounts[0].models[1], { slug: 'cursor-gpt-6', id: 'gpt-6', effort: { id: 'reasoning', values: ['low', 'medium', 'high'] }, display: 'Cursor GPT-6' });
     assert.deepEqual(grant.arguments, [join(store, 'sources/omd_cursor/transport.mjs'), 'serve', routePath]);
     const before = await readFile(join(store, 'host.json'), 'utf8');
     assert.equal(setup({ FIXTURE_DENY: '1' }).status, 1);
     assert.equal(await readFile(join(store, 'host.json'), 'utf8'), before);
     assert.equal(setup({}).status, 0);
     assert.equal(JSON.parse(await readFile(join(store, 'host.json'), 'utf8')).services.filter(service => service.id === 'cursor').length, 1);
+    const work = setup({}, 'work');
+    assert.equal(work.status, 0, work.stdout);
+    const both = JSON.parse(marked(work, 'OMD_CURSOR_RESULT'));
+    assert.deepEqual(both.models.map(entry => entry.slug), ['cursor-auto', 'cursor-gpt-6', 'cursor-auto.work', 'cursor-gpt-6.work']);
+    assert.equal(both.models[2].display, 'Cursor Auto · work');
+    assert.deepEqual(both.accounts.map(entry => [entry.name, entry.route, entry.secret]), [['default', 'cursor', 'p7'], ['work', 'cursor-work', 'p8']]);
+    assert.deepEqual(JSON.parse((await readFile(join(root, 'secrets.jsonl'), 'utf8')).trim().split('\n').at(-1)).argv.slice(3), ['omd_cursor', 'cursor-work', 'https://api2.cursor.sh']);
+    const routed = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
+    assert.deepEqual(routed.routes.map(entry => [entry.name, entry.provider, entry.model, entry.rates.provider_billed]),
+      [['cursor', 'omd_cursor', 'cursor-auto', true], ['cursor-work', 'omd_cursor', 'cursor-auto.work', true]]);
+    await writeFile(join(store, 'host.json'), JSON.stringify({ ...routed, routes: [...routed.routes, { ...routed.routes[0], name: 'cursor-spare', provider: 'omd_profiles' }] }));
+    assert.equal(marked(setup({}, 'spare'), 'OMD_CURSOR_ERROR'), 'cursor_route_name_taken: another route is named cursor-spare');
+    await writeFile(join(store, 'host.json'), JSON.stringify(routed));
+    const dropped = spawnSync(process.execPath, [join(store, 'sources/omd_cursor/setup.mjs'), 'work', '--remove'], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(marked(dropped, 'OMD_CURSOR_RESULT')).accounts.map(entry => entry.name), ['default']);
+    assert.deepEqual(JSON.parse(await readFile(join(store, 'host.json'), 'utf8')).routes.map(entry => entry.name), ['cursor']);
     const snapshot = join(root, 'snapshot');
     for (const path of Object.keys(grant.code_roots)) {
       const destination = `${snapshot}${path}`;
@@ -548,7 +612,7 @@ console.log(JSON.stringify({ id: 'p7', label: 'cursor', kind: 'secret', origin: 
     await rm(sdkRoot, { recursive: true, force: true });
     const previous = process.env.OMD_SERVICE_ROOT;
     process.env.OMD_SERVICE_ROOT = snapshot;
-    try { await new Router({ ...route, data: join(root, 'data') }, 'fixture').ready(); }
+    try { await new Router({ ...route, data: join(root, 'data') }, route.accounts[0], 'fixture').ready(); }
     finally {
       if (previous === undefined) delete process.env.OMD_SERVICE_ROOT;
       else process.env.OMD_SERVICE_ROOT = previous;
