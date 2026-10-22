@@ -35,7 +35,7 @@ sign-in finishes.
 
 Shortcuts: `/profile add chatgpt|claude|cursor|api_key|anthropic NAME` and `/profile add provider NAME HTTPS_URL`.
 
-To start a session on a profile, `omd-package profiles --setup` and `omd-package profiles --model NAME` still work
+To start a session on a profile, `omd-package profiles --setup` and `omd-package profiles --model NAME` also work
 from a terminal (see `omd-package profiles --help`).
 
 ## Use it

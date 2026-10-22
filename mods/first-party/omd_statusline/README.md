@@ -18,10 +18,11 @@ Run `/statusline` to open the editor in the panel where `/config` lives. Its sub
 
 Save keeps the draft and `Esc` discards it. Reset to defaults restores the defaults (`tones`, `github`, `refresh_s` and `scripts` keep their values).
 
-You can also edit settings in `/mods`, or from a shell:
+You can also edit settings in `/mods`, or from a shell (this replaces the mod's saved settings):
 
 ```sh
-omd-mod settings STORE omd_statusline '{"preset": "detailed"}'
+STORE=~/.local/share/oh-my-diff/stores/full
+omd-mod settings "$STORE" "$STORE/sources/omd_statusline" '{"preset": "detailed"}'
 ```
 
 Presets:

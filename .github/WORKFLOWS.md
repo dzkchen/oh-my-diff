@@ -26,10 +26,8 @@ PR, nightly and release jobs use the same Cargo download-cache keys. PR runs onl
 to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
 by a PR is visible to that PR alone.
 
-After this workflow lands and a hosted PR run succeeds, apply `.github/settings.json` to require **PR gate** on
-`main` with an up-to-date branch. The checked-in setting alone does not change GitHub protection. Verify the live
-required status after applying it. Dependency license/source policy and scheduled vulnerability checks remain
-deferred until exceptions for the pinned upstream workspace are established.
+`main` requires **PR gate** with an up-to-date branch. There are no dependency license or scheduled vulnerability
+checks yet.
 
 ## Validation
 
