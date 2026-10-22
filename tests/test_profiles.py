@@ -300,14 +300,20 @@ enabled = true
                     patch.object(profiles.sys.stdin, "isatty", return_value=True), \
                     patch.object(profiles.sys.stdout, "isatty", return_value=True), \
                     patch.object(profiles.signal, "signal"):
-                code = profiles.mini(Path("/prefix"), base, ["--model", "m"])
+                code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
+                                                             "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
                 selections["selections"][0]["effective"] = False
                 with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)
-            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [("--no-alt-screen --model m", "mini"), ("resume 019a0000-0000-7000-8000-000000000001", "full")])
+            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [
+                ("--no-alt-screen --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini"),
+                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full")])
             self.assertEqual([launch.split(".")[1] for _, _, launch in runs], ["0", "1"])
+            self.assertEqual(profiles.session_options(["resume", "--last", "-mx", "--model=y", "-c", "a=1", "-c", "b=2", "--", "-s", "p", "-m"]),
+                             ["-mx", "--model=y", "-c", "a=1", "-c", "b=2"])
+            self.assertEqual(profiles.session_options(["prompt", "-m"]), [])
             self.assertEqual(len({launch.split(".")[0] for _, _, launch in runs}), 1)
 
 

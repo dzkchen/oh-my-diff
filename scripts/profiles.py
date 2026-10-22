@@ -32,6 +32,13 @@ HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
 ROUTES = {"profiles": "omd_profiles"}
+CODEX_VALUE_OPTIONS = {"-c", "--config", "--enable", "--disable", "-m", "--model", "--local-provider", "-p", "--profile",
+                       "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--remote",
+                       "--remote-auth-token-env", "--listen", "--ws-auth", "--ws-token-file", "--ws-token-sha256",
+                       "--ws-shared-secret-file", "--ws-issuer", "--ws-audience", "--ws-max-clock-skew-seconds",
+                       "--ws-allowed-origin"}
+CODEX_FLAGS = {"--oss", "--approve-for-me", "--not-so-yolo", "--dangerously-bypass-approvals-and-sandbox", "--yolo",
+               "--dangerously-bypass-hook-trust", "--search", "--no-daemon", "--strict-config"}
 MANAGEMENT_FILES = ("scripts/profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/mods_lock.py", "runtime/mods.lock.json",
                     "upstream.lock.json", "docs/install.md", "install.sh")
@@ -385,6 +392,21 @@ def route(prefix, bin_dir, name, args):
                         "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
 
 
+def session_options(codex):
+    kept, index = [], 0
+    while index < len(codex) and codex[index] != "--":
+        argument = codex[index]
+        name = argument.split("=", 1)[0]
+        if name in CODEX_FLAGS or (name in CODEX_VALUE_OPTIONS and "=" in argument) \
+                or (argument[:2] in CODEX_VALUE_OPTIONS and len(argument) > 2 and argument[1] != "-"):
+            kept.append(argument)
+        elif name in CODEX_VALUE_OPTIONS and index + 1 < len(codex):
+            kept += codex[index:index + 2]
+            index += 1
+        index += 1
+    return kept
+
+
 def mini(prefix, bin_dir, codex):
     record = load(prefix)
     check(record, bin_dir)
@@ -395,7 +417,7 @@ def mini(prefix, bin_dir, codex):
         raise ValueError("omd mini needs its mod enabled: omd-package mod enable omd_mini")
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
-    launch, run, mode = os.urandom(8).hex(), 0, "mini"
+    launch, run, mode, options = os.urandom(8).hex(), 0, "mini", session_options(codex)
     for name in (signal.SIGINT, signal.SIGQUIT):
         signal.signal(name, signal.SIG_IGN)
     while True:
@@ -412,7 +434,7 @@ def mini(prefix, bin_dir, codex):
         if not (isinstance(request, dict) and request.get("run") == run and request.get("target") in ("mini", "full")
                 and isinstance(request.get("thread"), str) and re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", request["thread"])):
             return code
-        mode, codex, run = request["target"], ["resume", request["thread"]], run + 1
+        mode, codex, run = request["target"], [*options, "resume", request["thread"]], run + 1
 
 
 def verify(manager, source, expected):

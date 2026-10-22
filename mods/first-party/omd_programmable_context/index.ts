@@ -14,6 +14,8 @@ const KEEP_VERSIONS = 16;
 const HARNESS_BYTES = 12_000;
 const LOAD_BYTES = 60_000;
 const REGISTRY_BYTES = 49_152;
+const SOURCE_CHARS = 512 + 65;
+const UPDATE_BYTES = 120 * 1024;
 const TOOL = 'mod_omd_programmable_context';
 const PYTHON_API = `import json as _json
 
@@ -73,7 +75,7 @@ class RLM:
         return {path: Var(file["text"], file["sha256"], [f"{path}@{file['sha256']}"]) if file else None for path, file in files.items()}
 
     def keep(self, name, value, sources=()):
-        kept = _call("keep", name=name, value=str(value), sources=list(getattr(value, "sources", ())) + list(sources))
+        kept = _call("keep", name=name, value=str(value), sources=list(dict.fromkeys([*getattr(value, "sources", ()), *sources])))
         return Var(str(value), kept["sha256"], kept["sources"])
 
     def vars(self):
@@ -237,9 +239,9 @@ export default function activate(api: ModAPI) {
   });
 
   tool({ name: 'keep', description: 'Persist a named context variable (up to 32 KiB) with its sources for this session, so it survives kernel restarts and compaction.', parameters: schema({ name: { type: 'string' }, value: { type: 'string' }, sources: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['name', 'value']) }, async value => {
+    const sources = Array.isArray(value.sources) ? [...new Set(value.sources)] : value.sources ?? [];
     if (typeof value.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(value.name) || typeof value.value !== 'string' || value.value.length > 32_768
-      || !strings(value.sources ?? [], 8, 200)) throw new Error('keep_invalid: identifier name, string value up to 32 KiB and up to 8 sources');
-    const sources = [...new Set((value.sources ?? []) as string[])].slice(0, 8);
+      || !strings(sources, 8, SOURCE_CHARS)) throw new Error(`keep_invalid: identifier name, string value up to 32 KiB and up to 8 distinct sources of up to ${SOURCE_CHARS} characters`);
     if (utf8(value.value).length > 32_768) throw new Error('keep_limit: value exceeds 32 KiB');
     const registry = api.host.call('store.get', { key: 'vars', scope: 'thread' });
     const vars = { ...(registry?.value as unknown as Record<string, KeptIndex> | undefined ?? {}) };
@@ -251,11 +253,22 @@ export default function activate(api: ModAPI) {
     const key = `var.${await sha256(encoded)}`;
     const next = { ...vars, [value.name]: { ...kept, key } };
     if (utf8(JSON.stringify(next)).length > REGISTRY_BYTES) throw new Error('keep_limit: kept variable index exceeds 48 KiB');
+    if (utf8(JSON.stringify(vars)).length + utf8(JSON.stringify(next)).length + utf8(encoded).length > UPDATE_BYTES) {
+      throw new Error('keep_limit: the value and the kept variable index exceed one update; keep a smaller value or fewer variables');
+    }
     const previous = api.host.call('store.get', { key, scope: 'thread' });
     if (!previous) api.host.call('store.put', { key, value: envelope, expected_revision: null, scope: 'thread' });
     else if (JSON.stringify(previous.value) !== encoded) throw new Error('variable_digest_mismatch');
-    api.host.call('store.put', { key: 'vars', value: next as unknown as Exclude<Json, null>, expected_revision: registry?.revision ?? null, scope: 'thread' });
+    const written = api.host.call('store.put', { key: 'vars', value: next as unknown as Exclude<Json, null>, expected_revision: registry?.revision ?? null, scope: 'thread' });
     publish({ vars: { ...vars, [value.name]: kept } });
+    const revisionOf = (name: string) => {
+      const listed = api.host.tryCall('store.list', { prefix: name, limit: 1, scope: 'thread' });
+      return listed.ok ? listed.value.keys.find(item => item.key === name)?.revision ?? null : undefined;
+    };
+    if (previous && revisionOf(key) === null) api.host.tryCall('store.put', { key, value: envelope, expected_revision: null, scope: 'thread' });
+    const replaced = vars[value.name]?.key;
+    const stale = replaced && !Object.values(next).some(item => item.key === replaced) && revisionOf('vars') === written.revision ? revisionOf(replaced) : null;
+    if (replaced && stale) api.host.tryCall('store.delete', { key: replaced, expected_revision: stale, scope: 'thread' });
     return kept;
   });
 

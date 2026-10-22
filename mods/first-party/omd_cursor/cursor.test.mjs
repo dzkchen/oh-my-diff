@@ -400,6 +400,8 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.match(forked.text, /Conversation so far:[\s\S]*## User\nhello[\s\S]*## Assistant\nAnswer\.[\s\S]*## User\nin fork/);
   assert.equal(text(await call([...base, user('CHARGE')], { thread: 'a', request: 'req-7' })), 'Answer.');
   await new Promise(resolve => setTimeout(resolve, 300));
+  const elsewhere = await call([user('elsewhere')], { thread: 'd' });
+  assert.ok(!elsewhere.some(event => event.type === 'response.reasoning_summary_text.delta' && /charged/.test(event.delta)));
   const notice = await call([...base, user('CHARGE'), assistant('Answer.'), user('again')], { thread: 'a' });
   assert.match(notice.find(event => event.type === 'response.reasoning_summary_text.delta').delta, /charged 2\.50¢ beyond included usage/);
   const report = usageReport(await readFile(join(root, 'data/usage.jsonl'), 'utf8'));
@@ -428,7 +430,8 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
 
 test('Cursor transport survives aborted uploads and yields the port to a transport with a new key or route', async t => {
   const { call, child, root } = await fixture(t);
-  const port = JSON.parse(await readFile(join(root, 'route.json'), 'utf8')).port;
+  const route = JSON.parse(await readFile(join(root, 'route.json'), 'utf8'));
+  const port = route.port;
   const socket = connect(port, '127.0.0.1');
   await new Promise(resolve => socket.once('connect', resolve));
   socket.write(`POST /v1/responses HTTP/1.1\r\nhost: 127.0.0.1\r\nauthorization: Bearer ${token}\r\ncontent-length: 100000\r\n\r\n{"model"`);
@@ -438,8 +441,36 @@ test('Cursor transport survives aborted uploads and yields the port to a transpo
   assert.equal(child.exitCode, null);
   assert.equal(text(await call([user('hi')])), 'Answer.');
   const exited = new Promise(resolve => child.once('exit', resolve));
-  await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: 'next other-identity' });
+  assert.equal((await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: 'next other-identity' })).status, 401);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST', body: 'x'.repeat(1 << 20) }).then(reply => reply.status, () => 413)), 413);
+  assert.equal(child.exitCode, null);
+  await writeFile(join(root, 'next.json'), JSON.stringify({ ...route, backend_url: 'http://127.0.0.1:8' }));
+  const next = spawn(process.execPath, [new URL('./transport.mjs', import.meta.url).pathname, 'serve', join(root, 'next.json')],
+    { cwd: root, env: { PATH: '/usr/bin:/bin', OMD_SERVICE_ROOT: root, OMD_CURSOR_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'next' }, stdio: 'ignore' });
+  t.after(() => next.kill('SIGKILL'));
   assert.equal(await exited, 0);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.text(), () => '') === 'OMD_READY:next') break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(await fetch(`http://127.0.0.1:${port}/_omd/ready`).then(reply => reply.text()), 'OMD_READY:next');
+});
+
+test('the Cursor transport shows a foreign holder of its port neither the local token nor the readiness nonce', async t => {
+  const seen = [];
+  const squatter = createServer(async (incoming, response) => {
+    let body = '';
+    for await (const chunk of incoming) body += chunk;
+    seen.push(JSON.stringify(incoming.headers) + body);
+    response.end('OMD_READY:other');
+  });
+  await new Promise(resolve => squatter.listen(0, '127.0.0.1', resolve));
+  t.after(() => { squatter.closeAllConnections(); squatter.close(); });
+  const { child } = await fixture(t, { route: { port: squatter.address().port } });
+  const code = child.exitCode ?? await new Promise(resolve => child.once('exit', resolve));
+  assert.notEqual(code, 0);
+  assert.ok(seen.length);
+  assert.ok(!seen.some(entry => entry.includes(token) || entry.includes('ready')));
 });
 
 test('Cursor setup enrolls through the SDK login, hands the key to the broker and refuses a denied enrollment', async () => {

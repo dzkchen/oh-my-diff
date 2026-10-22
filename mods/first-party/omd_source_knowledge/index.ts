@@ -202,26 +202,24 @@ async function source(api: ModAPI, source_anchor: Anchor): Promise<{ version: Ve
 async function retain(api: ModAPI, input: Json): Promise<Json> {
   const value = object(input);
   const repository_identity = identity(input);
-  const id = text(value.id, 128, 'knowledge_id');
-  const task_id = text(value.task_id, 128, 'knowledge_task');
+  const id = token(value.id, 'knowledge_id');
+  const task_id = token(value.task_id, 'knowledge_task');
   const label = text(value.label, 1024, 'knowledge_label');
-  if (!TOKEN.test(id) || !TOKEN.test(task_id)) throw new Error('knowledge_token_invalid');
   const source_anchor = anchor(value.source);
-  if (!Number.isSafeInteger(value.expected_revision) || (value.expected_revision as number) < 0) throw new Error('knowledge_revision_invalid');
   const { state, store_revision } = await stored(api, repository_identity);
-  if (value.expected_revision !== state.revision) throw new Error('knowledge_revision_stale');
+  revision(value.expected_revision, state.revision);
   if (state.facts.length >= MAX_FACTS || used(state, id)) throw new Error('knowledge_fact_unavailable');
   const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('knowledge_candidate_invalid');
   const current = await source(api, source_anchor);
   if (!current.version) throw new Error(`knowledge_${current.reason}`);
   api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
-  const revision = state.revision + 1;
-  const fact: Fact = { id, task_id, label, source: source_anchor, created_revision: revision, refreshed_revision: revision,
+  const next = state.revision + 1;
+  const fact: Fact = { id, task_id, label, source: source_anchor, created_revision: next, refreshed_revision: next,
     status: 'fresh', version: current.version, reason: null };
-  const saved = await seal({ ...body(state), revision, facts: [...state.facts, fact].sort((a, b) => a.id < b.id ? -1 : 1) });
+  const saved = await seal({ ...body(state), revision: next, facts: [...state.facts, fact].sort((a, b) => a.id < b.id ? -1 : 1) });
   api.host.call('store.put', { key: KEY, scope: 'repository', expected_revision: store_revision, value: saved as unknown as Exclude<Json, null> });
-  return { fact, revision, candidate_sha256: before.candidate_sha256 } as Json;
+  return { fact, revision: next, candidate_sha256: before.candidate_sha256 } as Json;
 }
 
 async function retainEvidence(api: ModAPI, input: Json): Promise<Json> {
@@ -338,18 +336,27 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
   const invalidated: string[] = [];
   const paths = [...new Set(state.facts.map(fact => fact.source.path))];
   const stats = paths.length ? api.host.call('workspace.stat', { paths }).files : {};
+  const small = paths.filter(path => stats[path]?.kind === 'file' && stats[path]!.size <= MAX_FILE_BYTES);
+  const hashed = small.length ? api.host.call('workspace.stat', { paths: small, hash: true }).files : {};
+  const unchanged = (fact: Fact) => fact.version !== null && hashed[fact.source.path]?.kind === 'file'
+    && hashed[fact.source.path]!.sha256 === fact.version.file_sha256;
+  const files: Record<string, { text: string; sha256: string } | null> = {};
   let budget = MAX_FILE_BYTES;
-  const readable = paths.filter(path => stats[path]?.kind === 'file' && stats[path]!.size <= budget && (budget -= stats[path]!.size) >= 0);
-  const files = readable.length ? api.host.call('workspace.read', { paths: readable }).files : {};
-  if (readable.length) {
-    const final = api.host.call('workspace.stat', { paths: readable, hash: true }).files;
-    for (const path of readable) if (final[path]?.kind !== 'file' || final[path]?.size !== stats[path]?.size
-      || final[path]?.sha256 !== files[path]?.sha256) throw new Error('knowledge_source_stale');
-    api.host.call('workspace.check_access', { paths: readable });
+  for (const path of small) {
+    const stat = hashed[path];
+    if (stat?.kind !== 'file' || stat.size > budget || state.facts.every(fact => fact.source.path !== path || unchanged(fact))) continue;
+    budget -= stat.size;
+    const read = api.host.tryCall('workspace.read', { paths: [path] });
+    if (!read.ok) continue;
+    const file = read.value.files[path] ?? null;
+    if (file && file.sha256 !== stat.sha256) throw new Error('knowledge_source_stale');
+    files[path] = file;
   }
   for (const fact of state.facts) {
-    const current = stats[fact.source.path] && !readable.includes(fact.source.path) ? { version: null, reason: 'source_unavailable' }
-      : await sourceVersion(fact.source, stats[fact.source.path] || null, files[fact.source.path] || null);
+    const stat = (small.includes(fact.source.path) ? hashed : stats)[fact.source.path] ?? null;
+    const current = unchanged(fact) ? { version: fact.version, reason: null }
+      : stat?.kind === 'file' && stat.size <= MAX_FILE_BYTES && !(fact.source.path in files) ? { version: null, reason: 'source_unavailable' }
+        : await sourceVersion(fact.source, stat, files[fact.source.path] ?? null);
     const status = current.version ? 'fresh' : 'invalidated';
     const changed = fact.status !== status || JSON.stringify(canonical(fact.version)) !== JSON.stringify(canonical(current.version)) || fact.reason !== current.reason;
     if (changed) refreshed.push(fact.id);
@@ -357,6 +364,8 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
     facts.push({ ...fact, status, version: current.version, reason: current.reason,
       refreshed_revision: changed ? state.revision + 1 : fact.refreshed_revision });
   }
+  const access = [...new Set(facts.filter(fact => fact.version).map(fact => fact.source.path))];
+  if (access.length) api.host.call('workspace.check_access', { paths: access });
   api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const revision = state.revision + (refreshed.length ? 1 : 0);
   const visible = facts.filter(fact => inspect || fact.status === 'fresh');

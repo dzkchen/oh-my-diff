@@ -33,8 +33,9 @@ function fixture(files = {}) {
   let collision = false;
   let evidenceAvailable = true;
   let hashStale = false;
+  const binary = new Set();
   return {
-    files, calls,
+    files, calls, binary,
     set stale(value) { stale = value; },
     set collision(value) { collision = value; },
     set evidenceAvailable(value) { evidenceAvailable = value; },
@@ -61,6 +62,7 @@ function fixture(files = {}) {
             : { kind: 'file', size: Buffer.byteLength(files[path]), mtime_ms: 1,
               ...(call.arguments.hash ? { sha256: hashStale ? candidate : sha(files[path]) } : {}) }])) };
         } else if (call.operation === 'workspace.read') {
+          if (call.arguments.paths.some(path => binary.has(path))) refuse('workspace_text_not_utf8');
           value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] === undefined ? null
             : { text: files[path], sha256: sha(files[path]) }])) };
         } else if (call.operation === 'workspace.check_access') {
@@ -152,7 +154,7 @@ test('reuse batches bounded source reads and orders facts deterministically', ()
   assert.equal(result.error, undefined, result.error);
   assert.deepEqual(result.value.facts.map(fact => fact.id), ['a', 'z']);
   assert.equal(f.calls.filter(call => call.operation === 'workspace.stat').length, 2);
-  assert.equal(f.calls.filter(call => call.operation === 'workspace.read').length, 1);
+  assert.equal(f.calls.filter(call => call.operation === 'workspace.read').length, 0);
   assert.equal(f.calls.filter(call => call.operation === 'workspace.check_access').length, 1);
   assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
@@ -220,18 +222,47 @@ test('retention refuses oversized state before the native store write', () => {
   assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
 
-test('reuse reads at most 48 KiB of source files and reports the rest unavailable', () => {
-  const f = fixture({ 'a.txt': 'a'.repeat(30_000), 'b.txt': 'b'.repeat(30_000) });
+test('reuse keeps facts in unchanged files of any total size without reading them', () => {
+  const f = fixture({ 'a.txt': `small\n${'a'.repeat(30_000)}\n`, 'b.txt': `small\n${'b'.repeat(30_000)}\n` });
+  for (const [index, path] of ['a.txt', 'b.txt'].entries()) {
+    assert.equal(f.run('retain_source', { ...retain, id: path, expected_revision: index, source: { path, start_line: 1, end_line: 1 } }).error, undefined);
+  }
+  f.calls.length = 0;
+  const reuse = f.run('session', { ...common, mode: 'reuse' }).value;
+  assert.deepEqual(reuse.facts.map(fact => fact.id), ['a.txt', 'b.txt']);
+  assert.deepEqual(reuse.invalidated_ids, []);
+  assert.equal(f.calls.filter(call => ['workspace.read', 'store.put'].includes(call.operation)).length, 0);
+});
+
+test('a source that is no longer UTF-8 invalidates only its own fact', () => {
+  const f = fixture({ 'a.txt': 'alpha\n', 'b.txt': 'beta\n' });
+  for (const [index, path] of ['a.txt', 'b.txt'].entries()) {
+    assert.equal(f.run('retain_source', { ...retain, id: path, expected_revision: index, source: { path, start_line: 1, end_line: 1 } }).error, undefined);
+  }
+  f.files['a.txt'] = 'alpha\xff\n';
+  f.binary.add('a.txt');
+  const reuse = f.run('session', { ...common, mode: 'reuse' });
+  assert.equal(reuse.error, undefined, reuse.error);
+  assert.deepEqual(reuse.value.facts.map(fact => fact.id), ['b.txt']);
+  assert.deepEqual(reuse.value.invalidated_ids, ['a.txt']);
+  assert.equal(f.run('inspect', common).value.facts.find(fact => fact.id === 'a.txt').reason, 'source_unavailable');
+});
+
+test('reuse rereads at most 48 KiB of changed files and catches up on the next session', () => {
+  const f = fixture();
   for (const [index, path] of ['a.txt', 'b.txt'].entries()) {
     f.files[path] = 'small\n';
     assert.equal(f.run('retain_source', { ...retain, id: path, expected_revision: index, source: { path, start_line: 1, end_line: 1 } }).error, undefined);
-    f.files[path] = path[0].repeat(30_000);
+    f.files[path] = `changed\n${path[0].repeat(30_000)}\n`;
   }
   f.calls.length = 0;
   const reuse = f.run('session', { ...common, mode: 'reuse' }).value;
   assert.deepEqual(reuse.invalidated_ids, ['b.txt']);
-  assert.equal(f.run('inspect', common).value.facts.find(fact => fact.id === 'b.txt').reason, 'source_unavailable');
-  assert.deepEqual(f.calls.find(call => call.operation === 'workspace.read').arguments.paths, ['a.txt']);
+  assert.equal(f.saved.facts.find(fact => fact.id === 'b.txt').reason, 'source_unavailable');
+  assert.deepEqual(f.calls.filter(call => call.operation === 'workspace.read').map(call => call.arguments.paths), [['a.txt']]);
+  f.calls.length = 0;
+  assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.facts.map(fact => fact.id), ['a.txt', 'b.txt']);
+  assert.deepEqual(f.calls.filter(call => call.operation === 'workspace.read').map(call => call.arguments.paths), [['b.txt']]);
 });
 
 test('source policy permits harmless hidden files and rejects a changed post-read hash', () => {

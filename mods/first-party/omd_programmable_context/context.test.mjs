@@ -26,6 +26,8 @@ function session(settings = {}, prompt = 'accepted', beforePut = () => {}) {
         return { revision: store[args.key].revision };
       }
       case 'store.delete': delete store[args.key]; return { deleted: true };
+      case 'store.list': return { keys: Object.entries(store).filter(([key]) => key.startsWith(args.prefix ?? '')).slice(0, args.limit)
+        .map(([key, record]) => ({ key, revision: record.revision, bytes: 0, provenance: null })), cursor: null, generation: 0 };
       case 'workspace.stat': return { files: Object.fromEntries(args.paths.map(path => [path, path === 'missing' ? null : { kind: 'file', size: path.length * 60_000, mtime_ms: 0 }])) };
       case 'workspace.read': return { files: Object.fromEntries(args.paths.map(path => [path, path === 'missing' ? null : { text: path.repeat(60_000), sha256: sha(path) }])) };
       case 'routes.list': return [{ name: 'paid', roles: ['worker'], available: false }, { name: 'worker', roles: ['worker'], available: true }];
@@ -98,10 +100,23 @@ test('failed variable publication preserves the old body and provenance', () => 
   registry.value.padding = { sources: ['界'.repeat(16_300)] };
   const result = s.tool('keep', { name: 'summary', value: 'new', sources: ['界'.repeat(200)] });
   assert.match(result.error, /keep_limit: kept variable index/);
+  registry.value.padding = { sources: ['x'.repeat(45_000)] };
+  assert.match(s.tool('keep', { name: 'summary', value: '\n'.repeat(30_000) }).error, /keep_limit: the value and the kept variable index exceed one update/);
   const restored = s.tool('vars', { name: 'summary' });
   assert.equal(restored.value, 'old');
   assert.equal(restored.sha256, sha('old'));
   assert.deepEqual(restored.sources, ['old-source']);
+});
+
+test('overwriting a kept variable drops its unshared old record and keeps loaded-file provenance', () => {
+  const s = session();
+  const loaded = `${'d/'.repeat(200)}file.ts@${sha('x')}`;
+  assert.deepEqual(s.tool('keep', { name: 'summary', value: 'v0', sources: [loaded, loaded] }).sources, [loaded]);
+  s.tool('keep', { name: 'copy', value: 'v0', sources: [loaded] });
+  for (let index = 1; index <= 3; index++) s.tool('keep', { name: 'summary', value: `v${index}` });
+  const records = Object.values(s.stores.thread).filter(record => record.value?.value !== undefined).map(record => record.value.value).sort();
+  assert.deepEqual(records, ['v0', 'v3']);
+  assert.equal(s.tool('vars', { name: 'copy' }).value, 'v0');
 });
 
 test('restoring rejects corrupt content and keep measures UTF-8 bytes', () => {
