@@ -277,11 +277,14 @@ fn lead_candidate(route: &Route, provider: &str) -> bool {
 
 impl Host {
     fn admits(&self, repository: &std::path::Path, codex_home: &std::path::Path) -> bool {
+        let codex_home = codex_home
+            .canonicalize()
+            .unwrap_or_else(|_| codex_home.to_path_buf());
         !codex_omd::app_routes::unscoped_directory(repository)
-            && !repository.starts_with(codex_home)
             && !self
                 .protected_paths()
                 .iter()
+                .chain([&codex_home])
                 .any(|path| path.starts_with(repository) || repository.starts_with(path))
             && self.config.validate(repository).is_ok()
     }
@@ -775,12 +778,16 @@ mod tests {
             manager: Weak::new(),
             epoch: 0,
         };
+        let work = base.join("work");
+        std::fs::create_dir_all(work.join(".codex/memories")).unwrap();
         let codex_home = base.join("codex-home");
+        std::os::unix::fs::symlink(work.join(".codex"), &codex_home).unwrap();
         assert!(host.admits(&project, &codex_home));
         assert!(!host.admits(&base, &codex_home));
         assert!(!host.admits(&root, &codex_home));
         assert!(!host.admits(&root.join("sessions"), &codex_home));
-        assert!(!host.admits(&codex_home.join("memories"), &codex_home));
+        assert!(!host.admits(&work, &codex_home));
+        assert!(!host.admits(&work.join(".codex/memories"), &codex_home));
         assert!(!host.admits(std::path::Path::new("/"), &codex_home));
         let bound = host.for_repository(project.clone());
         assert_eq!(bound.repository, project);

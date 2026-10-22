@@ -672,7 +672,7 @@ def uninstall(args, root, bin_dir, current):
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
     if codex_app_enabled(root):
-        codex_app_disable(root)
+        codex_app(argparse.Namespace(action="disable", json=False), root, current)
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
     restore_links(root, bin_dir)
     try:
@@ -704,12 +704,16 @@ def editor_setting(path, wrapper, enable):
         return None
     try:
         settings = json.loads(path.read_text() or "{}") if path.is_file() else {}
-    except ValueError:
+    except (OSError, ValueError):
         settings = None
     if not isinstance(settings, dict):
-        return "has comments; edit chatgpt.cliExecutable by hand"
+        return "has comments or can't be read; edit chatgpt.cliExecutable by hand"
     value = settings.get("chatgpt.cliExecutable")
-    if enable and value not in (None, "", str(wrapper)):
+    if enable is None:
+        return "uses OMD" if value == str(wrapper) and wrapper.is_file() else f"uses {value}" if value else "uses its bundled Codex"
+    if enable and value == str(wrapper):
+        return "set"
+    if enable and value:
         return f"kept your chatgpt.cliExecutable {value}"
     if not enable and value != str(wrapper):
         return "unchanged"
@@ -717,11 +721,10 @@ def editor_setting(path, wrapper, enable):
         settings["chatgpt.cliExecutable"] = str(wrapper)
     else:
         del settings["chatgpt.cliExecutable"]
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-    temporary.write_text(json.dumps(settings, indent=4, ensure_ascii=False) + "\n")
-    if path.is_file():
-        shutil.copymode(path, temporary)
-    os.replace(temporary, path)
+    try:
+        write_json(path, settings, indent=4, ensure_ascii=False)
+    except OSError as error:
+        return f"can't be written ({error.strerror}); edit chatgpt.cliExecutable by hand"
     return "set" if enable else "removed"
 
 
@@ -761,15 +764,17 @@ def codex_app_disable(root):
 
 def codex_app(args, root, current):
     wrapper, agent, editors = codex_app_paths(root)
-    changed = {}
+    profile = receipt(current)["profile"] if current and args.action != "disable" else None
     if args.action == "enable":
-        if not current or receipt(current)["profile"] != "full":
+        if profile != "full":
             fail("The Codex app step needs an active OMD+ installation (--profile full).")
         try:
             (wrapper.parent / "cwd").mkdir(parents=True, exist_ok=True)
             wrapper.write_text("#!/bin/sh\ncommand= skip=\nfor argument do\n"
                                '  if [ -n "$skip" ]; then skip=; continue; fi\n'
-                               '  case $argument in -c|--config|--enable|--disable) skip=1;; -*) ;; *) command=$argument; break;; esac\n'
+                               "  case $argument in -c|--config|--enable|--disable|-m|--model|-p|--profile|-s|--sandbox"
+                               "|-a|--ask-for-approval|-C|--cd|--add-dir|-i|--image|--local-provider|--remote|--remote-auth-token-env)"
+                               " skip=1;; -*) ;; *) command=$argument; break;; esac\n"
                                "done\n"
                                'if [ "$command" = app-server ]; then\n'
                                '  here=$(pwd -P)\n'
@@ -788,13 +793,20 @@ def codex_app(args, root, current):
             raise
     elif args.action == "disable":
         changed = codex_app_disable(root)
-    result = {"enabled": wrapper.is_file() and agent_target(agent) == str(wrapper), "codex": str(wrapper),
+    else:
+        changed = {name: editor_setting(path, wrapper, None) for name, path in editors.items()}
+    result = {"enabled": wrapper.is_file() and agent_target(agent) == str(wrapper), "codex": str(wrapper), "profile": profile,
               "app_environment": app_environment(), "editors": {name: change for name, change in changed.items() if change}}
     if args.json:
         print(json.dumps(result, indent=2))
-    step("Codex app", f"uses {tilde(wrapper)}" if result["enabled"] else "uses its bundled Codex")
+    if not result["enabled"]:
+        step("Codex app", "uses its bundled Codex")
+    elif profile == "full":
+        step("Codex app", f"uses {tilde(wrapper)}")
+    else:
+        step("Codex app", f"uses {tilde(wrapper)}, but OMD+ is not active: reinstall OMD+ or run omd codex-app disable", "!")
     for name, change in result["editors"].items():
-        step(f"{name} extension", change, "✓" if change in ("set", "removed", "unchanged") else "!")
+        step(f"{name} extension", change, "✓" if change in ("set", "removed", "unchanged", "uses OMD", "uses its bundled Codex") else "!")
     if args.action in ("enable", "disable"):
         say("  Quit and reopen the Codex app and reload editor windows to apply. Unsupported by OpenAI; see the Codex app section of the docs.")
 
@@ -821,10 +833,16 @@ def update_dir(root):
     return root / "update"
 
 
-def write_json(path, value):
+def write_json(path, value, **dump):
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-    temporary.write_text(json.dumps(value, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(json.dumps(value, **(dump or {"sort_keys": True})) + "\n")
+        if path.is_file():
+            shutil.copymode(path, temporary)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def read_json(path, default):

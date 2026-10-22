@@ -59789,10 +59789,10 @@ index 0000000000000000000000000000000000000000..096710ab25143400080f58310d11d2d4
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8368b23d8a6293600ae6dfa6b08412ffdc747e08
+index 0000000000000000000000000000000000000000..7c6f8207b80b7d28719bd02ef77e9cf6c1ed505a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,789 @@
+@@ -0,0 +1,796 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -60072,11 +60072,14 @@ index 0000000000000000000000000000000000000000..8368b23d8a6293600ae6dfa6b08412ff
 +
 +impl Host {
 +    fn admits(&self, repository: &std::path::Path, codex_home: &std::path::Path) -> bool {
++        let codex_home = codex_home
++            .canonicalize()
++            .unwrap_or_else(|_| codex_home.to_path_buf());
 +        !codex_omd::app_routes::unscoped_directory(repository)
-+            && !repository.starts_with(codex_home)
 +            && !self
 +                .protected_paths()
 +                .iter()
++                .chain([&codex_home])
 +                .any(|path| path.starts_with(repository) || repository.starts_with(path))
 +            && self.config.validate(repository).is_ok()
 +    }
@@ -60570,12 +60573,16 @@ index 0000000000000000000000000000000000000000..8368b23d8a6293600ae6dfa6b08412ff
 +            manager: Weak::new(),
 +            epoch: 0,
 +        };
++        let work = base.join("work");
++        std::fs::create_dir_all(work.join(".codex/memories")).unwrap();
 +        let codex_home = base.join("codex-home");
++        std::os::unix::fs::symlink(work.join(".codex"), &codex_home).unwrap();
 +        assert!(host.admits(&project, &codex_home));
 +        assert!(!host.admits(&base, &codex_home));
 +        assert!(!host.admits(&root, &codex_home));
 +        assert!(!host.admits(&root.join("sessions"), &codex_home));
-+        assert!(!host.admits(&codex_home.join("memories"), &codex_home));
++        assert!(!host.admits(&work, &codex_home));
++        assert!(!host.admits(&work.join(".codex/memories"), &codex_home));
 +        assert!(!host.admits(std::path::Path::new("/"), &codex_home));
 +        let bound = host.for_repository(project.clone());
 +        assert_eq!(bound.repository, project);

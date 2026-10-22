@@ -64,8 +64,9 @@ Then quit and reopen the Codex app and reload editor windows.
 
 - The app reads `CODEX_CLI_PATH` from your login session. `enable` sets it now and at every login (LaunchAgent
   `dev.ohmydiff.codex-app`).
-- VS Code, Cursor and Windsurf get `chatgpt.cliExecutable` in their user settings. A settings file with comments is
-  left alone: add the printed path yourself.
+- VS Code, Cursor and Windsurf get `chatgpt.cliExecutable` in their user settings. A settings file with comments, or
+  one OMD can't write, is left alone: add the printed path yourself. `omd codex-app` warns when the active
+  installation is no longer OMD+.
 - Hooks, mod tools, skills, plugins, model-call middleware, providers and approvals work, and workspace operations act
   on each thread's project. Your global mod choices apply; per-project choices and checkout-scoped mod state don't.
   Cards, panes, status rows, `/mods` and `/omd` don't show, because these clients don't draw OMD's interface.

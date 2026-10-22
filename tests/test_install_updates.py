@@ -483,7 +483,9 @@ class UpdateSelection(unittest.TestCase):
         self.module.run = run
         wrapper = self.root / "codex-app/codex"
         agent = home / "Library/LaunchAgents/dev.ohmydiff.codex-app.plist"
-        with patch.dict(os.environ, {"HOME": str(home)}), patch("builtins.print"):
+        steps = []
+        with patch.dict(os.environ, {"HOME": str(home)}), patch("builtins.print"), \
+                patch.object(self.module, "step", side_effect=lambda *shown: steps.append(shown)):
             enable = types.SimpleNamespace(action="enable", json=False)
             with self.assertRaisesRegex(ValueError, "OMD\\+"):
                 self.module.codex_app(enable, self.root, self.current)
@@ -498,8 +500,31 @@ class UpdateSelection(unittest.TestCase):
             self.assertIn("// mine", cursor.read_text())
             self.assertEqual(json.loads(windsurf.read_text()), {"chatgpt.cliExecutable": "/opt/codex"})
             self.assertTrue(self.module.codex_app_enabled(self.root))
+            written = dotfile.stat().st_ino
+            windsurf.write_text("{}")
+            windsurf.parent.chmod(0o500)
+            steps.clear()
+            try:
+                self.module.codex_app(enable, self.root, self.current)
+            finally:
+                windsurf.parent.chmod(0o700)
+            self.assertEqual(dotfile.stat().st_ino, written)
+            self.assertEqual(launchd, {"CODEX_CLI_PATH": str(wrapper)})
+            self.assertIn(("Windsurf extension", "can't be written (Permission denied); edit chatgpt.cliExecutable by hand", "!"), steps)
+            windsurf.write_text('{"chatgpt.cliExecutable": "/opt/codex"}')
+            status = types.SimpleNamespace(action=None, json=False)
+            steps.clear()
+            self.module.codex_app(status, self.root, self.current)
+            self.assertEqual(steps, [("Codex app", f"uses {wrapper}"), ("Code extension", "uses OMD", "✓"),
+                                     ("Cursor extension", "has comments or can't be read; edit chatgpt.cliExecutable by hand", "!"),
+                                     ("Windsurf extension", "uses /opt/codex", "!")])
+            (self.current / "receipt.json").write_text(json.dumps(receipt | {"profile": "platform"}))
+            steps.clear()
+            self.module.codex_app(status, self.root, self.current)
+            self.assertEqual(steps[0][2], "!")
             base = wrapper.parent / "cwd"
             for argv, cwd, expected in ((["-c", "a=b", "app-server"], "/", base), (["app-server"], home, base),
+                                        (["-p", "work", "app-server"], "/", base),
                                         (["exec", "app-server"], "/", Path("/")), (["app-server"], self.root, self.root)):
                 shown = subprocess.run([wrapper, *argv], cwd=cwd, capture_output=True, text=True, check=True).stdout
                 self.assertEqual(Path(shown.strip()), expected)
