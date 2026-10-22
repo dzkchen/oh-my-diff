@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
 This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+`omd-mod status` reports the mod host release as `host.omd` (`1.0.0`); it is not the OMD release version. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -5592,15 +5592,15 @@ The contained directory is an ordinary public-API package with `mod.json` and `i
 
 ### `omd COMMAND` shell dispatch
 
-`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers
+`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` dispatches an exported CLI alias. It offers
 `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected
 from agent process writes. Ambiguous command ownership fails closed.
 
 ### Independent examples
 
 Independent examples live in [`examples/virtual_reader`](examples/virtual_reader),
-[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the
-existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
+[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and
+[`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
 implementations.
 
 ### Evidence across compaction

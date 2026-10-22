@@ -20,15 +20,15 @@ The contained directory is an ordinary public-API package with `mod.json` and `i
 
 ## `omd COMMAND` shell dispatch
 
-`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers
+`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` dispatches an exported CLI alias. It offers
 `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected
 from agent process writes. Ambiguous command ownership fails closed.
 
 ## Independent examples
 
 Independent examples live in [`examples/virtual_reader`](../examples/virtual_reader),
-[`examples/scoped_data`](../examples/scoped_data), [`examples/review_probe`](../examples/review_probe), and the
-existing [`examples/workspace`](../examples/workspace). They demonstrate shared interfaces, not production
+[`examples/scoped_data`](../examples/scoped_data), [`examples/review_probe`](../examples/review_probe), and
+[`examples/workspace`](../examples/workspace). They demonstrate shared interfaces, not production
 implementations.
 
 ## Evidence across compaction

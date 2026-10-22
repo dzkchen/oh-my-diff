@@ -27,7 +27,3 @@ The model proposes up to four changes with a reason and evidence references thro
 Every applied change creates a new version with before and after snapshots. `/refine rollback [vN]` restores one of the last 16 versions as a new version. `/refine promote project|personal` shows the session's additions, edits and removals against that scope's stored harness, asks for confirmation, then merges them for future sessions in this repository or for this user, keeping other stored entries; `omd store reset --mod omd_programmable_context --scope repository|user` removes it.
 
 Detached or background sessions, heartbeats, schedules and autonomous continuation are out of scope. Kept variables are text only, and importable Python helpers are not stored: the persistent kernel already keeps functions the model defines, and replaying stored model-written code into later kernels would bypass review.
-
-Kept text is immutable and addressed by its digest. One registry compare-and-swap
-publishes its digest and provenance together; failed publication leaves the old
-variable intact. Restoring a variable verifies its digest before returning content.

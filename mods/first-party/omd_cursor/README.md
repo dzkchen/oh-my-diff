@@ -51,7 +51,7 @@ accounts, each account's default first.
 
 ## Status
 
-Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login, delayed charges and setup through a stand-in `omd-mod`. Not verified: a real Cursor account; fixture-only support. Subscription support stays unclaimed until an authorized account-backed run.
+Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login, delayed charges and setup through a stand-in `omd-mod`. Not yet verified with a real Cursor account.
 
 ## Cost
 
