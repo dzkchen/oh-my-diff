@@ -179,6 +179,37 @@ fn thread_scope_binds_current_and_visible_threads() {
 }
 
 #[test]
+fn settings_updates_move_a_thread_only_to_a_configured_model_and_provider() {
+    let f = fixture(&["threads"]);
+    let update = |params: Value| {
+        let mut params = params;
+        params["threadId"] = json!("current");
+        f.code("thread/settings/update", params, User)
+    };
+    assert_eq!(
+        update(json!({"model": "gpt-test", "modelProvider": "openai"})),
+        "ok"
+    );
+    assert_eq!(update(json!({"modelProvider": "openai"})), "ok");
+    assert_eq!(
+        update(json!({"model": "gpt-test", "modelProvider": "other"})),
+        "app_route_unconfigured"
+    );
+    assert_eq!(
+        update(json!({"modelProvider": "other"})),
+        "app_route_unconfigured"
+    );
+    assert_eq!(
+        f.code(
+            "thread/settings/update",
+            json!({"threadId": "current", "model": "gpt-test", "modelProvider": "openai"}),
+            Event
+        ),
+        "app_context_user_only"
+    );
+}
+
+#[test]
 fn every_thread_addressed_route_has_a_scope() {
     let unscoped: Vec<_> = TABLE
         .requests

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "fdec0d3650f8bd04815919ea16076b895cb7e7846e3b160124aecb3cc58d880d"
+    "sha256": "ce9b12f0a9e3a7a34b671e188263f9f302493c1c20f7e938d54cb94d1e0aa256"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -895,11 +895,11 @@
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
-      "after": "fd8d8000586325dabdc3dcb642987025d24bd5e777b22e23212fddb254e56b25"
+      "after": "3742179fc93ed1c97ac3b76f2c89e001fa2c63e608647a3e636a987462d6fb35"
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
-      "after": "4883899d08cbe4291d7e1868158f589a7ac0c9d223d6fac1e1ff2b2c5c94c354"
+      "after": "001825d6a7faa333fe42795de498e4f9cc6e796b60795cd9b2c3df394eefd807"
     },
     "codex-rs/ext/omd/src/bin/omd-mod.rs": {
       "before": null,
@@ -1179,7 +1179,7 @@
     },
     "codex-rs/omd/src/app_routes.json": {
       "before": null,
-      "after": "0d6d8c1945f46c2f3b9b9ad80f756fe9fa5f78a691cfb5e8bc95bd87336f259f"
+      "after": "90a9171effe62d164d2cf271d8a890efb64620075774b356e84bfd3aa95ee42b"
     },
     "codex-rs/omd/src/app_routes.rs": {
       "before": null,
@@ -1187,7 +1187,7 @@
     },
     "codex-rs/omd/src/app_routes_tests.rs": {
       "before": null,
-      "after": "9496011cb34f7f3446a9280163f052bc15923ff6a2253d2802d929903ffd2095"
+      "after": "05c9c5772c5bf69d9a82d3609667e673a353b6a1c2007e5fa93e34c45ad953b5"
     },
     "codex-rs/omd/src/bin/omd-broker.rs": {
       "before": null,

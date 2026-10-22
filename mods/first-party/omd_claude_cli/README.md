@@ -16,13 +16,25 @@ OMD never switches between plan limits and API credits on its own. The choice is
 
 | Command | What it does |
 | --- | --- |
-| `/claude login` | Sign in with your Claude plan |
-| `/claude login api` | Sign in with Console API credits |
+| `/claude login [NAME]` | Sign in with your Claude plan; `NAME` adds another account |
+| `/claude login api [NAME]` | Sign in with Console API credits |
+| `/claude remove NAME` | Drop an account's models and route; a named account is also signed out |
 | `/claude code CODE` | Send the code the sign-in page shows to a running login |
-| `/claude` (or `/claude status`) | Show the CLI version, login, billing and whether models are published. If the installed CLI is not `2.1.307`, it says so and what to do |
+| `/claude` (or `/claude status`) | Show the CLI version, each account's login and billing, and whether models are published. If the installed CLI is not `2.1.307`, it says so and what to do |
 | `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
 `/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. An expired login or a model your account lacks is refused with a message naming `/claude login`.
+
+## Several accounts
+
+`/claude login` without a name uses your normal Claude Code login (`~/.claude`). `/claude login work` signs another
+account in under its own Claude CLI config directory (`<store>/routes/claude/accounts/work`, `CLAUDE_CONFIG_DIR`), so
+each account keeps its own login and Keychain item and none needs signing in again. Each account gets a route
+(`claude`, `claude-work`) and its own models in `/model` (`claude-opus-5-5.work`); requests run under the account
+that owns the model. `omd_profiles` lists the accounts in `/profile`, switches between them with Alt+s and shows each
+account's last-seen 5-hour and weekly limits. At most 16 models are listed across accounts, each account's default
+first. A model other than an account's default is accounted on the provider's shared rate (plan, or provider-billed if
+any account uses Console API credits), since the host keeps one route per account.
 
 ## Settings
 

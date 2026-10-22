@@ -1138,7 +1138,9 @@ The payload carries:
 - `output {text (first 4 KiB), tool_calls}`.
 - Raw `usage`, and `cache {read_tokens, write_tokens}`.
 - `cost {microusd, basis}`, where `basis` is `settled`, `unsettled`, `provider_reported`, `included_subscription`,
-  `unpriced` or `synthetic`.
+  `unpriced` or `synthetic`. A request without configured rates is `included_subscription` when it goes to the
+  ChatGPT Codex backend with the signed-in account (the native session on a ChatGPT plan; credits spent past the
+  plan's limit are not reported), otherwise `unpriced`.
 - `context_window` when the session knows it.
 - `timing {started_at_ms, first_event_ms, duration_ms}`.
 - `synthetic` and `error`.
@@ -1924,7 +1926,9 @@ Each route lists the parameter fields it accepts; any other non-null field is re
 policy, sandbox, permissions, config, roots, environments, dynamic tools, base instructions, service tier) and
 fields added by a later upstream stay closed until reviewed.
 
-- `model` is allowed only as a configured route.
+- `model` and `modelProvider` are allowed only as a configured route: each must match a `host.json` lead route, and
+  when both are given, the same one. `thread/settings/update {modelProvider}` moves the current thread to that provider from its next turn, as
+  picking another provider's model in `/model` does.
 - `thread/start` and `fuzzyFileSearch` roots must be the session root or one of its `git worktree list` entries.
 - Thread-scoped methods reach the current thread and threads the mod itself started or forked. Their other thread
   ids (`beforeThreadId`) must name one of those.

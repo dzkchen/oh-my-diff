@@ -462,7 +462,7 @@
       "path": "mods/first-party/omd_usage",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+."
+      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage dialog, budget notices and the summary the theme draws; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",

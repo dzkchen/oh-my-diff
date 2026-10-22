@@ -6,7 +6,7 @@
   "state_version": 1,
   "description": "Cursor models through your Cursor account and the official Cursor SDK as a Codex provider, with /cursor setup in the session. Experimental",
   "license": "MIT",
-  "subscriptions": { "channels": ["omd_cursor/setup"] },
+  "subscriptions": { "channels": ["omd_cursor/setup", "omd_cursor/removed"] },
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party/omd_cursor"

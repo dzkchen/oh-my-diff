@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CLI_VERSION, translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
+const override = /^ANTHROPIC_|^CLAUDE_(CONFIG_DIR|SECURESTORAGE_CONFIG_DIR)$|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;
 
@@ -17,22 +17,33 @@ export function cliEnv(values = {}) {
   return { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !override.test(name))), ...values };
 }
 
-export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER) {
+export const accountEnv = account => account?.config_dir ? { CLAUDE_CONFIG_DIR: account.config_dir } : {};
+export const loginHint = (billing, account) => `\`/claude login${billing === 'api' ? ' api' : ''}${account && account.name !== 'default' ? ` ${account.name}` : ''}\``;
+
+export function checkCli(claude, billing = 'subscription', home = process.env.HOME, username = process.env.USER, account = null) {
+  checkVersion(claude);
+  return checkAuth(claude, billing, home, username, account);
+}
+
+function checkVersion(claude) {
   const version = spawnSync(claude, ['--version'], { encoding: 'utf8', timeout: 10000 });
   if (version.status !== 0 || version.stdout.trim() !== CLI_VERSION) {
     throw new Error(`claude_cli_${CLI_VERSION.split(' ')[0]}_required`);
   }
+}
+
+function checkAuth(claude, billing, home, username, account) {
   const probe = spawnSync(claude, ['auth', 'status'], { encoding: 'utf8', timeout: 10000,
-    env: cliEnv({ HOME: home, USER: username, LOGNAME: username }) });
+    env: cliEnv({ HOME: home, USER: username, LOGNAME: username, ...accountEnv(account) }) });
   let status;
   try { status = JSON.parse(probe.stdout); } catch { status = {}; }
   const signedIn = probe.status === 0 && status.loggedIn === true && status.apiProvider === 'firstParty';
   if (billing === 'api') {
     if (!signedIn || status.authMethod !== 'api_key' || status.apiKeySource !== '/login managed key') {
-      throw new Error('claude_console_api_key_login_required: run `/claude login api`');
+      throw new Error(`claude_console_api_key_login_required: run ${loginHint(billing, account)}`);
     }
   } else if (!signedIn || status.authMethod !== 'claude.ai' || !PLANS[status.subscriptionType]) {
-    throw new Error('claude_ai_subscription_login_required: run `/claude login`');
+    throw new Error(`claude_ai_subscription_login_required: run ${loginHint(billing, account)}`);
   }
   return status;
 }
@@ -132,7 +143,7 @@ export function extraUsageStop(headers) {
   return { code: 'claude_extra_usage_blocked', message: `Claude plan limit reached and this request was served from extra usage${resetText(headers, overageWindow(headers))}. omd_claude_cli has extra_usage off, so OMD stopped and sends no further requests until ${until}; Anthropic may still bill this one request. Extra usage itself is controlled at claude.ai/settings/usage.` };
 }
 
-export function upstreamFailure(status, headers, body, billing = 'subscription') {
+export function upstreamFailure(status, headers, body, billing = 'subscription', account = null) {
   const kind = headers['anthropic-ratelimit-unified-representative-claim'];
   if (status === 429 || (status !== 200 && headers['anthropic-ratelimit-unified-status'] === 'rejected')) {
     const overage = headers['anthropic-ratelimit-unified-overage-status'] === 'rejected'
@@ -145,7 +156,7 @@ export function upstreamFailure(status, headers, body, billing = 'subscription')
   if (billing === 'api' && status === 400 && /credit balance is too low/i.test(body)) {
     return { code: 'claude_api_credits_exhausted', message: 'Anthropic API credit balance is too low. OMD never falls back to your subscription; purchased credits and auto-reload are managed at console.anthropic.com/settings/billing.' };
   }
-  const login = billing === 'api' ? '`/claude login api`' : '`/claude login`';
+  const login = loginHint(billing, account);
   if (status === 401 || (status === 403 && /oauth|revoked|authentication/i.test(body))) {
     return { code: 'claude_login_expired', message: billing === 'api'
       ? `Anthropic API key was rejected; run ${login} and retry`
@@ -372,11 +383,11 @@ export function cliArgs(entry, effort) {
 
 export async function runClaude(request, entry, claude, signal, onEvent, {
   upstream = 'https://api.anthropic.com', home = process.env.HOME, username = process.env.USER,
-  translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true } = {}) {
+  translated = null, onHeaders = () => {}, billing = 'subscription', extraUsage = true, account = null } = {}) {
   const cancelled = () => { if (signal.aborted) throw new Error('claude_request_cancelled'); };
   cancelled();
   translated ??= translateRequest(request, entry.slug);
-  const relay = new Relay(upstream, onEvent, onHeaders, { billing, extraUsage, model: entry.slug });
+  const relay = new Relay(upstream, onEvent, onHeaders, { billing, extraUsage, model: entry.model });
   let root;
   let child;
   let fault;
@@ -397,7 +408,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
       args: [file, 'inert', join(root, 'tools.json')] } } };
     const argv = [...cliArgs(entry, translated.effort), '--system-prompt-file', join(root, 'system.md'),
       '--settings', join(root, 'settings.json'), '--mcp-config', JSON.stringify(mcp)];
-    const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root,
+    const env = cliEnv({ HOME: home, USER: username, LOGNAME: username, TMPDIR: root, ...accountEnv(account),
       ANTHROPIC_BASE_URL: relay.url,
       ENABLE_TOOL_SEARCH: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_MAX_RETRIES: '0', DISABLE_AUTO_COMPACT: '1', DISABLE_COMPACT: '1',
@@ -438,7 +449,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     }
     await exited;
     if (signal.aborted) throw new Error('claude_request_cancelled');
-    const failure = relay.refusal ?? upstreamFailure(relay.status, relay.headers, relay.error, billing);
+    const failure = relay.refusal ?? upstreamFailure(relay.status, relay.headers, relay.error, billing, account);
     if (failure) throw Object.assign(new Error(failure.message), { code: failure.code });
     if (relay.used !== 1 || relay.status !== 200 || !relay.capture.complete) {
       let detail = relay.failure ?? 'none';
@@ -447,14 +458,14 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     }
     if (results.length !== 1 || !stopped) throw new Error('claude_result_incomplete');
     const servedModel = String(relay.capture.message.model);
-    if (servedModel !== entry.slug && !new RegExp(`^${entry.slug.replace(/[.]/g, '\\.')}-\\d{8}$`).test(servedModel)) {
-      throw Object.assign(new Error(`Claude served ${relay.capture.message.model} instead of ${entry.slug}`), { code: 'claude_model_mismatch' });
+    if (servedModel !== entry.model && !new RegExp(`^${entry.model.replace(/[.]/g, '\\.')}-\\d{8}$`).test(servedModel)) {
+      throw Object.assign(new Error(`Claude served ${relay.capture.message.model} instead of ${entry.model}`), { code: 'claude_model_mismatch' });
     }
     const served = results[0].modelUsage?.[entry.cli]?.contextWindow;
     if (served !== entry.window) throw new Error(`claude_context_window_changed:${served}:run_claude_login`);
     const admission = { upstream_requests: relay.used, blocked_requests: relay.denied,
       request_id: relay.requestId };
-    return responseEvents(relay.capture.message, admission, entry.slug, translated.reverse, true, results[0].total_cost_usd, billing);
+    return responseEvents(relay.capture.message, admission, entry.model, translated.reverse, true, results[0].total_cost_usd, billing);
   } catch (error) {
     throw signal.aborted ? new Error('claude_request_cancelled') : fault ?? error;
   } finally {
@@ -529,15 +540,27 @@ export async function extraUsageAllowed(routePath, mod = dirname(file)) {
   } catch { return false; }
 }
 
+export function accountLogins(route, home, username) {
+  if (!Array.isArray(route.accounts)) throw new Error('claude_account_required: run `/claude login`');
+  checkVersion(route.claude);
+  const logins = new Map(route.accounts.map(account => {
+    try { return [account.name, { plan: checkAuth(route.claude, account.billing, home, username, account).subscriptionType }]; }
+    catch (error) { return [account.name, { error: error.message }]; }
+  }));
+  if (![...logins.values()].some(login => !login.error)) throw new Error(logins.values().next().value?.error ?? 'claude_account_required: run `/claude login`');
+  return logins;
+}
+
 async function serve(routePath, home, username) {
   const route = JSON.parse(await readFile(routePath, 'utf8'));
-  const { subscriptionType } = checkCli(route.claude, route.billing, home, username);
+  const logins = accountLogins(route, home, username);
+  const models = route.accounts.flatMap(account => account.models.map(model => ({ ...model, account })));
   const token = process.env.OMD_CLAUDE_LOCAL_TOKEN ?? '';
   const ready = process.env.OMD_READY_TOKEN ?? '';
   if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
   const active = new Set();
   let nonce = ready;
-  let limits = {};
+  const limits = new Map();
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/_omd/ready') {
       response.writeHead(200).end(`OMD_READY:${nonce}`);
@@ -555,7 +578,7 @@ async function serve(routePath, home, username) {
     let entry;
     try {
       payload = JSON.parse(await bodyOf(request));
-      entry = route.models.find(model => model.slug === payload.model);
+      entry = models.find(model => model.slug === payload.model);
       translated = translateRequest(payload, entry?.slug);
     } catch (error) {
       response.writeHead(400).end(String(error?.message ?? 'invalid_claude_request'));
@@ -564,20 +587,24 @@ async function serve(routePath, home, username) {
     const controller = new AbortController();
     active.add(controller);
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
+    const { account } = entry;
+    const login = logins.get(account.name);
     const extraUsage = await extraUsageAllowed(routePath);
     const head = (headers = {}) => {
       if (!response.headersSent) response.writeHead(200, { 'content-type': 'text/event-stream',
-        'cache-control': 'no-store', ...limitHeaders(headers, providerNote(route.billing, subscriptionType, headers, extraUsage)) });
+        'cache-control': 'no-store', ...limitHeaders(headers, providerNote(account.billing, login.plan, headers, extraUsage)) });
     };
     const send = event => { head(); response.write(`data: ${JSON.stringify(event)}\n\n`); };
     try {
-      if (!extraUsage && stoppedForExtraUsage(limits)) {
-        head(limits);
-        throw Object.assign(new Error(extraUsageStop(limits).message), { code: 'claude_extra_usage_blocked' });
+      if (login.error) throw Object.assign(new Error(login.error), { code: login.error.split(':')[0] });
+      const seen = limits.get(account.name) ?? {};
+      if (!extraUsage && stoppedForExtraUsage(seen)) {
+        head(seen);
+        throw Object.assign(new Error(extraUsageStop(seen).message), { code: 'claude_extra_usage_blocked' });
       }
       const events = await runClaude(payload, entry, route.claude, controller.signal, send,
-        { home, username, translated, billing: route.billing, extraUsage,
-          onHeaders: (_, headers) => { limits = headers; head(headers); } });
+        { home, username, translated, billing: account.billing, extraUsage, account,
+          onHeaders: (_, headers) => { limits.set(account.name, headers); head(headers); } });
       for (const event of events) send(event);
     } catch (error) {
       const message = String(error?.message ?? 'claude_transport_failed').slice(0, 500);

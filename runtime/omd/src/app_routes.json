@@ -1196,6 +1196,7 @@
     "disabledPluginIds",
     "effort",
     "model",
+    "modelProvider",
     "multiAgentMode",
     "personality",
     "summary",
@@ -1205,7 +1206,8 @@
     "cwd"
    ],
    "route_fields": [
-    "model"
+    "model",
+    "modelProvider"
    ]
   },
   "thread/start": {

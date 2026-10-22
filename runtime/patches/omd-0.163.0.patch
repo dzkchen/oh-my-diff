@@ -51858,10 +51858,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef39a5aab9
+index 0000000000000000000000000000000000000000..36f87f22bd585c157e5c705965e0e91589c4a2fb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2318 @@
+@@ -0,0 +1,2325 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -53189,9 +53189,11 @@ index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef
 +        inject_credential(request, account.credential.as_deref(), &url)?;
 +        let Some(rates) = account.rates.clone() else {
 +            let model = requested.unwrap_or_else(|| account.model.clone());
-+            return Ok(Some(Box::new(self.attempt(
-+                account, thread, request_id, attempt, model, None, None,
-+            ))));
++            let mut attempt =
++                self.attempt(account, thread, request_id, attempt, model, None, None);
++            attempt.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
++                && request.headers.contains_key("chatgpt-account-id");
++            return Ok(Some(Box::new(attempt)));
 +        };
 +        let model = account.model.clone();
 +        if let Some((path, sha)) = &account.worker_authorization {
@@ -53478,6 +53480,7 @@ index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef
 +    state: Arc<Mutex<RequestState>>,
 +    required: bool,
 +    synthetic: Option<String>,
++    subscription: bool,
 +    settled: bool,
 +    failed: bool,
 +    reported: bool,
@@ -53519,6 +53522,7 @@ index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef
 +            state: self.requests.clone(),
 +            required: self.required("response_stream"),
 +            synthetic,
++            subscription: false,
 +            settled: false,
 +            failed: false,
 +            reported: false,
@@ -54040,6 +54044,9 @@ index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef
 +            }
 +            (None, Some(_), Some(amount)) => json!({"microusd": amount, "basis": "settled"}),
 +            (None, Some(_), None) => json!({"microusd": null, "basis": "unsettled"}),
++            (None, None, _) if self.subscription => {
++                json!({"microusd": 0, "basis": "included_subscription"})
++            }
 +            (None, None, _) => json!({"microusd": null, "basis": "unpriced"}),
 +        };
 +        let payload = json!({"request_id": self.request_id, "attempt": self.attempt,
@@ -54182,10 +54189,10 @@ index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b927e3f10673e7e0a1d1ae95f2e26c13badeb410
+index 0000000000000000000000000000000000000000..6ff55fd58aa01a1e1fe9c09c66b21e2ce667dbec
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1259 @@
+@@ -0,0 +1,1302 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -55444,6 +55451,49 @@ index 0000000000000000000000000000000000000000..b927e3f10673e7e0a1d1ae95f2e26c13
 +    };
 +    assert!(allowed(&repository) && allowed(&other));
 +    assert!(!allowed(&store.join("unlisted")));
++}
++
++#[test]
++fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
++    let (root, accounts, task, mut request, body) = setup();
++    let notified = Arc::new(Mutex::new(Vec::new()));
++    let sink = notified.clone();
++    accounts.install_mod_notifier(Arc::new(move |event, payload| {
++        sink.lock().unwrap().push((event, payload));
++    }));
++    let mut lead = account(&task, root.path(), "lead");
++    lead.provider = "openai".into();
++    lead.rates = None;
++    lead.route = None;
++    lead.url = String::new();
++    accounts
++        .by_thread
++        .lock()
++        .unwrap()
++        .insert("child".into(), lead);
++    let mut basis = |url: &str, account: bool| {
++        request.url = url.into();
++        if account {
++            request
++                .headers
++                .insert("chatgpt-account-id", "fixture".parse().unwrap());
++        } else {
++            request.headers.remove("chatgpt-account-id");
++        }
++        let mut attempt = accounts.before_send(&mut request, Some(&body)).unwrap().unwrap();
++        let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}});
++        attempt.observe(&mut completed, true).unwrap();
++        drop(attempt);
++        let (_, payload) = notified.lock().unwrap().pop().unwrap();
++        payload["cost"].clone()
++    };
++    assert_eq!(
++        basis(SUBSCRIPTION_RESPONSES_URL, true),
++        json!({"microusd": 0, "basis": "included_subscription"})
++    );
++    assert_eq!(basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"], "unpriced");
++    assert_eq!(basis("https://api.openai.com/v1/responses", true)["basis"], "unpriced");
++    assert!(task.attempts().unwrap().is_empty());
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
@@ -89420,10 +89470,10 @@ index 0000000000000000000000000000000000000000..346034fc75578b024e74d90622936982
 +}
 diff --git a/codex-rs/omd/src/app_routes.json b/codex-rs/omd/src/app_routes.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df1918675518374717
+index 0000000000000000000000000000000000000000..fed413978b5fc5ef311190c1c8c74f7e6fac2481
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.json
-@@ -0,0 +1,1934 @@
+@@ -0,0 +1,1936 @@
 +{
 + "schema": 1,
 + "upstream": {
@@ -90622,6 +90672,7 @@ index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df19186755
 +    "disabledPluginIds",
 +    "effort",
 +    "model",
++    "modelProvider",
 +    "multiAgentMode",
 +    "personality",
 +    "summary",
@@ -90631,7 +90682,8 @@ index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df19186755
 +    "cwd"
 +   ],
 +   "route_fields": [
-+    "model"
++    "model",
++    "modelProvider"
 +   ]
 +  },
 +  "thread/start": {
@@ -91973,10 +92025,10 @@ index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5c
 +mod tests;
 diff --git a/codex-rs/omd/src/app_routes_tests.rs b/codex-rs/omd/src/app_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6faf5fe5943ae8324c7fafb4533f052fb697a418
+index 0000000000000000000000000000000000000000..33320fcd88b63065dcedfb2439cbf1d9c6689933
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes_tests.rs
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,492 @@
 +use super::*;
 +
 +struct Fixture {
@@ -92155,6 +92207,37 @@ index 0000000000000000000000000000000000000000..6faf5fe5943ae8324c7fafb4533f052f
 +    };
 +    assert_eq!(move_before("other"), "ok");
 +    assert_eq!(move_before("stranger"), "app_thread_out_of_scope");
++}
++
++#[test]
++fn settings_updates_move_a_thread_only_to_a_configured_model_and_provider() {
++    let f = fixture(&["threads"]);
++    let update = |params: Value| {
++        let mut params = params;
++        params["threadId"] = json!("current");
++        f.code("thread/settings/update", params, User)
++    };
++    assert_eq!(
++        update(json!({"model": "gpt-test", "modelProvider": "openai"})),
++        "ok"
++    );
++    assert_eq!(update(json!({"modelProvider": "openai"})), "ok");
++    assert_eq!(
++        update(json!({"model": "gpt-test", "modelProvider": "other"})),
++        "app_route_unconfigured"
++    );
++    assert_eq!(
++        update(json!({"modelProvider": "other"})),
++        "app_route_unconfigured"
++    );
++    assert_eq!(
++        f.code(
++            "thread/settings/update",
++            json!({"threadId": "current", "model": "gpt-test", "modelProvider": "openai"}),
++            Event
++        ),
++        "app_context_user_only"
++    );
 +}
 +
 +#[test]

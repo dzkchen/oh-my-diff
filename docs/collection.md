@@ -45,7 +45,7 @@ OMD Core includes only the first three.
 | `omd_preview` | Previews HTML and files, draws Mermaid diagrams | |
 | `omd_frecency` | Ranks `@` file mentions by fuzzy match and how often you use them | |
 | `omd_privacy` | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
-| `omd_usage` | A usage display: context, cache, cost and quota (Alt+a) | |
+| `omd_usage` | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
@@ -76,18 +76,14 @@ Measured on one Apple Silicon Mac with a scripted model, October 2026. Your numb
 ### Claude
 
 In a session, turn on `omd_claude_cli` in `/mods` and approve its trust dialog, then run `/claude login` for your
-Claude plan or `/claude login api` for Console API credits. Claude models then appear in `/model`. The
+Claude plan or `/claude login api` for Console API credits; `/claude login NAME` adds another account. Claude models
+then appear in `/model`, and with `omd_profiles` on, `/profile` and Alt+s switch between accounts. The
 [`omd_claude_cli` README](../mods/first-party/omd_claude_cli/README.md) has the details.
 
 ### An API key or another provider
 
-1. In a `codex` session, add the credential with `/profile add api_key NAME` (or `chatgpt`, or `provider`).
-2. It prints a setup command like this one. Run it with your provider's details in place of the capitalized values:
-
-   ```sh
-   omd-package profiles --setup --add NAME --credential NAME --protocol responses --url URL --upstream-model MODEL
-   omd-package profiles --model NAME
-   ```
+Turn on `omd_profiles` in `/mods`, then run `/profile add` and pick a ChatGPT, Claude or Cursor account, an OpenAI or
+Anthropic API key, or another provider by URL. Sign-in and key entry happen in the session.
 
 More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
