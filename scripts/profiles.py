@@ -359,6 +359,20 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         raise ValueError(f"managed mod selection failed and was restored: {error}") from error
 
 
+def route_setup(prefix, record, name, identifier, options):
+    setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
+    node = record["author"]["node"] or shutil.which("node")
+    if not node:
+        raise ValueError(f"{name} setup needs Node.js on PATH")
+    stripping = subprocess.run([node, "-p", "process.features.typescript"], stdout=subprocess.PIPE, text=True)
+    if stripping.stdout.strip() not in {"strip", "transform"}:
+        raise ValueError(f"{name} setup needs Node.js 22.18 or later: {node}")
+    result = subprocess.run([node, str(setup), "setup", str(prefix / "install.json"), json.dumps(options)], stdout=subprocess.PIPE, text=True)
+    if result.returncode:
+        raise ValueError(f"{name} setup failed")
+    return json.loads(result.stdout)
+
+
 def route(prefix, bin_dir, name, args):
     record = load(prefix)
     check(record, bin_dir)
@@ -366,16 +380,9 @@ def route(prefix, bin_dir, name, args):
     if record["profile"] != "full":
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
-        setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
-                            "remove": args.remove, "allowance": args.allowance})
-        node = record["author"]["node"] or shutil.which("node")
-        if not node:
-            raise ValueError(f"{name} setup needs Node.js on PATH")
-        result = subprocess.run([node, str(setup), "setup", str(prefix / "install.json"), extra], stdout=subprocess.PIPE, text=True)
-        if result.returncode:
-            raise ValueError(f"{name} setup failed")
-        details = json.loads(result.stdout)
+        details = route_setup(prefix, record, name, identifier, {
+            "add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "cache_control", "text_only", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+            "remove": args.remove, "allowance": args.allowance})
         record.setdefault("providers", {})[identifier] = details.pop("provider")
         launcher = bin_dir / "codex"
         support.atomic_text(launcher, selected_text(record), 0o755)
@@ -391,6 +398,11 @@ def route(prefix, bin_dir, name, args):
     selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
     if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
         raise ValueError(f"the {name} route needs its mod enabled: omd-package mod enable {identifier}")
+    host = Path(record["store"]) / "host.json"
+    written = {route["model"] for route in (json.loads(host.read_text()).get("routes", []) if host.is_file() else [])
+               if route.get("provider") == identifier and isinstance(route.get("data"), dict)}
+    if written and written != {item["slug"] for item in json.loads(Path(provider["catalog"]).read_text())["models"]}:
+        route_setup(prefix, record, name, identifier, {})
     models = json.loads(Path(provider["route"]).read_text())
     wanted = args.model or models["default"]
     model = next((item["slug"] for item in models["models"] if wanted in (item["slug"], item.get("family"))), None)

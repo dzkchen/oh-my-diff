@@ -296,7 +296,7 @@ Slash commands, buttons and keybindings run in the terminal as user actions and 
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the terminal operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -306,7 +306,7 @@ A service call works only while its provider needs no other host operation.
 Component input callbacks run there too but not as user actions, so `packages.apply`, `settings.write`,
 `builtins.invoke`, `credentials.request` and `terminal.import_file` are refused.
 
-Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
+Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
 `agents.*`) goes through `events.publish` to the mod's own `channel` handler, which runs with the session.
 
 ### Settings defaults

@@ -13,7 +13,12 @@ export type ServiceContract = { name: `${string}.${string}`; version: `${number}
 export type ResourceRef = { reference: string; sha256: string };
 export type HostEvidence = { path: string; sha256: string };
 
-export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null };
+export type RouteInfo = { name: string; model: string; provider: string; reasoning: string; roles: ('lead' | 'worker')[]; billing: 'included_subscription' | 'explicit_paid_api_grant' | 'provider_billed'; tools: string[]; available: boolean; credential: string | null; data?: Json };
+/** A lead route as `host.json` stores it; `data` (at most 2 KiB) is kept for the route's provider mod. */
+export type HostRoute = { name: string; roles: ['lead']; provider: string; model: string; reasoning_effort: string; responses_url: string; rates: HostRouteRates; mods?: string[]; tools?: string[]; data?: Json };
+export type HostRouteRates = { input_microusd_per_million: number; cached_microusd_per_million: number; cache_write_microusd_per_million?: number; output_microusd_per_million: number; reservation_microusd: number; max_output_tokens: number; input_token_ceiling: number; included_subscription: boolean; external_subscription?: boolean; provider_billed?: boolean };
+/** A provider service grant; fields left out keep the caller's existing grant with the same `id`. */
+export type ServiceGrant = { id: string; mod_id?: string; program?: string; program_sha256?: string; arguments?: string[]; secrets?: Record<string, string>; route?: HostRoute; network?: boolean; read_paths?: string[]; requests?: boolean; read_hashes?: Record<string, string>; code_roots?: Record<string, string>; credentials?: string[] };
 export type ModelScope = { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' };
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 /** One classified prompt item; `group` is its message (or `instructions`), which it never leaves. */
@@ -377,6 +382,8 @@ export interface HostOperations {
   'sessions.snapshot': { arguments: { call_ids?: string[] }; result: { evidence: ResourceRef; provenance: { sha256: string; bytes: number; items: number; revision: number } } };
   'routes.list': { arguments: null; result: RouteInfo[] };
   'routes.add': { arguments: { mod: string }; result: { route: string } | Declined };
+  /** Requires route_write_v1: replaces the caller's lead routes and service grants in `host.json` after the user confirms. */
+  'routes.write': { arguments: { routes: HostRoute[]; services?: ServiceGrant[] }; result: { routes: string[]; services: string[]; unchanged?: true } | Declined };
   'task.status': { arguments: null; result: { ledger: Ledger; limits: Json; worker_limits: Json } };
   'task.complete': { arguments: { candidate_sha256: string; acceptance_sha256?: string }; result: { status: 'completed'; receipts: Receipt[] } | { status: 'refused'; missing: ContractRequirement[] } | { status: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[] } };
   'receipts.submit': { arguments: { kind: string; candidate_sha256: string; acceptance_sha256?: string; outcome: 'pass' | 'fail'; evidence: ResourceRef; agent?: string; execution?: boolean; findings?: ReceiptFinding[]; resolves?: string[] }; result: Receipt };

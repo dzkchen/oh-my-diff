@@ -103,6 +103,7 @@
     "prompts.status",
     "prompts.submit",
     "routes.add",
+    "routes.write",
     "session.info",
     "sessions.ports",
     "settings.write",
