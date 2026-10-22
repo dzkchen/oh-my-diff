@@ -12,6 +12,7 @@ Mods run on an embedded V8 runner instead of Node, with faster startup and a fra
 - Package controls: `packages.index` pages with `cursor` and `limit`, and the `/mods` Directory reads large indexes in pages (#265)
 - Advisor: `routes.add` adds a ChatGPT-plan helper route for a mod after a confirmation, granted per repository (#265)
 - Claude CLI: `/claude login` runs in the background and `/claude code CODE` sends a pasted sign-in code (#265)
+- Uninstall: `omd uninstall` removes Oh My Diff (#267)
 
 ### Changed
 

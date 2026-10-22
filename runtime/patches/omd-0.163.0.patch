@@ -51587,10 +51587,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124b6729b28
+index 0000000000000000000000000000000000000000..00efb65ced6cbd5ad1c1b0e8ea6a62ef39a5aab9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2314 @@
+@@ -0,0 +1,2318 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -52263,16 +52263,9 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +    }
 +
 +    fn request_id(&self) -> String {
-+        static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-+        let process = PROCESS.get_or_init(|| {
-+            format!(
-+                "{}-{}",
-+                std::process::id(),
-+                chrono::Utc::now().timestamp_millis()
-+            )
-+        });
 +        format!(
-+            "req-{process}-{}",
++            "req-{}-{}",
++            process_id(),
 +            self.next_request.fetch_add(1, Ordering::Relaxed) + 1
 +        )
 +    }
@@ -53900,6 +53893,17 @@ index 0000000000000000000000000000000000000000..80f49a80a26c02ba0ab3f4fe1b9ac124
 +            self.fail(reason);
 +        }
 +    }
++}
++
++pub(crate) fn process_id() -> &'static str {
++    static PROCESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    PROCESS.get_or_init(|| {
++        format!(
++            "{}-{}",
++            std::process::id(),
++            chrono::Utc::now().timestamp_millis()
++        )
++    })
 +}
 +
 +#[cfg(test)]
@@ -71591,10 +71595,10 @@ index 0000000000000000000000000000000000000000..73606867544f90f8be876d32da70714c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759d3eb7ec9
+index 0000000000000000000000000000000000000000..c200c5982bba8a860e61eaf989a1705295830007
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,709 @@
+@@ -0,0 +1,723 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -72046,11 +72050,17 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +        debounce_ms: Option<u64>,
 +        #[serde(default)]
 +        include_ignored: bool,
++        #[serde(default)]
++        key: Option<String>,
 +    }
 +    fn recursive() -> bool {
 +        true
 +    }
++    let shape = format!("{}:{arguments}", lead.thread);
 +    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++    if input.key.as_deref().is_some_and(invalid_watch_key) {
++        return Err("watch_arguments_invalid".into());
++    }
 +    let watches = {
 +        let mut watches = core
 +            .expansion
@@ -72099,17 +72109,22 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +                );
 +            }
 +        });
-+    let id = watches
++    let (id, _) = watches
 +        .watch(
 +            caller.id,
 +            caller.source,
 +            &input.paths,
 +            input.recursive,
 +            input.debounce_ms,
++            input.key.as_deref().map(|key| (key, shape.as_str())),
 +            sink,
 +        )
 +        .map_err(|error| error.to_string())?;
 +    Ok(json!({"watch_id": id}))
++}
++
++fn invalid_watch_key(key: &str) -> bool {
++    key.is_empty() || key.len() > 64
 +}
 +
 +pub(in crate::mods) fn unwatch(
@@ -72117,21 +72132,24 @@ index 0000000000000000000000000000000000000000..493eca85a8c3f0ef52b2dddd0d7d3759
 +    caller: &str,
 +    arguments: &Value,
 +) -> Result<Value, String> {
-+    let id = arguments["watch_id"]
-+        .as_str()
-+        .filter(|_| {
-+            arguments
-+                .as_object()
-+                .is_some_and(|object| object.len() == 1)
-+        })
-+        .ok_or("watch_arguments_invalid")?;
++    let single = arguments
++        .as_object()
++        .is_some_and(|object| object.len() == 1);
++    let (id, key) = (arguments["watch_id"].as_str(), arguments["key"].as_str());
++    if !single || id.is_none() && key.is_none_or(invalid_watch_key) {
++        return Err("watch_arguments_invalid".into());
++    }
 +    let stopped = core
 +        .expansion
 +        .watches
 +        .lock()
 +        .map_err(|_| "watch_state_poisoned")?
 +        .as_ref()
-+        .is_some_and(|watches| watches.unwatch(caller, id));
++        .is_some_and(|watches| match (id, key) {
++            (Some(id), _) => watches.unwatch(caller, id),
++            (None, Some(key)) => watches.unwatch_key(caller, key),
++            (None, None) => false,
++        });
 +    Ok(json!({"stopped": stopped}))
 +}
 +
@@ -77987,10 +78005,10 @@ index 0000000000000000000000000000000000000000..b7e24384928422189574c85bc45abb29
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163ce25a60da
+index 0000000000000000000000000000000000000000..7c203eb5cbbcd9a202300f979e75d969e181a817
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,768 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -78634,7 +78652,8 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
 +                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-+                "route": account.and_then(|account| account.route), "turns_started": turns}),
++                "route": account.and_then(|account| account.route), "turns_started": turns,
++                "process_id": crate::accounting::process_id()}),
 +            )
 +        }
 +        "task.status" => {
@@ -82517,10 +82536,10 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42fb4bb59b
+index 0000000000000000000000000000000000000000..7c93d96847f613c39e187ce7f4eacc489ba77ead
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,223 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -82540,6 +82559,7 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +
 +struct Watch {
 +    source: String,
++    key: Option<(String, String)>,
 +    _registration: WatchRegistration,
 +    task: tokio::task::JoinHandle<()>,
 +}
@@ -82565,6 +82585,15 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +        return None;
 +    }
 +    relative.to_str().map(str::to_owned)
++}
++
++fn keyed(watches: &BTreeMap<(String, String), Watch>, owner: &str, key: &str) -> Option<String> {
++    watches
++        .iter()
++        .find(|((mod_id, _), watch)| {
++            mod_id == owner && watch.key.as_ref().is_some_and(|(kept, _)| kept == key)
++        })
++        .map(|((_, id), _)| id.clone())
 +}
 +
 +impl WorkspaceWatches {
@@ -82619,8 +82648,9 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +        paths: &[String],
 +        recursive: bool,
 +        debounce_ms: Option<u64>,
++        key: Option<(&str, &str)>,
 +        sink: ChangeSink,
-+    ) -> io::Result<String> {
++    ) -> io::Result<(String, Option<String>)> {
 +        if paths.is_empty() || paths.len() > self.limits.paths_per_watch {
 +            return Err(io::Error::other("watch_paths_invalid"));
 +        }
@@ -82636,8 +82666,20 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +            .watches
 +            .lock()
 +            .map_err(|_| io::Error::other("watch_state_poisoned"))?;
-+        if watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
-+            >= self.limits.watches_per_mod
++        let replaced = key.and_then(|(key, _)| keyed(&watches, owner, key));
++        if let (Some(previous), Some((_, shape))) = (&replaced, key)
++            && watches
++                .get(&(owner.to_owned(), previous.clone()))
++                .is_some_and(|watch| {
++                    watch.source == source
++                        && watch.key.as_ref().is_some_and(|(_, kept)| kept == shape)
++                })
++        {
++            return Ok((previous.clone(), None));
++        }
++        if replaced.is_none()
++            && watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
++                >= self.limits.watches_per_mod
 +        {
 +            return Err(io::Error::other("watch_limit"));
 +        }
@@ -82675,15 +82717,26 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +                }
 +            }
 +        });
++        if let Some(previous) = &replaced {
++            watches.remove(&(owner.to_owned(), previous.clone()));
++        }
 +        watches.insert(
 +            (owner.to_owned(), id.clone()),
 +            Watch {
 +                source: source.to_owned(),
++                key: key.map(|(key, shape)| (key.to_owned(), shape.to_owned())),
 +                _registration: registration,
 +                task,
 +            },
 +        );
-+        Ok(id)
++        Ok((id, replaced))
++    }
++
++    pub(crate) fn unwatch_key(&self, owner: &str, key: &str) -> bool {
++        self.watches.lock().is_ok_and(|mut watches| {
++            keyed(&watches, owner, key)
++                .is_some_and(|id| watches.remove(&(owner.to_owned(), id)).is_some())
++        })
 +    }
 +
 +    pub(crate) fn unwatch(&self, owner: &str, id: &str) -> bool {
@@ -82712,10 +82765,10 @@ index 0000000000000000000000000000000000000000..2908f9615dce6c7f9a0ea972ca9f7b42
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9a5f9c2bf
+index 0000000000000000000000000000000000000000..f9ca43129c83316bb039bf050499026743444a06
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,131 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -82751,8 +82804,8 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +async fn external_changes_are_reported_relative_to_the_root() {
 +    let (dir, watches) = fixture();
 +    let (sink, rx) = channel_sink();
-+    let id = watches
-+        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
++    let (id, _) = watches
++        .watch("m", "sha", &["src".to_owned()], true, Some(50), None, sink)
 +        .unwrap();
 +    tokio::time::sleep(Duration::from_millis(300)).await;
 +    let file = dir.path().join("src/a.txt");
@@ -82784,7 +82837,7 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +        let (sink, _rx) = channel_sink();
 +        assert!(
 +            watches
-+                .watch("m", "sha", &[path.to_owned()], false, None, sink)
++                .watch("m", "sha", &[path.to_owned()], false, None, None, sink)
 +                .is_err(),
 +            "{path}"
 +        );
@@ -82792,11 +82845,11 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, Some(10), sink)
++            .watch("m", "sha", &["src".to_owned()], false, Some(10), None, sink)
 +            .is_err()
 +    );
 +    let (sink, _rx) = channel_sink();
-+    assert!(watches.watch("m", "sha", &[], false, None, sink).is_err());
++    assert!(watches.watch("m", "sha", &[], false, None, None, sink).is_err());
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -82805,18 +82858,18 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +    for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
 +        let (sink, _rx) = channel_sink();
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, sink)
++            .watch("m", "sha", &["src".to_owned()], false, None, None, sink)
 +            .unwrap();
 +    }
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, sink.clone())
++            .watch("m", "sha", &["src".to_owned()], false, None, None, sink.clone())
 +            .is_err()
 +    );
 +    assert!(
 +        watches
-+            .watch("other", "sha", &["src".to_owned()], false, None, sink)
++            .watch("other", "sha", &["src".to_owned()], false, None, None, sink)
 +            .is_ok()
 +    );
 +    watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
@@ -82824,6 +82877,28 @@ index 0000000000000000000000000000000000000000..ab4f49d2c6514b99a8ed3efb02bfcbb9
 +        (watches.unwatch_all("m"), watches.unwatch_all("other")),
 +        (0, 1)
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn a_keyed_watch_is_kept_when_unchanged_and_replaced_within_the_limit_otherwise() {
++    let (_dir, watches) = fixture();
++    let watch = |key: Option<(&str, &str)>| {
++        let (sink, _rx) = channel_sink();
++        watches.watch("m", "sha", &["src".to_owned()], false, None, key, sink)
++    };
++    let (first, replaced) = watch(Some(("k", "a"))).unwrap();
++    assert_eq!(replaced, None);
++    assert_eq!(watch(Some(("k", "a"))).unwrap(), (first.clone(), None));
++    for _ in 1..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
++        watch(None).unwrap();
++    }
++    let (second, replaced) = watch(Some(("k", "b"))).unwrap();
++    assert_eq!(replaced.as_deref(), Some(first.as_str()));
++    assert!(watch(Some(("other", "a"))).is_err());
++    assert!(!watches.unwatch("m", &first));
++    assert!(!watches.unwatch_key("other", "k"));
++    assert!(watches.unwatch_key("m", "k"));
++    assert!(!watches.unwatch("m", &second));
 +}
 diff --git a/codex-rs/ext/omd/tests/omd_mod_cli.rs b/codex-rs/ext/omd/tests/omd_mod_cli.rs
 new file mode 100644
@@ -104283,10 +104358,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..022ce5aa7297c8e967a1d984e4fa25e3d3ec467f
+index 0000000000000000000000000000000000000000..8e25ced57c43176801111404d469a751804eaa62
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6174 @@
+@@ -0,0 +1,6175 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104617,6 +104692,7 @@ index 0000000000000000000000000000000000000000..022ce5aa7297c8e967a1d984e4fa25e3
 +    "binary_evidence_v1",
 +    "package_controls_v1",
 +    "package_index_paging_v1",
++    "workspace_watch_key_v1",
 +    "terminal_surface_v1",
 +    "credentials_v1",
 +    "completion_v1",
@@ -113967,7 +114043,7 @@ index 0000000000000000000000000000000000000000..82f72653f59ac46769985200cb40c05c
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac33b8ea81
+index 0000000000000000000000000000000000000000..78b61d61d8316f6ebfe77b3e8141ffeb45e73cc7
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,218 @@
@@ -114040,8 +114116,8 @@ index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/33"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
 +    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
-+    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]}},"required":["paths"]},"result":{"$ref":"#/$defs/58"}},
-+    "workspace.unwatch": {"arguments":{"$ref":"#/$defs/58"},"result":{"$ref":"#/$defs/56"}},
++    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"}},"required":["paths"]},"result":{"$ref":"#/$defs/58"}},
++    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/58"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/56"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
 +    "events.schedule": {"arguments":{"$ref":"#/$defs/59"},"result":{"$ref":"#/$defs/59"}},
 +    "events.cancel": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/44"}},
@@ -114091,7 +114167,7 @@ index 0000000000000000000000000000000000000000..1515dbe5cff34907162d4acda57baaac
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/33"},{"$ref":"#/$defs/54"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/90"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/81"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/90"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
