@@ -263,6 +263,8 @@ User-only operations are never delegated:
 - `commands.invoke`
 - `config.set`
 - `packages.apply`
+- `routes.add`
+- `routes.write`
 - `contract.select`
 
 `prompts.consent` is never delegated either. Whenever a client's action or event caused the call, these operations

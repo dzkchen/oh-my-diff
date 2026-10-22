@@ -21,16 +21,18 @@ experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
 Version and support rules are in [COMPATIBILITY.md](../COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.

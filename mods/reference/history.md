@@ -35,7 +35,7 @@ their original `index`.
 The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
 keeps the original request.
 
-## Store-time history rewriting (`history_persist_v1`, experimental)
+## Store-time history rewriting (`history_persist_v1`)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
 stored, for redaction: every text written to the thread's rollout and the prompt-recall file

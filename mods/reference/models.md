@@ -11,14 +11,15 @@ Routes are configuration, not names in the API.
 ### Route fields
 
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
-roles (lead|worker), tools, mods, grant`.
+roles (lead|worker), tools, mods, grant, credential, data`.
 
 A route entry, with every field the host accepts:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
  "responses_url": "https://api.openai.com/v1/responses", "roles": ["worker"], "tools": ["exec_command"],
- "mods": ["omd_workflow"], "credential": null, "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
+ "mods": ["omd_workflow"], "credential": null, "data": null,
+ "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
  "rates": {"input_microusd_per_million": 1250000, "cached_microusd_per_million": 125000,
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}

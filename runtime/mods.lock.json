@@ -70,13 +70,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "effaee84ab25cb55dc0e984b42fca5efd2b7e4b2ebdd29489c77a380159ef294",
+        "index.ts": "f02f24dfab295ba48b461ec870f9896ba52d2b195bcb6e0760a5d6c24de4ed79",
         "mod.json": "15c57544e67d5ee8a9b33e111350948392d4613caefbf1b340c818202daf5e1c",
         "setup.mjs": "d20af133340737f3640c45e69fca9c0a3da367efaa93013111c81b8a392d8d95",
         "transport.mjs": "4aee3818bc3db41cec9316193234acd99d872c74832a25016e038501174ae08c"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "2a5aa973ff3e553cf436c844a7d3f25984fd5d64bc7fb045c68249e537ae4117",
+      "package_sha256": "c842bc18d37e72c4524c0a80bd1fe2ba63e962cac11f1fbf1dcdec2132d9ae07",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
@@ -113,13 +113,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "1ed064520f524475626815ee931950bf388c0b71a6060b505caf6c3c21ca05fb",
+        "index.ts": "3d1585470b2bab39144c0bd7029896e8ff8ab31baa786e077cc2500890bf2732",
         "mod.json": "847096720fab1ba4e296450a57d2053b83a7364de10ede816456360975642c8c",
         "setup.mjs": "de782437abeed0724faf6c6a5972ac720b230b1279844fbff5d85fe1fa60b56c",
         "transport.mjs": "2bf7601930473544055acdb958c15ebf82e081d58abcec1540c62fc796d33407"
       },
       "id": "omd_cursor",
-      "package_sha256": "c90b1a6b0342562f5b7233bd888b891218f1350fe61f26e11c0636d338821576",
+      "package_sha256": "7bb5dc13c36679e2cf864559e0fa238eb928b4cbf2286fa4738e8324a95f6e2f",
       "source": "mods/first-party/omd_cursor",
       "version": "1.0.0"
     },
@@ -407,14 +407,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "c29494b119f5063ea375b0036efe0a58bbc0c7def49974d6c8f01da29f2df39f",
+        "index.ts": "81706c1a1ad9406dd5f821819fa21eec67f7cf9562ea24b94d44065afbb1c462",
         "mod.json": "360407bf08e49a56acb731af682499f0b8a93ec0033de51b866269eb9cd17e53",
         "profiles.ts": "76c56a240fd57d754aa1b23d36e71c6bc09d7bdfd49e6c8243cf72a4e6c179ad",
         "router.mjs": "8b9949358fa9ce0368a18351338fbeae388f4f965da1ac4a6b84926793262112",
         "setup.mjs": "6565fd8aa907fab0afff00377b01f296aba0ef15c006388e7bb9081fea162d8f"
       },
       "id": "omd_profiles",
-      "package_sha256": "af43d539a69051237fa44a8df3a7f7f1ed61caa96beb43d706abc5bf4f28921e",
+      "package_sha256": "c5cdf4758873d3718339acd2fe9c157b88b228e7e1c5ccaf93e6bb17699601af",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },

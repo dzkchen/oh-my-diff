@@ -184,7 +184,7 @@ export type TerminalComponent =
   /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
-  /** Experimental: a region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
+  /** A region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
   | { type: 'module'; id: string; label: string; module: string; props?: Json; height?: number; keys?: boolean; pointer?: boolean }
   | { type: 'slot' }
   /** The native drawing of the component a `render` hook draws; at most once per tree. */
@@ -274,7 +274,7 @@ export type ComponentPointer = { kind: 'pointer'; column: number; row: number; h
   action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
 /** The region a component module draws: its width in cells, its height in rows (the node's `height`, 0 when it has none), the props of its `module` node, and `post`, which hands the mod's `component_post` hooks at most one value per frame. */
 export type ComponentContext<P extends Json = Json> = { readonly columns: number; readonly rows: number; readonly props: P; post(data: Json): void };
-/** Experimental: handlers run synchronously on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
+/** Handlers run synchronously on the frame clock in the mod's own runner, keep `S` between frames and get no host authority; returning `undefined` keeps the state. */
 export type ComponentModule<S = unknown, P extends Json = Json> = {
   init?(props: P, ui: ComponentContext<P>): S;
   view(state: S, ui: ComponentContext<P>): TerminalComponent | TerminalComponent[];
@@ -415,7 +415,7 @@ export interface HostOperations {
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };
-  'sidecars.status': { arguments: { id: string }; result: Json };
+  'sidecars.status': { arguments: { id: string }; result: { id: string; running: boolean; started_at_ms: number } };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
@@ -535,7 +535,7 @@ export interface Events {
     origin?: 'user' | 'mod'; client?: string; value?: string; values?: string[]; offset?: number; key?: string; text?: string | null;
     pointer?: { column: number; row: number; half?: 0 | 1 | null; action: 'down' | 'up' | 'scroll_up' | 'scroll_down' | 'move' | 'drag' | 'enter' | 'leave'; button: 'left' | 'right' | 'middle' | null };
     range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
-  /** Experimental: the latest value a component module posted this frame. */
+  /** The latest value a component module posted this frame. */
   component_post: { input: { component: string; module: string; client?: string; data: Json }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null; dropped?: number }; output: void };
   focus: { input: { focused: boolean; dropped?: number }; output: void };
@@ -631,7 +631,7 @@ export interface ModAPI {
   hook(name: ClassicHook, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   hook(name: ClassicHook, options: { match?: InterceptMatcher; required?: boolean }, handler: (envelope: ClassicEnvelope) => Json | void | Promise<Json | void>): void;
   readonly match: { glob(pattern: string): InterceptMatcher; not(matcher: InterceptMatcher): InterceptMatcher };
-  /** Experimental, terminal capability: registers a component module that `module` view nodes mount; at most 16 per mod. */
+  /** Terminal capability: registers a component module that `module` view nodes mount; at most 16 per mod. */
   component<S, P extends Json = Json>(id: string, module: ComponentModule<S, P>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;

@@ -21,16 +21,18 @@ experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
 Version and support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -195,7 +197,7 @@ Capabilities name authority classes. A call or registration outside the package'
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
@@ -909,14 +911,15 @@ Routes are configuration, not names in the API.
 #### Route fields
 
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
-roles (lead|worker), tools, mods, grant`.
+roles (lead|worker), tools, mods, grant, credential, data`.
 
 A route entry, with every field the host accepts:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
  "responses_url": "https://api.openai.com/v1/responses", "roles": ["worker"], "tools": ["exec_command"],
- "mods": ["omd_workflow"], "credential": null, "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
+ "mods": ["omd_workflow"], "credential": null, "data": null,
+ "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
  "rates": {"input_microusd_per_million": 1250000, "cached_microusd_per_million": 125000,
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
@@ -2603,7 +2606,7 @@ with a loopback `responses_url` defines its `route.provider` for the process (at
 at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
 thread resumed after its provider is gone continues on the configured provider.
 
-The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+`providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
@@ -2658,7 +2661,7 @@ thread from event, tool and terminal slash-command callbacks, recorded only whil
 
 #### `sessions.read`
 
-The experimental `sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
+`sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
 `local_visible_records`:
 
 | Record | Fields |
@@ -2721,7 +2724,7 @@ their original `index`.
 The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
 keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`, experimental)
+### Store-time history rewriting (`history_persist_v1`)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
 stored, for redaction: every text written to the thread's rollout and the prompt-recall file
@@ -3529,7 +3532,7 @@ delivered event reports the count as `dropped`.
 
 #### Component modules (`component_modules_v1`)
 
-Component modules are experimental and need the feature `component_modules_v1`, which `mod_host_check.py --static`
+Component modules need the feature `component_modules_v1`, which `mod_host_check.py --static`
 requires of any package that calls `api.component`.
 
 `api.component(module, {init?, view, key?, pointer?, every?})` is registered during activation under the `terminal`
@@ -3789,7 +3792,7 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
 tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
@@ -3887,7 +3890,7 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-The `above_composer` and `below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
+The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
 focused control. Both are hidden while an approval or popup replaces the composer.
@@ -4187,6 +4190,8 @@ User-only operations are never delegated:
 - `commands.invoke`
 - `config.set`
 - `packages.apply`
+- `routes.add`
+- `routes.write`
 - `contract.select`
 
 `prompts.consent` is never delegated either. Whenever a client's action or event caused the call, these operations

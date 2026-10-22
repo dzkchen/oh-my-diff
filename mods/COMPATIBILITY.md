@@ -6,7 +6,8 @@ checks it against the host.
 API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
 [the conformance registry](conformance/contract.json) keep their shape until then; a breaking change needs a
 major version and a migration note in [the reference](REFERENCE.md). Experimental entries (including the raster
-surfaces `terminal.blit` and `process_raster_v1`) may change in any release.
+surfaces `terminal.blit` and `process_raster_v1`), and the `experimental_fields` of frozen entries, may change in any
+release.
 
 ## Supported versions
 
@@ -43,6 +44,7 @@ These reject older hosts before activation, even when the API version matches.
 | `environment.set` | `environment_overrides_v1` |
 | Timers of 16-999 ms | `timers_16ms_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
+| `routes.write` | `route_write_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |

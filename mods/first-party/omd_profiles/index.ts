@@ -58,10 +58,10 @@ export default function activate(api: ModAPI) {
   };
   const ensure = () => {
     const status = api.host.tryCall('sidecars.status', { id: PROVIDER });
-    const sidecar = status.ok ? status.value as { running?: boolean; started_at_ms?: number } | null : null;
+    const sidecar = status.ok ? status.value : null;
     const changed = api.host.tryCall('store.get', { key: 'changed', scope: 'user' });
     const stale = changed.ok && changed.value !== null && (sidecar?.started_at_ms ?? 0) <= changed.value.provenance.at;
-    if (sidecar?.running === true && !stale) return;
+    if (sidecar?.running && !stale) return;
     if (status.ok) api.host.tryCall('providers.unregister', { id: PROVIDER });
     if (api.host.tryCall('providers.register', { id: PROVIDER }).ok) {
       api.host.tryCall('providers.models', { provider: PROVIDER, name: 'OMD profiles', models: owned(saved().accounts).slice(0, 16).map(modelFor) });

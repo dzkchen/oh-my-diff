@@ -73,7 +73,7 @@ export default function activate(api: ModAPI): void {
     api.host.tryCall('terminal.notice', { text, kind: error ? 'error' : 'info', placement: 'transcript' });
   const ensure = (restart = false) => {
     const status = api.host.tryCall('sidecars.status', { id: service });
-    if (!restart && status.ok && (status.value as Row | null)?.running === true) return true;
+    if (!restart && status.ok && status.value.running) return true;
     if (status.ok) api.host.tryCall('providers.unregister', { id: service });
     const models = saved().models;
     const profiles = api.host.tryCall('credentials.list', null);
