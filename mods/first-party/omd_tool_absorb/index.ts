@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI } from '../../api.d.ts';
 
 type Call = { call_id: string; tool: string; arguments: Json };
 type Flight = { key: string; status: 'running' } | { key: string; status: 'done'; output: string; value: Json };

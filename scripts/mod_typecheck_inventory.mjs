@@ -34,6 +34,8 @@ function main() {
     ['mods/first-party/omd_preview/render.mjs', 'preview renderer sidecar'],
     ['mods/first-party/omd_claude_cli/setup.mjs', 'CLI setup hook'],
     ['mods/first-party/omd_claude_cli/transport.mjs', 'CLI transport sidecar'],
+    ['mods/first-party/omd_cursor/setup.mjs', 'CLI setup hook'],
+    ['mods/first-party/omd_cursor/transport.mjs', 'CLI transport sidecar'],
     ['mods/first-party/omd_profiles/setup.mjs', 'profile setup hook'],
     ['mods/first-party/omd_profiles/router.mjs', 'profile router sidecar'],
   ]);

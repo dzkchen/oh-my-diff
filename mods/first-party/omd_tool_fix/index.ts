@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI } from '../../api.d.ts';
 
 type Schema = { [key: string]: Json };
 type Change = { path: string; rule: string; from: Json; to: Json };

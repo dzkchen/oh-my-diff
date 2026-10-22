@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "omd_programmable_context",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Python context variables, child agents and a continual session harness over the code-execution kernel",
+  "license": "MIT",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_programmable_context"
+  },
+  "capabilities": ["agents", "commands", "fs.read", "history", "lifecycle", "model", "inventory", "store", "terminal", "tools"],
+  "environment": ["crypto"],
+  "compatibility": {
+    "required_features": ["state_scopes_v1", "history_v1", "store_thread_v1", "routes_v1", "model_complete_v2", "terminal_prompt_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "refine": {
+        "type": "string",
+        "enum": ["off", "manual", "auto"],
+        "default": "manual"
+      },
+      "route": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "additionalProperties": false
+  }
+}
