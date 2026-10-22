@@ -338,7 +338,8 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 - **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
 - **Frozen or experimental:** API `1.0.0` is stable. Entries that
   [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
-  including raster and `terminal.blit` frames and `omd/*` external-client methods.
+  including raster and `terminal.blit` frames, `omd/*` external-client methods and the `experimental_fields` of
+  frozen entries.
 - **Authority:** a mod gets only the capabilities its manifest lists and the user trusts. Codex and the host keep
   the sandbox, approvals and credentials; permissions the user grants (`os`, network, `approve`, secrets) run with
   the user's authority. See [Composition and safety](../mods/REFERENCE.md#composition-and-safety).

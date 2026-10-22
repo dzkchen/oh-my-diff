@@ -63,7 +63,7 @@
     "providers.unregister": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
     "sidecars.invoke": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"input":{}},"required":["id","input"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"program_sha256":{"type":"string"},"source_hashes":{"$ref":"#/$defs/0"},"result":{},"untrusted":{"const":true}},"required":["provider","program_sha256","source_hashes","result","untrusted"]}},
     "sidecars.start": {"arguments":{"$ref":"#/$defs/60"},"result":{}},
-    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
+    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{"type":"object","properties":{"id":{"type":"string"},"running":{"type":"boolean"},"started_at_ms":{"type":"number"}},"required":["id","running","started_at_ms"]}},
     "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
     "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
     "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},

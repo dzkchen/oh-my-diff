@@ -114398,7 +114398,7 @@ index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7a2acc50bbb3c6f736c6caa471553e99a41b526
+index 0000000000000000000000000000000000000000..c7085d00a4400c2ffd6bc460e798d7db3440528c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114467,7 +114467,7 @@ index 0000000000000000000000000000000000000000..f7a2acc50bbb3c6f736c6caa471553e9
 +    "providers.unregister": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "sidecars.invoke": {"arguments":{"type":"object","properties":{"id":{"type":"string"},"input":{}},"required":["id","input"]},"result":{"type":"object","properties":{"provider":{"type":"string"},"program_sha256":{"type":"string"},"source_hashes":{"$ref":"#/$defs/0"},"result":{},"untrusted":{"const":true}},"required":["provider","program_sha256","source_hashes","result","untrusted"]}},
 +    "sidecars.start": {"arguments":{"$ref":"#/$defs/60"},"result":{}},
-+    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
++    "sidecars.status": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{"type":"object","properties":{"id":{"type":"string"},"running":{"type":"boolean"},"started_at_ms":{"type":"number"}},"required":["id","running","started_at_ms"]}},
 +    "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},

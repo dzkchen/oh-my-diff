@@ -108,6 +108,10 @@ def check_launch(contract, sets):
         if entry.get("status") != "frozen":
             problems.append(f"{name}: invalid launch status")
             continue
+        extra = entry.get("experimental_fields")
+        if extra is not None and (not extra or not entry.get("reason")
+                                  or any(not re.search(rf"\b{re.escape(field)}\??:", source) for field in extra)):
+            problems.append(f"{name}: experimental_fields need a reason and fields declared in api.d.ts")
         if "decision" in entry and entry["decision"] not in decisions:
             problems.append(f"{name}: unknown decision {entry['decision']}")
         consumer = entry.get("consumer", {})

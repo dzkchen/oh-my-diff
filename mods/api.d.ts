@@ -415,7 +415,7 @@ export interface HostOperations {
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };
-  'sidecars.status': { arguments: { id: string }; result: Json };
+  'sidecars.status': { arguments: { id: string }; result: { id: string; running: boolean; started_at_ms: number } };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
