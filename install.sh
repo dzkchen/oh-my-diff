@@ -20,7 +20,9 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -53,6 +55,8 @@ MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
 DOWNLOAD_WAIT = "Waiting for the background update check or download to finish…"
 BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
+CODEX_APP = "dev.ohmydiff.codex-app"
+EDITORS = ("Code", "Cursor", "Windsurf")
 WEBSITE = "https://www.ohmydiff.me"
 DOCS = "https://github.com/dzkchen/oh-my-diff/blob/main/docs/install.md"
 MARK = ("╭─╮ ╭╮╭╮ ┌─╮", "│ │ │╰╯│ │ │", "╰─╯ ╵  ╵ └─╯")
@@ -667,6 +671,8 @@ def uninstall(args, root, bin_dir, current):
     (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
+    if codex_app_enabled(root):
+        codex_app(argparse.Namespace(action="disable", json=False), root, current)
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})
     restore_links(root, bin_dir)
     try:
@@ -684,6 +690,125 @@ def uninstalled(root):
     for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
         shutil.rmtree(leftover, ignore_errors=True)
     return {"uninstalled": True, "preserved_stores": str(root / "stores")}
+
+
+def codex_app_paths(root):
+    home = Path.home()
+    return (root / "codex-app/codex", home / f"Library/LaunchAgents/{CODEX_APP}.plist",
+            {name: home / "Library/Application Support" / name / "User/settings.json" for name in EDITORS})
+
+
+def editor_setting(path, wrapper, enable):
+    path = path.resolve()
+    if not path.parent.is_dir():
+        return None
+    try:
+        settings = json.loads(path.read_text() or "{}") if path.is_file() else {}
+    except (OSError, ValueError):
+        settings = None
+    if not isinstance(settings, dict):
+        return "has comments or can't be read; edit chatgpt.cliExecutable by hand"
+    value = settings.get("chatgpt.cliExecutable")
+    if enable is None:
+        return "uses OMD" if value == str(wrapper) and wrapper.is_file() else f"uses {value}" if value else "uses its bundled Codex"
+    if enable and value == str(wrapper):
+        return "set"
+    if enable and value:
+        return f"kept your chatgpt.cliExecutable {value}"
+    if not enable and value != str(wrapper):
+        return "unchanged"
+    if enable:
+        settings["chatgpt.cliExecutable"] = str(wrapper)
+    else:
+        del settings["chatgpt.cliExecutable"]
+    try:
+        write_json(path, settings, indent=4, ensure_ascii=False)
+    except OSError as error:
+        return f"can't be written ({error.strerror}); edit chatgpt.cliExecutable by hand"
+    return "set" if enable else "removed"
+
+
+def app_environment():
+    try:
+        return run(["launchctl", "getenv", "CODEX_CLI_PATH"]).strip() or None
+    except ValueError:
+        return None
+
+
+def agent_target(agent):
+    try:
+        return plistlib.loads(agent.read_bytes())["ProgramArguments"][-1]
+    except (OSError, ValueError, KeyError, IndexError, plistlib.InvalidFileException):
+        return None
+
+
+def codex_app_enabled(root):
+    wrapper, agent, _ = codex_app_paths(root)
+    return wrapper.parent.exists() or agent_target(agent) == str(wrapper) or app_environment() == str(wrapper)
+
+
+def codex_app_disable(root):
+    wrapper, agent, editors = codex_app_paths(root)
+    if agent_target(agent) == str(wrapper):
+        try:
+            run(["launchctl", "bootout", f"gui/{os.getuid()}/{CODEX_APP}"])
+        except ValueError:
+            pass
+        agent.unlink()
+    if app_environment() == str(wrapper):
+        run(["launchctl", "unsetenv", "CODEX_CLI_PATH"])
+    changed = {name: editor_setting(path, wrapper, False) for name, path in editors.items()}
+    shutil.rmtree(wrapper.parent, ignore_errors=True)
+    return changed
+
+
+def codex_app(args, root, current):
+    wrapper, agent, editors = codex_app_paths(root)
+    profile = receipt(current)["profile"] if current and args.action != "disable" else None
+    if args.action == "enable":
+        if profile != "full":
+            fail("The Codex app step needs an active OMD+ installation (--profile full).")
+        try:
+            (wrapper.parent / "cwd").mkdir(parents=True, exist_ok=True)
+            wrapper.write_text("#!/bin/sh\ncommand= skip=\nfor argument do\n"
+                               '  if [ -n "$skip" ]; then skip=; continue; fi\n'
+                               "  case $argument in -c|--config|--enable|--disable|-m|--model|-p|--profile|-s|--sandbox"
+                               "|-a|--ask-for-approval|-C|--cd|--add-dir|-i|--image|--local-provider|--remote|--remote-auth-token-env)"
+                               " skip=1;; -*) ;; *) command=$argument; break;; esac\n"
+                               "done\n"
+                               'if [ "$command" = app-server ]; then\n'
+                               '  here=$(pwd -P)\n'
+                               '  if [ "$here" = / ] || [ "$here" = "$(cd "$HOME" 2>/dev/null && pwd -P)" ]; then\n'
+                               f'    cd {shlex.quote(str(wrapper.parent / "cwd"))} || exit 1\n'
+                               "  fi\nfi\n"
+                               f'exec {shlex.quote(str(root / "current/bin/codex"))} "$@"\n')
+            wrapper.chmod(0o755)
+            agent.parent.mkdir(parents=True, exist_ok=True)
+            agent.write_bytes(plistlib.dumps({"Label": CODEX_APP, "RunAtLoad": True,
+                                              "ProgramArguments": ["/bin/launchctl", "setenv", "CODEX_CLI_PATH", str(wrapper)]}))
+            run(["launchctl", "setenv", "CODEX_CLI_PATH", wrapper])
+            changed = {name: editor_setting(path, wrapper, True) for name, path in editors.items()}
+        except BaseException:
+            codex_app_disable(root)
+            raise
+    elif args.action == "disable":
+        changed = codex_app_disable(root)
+    else:
+        changed = {name: editor_setting(path, wrapper, None) for name, path in editors.items()}
+    result = {"enabled": wrapper.is_file() and agent_target(agent) == str(wrapper), "codex": str(wrapper), "profile": profile,
+              "app_environment": app_environment(), "editors": {name: change for name, change in changed.items() if change}}
+    if args.json:
+        print(json.dumps(result, indent=2))
+    if not result["enabled"]:
+        step("Codex app", "uses its bundled Codex")
+    elif profile == "full":
+        step("Codex app", f"uses {tilde(wrapper)}")
+    else:
+        step("Codex app", f"uses {tilde(wrapper)}, but OMD+ is not active: reinstall OMD+ or run omd codex-app disable", "!")
+    for name, change in result["editors"].items():
+        step(f"{name} extension", change, "✓" if change in ("set", "removed", "unchanged", "uses OMD", "uses its bundled Codex") else "!")
+    if args.action in ("enable", "disable"):
+        say("  Quit and reopen the Codex app and reload editor windows to apply. Unsupported by OpenAI; see the Codex app section of the docs.")
 
 
 def resume_uninstall(args, root):
@@ -708,10 +833,16 @@ def update_dir(root):
     return root / "update"
 
 
-def write_json(path, value):
+def write_json(path, value, **dump):
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
-    temporary.write_text(json.dumps(value, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(json.dumps(value, **(dump or {"sort_keys": True})) + "\n")
+        if path.is_file():
+            shutil.copymode(path, temporary)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def read_json(path, default):
@@ -1201,8 +1332,8 @@ def main():
         prog="install.sh",
         description="Install, update and roll back Oh My Diff on Apple Silicon macOS",
         epilog="omd update [now|status|check|enable|disable|rollback], omd update checks on|off, "
-               "omd update channel stable|prerelease|nightly, omd update cadence daily|weekly, omd update pin VERSION|none")
-    parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "tick", "launch"),
+               "omd update channel stable|prerelease|nightly, omd update cadence daily|weekly, omd update pin VERSION|none, omd codex-app [enable|disable|status]")
+    parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall", "update", "codex-app", "tick", "launch"),
                         default="install")
     parser.add_argument("action", nargs="?", choices=("now", "status", "check", "enable", "disable", "rollback", "pin", *POLICY),
                         help="update action")
@@ -1219,8 +1350,8 @@ def main():
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument("--session", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.action and args.command != "update":
-        parser.error("only update takes an action")
+    if args.action and args.command != "update" and not (args.command == "codex-app" and args.action in ("enable", "disable", "status")):
+        parser.error("only update and codex-app (enable|disable|status) take an action")
     args.root = args.root.expanduser().resolve()
     root = args.root
     pending = read_json(root / "update/journal.json", {}) if root.is_dir() else {}
@@ -1254,6 +1385,8 @@ def main():
                 print(update_summary(result), file=sys.stderr)
         elif args.command == "install":
             install(args, root, current)
+        elif args.command == "codex-app":
+            codex_app(args, root, current)
         elif args.command == "status":
             if not current:
                 fail("No managed OMD installation is active.")

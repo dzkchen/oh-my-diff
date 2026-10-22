@@ -593,10 +593,14 @@ pub fn resource(reference: &str) -> Result<(String, Vec<u8>), String> {
         .into_iter()
         .map(|(id, owner)| (id, owner.sha256))
         .collect::<BTreeMap<_, _>>();
-    let thread = core
-        .expansion
-        .current()
+    let current = core.expansion.current();
+    let thread = current
+        .as_ref()
         .map_or_else(|| "user".to_owned(), |lead| lead.thread.to_string());
+    let repository = current.map_or_else(
+        || core.host.repository.clone(),
+        |lead| lead.host.repository.clone(),
+    );
     let mut last = "resource_unavailable".to_owned();
     for owner in owners {
         let Some(source) = sources.get(&owner) else {
@@ -605,7 +609,7 @@ pub fn resource(reference: &str) -> Result<(String, Vec<u8>), String> {
         };
         let loaded = codex_omd::scoped_data::ScopedDataHost::new(
             core.host.root.clone(),
-            core.host.repository.clone(),
+            repository.clone(),
             None,
             None,
             owner,

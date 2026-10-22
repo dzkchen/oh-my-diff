@@ -277,7 +277,20 @@ fn lead_candidate(route: &Route, provider: &str) -> bool {
 }
 
 impl Host {
-    fn for_worktree(&self, repository: PathBuf) -> Host {
+    fn admits(&self, repository: &std::path::Path, codex_home: &std::path::Path) -> bool {
+        let codex_home = codex_home
+            .canonicalize()
+            .unwrap_or_else(|_| codex_home.to_path_buf());
+        !codex_omd::app_routes::unscoped_directory(repository)
+            && !self
+                .protected_paths()
+                .iter()
+                .chain([&codex_home])
+                .any(|path| path.starts_with(repository) || repository.starts_with(path))
+            && self.config.validate(repository).is_ok()
+    }
+
+    fn for_repository(&self, repository: PathBuf) -> Host {
         self.route_config();
         let routes = self
             .routes
@@ -742,5 +755,43 @@ mod tests {
         );
         std::fs::write(root.join(config::HOST_CONFIG), br#"{"schema":2}"#).unwrap();
         assert!(HostConfig::load(&root, &root.join("repo")).is_err());
+    }
+
+    #[test]
+    fn thread_projects_exclude_unscoped_directories_and_protected_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let base = directory.path().canonicalize().unwrap();
+        let root = base.join("store");
+        let project = base.join("project");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&project).unwrap();
+        let host = Host {
+            root: root.clone(),
+            repository: base.join("launch"),
+            repository_identity: String::new(),
+            config: HostConfig::default(),
+            routes: std::sync::Mutex::new(RouteTable {
+                stamp: None,
+                config: Arc::new(HostConfig::default()),
+                error: None,
+            }),
+            accounts: Arc::new(Accounts::default()),
+            manager: Weak::new(),
+            epoch: 0,
+        };
+        let work = base.join("work");
+        std::fs::create_dir_all(work.join(".codex/memories")).unwrap();
+        let codex_home = base.join("codex-home");
+        std::os::unix::fs::symlink(work.join(".codex"), &codex_home).unwrap();
+        assert!(host.admits(&project, &codex_home));
+        assert!(!host.admits(&base, &codex_home));
+        assert!(!host.admits(&root, &codex_home));
+        assert!(!host.admits(&root.join("sessions"), &codex_home));
+        assert!(!host.admits(&work, &codex_home));
+        assert!(!host.admits(&work.join(".codex/memories"), &codex_home));
+        assert!(!host.admits(std::path::Path::new("/"), &codex_home));
+        let bound = host.for_repository(project.clone());
+        assert_eq!(bound.repository, project);
+        assert_ne!(bound.repository_identity, host.repository_identity);
     }
 }
