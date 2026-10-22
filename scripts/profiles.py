@@ -442,8 +442,9 @@ def mini(prefix, bin_dir, codex):
     for name in (signal.SIGINT, signal.SIGQUIT):
         signal.signal(name, signal.SIG_IGN)
     while True:
-        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}"}
-        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen"] if mode == "mini" else []), *codex], env=env,
+        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}",
+               **({"OMD_TUI_MOD_UI": "omd_mini", "OMD_TUI_HEADER": "off", "OMD_TUI_COMPOSER": "plain"} if mode == "mini" else {})}
+        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen", "-c", "tui.show_tooltips=false"] if mode == "mini" else []), *codex], env=env,
                               preexec_fn=lambda: [signal.signal(name, signal.SIG_DFL) for name in (signal.SIGINT, signal.SIGQUIT)]).returncode
         exported = subprocess.run([record["tools"]["omd"]["installed_path"], "store", "export", "--mod", "omd_mini",
                                    "--store", record["store"], "--scope", "user"], capture_output=True, text=True)

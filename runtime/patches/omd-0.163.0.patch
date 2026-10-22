@@ -31718,7 +31718,7 @@ index ea0894b3e1d3777f4c598727b03199c1f69cbd05..f6fecf6a99ab459fb577841f7c7c83c9
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f51cd3f4ec 100644
+index 1b07e9826dd10fae888b903d75bdf0187a768e82..2683d685283e04bfaccacded59aedfa50036228a 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -235,6 +235,10 @@ mod link_hover;
@@ -31803,7 +31803,7 @@ index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f5
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1217,7 +1248,90 @@ impl App {
+@@ -1217,7 +1248,89 @@ impl App {
          Ok(())
      }
 
@@ -31823,7 +31823,6 @@ index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f5
 +        let (depth, view_id) = self.chat_widget.mod_view_state();
 +        crate::mod_surface::view_state(depth, view_id, self.overlay.is_some());
 +        self.sync_mod_keymap();
-+        let before = crate::mod_ui::status_segments();
 +        crate::mod_ui::refresh();
 +        if let Some(warning) = crate::mod_ui::sync_syntax_theme()
 +            && crate::mod_ui::first_warning(&warning)
@@ -31838,7 +31837,7 @@ index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f5
 +        }
 +        if crate::omd::status_line_disabled_changed() {
 +            self.chat_widget.refresh_status_surfaces();
-+        } else if crate::mod_ui::notices_changed() || before != crate::mod_ui::status_segments() {
++        } else if crate::mod_ui::notices_changed() || crate::mod_ui::status_segments_stale() {
 +            self.chat_widget.refresh_status_line();
 +        }
 +    }
@@ -31894,7 +31893,7 @@ index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f5
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1237,33 +1351,47 @@ impl App {
+@@ -1237,33 +1350,47 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -31949,7 +31948,7 @@ index 1b07e9826dd10fae888b903d75bdf0187a768e82..b90a4a7996acf43090cf6a173e93e7f5
              Ok(rendered_area)
          })
      }
-@@ -1273,6 +1401,7 @@ impl App {
+@@ -1273,6 +1400,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -32613,6 +32612,20 @@ index a7f7f1e827818386b7417f27ab9a829f34fe1fa7..4bade24bd175eeac4aa6274271c0c479
              AppEvent::StartSide {
                  parent_thread_id,
                  user_message,
+diff --git a/codex-rs/tui/src/app/history_ui.rs b/codex-rs/tui/src/app/history_ui.rs
+index ca29929c1350cdad2a9ba465ffafc27dd59a96cb..f48c197742dec22029d78cb0840daa1fda7021eb 100644
+--- a/codex-rs/tui/src/app/history_ui.rs
++++ b/codex-rs/tui/src/app/history_ui.rs
+@@ -326,6 +326,9 @@ impl App {
+     }
+
+     pub(super) fn queue_clear_ui_header(&mut self, tui: &mut tui::Tui) {
++        if !crate::omd::session_header_shown() {
++            return;
++        }
+         if tui.is_owned_screen() {
+             if !self.transcript_cells.iter().any(|cell| {
+                 cell.as_any().is::<history_cell::SessionInfoCell>()
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
 index f1c6dec7052b64b6ff15876cae29ab275df8bf4c..818b964917a19e4b89e5e5561a14f65d68d5bfe5 100644
 --- a/codex-rs/tui/src/app/input.rs
@@ -33704,9 +33717,18 @@ index 8aa1bca71b37199ea5aa9956871c68de2b0c1dc5..d2df0e3f2da31f61cb066f95e349da58
 
 
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index 4c329f378702414c3c17cc31802c778a8dbb2266..1e450a6cea0ba71bf01a7ac1be0bf55afe4bf096 100644
+index 4c329f378702414c3c17cc31802c778a8dbb2266..9f3626c55d1faa6cb7c39307c0043964a59786a7 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
+@@ -1163,7 +1163,7 @@ See the Codex keymap documentation for supported actions and examples."
+         let mut listen_for_app_server_events = true;
+         let mut reconnect = None;
+         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
+-        let mut waiting_for_initial_session_header = true;
++        let mut waiting_for_initial_session_header = crate::omd::session_header_shown();
+
+         #[cfg(not(debug_assertions))]
+         let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
 @@ -1470,6 +1470,7 @@ See the Codex keymap documentation for supported actions and examples."
          if let Err(err) = app_server.shutdown().await {
              tracing::warn!(error = %err, "failed to shut down embedded app server");
@@ -34617,7 +34639,7 @@ index 6e3726352afb15a40c3de0de1558bc2b59def9cc..3e49620c08405df01131ff35d6ad8d45
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc15726f84 100644
+index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..6d4cb9eb4ac1f982a10a5d5443b0022198ab98d6 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -383,6 +383,7 @@ mod draft_state;
@@ -34964,7 +34986,20 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      /// Synchronize the legacy file-search popup with the current `@` token.
      fn sync_file_search_popup(&mut self, range: Range<usize>, query: String) {
          if self
-@@ -4902,6 +5082,11 @@ impl ChatComposer {
+@@ -4818,7 +4998,11 @@ impl ChatComposer {
+             selection.register(status.intersection(buf.area), changed);
+             selection.register(footer_rect.intersection(buf.area), changed);
+         }
+-        let style = user_message_style();
++        let style = if crate::omd::plain_composer() {
++            Style::default()
++        } else {
++            user_message_style()
++        };
+         Block::default().style(style).render(composer_rect, buf);
+         if !remote_images_rect.is_empty() {
+             let first = self
+@@ -4902,11 +5086,20 @@ impl ChatComposer {
                          &highlights,
                      );
                  }
@@ -34976,7 +35011,17 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
              }
          }
          if !self.draft.input_enabled || textarea_is_empty {
-@@ -4915,8 +5100,20 @@ impl ChatComposer {
+             let text = if self.draft.input_enabled {
+-                self.placeholder_text.as_str().to_string()
++                if crate::omd::plain_composer() {
++                    String::new()
++                } else {
++                    self.placeholder_text.as_str().to_string()
++                }
+             } else {
+                 self.draft
+                     .input_disabled_placeholder
+@@ -4915,8 +5108,20 @@ impl ChatComposer {
                      .to_string()
              };
              if !textarea_rect.is_empty() {
@@ -34999,7 +35044,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
              }
          }
          // The reserved right margin indicates hidden rows without changing wrapping.
-@@ -4968,6 +5165,7 @@ impl ChatComposer {
+@@ -4968,6 +5173,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -35007,7 +35052,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9361,6 +9559,7 @@ mod tests {
+@@ -9361,6 +9567,7 @@ mod tests {
                      Some(CommandItem::ServiceTier(command)) => {
                          panic!("expected {expected} command, got service tier {command:?}")
                      }
@@ -35015,7 +35060,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
                      None => panic!("no selected command for '{input}'"),
                  },
                  _ => panic!("slash popup not active after typing '{input}'"),
-@@ -9460,6 +9659,7 @@ mod tests {
+@@ -9460,6 +9667,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -35023,7 +35068,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9477,6 +9677,25 @@ mod tests {
+@@ -9477,6 +9685,25 @@ mod tests {
          );
      }
 
@@ -35049,7 +35094,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -9970,6 +10189,7 @@ mod tests {
+@@ -9970,6 +10197,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -35057,7 +35102,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10170,6 +10390,7 @@ mod tests {
+@@ -10170,6 +10398,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -35065,7 +35110,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -10228,6 +10449,7 @@ mod tests {
+@@ -10228,6 +10457,7 @@ mod tests {
      }
 
      #[test]
@@ -35073,7 +35118,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn file_completion_preserves_large_paste_placeholder_elements() {
          use crossterm::event::KeyCode;
          use crossterm::event::KeyEvent;
-@@ -10312,6 +10534,7 @@ mod tests {
+@@ -10312,6 +10542,7 @@ mod tests {
      }
 
      #[test]
@@ -35081,7 +35126,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn legacy_file_completion_ignores_shell_variable_to_the_right() {
          let (mut composer, _rx) = new_test_composer();
          composer.set_skill_mentions(Some(vec![test_skill_metadata("available")]));
-@@ -10338,6 +10561,7 @@ mod tests {
+@@ -10338,6 +10569,7 @@ mod tests {
      }
 
      #[test]
@@ -35089,7 +35134,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn adjacent_file_completion_inserts_leading_separator() {
          let (mut composer, _rx) = new_test_composer();
          configure_bound_plugin_left_of_unbound_plugin(&mut composer);
-@@ -10371,6 +10595,7 @@ mod tests {
+@@ -10371,6 +10603,7 @@ mod tests {
      }
 
      #[test]
@@ -35097,7 +35142,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn file_completion_preserves_separator_before_existing_suffix() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10386,6 +10611,7 @@ mod tests {
+@@ -10386,6 +10619,7 @@ mod tests {
      }
 
      #[test]
@@ -35105,7 +35150,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn file_completion_preserves_separator_before_sigiled_suffix() {
          for suffix in ["@next", "$next"] {
              let (mut composer, _rx) = new_test_composer();
-@@ -10398,6 +10624,7 @@ mod tests {
+@@ -10398,6 +10632,7 @@ mod tests {
      }
 
      #[test]
@@ -35113,7 +35158,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn file_completion_inserts_separator_before_line_break() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10413,6 +10640,7 @@ mod tests {
+@@ -10413,6 +10648,7 @@ mod tests {
      }
 
      #[test]
@@ -35121,7 +35166,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10435,6 +10663,138 @@ mod tests {
+@@ -10435,6 +10671,138 @@ mod tests {
          }
      }
 
@@ -35260,6 +35305,71 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..ffee0211eeb61cc0d95f7e9fea6d1dfc
      #[test]
      fn file_completion_does_not_dismiss_identical_next_token() {
          let (mut composer, _rx) = new_test_composer();
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
+index 949edcf91699d64956826211c335f9ef84854005..f8a751277c22beca9a7e55520d94c75bf4e63265 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
+@@ -42,10 +42,11 @@ impl ChatComposer {
+         options: ComposerRenderOptions<'_>,
+     ) -> ComposerLayout {
+         let footer_hint_height = self.footer_hint_height(area.width, options);
++        let padding = u16::from(!crate::omd::plain_composer());
+         // Preserve input and hints before allocating the persistent status row.
+         let status_height = self.status_surface_height(options).min(
+             area.height
+-                .saturating_sub(footer_hint_height.saturating_add(/*rhs*/ 3)),
++                .saturating_sub(footer_hint_height.saturating_add(1 + 2 * padding)),
+         );
+         let status = Rect {
+             y: area
+@@ -77,7 +78,7 @@ impl ChatComposer {
+         let (composer_rect, popup_rect, mut footer_rect) = if shortcuts_above {
+             let [shortcuts, composer, footer] = Layout::vertical([
+                 Constraint::Max(footer_height(&self.hint_footer_props(options), area.width)),
+-                Constraint::Min(3 + voice_rows),
++                Constraint::Min(1 + 2 * padding + voice_rows),
+                 Constraint::Length(footer_hint_height),
+             ])
+             .areas(area);
+@@ -85,7 +86,7 @@ impl ChatComposer {
+         } else if self.popups.active.is_above_composer() {
+             // Preserve the draft first, then its footer, and use remaining space for suggestions.
+             let [mut composer, mut popup, footer] = Layout::vertical([
+-                Constraint::Min(3 + voice_rows),
++                Constraint::Min(1 + 2 * padding + voice_rows),
+                 Constraint::Max(popup_height.saturating_sub(footer_hint_height)),
+                 Constraint::Length(footer_hint_height),
+             ])
+@@ -95,7 +96,7 @@ impl ChatComposer {
+             (composer, popup, footer)
+         } else {
+             let [composer, popup] = Layout::vertical([
+-                Constraint::Min(3 + voice_rows),
++                Constraint::Min(1 + 2 * padding + voice_rows),
+                 Constraint::Max(popup_height),
+             ])
+             .areas(area);
+@@ -105,9 +106,9 @@ impl ChatComposer {
+         // Keep the draft visible when clipped.
+         let voice_rows = voice_rows * u16::from(composer_rect.height >= voice_rows + 3);
+         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
+-            /*top*/ 1 + voice_rows,
++            /*top*/ padding + voice_rows,
+             LIVE_PREFIX_COLS,
+-            /*bottom*/ 1,
++            /*bottom*/ padding,
+             /*right*/ 1u16.saturating_add(options.textarea_right_reserve),
+         ));
+         let remote_images_height = self
+@@ -192,7 +193,7 @@ impl ChatComposer {
+             } else {
+                 0
+             }
+-            + 2
++            + if crate::omd::plain_composer() { 0 } else { 2 }
+             + self
+                 .voice_strip
+                 .as_ref()
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs
 index b219097ee18118ba7be29fd24c514d7e64b2cfb5..192ca81a4d6223645af607083a432f2ad5dc0a58 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs
@@ -35280,6 +35390,58 @@ index b219097ee18118ba7be29fd24c514d7e64b2cfb5..192ca81a4d6223645af607083a432f2a
          }
      }
  }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..1a8ea42dcdbbf9272a70fa0a568bd99f072a8f3a 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+@@ -15,6 +15,7 @@
+ use std::time::Instant;
+
+ use super::super::footer::footer_height;
++use super::super::footer::passive_footer_status_line;
+ use super::super::footer::reset_mode_after_activity;
+ use super::super::footer::shows_passive_footer_line;
+ use super::ActivePopup;
+@@ -275,10 +276,22 @@ impl super::ChatComposer {
+         self.shortcut_overlay_visible() && options.footer.is_none()
+     }
+
++    fn idle_hint_only(&self, options: ComposerRenderOptions<'_>) -> bool {
++        let props = self.hint_footer_props(options);
++        self.custom_footer_height().is_none()
++            && self.footer.hint_override.is_none()
++            && !self.footer.flash_visible()
++            && shows_passive_footer_line(&props)
++            && passive_footer_status_line(&props).is_none()
++    }
++
+     pub(super) fn footer_hint_height(&self, width: u16, options: ComposerRenderOptions<'_>) -> u16 {
+         if self.show_warning_notice(options) || self.shortcuts_above_composer(options) {
+             return 1;
+         }
++        if crate::omd::plain_composer() && options.footer.is_none() && self.idle_hint_only(options) {
++            return u16::from(options.separate_status_line);
++        }
+         options
+             .footer
+             .map_or_else(
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs b/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs
+index 48f7adff591d5c94eae8b275deb7217be39d864a..2b8c3730a434dabe417928a76f156922783dcc15 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs
+@@ -158,7 +158,11 @@ impl ChatComposer {
+         }
+         ratatui::widgets::Clear.render(area, buf);
+         Block::default()
+-            .style(Style::reset().patch(user_message_style()))
++            .style(Style::reset().patch(if crate::omd::plain_composer() {
++                Style::default()
++            } else {
++                user_message_style()
++            }))
+             .render(area, buf);
+         let mut area = area;
+         if self.footer.flash_visible()
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs b/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs
 index 65a5926135ecd4d211f0edf54f834e4878f52a08..d56abcc622d12cb095118e9712ce5b49c0b87b9f 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/mouse.rs
@@ -36231,7 +36393,7 @@ index 681fc9bcae31032ce05b769309dea30f53241701..c46b29bac576fd28c05dea6e4b2646d1
          let origin = &self.mouse_selection.as_ref()?.origin;
          let range = origin.start.min(self.cursor_pos)..origin.end.max(self.cursor_pos);
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 2f74f843d59d8578fe32a195de0c664bf049e4fe..6eed20edb41ee04d871a1a860f13a8c55a440eed 100644
+index 2f74f843d59d8578fe32a195de0c664bf049e4fe..fb2ad6ff0486567c5b2b68594a09ac16aba1d58f 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -310,6 +310,7 @@ mod interaction;
@@ -36318,6 +36480,17 @@ index 2f74f843d59d8578fe32a195de0c664bf049e4fe..6eed20edb41ee04d871a1a860f13a8c5
          if let Some(input) = realtime::realtime_delegation_input(items) {
              if !from_replay && self.should_hide_realtime_delegation(turn_id) {
                  return;
+@@ -1528,6 +1551,10 @@ impl ChatWidget {
+
+     /// Merge the real session info cell with any placeholder header to avoid double boxes.
+     fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
++        if cell.is_empty() {
++            self.flush_active_cell();
++            return;
++        }
+         let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
+         let merged_header = if let Some(active) = self.transcript.take_active_cell() {
+             if active
 diff --git a/codex-rs/tui/src/chatwidget/activity_presentation.rs b/codex-rs/tui/src/chatwidget/activity_presentation.rs
 index 573a4770f6265fe88acca9e69d56394229a34fa7..d74cce51b6b58206577721caad446cd5573d0454 100644
 --- a/codex-rs/tui/src/chatwidget/activity_presentation.rs
@@ -36396,7 +36569,7 @@ index e769319de7d8bb2e1dc4ab6cc9d71675c739bc48..85826fbf2d58d515fa7dbb340a3620d0
              std::mem::take(&mut previous.rate_limit_snapshots_by_limit_id);
          self.usage_notice_state = std::mem::take(&mut previous.usage_notice_state);
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..2f16aa9782f97d950dff50c3cde23dc53f25a14d 100644
+index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..864bef95c4ed00fe11f779f0fcea1d233c695122 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -39,7 +39,11 @@ impl ChatWidget {
@@ -36412,8 +36585,14 @@ index 05dde949edeadc4c4ef2c510d13c19f195a9b43a..2f16aa9782f97d950dff50c3cde23dc5
          let side_placeholder = SIDE_PLACEHOLDER.to_string();
 
          let model_override = model.as_deref();
-@@ -68,6 +72,7 @@ impl ChatWidget {
-         let active_cell = Some(header);
+@@ -64,10 +68,11 @@ impl ChatWidget {
+         };
+
+         let empty_state_animation = crate::empty_state_animation::EmptyStateAnimation::default();
+-        let header = Self::placeholder_session_header_cell(&config);
+-        let active_cell = Some(header);
++        let active_cell = crate::omd::session_header_shown()
++            .then(|| Self::placeholder_session_header_cell(&config));
 
          let current_cwd = Some(config.cwd.to_path_buf());
 +        let startup_model_provider_id = config.model_provider_id.clone();
@@ -37526,21 +37705,26 @@ index 692eba105a92c446fd4ffb8a3440c08b7b88134c..08c46d9d2b954aac5416b0cc808a7598
              .as_ref()
              .and_then(|info| info.model_context_window)
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..8af4669574966e9835ad4bbdb67fff4f329e70f7 100644
+index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..d3178d3899173533006ab5b8f36d55ffc6409a21 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-@@ -201,7 +201,9 @@ impl ChatWidget {
+@@ -201,7 +201,14 @@ impl ChatWidget {
      }
 
      fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
 -        let enabled = !selections.status_line_items.is_empty();
 +        let mod_segments = crate::mod_ui::status_segments();
-+        let enabled = !selections.status_line_items.is_empty()
++        crate::mod_ui::status_segments_applied(&mod_segments);
++        let shown = !selections.status_line_items.is_empty()
 +            || (crate::omd::status_line_disabled() && !mod_segments.is_empty());
++        let summary = (shown || codex_omd::mod_ui_allowlist().is_some())
++            .then(crate::omd::compact_status)
++            .flatten();
++        let enabled = shown || summary.is_some();
          self.bottom_pane.set_status_line_enabled(enabled);
          if !enabled {
              self.set_status_line(/*status_line*/ None);
-@@ -216,11 +218,24 @@ impl ChatWidget {
+@@ -216,11 +223,24 @@ impl ChatWidget {
              }
          }
 
@@ -37551,7 +37735,7 @@ index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..8af4669574966e9835ad4bbdb67fff4f
              self.thread_id,
 -        ));
 +        );
-+        let parts = crate::omd::compact_status()
++        let parts = summary
 +            .map(|status| vec![status.bold()])
 +            .into_iter()
 +            .chain(mod_segments.into_iter().map(|segment| vec![segment.into()]))
@@ -37567,7 +37751,7 @@ index a3946abd13fb0cc06f1fddd80b42e815fe35e8aa..8af4669574966e9835ad4bbdb67fff4f
          let hyperlink_url = selections
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
-@@ -471,6 +486,9 @@ impl ChatWidget {
+@@ -471,6 +491,9 @@ impl ChatWidget {
      ///
      /// Unknown ids are deduplicated in insertion order for warning messages.
      fn status_line_items_with_invalids(&self) -> (Vec<StatusLineItem>, Vec<String>) {
@@ -39924,7 +40108,7 @@ index 7c398870a92a728d6f69273765fafd9a2c76a59f..a1bbf76b0f21e3c52b4ca0aa60850246
          if width == 0 {
              return Vec::new();
 diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
-index 48295d4b85ce51d6dc048c7942127c9c947c9987..0d5503a699c51f1281832e026610e10260fb80d4 100644
+index 48295d4b85ce51d6dc048c7942127c9c947c9987..97d1022a57d94214481b7865918a75749ada3acb 100644
 --- a/codex-rs/tui/src/history_cell/session.rs
 +++ b/codex-rs/tui/src/history_cell/session.rs
 @@ -42,11 +42,15 @@ pub(crate) fn with_border_with_inner_width(
@@ -39968,7 +40152,20 @@ index 48295d4b85ce51d6dc048c7942127c9c947c9987..0d5503a699c51f1281832e026610e102
      fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
          self.0.display_lines(width)
      }
-@@ -129,7 +145,10 @@ pub(crate) fn fullscreen_session_lines(
+@@ -106,6 +122,12 @@ impl HistoryCell for SessionNoticeCell {
+ #[derive(Debug)]
+ pub struct SessionInfoCell(CompositeHistoryCell);
+
++impl SessionInfoCell {
++    pub(crate) fn is_empty(&self) -> bool {
++        self.0.parts.is_empty()
++    }
++}
++
+ /// Fullscreen transcript presentation omits tips; scrollback retains the original cells.
+ pub(crate) fn fullscreen_session_lines(
+     cell: &dyn HistoryCell,
+@@ -129,7 +151,10 @@ pub(crate) fn fullscreen_session_lines(
          }
          lines
      } else if detailed || mode == HistoryRenderMode::Rich {
@@ -39980,7 +40177,25 @@ index 48295d4b85ce51d6dc048c7942127c9c947c9987..0d5503a699c51f1281832e026610e102
      } else {
          cell.display_hyperlink_lines_for_mode(width, mode)
      }
-@@ -354,6 +373,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -190,9 +215,16 @@ pub(crate) fn new_session_info(
+         session.approval_policy,
+         &session.permission_profile,
+     ));
+-    let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
++    let shown = crate::omd::session_header_shown();
++    let mut parts: Vec<Box<dyn HistoryCell>> = Vec::new();
++    if shown {
++        parts.push(Box::new(header));
++    }
+
+     if is_first_event {
++        if !shown {
++            return SessionInfoCell(CompositeHistoryCell { parts });
++        }
+         // Help lines below the header (new copy and list)
+         let help_lines: Vec<Line<'static>> = vec![
+             "  To get started, describe a task or try one of these commands:"
+@@ -354,6 +386,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
                  "YOLO mode".magenta().bold(),
              ]));
          }
@@ -39994,7 +40209,7 @@ index 48295d4b85ce51d6dc048c7942127c9c947c9987..0d5503a699c51f1281832e026610e102
          lines
              .into_iter()
              .map(|line| truncate_line_with_ellipsis_if_overflow(line, width))
-@@ -361,8 +387,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -361,8 +400,13 @@ impl HistoryCell for SessionHeaderHistoryCell {
      }
 
      fn raw_lines(&self) -> Vec<Line<'static>> {
@@ -40009,7 +40224,7 @@ index 48295d4b85ce51d6dc048c7942127c9c947c9987..0d5503a699c51f1281832e026610e102
              Line::from(format!(
                  "model: {}{}",
                  self.model,
-@@ -378,6 +409,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
+@@ -378,6 +422,9 @@ impl HistoryCell for SessionHeaderHistoryCell {
          if self.yolo_mode {
              lines.push(Line::from("permissions: YOLO mode"));
          }
@@ -40648,7 +40863,7 @@ index b547642270e9b9c612d1b62ccedf6d305b9b84d0..d3443fbcb11f4ebe09442d3a7a086edb
 
  › 1. Update now (runs `npm install -g @openai/codex`)                           
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index e0a4d5286b33ae186952b405f87a42a9b7fbd439..ec75a448812154dbc38802d8f73d0ce959db95bc 100644
+index e0a4d5286b33ae186952b405f87a42a9b7fbd439..2c9223d860bcc11f01acdcb9f5d2970f63da6437 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -58,6 +58,7 @@ use input::handle_startup_draft_key;
@@ -40756,7 +40971,18 @@ index e0a4d5286b33ae186952b405f87a42a9b7fbd439..ec75a448812154dbc38802d8f73d0ce9
              tui.frame_requester()
                  .schedule_frame_in(ChatComposer::recommended_paste_flush_delay());
          }
-@@ -517,7 +546,12 @@ fn startup_draft_bottom_pane(
+@@ -480,7 +509,9 @@ fn startup_draft_renderable<'a>(
+     session_action: StartupDraftSessionAction,
+ ) -> RenderableItem<'a> {
+     let mut renderable = FlexRenderable::new();
+-    renderable.push(/*flex*/ 1, RenderableItem::Borrowed(header));
++    if crate::omd::session_header_shown() {
++        renderable.push(/*flex*/ 1, RenderableItem::Borrowed(header));
++    }
+     let loading_message = match session_action {
+         StartupDraftSessionAction::New | StartupDraftSessionAction::NewFromCommandCenter => None,
+         StartupDraftSessionAction::Resume => Some("  Resuming session…"),
+@@ -517,7 +548,12 @@ fn startup_draft_bottom_pane(
              frame_requester,
              has_input_focus: true,
              enhanced_keys_supported,
@@ -102882,10 +103108,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5aced77b95479c9a9b1d02dd85afb3d78a8c52b1
+index 0000000000000000000000000000000000000000..f3dd2e714f4b63bfb06f6c8d17076ada10b705af
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,252 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -103120,6 +103346,7 @@ index 0000000000000000000000000000000000000000..5aced77b95479c9a9b1d02dd85afb3d7
 +pub use mods::mod_component_id;
 +pub use mods::mod_counts;
 +pub use mods::mod_key_name;
++pub use mods::mod_ui_allowlist;
 +pub use mods::namespace_matches;
 +pub use mods::owned_command;
 +pub use mods::persist_changed_by;
@@ -104774,10 +105001,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc56918495
+index 0000000000000000000000000000000000000000..29cd071d58ae9a5762a6b634b16d3bf89652a239
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6179 @@
+@@ -0,0 +1,6212 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105462,6 +105689,16 @@ index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc
 +        "private" => "private",
 +        _ => "unknown",
 +    }
++}
++
++pub fn mod_ui_allowlist() -> Option<Vec<String>> {
++    std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
++        ids.split(',')
++            .map(str::trim)
++            .filter(|id| !id.is_empty())
++            .map(str::to_owned)
++            .collect()
++    })
 +}
 +pub const MOD_EVENTS: &[(&str, &str)] = &[
 +    ("context", "context"),
@@ -107479,6 +107716,24 @@ index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc
 +    }
 +
 +    #[test]
++    fn a_mod_ui_allowlist_keeps_only_dialogs_from_unlisted_mods() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap().join("store");
++        ModStore::create(root.clone()).unwrap();
++        let mut host = ModHost::open(root).unwrap();
++        host.ui_mods = Some(vec!["b".into()]);
++        let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
++        let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
++        let composed = host.compose_terminal(vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))], "terminal", None);
++        assert_eq!(composed.view.status, ["b"]);
++        assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
++        assert_eq!(
++            view::site_component_ids(&composed.view.sites),
++            ["a_dialog", "b_above", "b_below", "b_header"].map(String::from).into_iter().collect()
++        );
++    }
++
++    #[test]
 +    fn every_capability_has_a_consent_phrase() {
 +        for capability in MOD_CAPABILITIES {
 +            assert_ne!(capability_phrase(capability), *capability);
@@ -107601,6 +107856,7 @@ index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc
 +    valid_views: BTreeMap<String, Value>,
 +    renders: BTreeMap<String, (String, Value, Option<Instant>)>,
 +    clock_reads: BTreeSet<String>,
++    ui_mods: Option<Vec<String>>,
 +    rendered: HashMap<String, render::Rendered>,
 +    chains: Vec<Value>,
 +    access: Vec<Value>,
@@ -108106,6 +108362,7 @@ index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc
 +            valid_views: BTreeMap::new(),
 +            renders: BTreeMap::new(),
 +            clock_reads: BTreeSet::new(),
++            ui_mods: mod_ui_allowlist(),
 +            rendered: HashMap::new(),
 +            chains: Vec::new(),
 +            access: Vec::new(),
@@ -110343,6 +110600,9 @@ index 0000000000000000000000000000000000000000..ef28aa4bd90e65901e4aa0d9dadedbfc
 +            let Ok(mut patch) = parsed else {
 +                continue;
 +            };
++            if self.ui_mods.as_ref().is_some_and(|ids| !ids.contains(&id)) {
++                patch.drop_persistent_ui();
++            }
 +            if view.sites.get("dialog").is_some_and(|dialog| {
 +                dialog.mode == ModSiteMode::Replace && !dialog.components.is_empty()
 +            }) {
@@ -122225,10 +122485,10 @@ index 0000000000000000000000000000000000000000..68cad86052ed742edf5ab85cf8fe4aed
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcdb1932b1166dfab14b6d95d3c1a5afd02b2723
+index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd65dd23bf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2192 @@
+@@ -0,0 +1,2201 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -124148,6 +124408,15 @@ index 0000000000000000000000000000000000000000..bcdb1932b1166dfab14b6d95d3c1a5af
 +            return Err(failure(format!("invalid_terminal_patch: {field}")));
 +        }
 +        Ok(patch)
++    }
++
++    pub fn drop_persistent_ui(&mut self) {
++        self.sites.retain(|name, _| name == "dialog");
++        self.panels = None;
++        self.header = None;
++        self.footer = None;
++        self.layout = None;
++        self.status.clear();
 +    }
 +
 +    /// Exclusive fields go to the first mod in composition order; later claims become conflicts.
@@ -162200,10 +162469,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf8099f9ee
+index 0000000000000000000000000000000000000000..a7cb49c745be8908d45f734c806ae1aff9f5ff43
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4843 @@
+@@ -0,0 +1,4857 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -163652,6 +163921,16 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +
 +pub(crate) fn syntax_theme() -> Option<String> {
 +    with_cache(|cache| cache.snapshot.view.theme.syntax.clone()).flatten()
++}
++
++static APPLIED_STATUS: Mutex<Vec<String>> = Mutex::new(Vec::new());
++
++pub(crate) fn status_segments_applied(segments: &[String]) {
++    *APPLIED_STATUS.locked() = segments.to_vec();
++}
++
++pub(crate) fn status_segments_stale() -> bool {
++    *APPLIED_STATUS.locked() != status_segments()
 +}
 +
 +pub(crate) fn status_segments() -> Vec<String> {
@@ -165695,10 +165974,14 @@ index 0000000000000000000000000000000000000000..af87862e4a5f33d3bf01b30fec508ecf
 +    if notices.0.len() != count {
 +        notices.1 += 1;
 +    }
++    let ui_mods = (placement == NoticePlacement::Status)
++        .then(codex_omd::mod_ui_allowlist)
++        .flatten();
 +    notices
 +        .0
 +        .iter()
 +        .filter(|notice| notice.placement == placement)
++        .filter(|notice| ui_mods.as_ref().is_none_or(|ids| ids.contains(&notice.owner)))
 +        .rev()
 +        .take(3)
 +        .cloned()
@@ -169477,10 +169760,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fcd78271e170693dd12380243e995a9b6d797d1f
+index 0000000000000000000000000000000000000000..f04d186a13f5e5f5ac8f5debf90087d8d9146ef4
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,722 @@
+@@ -0,0 +1,733 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -169814,7 +170097,7 @@ index 0000000000000000000000000000000000000000..fcd78271e170693dd12380243e995a9b
 +}
 +
 +pub(crate) fn status_line_disabled() -> bool {
-+    builtins().surface_disabled("status_line")
++    codex_omd::mod_ui_allowlist().is_some() || builtins().surface_disabled("status_line")
 +}
 +
 +pub(crate) fn status_line_disabled_changed() -> bool {
@@ -169863,6 +170146,14 @@ index 0000000000000000000000000000000000000000..fcd78271e170693dd12380243e995a9b
 +
 +pub(crate) fn mouse_enabled() -> bool {
 +    terminal_active() && std::env::var("OMD_TUI_MOUSE").as_deref() != Ok("off")
++}
++
++pub(crate) fn session_header_shown() -> bool {
++    std::env::var("OMD_TUI_HEADER").as_deref() != Ok("off")
++}
++
++pub(crate) fn plain_composer() -> bool {
++    std::env::var("OMD_TUI_COMPOSER").as_deref() == Ok("plain")
 +}
 +
 +fn locale_supports_unicode() -> bool {
@@ -169996,6 +170287,9 @@ index 0000000000000000000000000000000000000000..fcd78271e170693dd12380243e995a9b
 +                    .is_some_and(|status| status["activation_error"].is_string()) =>
 +                {
 +                    "Oh My Diff · mods inactive · see /omd".to_string()
++                }
++                Ok(snapshot) if snapshot.failed_mods == 0 && codex_omd::mod_ui_allowlist().is_some() => {
++                    return None;
 +                }
 +                Ok(snapshot) if status.is_some() => format!(
 +                    "Oh My Diff · {} mod{} on{}{}",

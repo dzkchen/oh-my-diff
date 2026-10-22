@@ -260,15 +260,16 @@
         "store",
         "exec",
         "threads",
+        "sessions",
         "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "1ebab9139b444b995aedb64d0a6f55c6210ec81678ce37941b12c79116c0c56d",
-        "mod.json": "8bc6ced3ced335a546a666ec16a7d7bef073edb3e8ae3a4f5be08d89f114e13d"
+        "index.ts": "c043f786e3de8b8dfea7c30e0c1086e399d328f5e8820415a9570c8565057a02",
+        "mod.json": "241f76ed494e07d43e0062e1dad3826240dca0e1d20acf9f3b1dbd34afe0b8cb"
       },
       "id": "omd_mini",
-      "package_sha256": "c29f8e6b3d5663b7af38f2d485bf07875c80867c43a9aef81e652e3628850652",
+      "package_sha256": "494e07f8b5c1ff3bb57c79121491fcaed80ad933283d1d3567040be05ff7b34c",
       "source": "mods/first-party/omd_mini",
       "version": "1.0.0"
     },

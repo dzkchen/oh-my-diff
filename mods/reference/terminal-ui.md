@@ -690,6 +690,13 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
+A launcher can narrow one session's TUI with two environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
+panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
+`render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
+`/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
+first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
+blank rows, placeholder or idle hint row. `omd mini` sets all three.
+
 The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the

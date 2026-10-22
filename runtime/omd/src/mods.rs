@@ -683,6 +683,16 @@ pub fn install_profile(value: &str) -> &'static str {
         _ => "unknown",
     }
 }
+
+pub fn mod_ui_allowlist() -> Option<Vec<String>> {
+    std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
+        ids.split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
     ("migrate", "store"),
@@ -2699,6 +2709,24 @@ mod reload_tests {
     }
 
     #[test]
+    fn a_mod_ui_allowlist_keeps_only_dialogs_from_unlisted_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("store");
+        ModStore::create(root.clone()).unwrap();
+        let mut host = ModHost::open(root).unwrap();
+        host.ui_mods = Some(vec!["b".into()]);
+        let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+        let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
+        let composed = host.compose_terminal(vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))], "terminal", None);
+        assert_eq!(composed.view.status, ["b"]);
+        assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
+        assert_eq!(
+            view::site_component_ids(&composed.view.sites),
+            ["a_dialog", "b_above", "b_below", "b_header"].map(String::from).into_iter().collect()
+        );
+    }
+
+    #[test]
     fn every_capability_has_a_consent_phrase() {
         for capability in MOD_CAPABILITIES {
             assert_ne!(capability_phrase(capability), *capability);
@@ -2821,6 +2849,7 @@ pub struct ModHost {
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Option<Instant>)>,
     clock_reads: BTreeSet<String>,
+    ui_mods: Option<Vec<String>>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -3326,6 +3355,7 @@ impl ModHost {
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
             clock_reads: BTreeSet::new(),
+            ui_mods: mod_ui_allowlist(),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -5563,6 +5593,9 @@ impl ModHost {
             let Ok(mut patch) = parsed else {
                 continue;
             };
+            if self.ui_mods.as_ref().is_some_and(|ids| !ids.contains(&id)) {
+                patch.drop_persistent_ui();
+            }
             if view.sites.get("dialog").is_some_and(|dialog| {
                 dialog.mode == ModSiteMode::Replace && !dialog.components.is_empty()
             }) {
