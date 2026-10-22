@@ -22157,7 +22157,7 @@ index db1c0e4096a8c39eec4958e0a25829ba0d3257fa..e89b149e262e02b16516ac592c328dca
          normalize::ensure_call_outputs_present(items);
 
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index f72396e38320e838e21b6a9ceaaa433ada62f0c0..d7bfdf7d8557e96b3db8abbc702004c9281f85cb 100644
+index f72396e38320e838e21b6a9ceaaa433ada62f0c0..afe29a5047a79c99f4257fe6ef33f6dc3b1d6836 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -122,6 +122,9 @@ pub enum ExecCapturePolicy {
@@ -22190,21 +22190,19 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..d7bfdf7d8557e96b3db8abbc702004c9
              Self::FullBuffer => false,
          }
      }
-@@ -365,6 +372,13 @@ pub async fn build_exec_request(
+@@ -365,6 +372,11 @@ pub async fn build_exec_request(
          justification: _,
          sandbox_permissions: _,
      } = params;
 +    let narrow_omd_sandbox = env
 +        .remove("OMD_NARROW_SANDBOX")
 +        .is_some_and(|value| value == "1");
-+    // A mod's own exec keeps the launcher signals it declared; agent tool processes must not inherit them.
-+    if !narrow_omd_sandbox {
-+        env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
-+    }
++    // Launcher presentation signals stay with the TUI; a nested codex in a tool must not inherit them.
++    env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
 
      let enforce_managed_network = network.is_some();
      let sandbox_type = select_process_exec_tool_sandbox_type(
-@@ -390,7 +404,11 @@ pub async fn build_exec_request(
+@@ -390,7 +402,11 @@ pub async fn build_exec_request(
      let cwd = PathUri::from_abs_path(&cwd);
      let sandbox_policy_cwd_uri = PathUri::from_abs_path(sandbox_cwd);
 
@@ -22217,7 +22215,7 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..d7bfdf7d8557e96b3db8abbc702004c9
      let command = SandboxCommand {
          program: program.clone().into(),
          args: args.to_vec(),
-@@ -1000,6 +1018,21 @@ async fn consume_output(
+@@ -1000,6 +1016,21 @@ async fn consume_output(
          ))
      })?;
 
@@ -22239,7 +22237,7 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..d7bfdf7d8557e96b3db8abbc702004c9
      let retained_bytes_cap = capture_policy.retained_bytes_cap();
      let stdout_handle = tokio::spawn(read_output(
          BufReader::new(stdout_reader),
-@@ -1082,6 +1115,8 @@ async fn consume_output(
+@@ -1082,6 +1113,8 @@ async fn consume_output(
          }
      };
 
@@ -22349,10 +22347,10 @@ index b8dbf30c8583874e4112e0ef686446826460d4ad..e0144d460f278797aadaba1893d512cc
 +    assert!(!manager.forbidden_only_by_user_rules(&command("ls"), None));
 +}
 diff --git a/codex-rs/core/src/exec_tests.rs b/codex-rs/core/src/exec_tests.rs
-index f86df094b80fe364d1c8b137481ecca4b9ebd76c..031e44d9ae5f738357ef1d15477e15ad5af5d781 100644
+index f86df094b80fe364d1c8b137481ecca4b9ebd76c..0cac293ed84ae341a2158df7bd5857b6df4824d9 100644
 --- a/codex-rs/core/src/exec_tests.rs
 +++ b/codex-rs/core/src/exec_tests.rs
-@@ -1621,3 +1621,57 @@ fn long_running_command() -> Vec<String> {
+@@ -1621,3 +1621,45 @@ fn long_running_command() -> Vec<String> {
          "Start-Sleep -Seconds 30".to_string(),
      ]
  }
@@ -22361,53 +22359,41 @@ index f86df094b80fe364d1c8b137481ecca4b9ebd76c..031e44d9ae5f738357ef1d15477e15ad
 +async fn tool_processes_do_not_inherit_launcher_presentation_signals() -> Result<()> {
 +    let temp_dir = tempfile::TempDir::new()?;
 +    let cwd = temp_dir.path().abs();
-+    let env_for = async |narrow: bool| -> Result<HashMap<String, String>> {
-+        let mut env = HashMap::from([
-+            ("OMD_TUI_COMPOSER".to_string(), "plain".to_string()),
-+            ("OH_MY_DIFF_LAUNCH".to_string(), "abc.0".to_string()),
-+            ("KEEP".to_string(), "1".to_string()),
-+        ]);
-+        if narrow {
-+            env.insert("OMD_NARROW_SANDBOX".to_string(), "1".to_string());
-+        }
-+        let request = build_exec_request(
-+            ExecParams {
-+                command: vec!["echo".to_string(), "ok".to_string()],
-+                cwd: cwd.clone(),
-+                expiration: ExecExpiration::DefaultTimeout,
-+                capture_policy: ExecCapturePolicy::ShellTool,
-+                env,
-+                network: None,
-+                network_environment_id: None,
-+                sandbox_permissions: SandboxPermissions::UseDefault,
-+                windows_sandbox_level: WindowsSandboxLevel::Disabled,
-+                justification: None,
-+                arg0: None,
-+            },
-+            &PermissionProfile::read_only(),
-+            &cwd,
-+            &[PathUri::from_abs_path(&cwd)],
-+            &None,
-+            /*codex_self_exe*/ &None,
-+            SandboxType::None,
-+            /*use_legacy_landlock*/ false,
-+        )
-+        .await?;
-+        Ok(request.env)
-+    };
-+    let names = |env: HashMap<String, String>| {
-+        let mut names = env
-+            .into_keys()
-+            .filter(|name| !name.starts_with("CODEX_"))
-+            .collect::<Vec<_>>();
-+        names.sort();
-+        names
-+    };
-+    assert_eq!(names(env_for(false).await?), ["KEEP"]);
-+    assert_eq!(
-+        names(env_for(true).await?),
-+        ["KEEP", "OH_MY_DIFF_LAUNCH", "OMD_TUI_COMPOSER"]
-+    );
++    let request = build_exec_request(
++        ExecParams {
++            command: vec!["echo".to_string(), "ok".to_string()],
++            cwd: cwd.clone(),
++            expiration: ExecExpiration::DefaultTimeout,
++            capture_policy: ExecCapturePolicy::ShellTool,
++            env: HashMap::from([
++                ("OMD_NARROW_SANDBOX".to_string(), "1".to_string()),
++                ("OMD_TUI_COMPOSER".to_string(), "plain".to_string()),
++                ("OH_MY_DIFF_LAUNCH".to_string(), "abc.0".to_string()),
++                ("KEEP".to_string(), "1".to_string()),
++            ]),
++            network: None,
++            network_environment_id: None,
++            sandbox_permissions: SandboxPermissions::UseDefault,
++            windows_sandbox_level: WindowsSandboxLevel::Disabled,
++            justification: None,
++            arg0: None,
++        },
++        &PermissionProfile::read_only(),
++        &cwd,
++        &[PathUri::from_abs_path(&cwd)],
++        &None,
++        /*codex_self_exe*/ &None,
++        SandboxType::None,
++        /*use_legacy_landlock*/ false,
++    )
++    .await?;
++    let mut names = request
++        .env
++        .into_keys()
++        .filter(|name| !name.starts_with("CODEX_"))
++        .collect::<Vec<_>>();
++    names.sort();
++    assert_eq!(names, ["KEEP"]);
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/guardian/prompt.rs b/codex-rs/core/src/guardian/prompt.rs
@@ -29663,10 +29649,10 @@ index ee497de6895073054de1aa5e45eedcaab7f79435..d569294da756cba17c9c2b99dec63e3e
 
  App-server clients can supply the raw token through `environment/add.authBearerToken` or `auth_bearer_token` in an `environments.toml` URL entry; omission preserves unauthenticated behavior.
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index cb7f061961d528a3bf508fb3743b431f146727fc..9d674c001e96a6e2941c011ba76090ba0a7bbc96 100644
+index cb7f061961d528a3bf508fb3743b431f146727fc..847b7e574ee1aa3535438f0e06e3ab24fe2f69bf 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
-@@ -109,8 +109,14 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+@@ -109,8 +109,12 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
              ));
          }
      }
@@ -29675,14 +29661,12 @@ index cb7f061961d528a3bf508fb3743b431f146727fc..9d674c001e96a6e2941c011ba76090ba
 +    let narrow_omd_sandbox = env
 +        .remove("OMD_NARROW_SANDBOX")
 +        .is_some_and(|value| value == "1");
-+    // A mod's own exec keeps the launcher signals it declared; agent tool processes must not inherit them.
-+    if !narrow_omd_sandbox {
-+        env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
-+    }
++    // Launcher presentation signals stay with the TUI; a nested codex in a tool must not inherit them.
++    env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
      #[cfg(target_os = "windows")]
      let network_proxy = if params.sandbox.is_none() {
          // Shared Windows ingress selects a route from the sandbox token's SID. Native launches
-@@ -209,8 +215,12 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+@@ -209,8 +213,12 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
          &file_system_policy,
          network_policy,
      );
@@ -35376,10 +35360,25 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..6d4cb9eb4ac1f982a10a5d5443b00221
      fn file_completion_does_not_dismiss_identical_next_token() {
          let (mut composer, _rx) = new_test_composer();
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
-index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667271f2fea 100644
+index 949edcf91699d64956826211c335f9ef84854005..968a4e454cd2d0ba8c4a763faace3842429e8149 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
-@@ -42,10 +42,11 @@ impl ChatComposer {
+@@ -22,11 +22,12 @@ impl ChatComposer {
+     }
+
+     pub(super) fn render_voice_strip(&self, composer_rect: Rect, buf: &mut Buffer) {
++        let padding = u16::from(!crate::omd::plain_composer());
+         if let Some(strip) = &self.voice_strip
+-            && composer_rect.height >= strip.desired_height(composer_rect.width) + 4
++            && composer_rect.height > strip.desired_height(composer_rect.width) + 1 + 2 * padding
+         {
+             let voice_rect = Rect {
+-                y: composer_rect.y.saturating_add(/*rhs*/ 1),
++                y: composer_rect.y.saturating_add(padding),
+                 height: strip.desired_height(composer_rect.width),
+                 ..composer_rect
+             };
+@@ -42,10 +43,11 @@ impl ChatComposer {
          options: ComposerRenderOptions<'_>,
      ) -> ComposerLayout {
          let footer_hint_height = self.footer_hint_height(area.width, options);
@@ -35392,7 +35391,7 @@ index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667
          );
          let status = Rect {
              y: area
-@@ -77,7 +78,7 @@ impl ChatComposer {
+@@ -77,7 +79,7 @@ impl ChatComposer {
          let (composer_rect, popup_rect, mut footer_rect) = if shortcuts_above {
              let [shortcuts, composer, footer] = Layout::vertical([
                  Constraint::Max(footer_height(&self.hint_footer_props(options), area.width)),
@@ -35401,7 +35400,7 @@ index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667
                  Constraint::Length(footer_hint_height),
              ])
              .areas(area);
-@@ -85,7 +86,7 @@ impl ChatComposer {
+@@ -85,7 +87,7 @@ impl ChatComposer {
          } else if self.popups.active.is_above_composer() {
              // Preserve the draft first, then its footer, and use remaining space for suggestions.
              let [mut composer, mut popup, footer] = Layout::vertical([
@@ -35410,7 +35409,7 @@ index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667
                  Constraint::Max(popup_height.saturating_sub(footer_hint_height)),
                  Constraint::Length(footer_hint_height),
              ])
-@@ -95,7 +96,7 @@ impl ChatComposer {
+@@ -95,7 +97,7 @@ impl ChatComposer {
              (composer, popup, footer)
          } else {
              let [composer, popup] = Layout::vertical([
@@ -35419,7 +35418,7 @@ index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667
                  Constraint::Max(popup_height),
              ])
              .areas(area);
-@@ -103,11 +104,11 @@ impl ChatComposer {
+@@ -103,11 +105,11 @@ impl ChatComposer {
          };
          footer_rect.y = footer_rect.y.saturating_add(status.height);
          // Keep the draft visible when clipped.
@@ -35434,7 +35433,7 @@ index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667
              /*right*/ 1u16.saturating_add(options.textarea_right_reserve),
          ));
          let remote_images_height = self
-@@ -192,7 +193,7 @@ impl ChatComposer {
+@@ -192,7 +194,7 @@ impl ChatComposer {
              } else {
                  0
              }

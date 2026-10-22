@@ -146,6 +146,7 @@ async function setup(name, action, login) {
   const owned = async dir => relative(await realpath(join(directory, 'accounts')), await realpath(dir)) === name;
   let signedOut = null;
   let claude = previous.claude ?? null;
+  let discard = async () => {};
   if (action === 'remove') {
     if (!known) throw new Error(`claude_account_unknown: ${name}`);
     if (known.config_dir && await owned(known.config_dir).catch(() => false)) {
@@ -155,6 +156,10 @@ async function setup(name, action, login) {
   } else {
     if (!['subscription', 'api'].includes(action)) throw new Error('claude_billing_must_be_subscription_or_api');
     const config = name === 'default' ? null : login || join(directory, 'accounts', name);
+    if (config && !known) discard = async () => {
+      signOut(await findCli().catch(() => null), config);
+      await rm(join(directory, 'accounts', name), { recursive: true, force: true });
+    };
     try {
       taken(host.routes, 1);
       if (config) {
@@ -171,10 +176,7 @@ async function setup(name, action, login) {
       accounts.splice(name === 'default' ? 0 : accounts.length, 0, { ...account, plan: status.subscriptionType ?? null,
         email: status.email ?? null, default: fallback.slug, models: [fallback, ...models.filter(model => model !== fallback)] });
     } catch (error) {
-      if (config && !known) {
-        signOut(await findCli().catch(() => null), config);
-        await rm(join(directory, 'accounts', name), { recursive: true, force: true });
-      }
+      await discard();
       throw error;
     }
   }
@@ -184,7 +186,6 @@ async function setup(name, action, login) {
   await chmod(tokenPath, 0o600);
   const port = previous.port ?? await unusedPort();
   const url = `http://127.0.0.1:${port}/v1`;
-  await writeFile(routePath, `${JSON.stringify({ port, claude, accounts }, null, 2)}\n`);
   const node = await realpath(process.execPath);
   const readPaths = [];
   for (const path of [mod, directory, join(store, 'mods.json'), ...claude ? [claude, dirname(claude)] : [], resolve(dirname(node), '..'), '/opt/homebrew',
@@ -195,7 +196,7 @@ async function setup(name, action, login) {
   const route = account => ({ name: routeName(account.name), roles: ['lead'], provider: PROVIDER, model: account.default, reasoning_effort: 'high',
     responses_url: `${url}/responses`, rates: rates(account.billing, account.models[0].window) });
   const programSha = sha(await readFile(node));
-  await updateHost(store, host => {
+  const merge = host => {
     host.schema = 1;
     host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
     host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits,
@@ -207,7 +208,12 @@ async function setup(name, action, login) {
       arguments: [join(mod, 'transport.mjs'), 'serve', routePath, home, username],
       secrets: { OMD_CLAUDE_LOCAL_TOKEN: 'claude_local_token' }, network: true, read_paths: readPaths,
       route: { ...route(accounts[0]), rates: rates(accounts.some(account => account.billing === 'api') ? 'api' : 'subscription', accounts[0].models[0].window) } }] : []];
-  });
+  };
+  try { await updateHost(store, merge); } catch (error) {
+    await discard();
+    throw error;
+  }
+  await writeFile(routePath, `${JSON.stringify({ port, claude, accounts }, null, 2)}\n`);
   const published = publishable(accounts);
   return { signed_out: signedOut, accounts: accounts.map(account => ({ name: account.name, billing: account.billing, plan: account.plan,
     email: account.email, config_dir: account.config_dir, route: routeName(account.name), models: account.models.length })),

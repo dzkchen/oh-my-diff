@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "500003800e9431dced6934a6bf94f776558374ce849cb833afb502aa40cb3d92"
+    "sha256": "9083cc5e98b4272a144f7a436fa8d3b5d052b307236ec5700f693a228884ecd3"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -463,7 +463,7 @@
     },
     "codex-rs/core/src/exec.rs": {
       "before": "83f72b788b041e2865ebd5b10ce6878b4a471ea4082116c821d87ef39b710888",
-      "after": "74102f204d8429e309ecaf56b4d460a3d39165dc27e739c81a8fa681cf7a30d0"
+      "after": "4d2c19ad7217568f0c068d2399c492107a722c7294e99dc332818a6a51261df4"
     },
     "codex-rs/core/src/exec_policy.rs": {
       "before": "1796351effe65d1dc81296f0a0a10ea160e45e43bc9623fa9dba88309641f03c",
@@ -475,7 +475,7 @@
     },
     "codex-rs/core/src/exec_tests.rs": {
       "before": "1a854e0cc5da42899ceaa0e2bbff5d741532d439b16a1f756d6422e712ccaf7f",
-      "after": "9e87ced40d91bad19c1bc6579a99ae6bf66ef526a9578099249e7ccd30ac5c31"
+      "after": "ac44fb5bcd0a9ab354f28eafc85962b3625214ee7112407e6a7b39225941832f"
     },
     "codex-rs/core/src/guardian/prompt.rs": {
       "before": "dd95312b26a8eb978d953e3b100e8c45bfc2c603c391182e2daed94b79d8208b",
@@ -811,7 +811,7 @@
     },
     "codex-rs/exec-server/src/process_sandbox.rs": {
       "before": "ddf2027a373438a20a5b5c45cb2f02ab24a86c540379ac7fc09bfdd5dd5a463b",
-      "after": "5ee71faaa25173cb9690fd6893176ff259bf8213c85aa9a45b13e0a19f5ede8a"
+      "after": "be71395271c2cc98131c1cd4df256d6531c86b69567ce7dae21a35ea32bfd3c8"
     },
     "codex-rs/exec-server/src/server/transport.rs": {
       "before": "44d0c5309e66fa5740543b08467bcea7e23dcb900ac3a116b2146173fe730276",
@@ -1843,7 +1843,7 @@
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs": {
       "before": "0d481f30e9aaeec083e0b9dbce4b8e0883a012c1fa918e2a49dbeb1cc03e2f07",
-      "after": "2a4d5ce490dbe3a7b56f3e547f29ae29e4ec2c3b1e63cccca5a020134ef5ecc9"
+      "after": "31455a0ba28f3e409a3d49dadbdb394a78e64644d051772254268569f0c6e90d"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs": {
       "before": "4e5ec20000b59eb08cd64db634668147c9788faea5f098d1ee5b3a57a02051e1",

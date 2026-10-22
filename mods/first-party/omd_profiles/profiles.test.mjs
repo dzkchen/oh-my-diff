@@ -373,6 +373,8 @@ test('/profile add opens one picker; accounts sign in through their own mods and
       return next;
     }
     if (operation === 'credentials.list') return credentials;
+    if (operation === 'routes.write') throw new Error('routes_write_allowance_required: key3');
+    if (operation === 'credentials.request') return { status: 'completed', profile: { id: `cred-${args.label}`, label: args.label, kind: 'api_key', origin: 'https://api.openai.com', status: 'ready' } };
     if (operation === 'commands.invoke') return args.command === 'omd_cursor:cursor' ? (() => { throw new Error('unknown_command: omd_cursor:cursor'); })()
       : { command: args.command, result: { display: 'Starting Claude login for account work (subscription); progress shows below' } };
     return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', provider: 'openai', model: 'gpt-6.1-sol' }, 'routes.list': routes, 'events.schedule': {}, 'events.publish': { delivered: 1, dropped: 0 },
@@ -410,28 +412,28 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   assert.equal(invoke(state, 'command', 'add chatgpt work', 'profile').value.display, 'Cancelled: the context window is a whole number of tokens.');
   assert.deepEqual(prompted().slice(asked).map(prompt => prompt.title), ['Upstream model', 'Context window']);
   answers.length = 0;
-  answers.push('gpt-6.1-sol', '1.25:10', 'declined');
+  answers.push('gpt-6.1-sol', '1.25:10', '20', 'declined');
   setup = [catalogued];
   asked = prompted().length;
   assert.equal(invoke(state, 'command', 'add api_key key1', 'profile').value.display,
     'Profiles unchanged. The sign-in "key1" was kept: /profile add reuses it, /profile remove key1 drops it.');
-  assert.deepEqual(prompted().slice(asked).map(prompt => prompt.title), ['Upstream model', 'Price', 'Change model routes']);
-  assert.match(prompted().at(-1).message, /^Add model route key1: gpt-6\.1-sol, paid API, per request\nAdd service omd_profiles: /);
-  credentials = [{ id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com' }];
+  assert.deepEqual(prompted().slice(asked).map(prompt => prompt.title), ['Upstream model', 'Price', 'Allowance', 'Change model routes']);
+  assert.match(prompted().at(-1).message, /^Add model route key1: gpt-6\.1-sol, paid API, per request\nAdd service omd_profiles: [^\n]+\nLet service omd_profiles use key1 \(api_key\)\n/);
+  credentials = [{ id: 'cred-k', label: 'key1', kind: 'api_key', origin: 'https://api.openai.com', status: 'ready' }];
   const enrolls = calls.filter(call => call.operation === 'credentials.request').length;
-  answers.push('gpt-6.1-sol', '1.25:10', 'accepted', 'twenty', '$20', 'accepted');
+  answers.push('gpt-6.1-sol', '1.25:10', 'twenty', '$20', 'accepted');
   const routed = { ...profileData('key1', true), credential: 'cred-k', router: 'http://127.0.0.1:41000/v1' };
-  setup = [catalogued, { exit_code: 1, stdout: '', stderr: 'profile_allowance_required: paid API profiles need an allowance (--allowance USD)' },
-    { exit_code: 0, stdout: JSON.stringify({ profiles: [routed] }), stderr: '' }];
+  setup = [catalogued, { exit_code: 0, stdout: JSON.stringify({ profiles: [routed] }), stderr: '' }];
+  asked = prompted().length;
   const runsBefore = calls.filter(call => call.operation === 'exec.run').length;
   const added = invoke(state, 'command', 'add api_key key1', 'profile');
   assert.match(added.value.display, /^Added key1\./);
   assert.equal(calls.filter(call => call.operation === 'credentials.request').length, enrolls);
+  assert.equal(prompted().slice(asked).filter(prompt => prompt.kind === 'confirm').length, 1);
   assert.match(prompted().at(-1).message, /\nLet paid API profiles spend at most \$20 per thread$/);
   const runs = calls.filter(call => call.operation === 'exec.run').slice(runsBefore).map(call => call.args);
   assert.deepEqual(runs.map(run => [run.program, run.argv, run.sandbox, run.stdin === undefined ? undefined : JSON.parse(run.stdin).allowance]),
-    [['node', ['/store/sources/omd_profiles/setup.mjs', 'catalog', 'gpt-6.1-sol'], 'none', undefined],
-      ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', null], ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', 20]]);
+    [['node', ['/store/sources/omd_profiles/setup.mjs', 'catalog', 'gpt-6.1-sol'], 'none', undefined], ['node', ['/store/sources/omd_profiles/setup.mjs', 'session'], 'none', 20]]);
   const sent = JSON.parse(runs[1].stdin).profiles[0];
   assert.deepEqual([sent.name, sent.window, sent.paid, sent.effort, sent.efforts], ['key1', 272000, [1.25, 10], 'medium', ['low', 'medium', 'xhigh']]);
   assert.equal(calls.some(call => call.operation === 'routes.write'), false);
@@ -442,6 +444,13 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   invoke(added.state, 'channel', { channel: 'omd_profiles/added', data: {} });
   const after = calls.slice(before).map(call => call.operation);
   assert.ok(after.includes('routes.list') && after.includes('providers.register') && after.includes('providers.models'), after.join(','));
+  credentials = [{ id: 'cred-half', label: 'key3', kind: 'api_key', origin: 'https://api.openai.com', status: 'not_enrolled' }];
+  answers.push('gpt-6.1-sol', '1.25:10', '5', 'accepted');
+  setup = [catalogued, { exit_code: 0, stdout: JSON.stringify({ profiles: [routed, { ...profileData('key3', true), credential: 'cred-k', router: routed.router }] }), stderr: '' }];
+  const enrolling = calls.filter(call => call.operation === 'credentials.request').length;
+  assert.match(invoke(added.state, 'command', 'add api_key key3', 'profile').value.display, /^Added key3\./);
+  assert.equal(calls.filter(call => call.operation === 'credentials.request').length, enrolling + 1);
+  assert.match(prompted().at(-1).message, /^Add model route key3: [^\n]+\nLet service omd_profiles use key3 \(api_key\)\nLet paid API profiles spend at most \$5 per thread$/);
   answers.length = 0;
   answers.push('gpt-6.1-sol');
   setup = [new Error('exec_program_unavailable')];

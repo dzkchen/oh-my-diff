@@ -214,8 +214,10 @@ export default function activate(api: ModAPI) {
   // Only the first profile (which creates the router's service grant) and a new allowance write host.json outside routes.write.
   const bootstrap = (profiles: Profile[], added: Profile, allowance: number | null, done: string) => {
     const first = !profiles.some(profile => profile !== added && profile.router);
+    const shared = profiles.some(profile => profile !== added && profile.credential === added.credential);
     const changes = [`Add model route ${added.name}: ${added.model}, ${added.paid ? 'paid API, per request' : 'subscription'}`,
       ...first ? ['Add service omd_profiles: runs the omd_profiles router (node) with network access and the sign-ins of your profiles'] : [],
+      ...shared ? [] : [`Let service omd_profiles use ${added.name} (${added.kind})`],
       ...allowance === null ? [] : [`Let paid API profiles spend at most $${allowance} per thread`]];
     const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title: 'Change model routes', message: changes.join('\n') });
     if (!answer.ok || answer.value.status !== 'accepted') return 'Profiles unchanged.';
@@ -252,7 +254,7 @@ export default function activate(api: ModAPI) {
     const credentialKind = kindName === 'provider' || kindName === 'anthropic' ? 'provider' : kindName;
     const enroll = () => {
       const listed = api.host.tryCall('credentials.list', null);
-      const kept = (listed.ok ? listed.value : []).find(item => item.label === name && item.kind === credentialKind && item.origin === origin(endpoint));
+      const kept = (listed.ok ? listed.value : []).find(item => item.label === name && item.kind === credentialKind && item.origin === origin(endpoint) && item.status === 'ready');
       if (kept) return kept;
       const enrolled = api.host.tryCall('credentials.request', credentialKind === 'provider'
         ? { action: 'enroll', kind: 'provider', label: name, provider: kindName === 'anthropic' ? 'anthropic' : name, origin: origin(endpoint)! }
@@ -290,7 +292,9 @@ export default function activate(api: ModAPI) {
     }
     const done = `Added ${name}. Switch with Alt+s or /profile use ${name}; it applies at this thread's next turn.`;
     const next = [...profiles, profile];
-    let result = base?.router ? write(next, done) : bootstrap(next, profile, null, done);
+    const upfront = !base?.router && profile.paid ? allowance() : null;
+    if (!base?.router && profile.paid && upfront === null) return `Cancelled: paid profiles need an allowance. ${kept}`;
+    let result = base?.router ? write(next, done) : bootstrap(next, profile, upfront, done);
     if (/allowance_required/.test(result)) {
       const usd = allowance();
       result = usd === null ? 'Cancelled: paid profiles need an allowance.' : bootstrap(next, profile, usd, done);

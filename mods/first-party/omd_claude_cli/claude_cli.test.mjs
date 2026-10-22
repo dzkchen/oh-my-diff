@@ -5,7 +5,7 @@ import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { CLI_MINIMUM, cliSupported, translateRequest, responseEvents } from './index.ts';
@@ -356,6 +356,13 @@ else if (argv[0] === 'auth') {
     assert.match(failed.stderr, /claude_ai_subscription_login_required/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/team')));
     assert.match(await readFile(join(root, 'auth.log'), 'utf8'), new RegExp(`logout ${join(store, 'routes/claude/accounts/team')}\n$`));
+    const held = openSync(join(store, 'store.lock'), constants.O_WRONLY | constants.O_CREAT | 0x20);
+    const locked = setup('crew', 'api', join(store, 'routes/claude/accounts/crew'));
+    closeSync(held);
+    assert.match(locked.stderr, /host_config_locked/);
+    await assert.rejects(stat(join(store, 'routes/claude/accounts/crew')));
+    assert.match(await readFile(join(root, 'auth.log'), 'utf8'), new RegExp(`logout ${join(store, 'routes/claude/accounts/crew')}\n$`));
+    assert.deepEqual(JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8')).accounts.map(account => account.name), ['default', 'work']);
     assert.match(setup('stray', 'api', join(root, 'elsewhere')).stderr, /claude_account_directory_outside_store/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/stray')));
     const removed = setup('work', 'remove');
