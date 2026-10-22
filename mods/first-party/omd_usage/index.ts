@@ -1,4 +1,4 @@
-import type { CostBasis, Json, Ledger, ModAPI, ModelResponse, TerminalComponent, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
+import type { CostBasis, Json, Ledger, ModAPI, TerminalComponent, TerminalListRow, TerminalPatch } from '../../api.d.ts';
 
 type Tokens = { input: number | null; cached: number | null; write: number | null; output: number | null; reasoning: number | null };
 type Reported = { usd: number; basis: 'provider_billed' | 'client_list_estimate' };
@@ -221,35 +221,6 @@ export default function activate(api: ModAPI) {
     if (shown) hud(h => { h.alerted = { budget, level: reached }; });
   };
 
-  const prompt = (state: Snapshot, now: number): TerminalComponent[] => {
-    const h = state.hud; const current = context(h); const sum = totals(h.entries);
-    const usage: string[] = [];
-    if (current?.last.tokens?.input) {
-      const expires = cacheTtl(h, current.last);
-      usage.push(`Cache ${Math.round((current.last.tokens.cached ?? 0) / current.last.tokens.input * 100)}% hit${expires === null ? '' : expires > now ? ` · ~${span(expires - now)} TTL` : ' · TTL passed'}`);
-    }
-    for (const slot of quota(h, now)) usage.push(slot.passed ? `${slot.name} reset passed · stale` : `${slot.name} ${slot.current.used}%${slot.current.resets ? ` · resets ${span(slot.current.resets - now)}` : ''}`);
-    usage.push(fit(spendText(sum), 34));
-    if (state.allowance) {
-      const filled = Math.min(10, Math.round(state.allowance.used / state.allowance.limit * 10));
-      usage.push(`[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}] ${usd(state.allowance.used / 1e6)}/${usd(state.allowance.limit / 1e6)}`);
-    }
-    if (budget !== null) usage.push(`Budget ${usd(outlay(h))} of ${usd(budget)} (soft)`);
-    const agents = Object.entries(h.agents).filter(([, agent]) => agent.status === 'running');
-    const workers = [
-      ...(h.plan ? [`Tasks ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · ${h.plan.step}` : ''}`] : []),
-      ...agents.slice(0, 4).map(([id, agent]) => `${agent.role} · ${id.slice(0, 8)}`),
-      ...Object.values(h.tools).slice(0, 3).map(tool => `running ${tool.tool}`),
-    ];
-    const reached = level(outlay(h));
-    const tone = (body: string): TerminalTone => body.startsWith('Budget ') && reached ? (reached === 100 ? 'failure' : 'attention') : /stale|passed|unknown|unsettled/.test(body) ? 'attention' : 'muted';
-    const spans = (parts: string[]) => parts.slice(0, 6).flatMap((body, index) => [...(index ? [{ text: ' · ', tone: 'muted' as const }] : []), { text: fit(body, 40), tone: tone(body) }]);
-    return [{ type: 'box', id: 'omd_usage_prompt', label: 'Usage', style: { direction: 'row', gap: 2, padding: [0, 1] }, children: [
-      { type: 'line', id: 'omd_usage_prompt_usage', label: 'Usage', spans: spans(usage) },
-      ...(workers.length ? [{ type: 'line' as const, id: 'omd_usage_prompt_workers', label: `Tasks and workers${agents.length ? ` (${agents.length})` : ''}`, spans: spans(workers) }] : []),
-    ] }];
-  };
-
   const expanded = (state: Snapshot, now: number): TerminalComponent[] => {
     const h = state.hud; const current = context(h);
     const lead = h.entries.filter(entry => isLead(h, entry)); const workers = h.entries.filter(entry => !isLead(h, entry) && (entry.kind !== 'main' || entry.agent));
@@ -288,6 +259,7 @@ export default function activate(api: ModAPI) {
       ...(inherited.length ? [`Inherited from the parent session: ${inherited.length} requests (${spendText(totals(inherited))})`] : []),
       ...(h.entries.some(entry => entry.overage) ? ['Subscription overage: not reported by the provider (unknown)'] : []),
       `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
+      ...(state.allowance ? [`Task allowance: up to ${usd(state.allowance.used / 1e6)} of ${usd(state.allowance.limit / 1e6)} (${Math.round(state.allowance.used / state.allowance.limit * 100)}%)`] : []),
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
       ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
@@ -322,9 +294,8 @@ export default function activate(api: ModAPI) {
 
   const view = (ledger: Ledger | null): TerminalPatch => {
     const state = saved(); const now = Date.now();
-    const sites = { above_composer: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, ...prompt(state, now)] } };
     const keybindings = { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } };
-    if (!state.open) return { sites, keybindings };
+    if (!state.open) return { keybindings };
     const effective = ledger ?? state.ledger;
     const children: TerminalComponent[] = [
       ...(state.error ? [text('omd_usage_error', 'Status', state.error)] : []),
@@ -333,7 +304,7 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'omd_usage:hud', args: state.hud.detail ? 'compact' : 'expanded' } },
       { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'omd_usage:hud', args: 'close' } },
     ];
-    return { sites: { ...sites, dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
+    return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
   };
 
   // Slash commands can't read task status, so they hop to this mod's own native channel handler.
@@ -371,6 +342,7 @@ export default function activate(api: ModAPI) {
     if (channel !== 'omd_usage/refresh') return;
     save(capture(saved()));
     publish();
+    if (expiry() !== null) ticker.start();
   });
   api.on('terminal', input => view(input.ledger));
   api.on('component_event', event => {
@@ -396,14 +368,12 @@ export default function activate(api: ModAPI) {
   api.on('start', configure);
   api.on('resume', configure);
   const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last) : null; };
-  // Redraws a cache countdown once a minute until it passes; the tick adds no observation.
+  // Redraws the open dialog's cache countdown once a minute until it passes; the tick adds no observation.
   const ticker = api.time.every('countdown', 60_000, () => {
+    if (!saved().open) return false;
     hud(state => { state.tick += 1; });
     return (expiry() ?? 0) > Date.now();
   });
-  // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
-  const plan = (state: Hud, response: ModelResponse) =>
-    response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && (response.credential === 'chatgpt' || state.samples.length > 0);
   api.on('model_response', response => {
     const usage = object(response.usage);
     const summary = api.usage.summarize(response);
@@ -413,7 +383,7 @@ export default function activate(api: ModAPI) {
       thread: response.scope.thread_id, agent: response.scope.agent_id, kind: response.scope.kind, turn: response.scope.kind === 'main' ? state.turn : null,
       provider: response.provider, credential: response.credential, route: response.route, requested: response.requested_model, served: response.served_model, status: response.status,
       tokens: summary.measured ? { input: summary.tokens.input, cached: summary.tokens.cached, write: summary.tokens.cache_write, output: summary.tokens.output, reasoning: summary.tokens.reasoning } : null,
-      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: plan(state, response) ? 'included_subscription' : response.cost.basis },
+      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: response.cost.basis },
       reported: number(reported.usd) !== null && (reported.basis === 'provider_billed' || reported.basis === 'client_list_estimate') ? { usd: reported.usd, basis: reported.basis } : null,
       overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds),
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
