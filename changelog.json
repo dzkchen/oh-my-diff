@@ -200,7 +200,6 @@
       {
         "label": "Decided",
         "items": [
-          "1.0.0 ships labeled beta: not every planned capability is in yet.",
           "Packages outside the launch collection return in post-launch waves."
         ]
       }

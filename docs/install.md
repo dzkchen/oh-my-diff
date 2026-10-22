@@ -6,8 +6,7 @@
 - Codex `0.163.x` (`codex --version`). Install: `npm install -g @openai/codex@0.163`. Don't update Codex until OMD
   supports the new version.
 - Python 3.12+ (macOS ships 3.9): `brew install python@3.12`.
-- Node on `PATH` for the account mods `omd_profiles`, `omd_claude_cli` and `omd_cursor`, which run their sign-in and
-  routing helpers on Node 22.18 or later (`brew install node`). Writing mods (`omd-mod-author`) needs Node 24.18+ (24.x).
+- Only to write mods: Node 24.18+ (24.x) on `PATH` for `omd-mod-author`.
 
 ## Install
 
@@ -15,11 +14,10 @@
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-- `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
-  with `/mods`.
-- `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
-
-OMD is labeled beta: not every planned capability is included yet. The label does not mean unstable.
+- `--profile full` is **OMD+**, the one most people want: OMD plus the [mod collection](collection.md). Some mods
+  start on; turn on the rest with `/mods`.
+- `--profile platform` is **OMD Core**: only OMD, the mod manager and update notices, for adding just the mods you
+  pick or writing your own.
 
 Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
 sign-in and sessions aren't touched.
