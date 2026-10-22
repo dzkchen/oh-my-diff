@@ -330,7 +330,7 @@ enabled = true
             log, exported = base / "runs.log", base / "export.json"
             (base / "codex").write_text(
                 "#!/bin/sh\n"
-                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH\" >> {log}\n"
+                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH|$OMD_TUI_MOD_UI|$OMD_TUI_HEADER|$OMD_TUI_COMPOSER\" >> {log}\n"
                 "launch=${OH_MY_DIFF_LAUNCH%.*} run=${OH_MY_DIFF_LAUNCH##*.}\n"
                 "if [ \"$OH_MY_DIFF_PRESENTATION\" = mini ]; then\n"
                 f"  echo \"{{\\\"entries\\\":{{\\\"switch_$launch\\\":{{\\\"value\\\":{{\\\"run\\\":$run,\\\"target\\\":\\\"full\\\",\\\"thread\\\":\\\"019a0000-0000-7000-8000-000000000001\\\"}}}}}}}}\" > {exported}\n"
@@ -353,14 +353,14 @@ enabled = true
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)
-            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [
-                ("--no-alt-screen --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini"),
-                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full")])
-            self.assertEqual([launch.split(".")[1] for _, _, launch in runs], ["0", "1"])
+            self.assertEqual([(argv, mode, *tui) for argv, mode, _, *tui in runs], [
+                ("--no-alt-screen -c tui.show_tooltips=false --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini", "omd_mini", "off", "plain"),
+                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full", "", "", "")])
+            self.assertEqual([launch.split(".")[1] for _, _, launch, *_ in runs], ["0", "1"])
             self.assertEqual(profiles.session_options(["resume", "--last", "-mx", "--model=y", "-c", "a=1", "-c", "b=2", "--", "-s", "p", "-m"]),
                              ["-mx", "--model=y", "-c", "a=1", "-c", "b=2"])
             self.assertEqual(profiles.session_options(["prompt", "-m"]), [])
-            self.assertEqual(len({launch.split(".")[0] for _, _, launch in runs}), 1)
+            self.assertEqual(len({launch.split(".")[0] for _, _, launch, *_ in runs}), 1)
 
 
 if __name__ == "__main__":

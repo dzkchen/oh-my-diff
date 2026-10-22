@@ -498,7 +498,7 @@
       "path": "mods/first-party/omd_mini",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
+      "why_mod": "Owns the mini presentation of omd mini sessions: a short prompt, one status line and the switch request read by the launcher; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_tool_absorb",

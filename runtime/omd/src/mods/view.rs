@@ -1919,6 +1919,15 @@ impl ModViewPatch {
         Ok(patch)
     }
 
+    pub fn drop_persistent_ui(&mut self) {
+        self.sites.retain(|name, _| name == "dialog");
+        self.panels = None;
+        self.header = None;
+        self.footer = None;
+        self.layout = None;
+        self.status.clear();
+    }
+
     /// Exclusive fields go to the first mod in composition order; later claims become conflicts.
     pub fn apply(
         mut self,
