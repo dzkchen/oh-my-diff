@@ -4,7 +4,7 @@ Lets a session use Claude models through the official Claude CLI and your Claude
 
 ## Turn it on
 
-It comes with OMD+ but starts off. It needs Claude CLI `2.1.302` on your `PATH` and Node on your `PATH`.
+It comes with OMD+ but starts off. It needs Claude CLI `2.1.307` on your `PATH` and Node on your `PATH`.
 
 1. Enable `omd_claude_cli` in `/mods` and approve its trust dialog. It asks to run `claude` and `node` outside the sandbox (`os`): `claude auth login` and the setup script need your real home directory and network.
 2. Run `/claude login` for your plan (Pro, Max, Team or Enterprise), or `/claude login api` for Console API credits. The official `claude auth login` (`--console` for API) runs in the background and its progress shows in the transcript: the sign-in link appears there (the CLI also opens your browser), so finish signing in in the browser. If the page shows a code instead (for example over SSH), run `/claude code CODE`.

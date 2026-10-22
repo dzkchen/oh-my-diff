@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { translateRequest, responseEvents, reasoningItem } from './index.ts';
 
 const file = fileURLToPath(import.meta.url);
-export const CLI_VERSION = '2.1.302 (Claude Code)';
+export const CLI_VERSION = '2.1.307 (Claude Code)';
 const override = /^ANTHROPIC_|^CLAUDE_CODE_(USE_|SKIP_|SIMPLE$|OAUTH_|API_KEY|CUSTOM_OAUTH|PROVIDER_MANAGED|HOST_AUTH|ACCOUNT_UUID$|ORGANIZATION_UUID$|USER_EMAIL$)/;
 const PLANS = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
 const BODY_LIMIT = 64 * 1024 * 1024;

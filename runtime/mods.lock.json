@@ -73,10 +73,10 @@
         "index.ts": "a7afe2ee8b40599f68e97f21cb7462a2b7083220abfa058cc470a637db54ea72",
         "mod.json": "8f04fa376dac841172d9e1d1558eb704b7f3bd05892c2d6ed361137c260a0434",
         "setup.mjs": "4fa5b4f35c37f63a83aca8316559f360777d84bf829d5ed8181be7caafd81142",
-        "transport.mjs": "dd8fc34857f530eae9961d92d37c189060304d43e9e497c61e5819f588399a2e"
+        "transport.mjs": "85fc26fb9944be23d6908b803c738e9006355a6323528ce015e327a627782d42"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "6e516d0165feacb9f8947b8020c324290053b87297a997eb2433416be0ce9117",
+      "package_sha256": "9ea6613ae82bf03f035172c39915765dbdb3697a77f08ad2b6e48e13b72680f1",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
