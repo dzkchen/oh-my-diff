@@ -369,6 +369,6 @@ test('/claude and /claude status name a host error, a missing CLI and a CLI vers
   assert.match(status(() => { throw new Error('exec_program_too_large'); }), /^CLI: check failed: exec_program_too_large/);
   assert.match(status(probe(null), 'status'), /^CLI: not found on PATH/);
   assert.match(status(probe(null), 'bogus'), /^Usage:/);
-  assert.match(status(probe('2.1.999 (Claude Code)')), /^CLI: 2\.1\.999 \(Claude Code\) is installed but omd_claude_cli needs 2\.1\.302 \(Claude Code\).*auto-update/);
+  assert.match(status(probe('2.1.999 (Claude Code)')), /^CLI: 2\.1\.999 \(Claude Code\) is installed but omd_claude_cli needs 2\.1\.307 \(Claude Code\).*auto-update/);
   assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\n`));
 });

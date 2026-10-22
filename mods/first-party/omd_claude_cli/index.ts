@@ -4,7 +4,7 @@ const service = 'claude_cli';
 const delegate = 'mod_omd_claude_cli_ask_claude';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
-export const CLI_VERSION = '2.1.302 (Claude Code)';
+export const CLI_VERSION = '2.1.307 (Claude Code)';
 const ansi = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const probe = `const { spawnSync } = await import('node:child_process');
 const run = argv => spawnSync('claude', argv, { encoding: 'utf8', timeout: 10000 });

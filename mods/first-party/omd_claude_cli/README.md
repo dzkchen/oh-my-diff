@@ -4,13 +4,13 @@ Lets a session use Claude models through the official Claude CLI and your Claude
 
 ## Turn it on
 
-It comes with OMD+ but starts off. It needs Claude CLI `2.1.302` on your `PATH` and Node on your `PATH`.
+It comes with OMD+ but starts off. It needs Claude CLI `2.1.307` on your `PATH` and Node on your `PATH`.
 
 1. Enable `omd_claude_cli` in `/mods` and approve its trust dialog. It asks to run `claude` and `node` outside the sandbox (`os`): `claude auth login` and the setup script need your real home directory and network.
 2. Run `/claude login` for your plan (Pro, Max, Team or Enterprise), or `/claude login api` for Console API credits. The official `claude auth login` (`--console` for API) runs in the background and its progress shows in the transcript: the sign-in link appears there (the CLI also opens your browser), so finish signing in in the browser. If the page shows a code instead (for example over SSH), run `/claude code CODE`.
 3. When the login exits, the mod rechecks `claude auth status`, discovers the models, registers the provider and adds them to `/model` beside the OpenAI models.
 
-OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run `/claude login` or `/claude login api` again. Later sessions publish the models at start with no step from you; run `/claude login` again after upgrading the Claude CLI. Only `2.1.302` is accepted: after Claude Code auto-updates to another version, login and Claude requests are refused until `2.1.302` is installed again, so turn off Claude Code's auto-update.
+OMD never switches between plan limits and API credits on its own. The choice is stored and changes only when you run `/claude login` or `/claude login api` again. Later sessions publish the models at start with no step from you; run `/claude login` again after upgrading the Claude CLI. Only `2.1.307` is accepted: after Claude Code auto-updates to another version, login and Claude requests are refused until `2.1.307` is installed again, so turn off Claude Code's auto-update.
 
 ## Use it
 
@@ -19,7 +19,7 @@ OMD never switches between plan limits and API credits on its own. The choice is
 | `/claude login` | Sign in with your Claude plan |
 | `/claude login api` | Sign in with Console API credits |
 | `/claude code CODE` | Send the code the sign-in page shows to a running login |
-| `/claude` (or `/claude status`) | Show the CLI version, login, billing and whether models are published. If the installed CLI is not `2.1.302`, it says so and what to do |
+| `/claude` (or `/claude status`) | Show the CLI version, login, billing and whether models are published. If the installed CLI is not `2.1.307`, it says so and what to do |
 | `/model` | Pick a Claude model; the thread switches provider from its next turn and keeps its history |
 
 `/status` shows the plan's 5-hour and weekly limits with reset times, and which billing source is in use. An expired login or a model your account lacks is refused with a message naming `/claude login`.
