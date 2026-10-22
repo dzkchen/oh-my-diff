@@ -49,10 +49,16 @@ OMD Core includes only the first three.
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
-| `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI `2.1.302`. See [Claude](#claude). |
+| `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI `2.1.307`. See [Claude](#claude). |
 | `omd_profiles` | Switch between ChatGPT accounts, API keys and compatible providers | A profile. See [An API key or another provider](#an-api-key-or-another-provider). |
 | `omd_workflow` | Workflow checkpoints and completion checks | A contract: turn the mod on, then `omd-package contract list` and `omd-package contract select ID@VERSION` |
 | `omd_advisor` | A second model reviews plans and claimed completion | Its own model allowance; see its README |
+| `omd_source_knowledge` | Keeps file-backed facts, test evidence and approved lessons for later tasks in this repository | |
+| `omd_programmable_context` | Python helpers for kept context, child agents and a session harness; `/refine` | The `omd-code-execution` plugin's Python kernel |
+| `omd_mini` | `omd mini`: a scrollback-first session with a short prompt and one status segment; `/omd_mini:switch` | A terminal |
+| `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account and `pnpm`; not yet verified on a live account |
+| `omd_tool_absorb` | Runs a response's parallel reads as one step and repeated reads once; `/absorb` | |
+| `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 

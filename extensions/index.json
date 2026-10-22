@@ -16,13 +16,13 @@
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.302",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.307",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 1.0.0-rc.2",
         "mod API 1.0.0",
         "Node 24.18.0",
-        "Claude CLI 2.1.302"
+        "Claude CLI 2.1.307"
       ],
       "support_status": "reviewed_candidate"
     },
@@ -265,6 +265,40 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_tool_absorb",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in tool-call absorption: a response's parallel read-only calls run as one merged step through tools.invoke with per-call results and success, identical reads in it run once, and unchanged file reads, including concurrent ones, are reused with their structured result inside a code-mode cell",
+      "source": "mods/first-party/omd_tool_absorb",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; tool_batch_v1, tool_batch_success_v1, code_mode_values_v1, continuation_middleware_v1, tool_continuation_v2, store_v1, store_thread_v1, state_scopes_v1, events_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_tool_fix",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in schema-aware tool-call correction: clear-cut argument representation and JSON syntax errors are fixed before the call runs and recorded as evidence; ambiguous calls go back to the model",
+      "source": "mods/first-party/omd_tool_fix",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; continuation_middleware_v1, tool_continuation_v2, model_turn_interception_v1, store_v1, store_thread_v1, state_scopes_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.0-rc.2",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "omd_mods",
       "version": "1.0.0",
       "extension_type": "mod",
@@ -335,9 +369,9 @@
       ],
       "support_status": "reviewed_candidate",
       "extension_type": "mod",
-      "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn",
+      "capability": "Opt-in account and provider profiles: switch a thread between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at its next turn, with a usage meter, Alt+s cycling and in-session add and remove",
       "source": "mods/first-party/omd_profiles",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; credentials_v1, events_v1, route_reload_v1, state_scopes_v1; Node 24.18.0"
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; credentials_v1, events_v1, route_reload_v1, route_write_v1, state_scopes_v1; Node 24.18.0"
     },
     {
       "id": "omd_lsp_sync",
@@ -404,6 +438,75 @@
         "OMD 1.0.0-rc.2",
         "mod API 1.0.0",
         "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_source_knowledge",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in source-backed facts, task evidence and approved lessons with exact file hashes, refreshed against the workspace for reuse in later tasks",
+      "source": "mods/first-party/omd_source_knowledge",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; workspace_fs_v1, workspace_fingerprint_v1, store_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_programmable_context",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in Python context variables, child agents and a refinable session harness over the omd-code-execution kernel bridge",
+      "source": "mods/first-party/omd_programmable_context",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; history_v1, store_thread_v1, routes_v1, model_complete_v2, terminal_prompt_v1; Node 24.18.0; the omd-code-execution python kernel",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_mini",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in scrollback-first interface launched by `omd mini`: hidden inline sites, a simple prompt, one status segment and switching to the full UI at quit",
+      "source": "mods/first-party/omd_mini",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1, render_hooks_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_cursor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in Cursor models in /model through your Cursor account and the official Cursor SDK, with OMD tools only; verified against a fake SDK, not a live account",
+      "source": "mods/first-party/omd_cursor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; @cursor/sdk 1.0.35 installed by /cursor setup; a Cursor account",
+      "tested_versions": [
+        "Codex 0.163.0",
+        "OMD 1.0.1",
+        "mod API 1.0.0",
+        "Node 24.18.0",
+        "@cursor/sdk 1.0.35 (fake SDK fixture)"
       ],
       "support_status": "reviewed_candidate"
     },

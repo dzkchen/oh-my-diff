@@ -159,6 +159,7 @@ pub fn install(
     if !codex_omd::effective_mode()?.mod_host_enabled() {
         return Ok(());
     }
+    codex_omd::route_writes::set_host_check(HostConfig::check);
     let root = PathBuf::from(
         std::env::var_os(codex_omd::MOD_STORE_ENV).ok_or("OMD_MODE=omd requires OMD_MOD_STORE")?,
     );

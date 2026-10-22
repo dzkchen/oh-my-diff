@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "store.get": [{ "result": null }, { "result": null }, { "result": null }],
+    "workspace.fingerprint": [
+      { "result": { "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+      { "result": { "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+      { "result": { "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+      { "result": { "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+    ],
+    "workspace.stat": [
+      { "result": { "files": { "src/config.txt": { "kind": "file", "size": 13, "mtime_ms": 1 } } } },
+      { "result": { "files": { "src/config.txt": { "kind": "file", "size": 13, "mtime_ms": 1,
+        "sha256": "dbea9325179efe46ea2add94f7b6b745ca983fabb208dc6d34aa064623d7ee23" } } } }
+    ],
+    "workspace.read": [{ "result": { "files": { "src/config.txt": { "text": "first\nsecond\n", "sha256": "dbea9325179efe46ea2add94f7b6b745ca983fabb208dc6d34aa064623d7ee23" } } } }],
+    "workspace.check_access": [{ "result": { "paths": ["src/config.txt"], "write": false } }],
+    "evidence.read": [{ "result": {
+      "reference": { "reference": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      "text": "{\"media_type\":\"text/plain\",\"label\":\"fixture\",\"content\":\"Focused check passed\"}", "cursor": null, "bytes": 78
+    } }],
+    "store.put": [{ "result": { "revision": 1 } }, { "result": { "revision": 1 } }, { "result": { "revision": 1 } }]
+  },
+  "steps": [
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "tool", "name": "retain_source",
+      "payload": { "repository_identity": "fixture/repository", "expected_revision": 0, "id": "source.fact", "task_id": "task-1",
+        "label": "Configuration source", "source": { "path": "src/config.txt", "start_line": 2, "end_line": 2 } } },
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "command", "name": "discard",
+      "payload": "{\"repository_identity\":\"fixture/repository\",\"expected_revision\":0,\"action\":{\"actor\":\"fixture-maintainer\",\"reason\":\"Explicit reset\"}}" },
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "tool", "name": "retain_evidence",
+      "payload": { "repository_identity": "fixture/repository", "expected_revision": 0, "id": "check-1", "task_id": "task-1",
+        "summary": "Focused configuration check", "kind": "test", "reference": {
+          "reference": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } }
+  ]
+}

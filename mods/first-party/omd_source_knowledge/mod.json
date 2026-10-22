@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "omd_source_knowledge",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "description": "Keeps source-backed facts and task evidence with exact file hashes for reuse in later tasks",
+  "license": "MIT",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_source_knowledge" },
+  "capabilities": ["tools", "commands", "fs.read", "store"],
+  "environment": ["crypto"],
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_fingerprint_v1", "store_v1"] }
+}

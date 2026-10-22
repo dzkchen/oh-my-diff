@@ -100,6 +100,7 @@ pub(super) struct Services {
 struct Service {
     mod_id: String,
     generation: u64,
+    started_at_ms: u64,
     route: Option<Route>,
     job: Option<tokio::task::JoinHandle<Result<Value, String>>>,
     task: Arc<Task>,
@@ -386,7 +387,7 @@ impl Services {
                 .get(&selection.id)
                 .filter(|r| r.mod_id == mod_id && r.generation == generation)
                 .ok_or("unknown_or_foreign_sidecar")?;
-            return Ok(json!({"id":selection.id,"running":!record.finished()}));
+            return Ok(json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}));
         }
         if records.contains_key(&selection.id) {
             return Err("service_already_registered".into());
@@ -833,6 +834,7 @@ impl Services {
             Service {
                 mod_id: mod_id.into(),
                 generation,
+                started_at_ms: codex_omd::peers::now_ms(),
                 // A provider becomes routable only after its readiness handshake succeeds.
                 route: None,
                 job: Some(job),

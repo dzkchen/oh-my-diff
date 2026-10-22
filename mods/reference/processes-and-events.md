@@ -196,10 +196,14 @@ exits, even while a background child keeps the output streams open and more outp
 
 ### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
+- A `key` (1-64 bytes) names one watch per mod in this OMD process. Calling again from the same thread with the
+  same arguments keeps it; other arguments or another thread replace it without counting against the limit, and
+  changes it already queued are still delivered. `workspace.unwatch {key}` stops it; `{watch_id}` stops one of the
+  mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 

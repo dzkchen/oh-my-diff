@@ -601,7 +601,15 @@ async fn run(
                 .0
                 .routes_for(caller.id)
                 .into_iter()
-                .map(|route| route_info(host, route))
+                .map(|route| {
+                    let mut info = route_info(host, route);
+                    if route.provider == caller.id
+                        && let Some(data) = &route.data
+                    {
+                        info["data"] = data.clone();
+                    }
+                    info
+                })
                 .collect::<Vec<_>>()
         )),
         "ledger.settle" => {
@@ -628,6 +636,17 @@ async fn run(
                 .get(&lead.thread.to_string())
                 .cloned();
             let config = super::agents::parent_config(lead).await?;
+            let cwd = host
+                .manager
+                .upgrade()
+                .ok_or("native_thread_manager_stopped")?
+                .get_thread(lead.thread)
+                .await
+                .map_err(|e| e.to_string())?
+                .config_snapshot()
+                .await
+                .cwd()
+                .clone();
             let turns = core
                 .expansion
                 .turns
@@ -638,10 +657,11 @@ async fn run(
                 .unwrap_or(0);
             Ok(
                 json!({"thread_id": lead.thread.to_string(), "root": host.repository,
-                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
+                "cwd": cwd, "codex_version": env!("CARGO_PKG_VERSION"),
                 "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
                 "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-                "route": account.and_then(|account| account.route), "turns_started": turns}),
+                "route": account.and_then(|account| account.route), "turns_started": turns,
+                "process_id": crate::accounting::process_id()}),
             )
         }
         "task.status" => {

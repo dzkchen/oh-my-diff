@@ -197,6 +197,7 @@
     "operations:providers.unregister": {"status":"frozen","consumer":{"path":"mods/first-party/omd_claude_cli/index.ts","snippet":"api.host.tryCall('providers.unregister'"},"decision":"coordination.providers"},
     "operations:receipts.submit": {"status":"frozen","consumer":{"path":"mods/examples/release_check/index.ts","snippet":"api.host.call('receipts.submit'"},"decision":"coordination.contracts"},
     "operations:routes.add": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('routes.add'"},"decision":"coordination.packages"},
+    "operations:routes.write": {"status":"experimental","reason":"Added after 1.0.0 for mod-owned provider routes; experimental."},
     "operations:routes.list": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('routes.list'"},"decision":"coordination.lead_route"},
     "operations:routes.select": {"status":"frozen","consumer":{"path":"mods/examples/profile_switcher/index.ts","snippet":"api.host.tryCall('routes.select'"},"decision":"coordination.credentials"},
     "operations:session.info": {"status":"frozen","consumer":{"path":"mods/first-party/omd_usage/index.ts","snippet":"api.host.tryCall('session.info'"},"decision":"coordination.sdk_helpers"},
@@ -253,7 +254,7 @@
     "operations:workspace.snapshot": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.call('workspace.snapshot'"},"decision":"tool.workspace"},
     "operations:workspace.stat": {"status":"frozen","consumer":{"path":"mods/first-party/omd_advisor/index.ts","snippet":"api.host.tryCall('workspace.stat'"},"decision":"tool.workspace"},
     "operations:workspace.transaction": {"status":"frozen","consumer":{"path":"mods/examples/workspace/index.ts","snippet":"api.host.call('workspace.transaction'"},"decision":"tool.workspace"},
-    "operations:workspace.unwatch": {"status":"experimental","reason":"Used by omd_preview to replace its file watch; experimental in 1.0.0."},
+    "operations:workspace.unwatch": {"status":"experimental","reason":"Used by omd_preview to stop its keyed file watch; experimental in 1.0.0."},
     "operations:workspace.watch": {"status":"frozen","consumer":{"path":"mods/examples/watch_notify/index.ts","snippet":"api.host.call('workspace.watch'"},"decision":"context.events"},
     "components:box": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'box'"},"decision":"terminal.box_model"},
     "components:button": {"status":"frozen","consumer":{"path":"mods/examples/box_model/index.ts","snippet":"type: 'button'"},"decision":"terminal.controls"},
@@ -1413,7 +1414,7 @@
       "replace": "tool_batch (exclusive)",
       "timing": "after the response's calls are known, before dispatch",
       "ownership": "mod: which calls merge; host: admission, approvals, per-call results and attribution",
-      "limits": "merged calls run once under a synthetic id; results fan out by call id and missing results become errors; dispatch is unchanged without an owner",
+      "limits": "merged calls run once under a synthetic id; results fan out by call id, with a per-call success flag when the merge sets success_per_call, and missing results become errors; dispatch is unchanged without an owner",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1608,7 +1609,8 @@
           "packages.apply",
           "packages.reload",
           "settings.write",
-          "routes.add"
+          "routes.add",
+          "routes.write"
         ]
       },
       "replace_note": null

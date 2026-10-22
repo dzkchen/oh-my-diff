@@ -28,6 +28,9 @@ next request or for the thread.
 (`OMD_SECRETS`, JSON `[{id, label, origin, value}]`) into the sidecar only; values never reach the mod runtime or
 the model.
 
+`sidecars.status {id}` returns `{id, running, started_at_ms}` for a sidecar or provider service the caller started
+in this process. Compare `started_at_ms` with a store entry's `provenance.at` to tell whether it predates a change.
+
 ### Credential origins
 
 Every credential profile sends its token to one origin, fixed at enrollment:

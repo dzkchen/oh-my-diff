@@ -56,6 +56,53 @@ class ProfileModeTests(unittest.TestCase):
                           "activation": {"selection": selection}}
                 self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
+    def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "host.json").write_text(json.dumps({"routes": [{"model": "work", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "home", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "legacy", "provider": "omd_profiles"}]}))
+            route, catalog = base / "route.json", base / "models.json"
+            route.write_text(json.dumps({"default": "work", "models": [{"slug": "work", "family": "work"}]}))
+            catalog.write_text(json.dumps({"models": [{"slug": "work"}]}))
+            record = {"profile": "full", "store": str(base), "activation": {"selection": "omd"}, "manager": {"installed_path": "m"},
+                      "providers": {"omd_profiles": {"route": str(route), "catalog": str(catalog)}}}
+
+            def setup(_prefix, _record, _name, _identifier, options):
+                self.assertEqual(options, {})
+                route.write_text(json.dumps({"default": "work", "models": [{"slug": "work"}, {"slug": "home"}]}))
+                catalog.write_text(json.dumps({"models": [{"slug": "work"}, {"slug": "home"}]}))
+
+            arguments = argparse.Namespace(setup=False, model="home", codex=[])
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value={"selections": [{"id": "omd_profiles", "effective": True}]}), \
+                    patch.object(profiles, "route_setup", side_effect=setup) as refreshed, \
+                    patch.object(profiles.os, "execv") as launched:
+                profiles.route(base, base, "profiles", arguments)
+                profiles.route(base, base, "profiles", arguments)
+            self.assertEqual(refreshed.call_count, 1)
+            self.assertIn('model="home"', launched.call_args.args[1])
+
+    def test_omd_launcher_routes_uninstall_to_the_installer_that_owns_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            for name in ("tool", "control", "installer"):
+                (base / name).write_text(f"echo {name} \"$@\" \"$OMD_MOD_STORE\"\n")
+                (base / name).chmod(0o755)
+            record = {"store": "/omd/store"}
+            managed = {**record, "update": {"python": "python3", "installer": str(base / "installer"), "root": "/omd/root"}}
+            for current, argv, expected in (
+                    (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
+                    (managed, ["update"], "installer update --root /omd/root"),
+                    (managed, ["codex-app", "status"], "installer codex-app --root /omd/root status"),
+                    (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
+                    (record, ["update"], "tool update /omd/store")):
+                with self.subTest(managed="update" in current, argv=argv):
+                    launcher = base / "omd"
+                    launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
+                    run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
+                    self.assertEqual(run.stdout.strip(), expected)
+
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
             with self.subTest(unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:
@@ -277,6 +324,44 @@ enabled = true
                 result = profiles.select_mod(base / "prefix", base / "bin", "omd_lsp_view", True)
                 self.assertTrue(result["packages"][0]["enabled_in_store"])
                 self.assertIsNone(result["packages"][0]["error"])
+
+    def test_omd_mini_reopens_the_thread_its_switch_request_names(self):
+        with tempfile.TemporaryDirectory(prefix="omd-mini-", dir="/private/tmp") as temporary:
+            base = Path(temporary)
+            log, exported = base / "runs.log", base / "export.json"
+            (base / "codex").write_text(
+                "#!/bin/sh\n"
+                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH\" >> {log}\n"
+                "launch=${OH_MY_DIFF_LAUNCH%.*} run=${OH_MY_DIFF_LAUNCH##*.}\n"
+                "if [ \"$OH_MY_DIFF_PRESENTATION\" = mini ]; then\n"
+                f"  echo \"{{\\\"entries\\\":{{\\\"switch_$launch\\\":{{\\\"value\\\":{{\\\"run\\\":$run,\\\"target\\\":\\\"full\\\",\\\"thread\\\":\\\"019a0000-0000-7000-8000-000000000001\\\"}}}}}}}}\" > {exported}\n"
+                f"else echo '{{\"entries\":{{}}}}' > {exported}; exit 3; fi\n")
+            (base / "omd").write_text(f"#!/bin/sh\ncat {exported}\n")
+            for name in ("codex", "omd"):
+                (base / name).chmod(0o755)
+            record = {"activation": {"selection": "full"}, "manager": {"installed_path": "/manager"}, "store": "/store",
+                      "tools": {"omd": {"installed_path": str(base / "omd")}}}
+            selections = {"selections": [{"id": "omd_mini", "effective": True, "error": None}]}
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value=selections), \
+                    patch.object(profiles.sys.stdin, "isatty", return_value=True), \
+                    patch.object(profiles.sys.stdout, "isatty", return_value=True), \
+                    patch.object(profiles.signal, "signal"):
+                code = profiles.mini(Path("/prefix"), base, ["--model", "m", "-s=danger-full-access", "-C", "/repo", "-c", "a=1",
+                                                             "-i", "x.png", "--yolo", "--no-alt-screen", "fix it"])
+                selections["selections"][0]["effective"] = False
+                with self.assertRaisesRegex(ValueError, "needs its mod enabled"):
+                    profiles.mini(Path("/prefix"), base, [])
+            runs = [line.split("|") for line in log.read_text().splitlines()]
+            self.assertEqual(code, 3)
+            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [
+                ("--no-alt-screen --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini"),
+                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full")])
+            self.assertEqual([launch.split(".")[1] for _, _, launch in runs], ["0", "1"])
+            self.assertEqual(profiles.session_options(["resume", "--last", "-mx", "--model=y", "-c", "a=1", "-c", "b=2", "--", "-s", "p", "-m"]),
+                             ["-mx", "--model=y", "-c", "a=1", "-c", "b=2"])
+            self.assertEqual(profiles.session_options(["prompt", "-m"]), [])
+            self.assertEqual(len({launch.split(".")[0] for _, _, launch in runs}), 1)
 
 
 if __name__ == "__main__":

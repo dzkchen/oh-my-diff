@@ -924,7 +924,8 @@ A route entry, with every field the host accepts:
 
 #### Choosing a route
 
-- `routes.list` returns the routes visible to the calling mod with `billing` and `available`.
+- `routes.list` returns the routes visible to the calling mod with `billing` and `available`, plus `data` on the
+  caller's own routes ([route writes](#route-writes-route_write_v1)).
 - The `routing` replacement returns `{route}` to choose a configured lead route at thread start.
 - A `model_request` interceptor switches one request among the thread's lead routes (see [Model requests and
   streams](#model-requests-and-streams-model_turn_interception_v1)).
@@ -947,6 +948,27 @@ and `routes.select` without restarting.
 - Services, secrets and protected paths stay as loaded at start.
 - An invalid edit keeps the previous routes and `routes.select` reports why.
 - `routes.select` also admits a lead route added after the thread started when it is on the thread's provider.
+
+#### Route writes (`route_write_v1`)
+
+`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own entries in
+`host.json` after the user confirms a dialog listing every change. It returns `{routes, services}` (the caller's
+route names and service ids afterwards), `{status: 'declined'}`, or `{unchanged: true}` without asking when
+nothing would change.
+
+- `routes` replaces every route without a `grant` whose `provider` is the caller's mod id. Each must name that
+  provider, have the single role `lead` and no `grant` or `credential`. A paid route (neither `included_subscription` nor
+  `provider_billed`) needs `limits.exposure_microusd` above zero (`routes_write_allowance_required`).
+- A route's `data` (any JSON, at most 2 KiB) is ignored by the host; `routes.list` returns it only to the route's
+  provider mod, and the mod's provider service can read it from `host.json`.
+- `services`, when given, lists the caller's service grants afterwards: each entry's fields replace those of the
+  caller's grant with the same `id`, an entry without one must be a complete grant with `mod_id` set to the caller,
+  and the caller's grants it leaves out are removed. Secrets may name only `secret_refs` the caller's grants already
+  use, and credentials must be existing profiles (a `secret` profile only when the caller owns it). The dialog lists
+  every route and grant field that changes with its new value.
+- The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
+  nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
+  through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
 
 #### Route grant files
 
@@ -1318,8 +1340,10 @@ none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
 - `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started}` for the session thread, also from terminal commands in the same process. `turns_started`
-  counts turns this process started in the thread.
+  route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+  `cwd` is the thread's current working directory, and `turns_started` counts turns this process started in the
+  thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
+  records in shared state, such as watch IDs, by it.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -2082,6 +2106,10 @@ shape.
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
 - Output beyond 48 KiB arrives truncated with `truncated: true`.
+- For a code-mode call, `next` also resolves with `value` when a mod intercepting `tool` requires `code_mode_values_v1`, the structured result the cell receives (omitted above
+  32 KiB or when it and `output` together exceed 48 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
+  ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
   `tool_result` and in turn evidence, and the answer cannot attest that a file changed or a process ran.
 - Input handlers cannot answer for the engine, so an outer handler cannot bypass an inner required one.
@@ -2212,7 +2240,10 @@ added after any interceptor result at any output size.
 #### `replace('tool_batch')`
 
 `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of one response into one call of a tool the
-mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id.
+mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id: the
+merged tool returns an object keyed by call id whose values are the output text. A merge with
+`success_per_call: true` (`tool_batch_success_v1`) instead reads each value that is exactly `{output, success}` as
+that call's output and own success flag; any other value stays text.
 
 #### `intercept('tool_specs')`
 
@@ -2459,10 +2490,14 @@ exits, even while a background child keeps the output streams open and more outp
 
 #### `workspace.watch`
 
-`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
+`workspace.watch {paths, recursive?, debounce_ms?, include_ignored?, key?}` reports external edits as `workspace_change`
 with source `external`.
 
 - At most 16 watches per mod.
+- A `key` (1-64 bytes) names one watch per mod in this OMD process. Calling again from the same thread with the
+  same arguments keeps it; other arguments or another thread replace it without counting against the limit, and
+  changes it already queued are still delivered. `workspace.unwatch {key}` stops it; `{watch_id}` stops one of the
+  mod's watches. Keys require `workspace_watch_key_v1`.
 - Protected paths are always excluded.
 - Git-ignored paths are excluded unless `include_ignored` is true.
 
@@ -2516,6 +2551,9 @@ next request or for the thread.
 `sidecars.start {id, credential?, secrets?}` injects a host-approved credential and the caller's own secrets
 (`OMD_SECRETS`, JSON `[{id, label, origin, value}]`) into the sidecar only; values never reach the mod runtime or
 the model.
+
+`sidecars.status {id}` returns `{id, running, started_at_ms}` for a sidecar or provider service the caller started
+in this process. Compare `started_at_ms` with a store entry's `provenance.at` to tell whether it predates a change.
 
 #### Credential origins
 
@@ -4524,7 +4562,7 @@ Slash commands, buttons and keybindings run in the terminal as user actions and 
 - `workspace.read/list/stat/check_access/transaction/backup/restore`
 - `store.*`
 - the terminal operations (`app.request`, `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`,
-  `packages.*`, `contract.select`, `sessions.ports`, `settings.write`)
+  `packages.*`, `routes.add`, `routes.write`, `contract.select`, `sessions.ports`, `settings.write`)
 - `app.routes`
 - `turns.activity`
 - `events.publish`
@@ -4534,7 +4572,7 @@ A service call works only while its provider needs no other host operation.
 Component input callbacks run there too but not as user actions, so `packages.apply`, `settings.write`,
 `builtins.invoke`, `credentials.request` and `terminal.import_file` are refused.
 
-Anything else (`task.*`, `contract.*`, `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
+Anything else (`task.*`, `contract.*`, other `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
 `agents.*`) goes through `events.publish` to the mod's own `channel` handler, which runs with the session.
 
 #### Settings defaults
