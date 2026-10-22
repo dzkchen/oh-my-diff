@@ -265,11 +265,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "47e3e99a91359314d4ca89ec6c23a80fb17e4ea11c09be200b59dbf328e35328",
-        "mod.json": "56af8542c1091cd683f25f3f7918bf87c027a9e8a615c542deee34383a5aa022"
+        "index.ts": "c043f786e3de8b8dfea7c30e0c1086e399d328f5e8820415a9570c8565057a02",
+        "mod.json": "241f76ed494e07d43e0062e1dad3826240dca0e1d20acf9f3b1dbd34afe0b8cb"
       },
       "id": "omd_mini",
-      "package_sha256": "99ec5f8618144fc1dea371631246a813834e0f76a9c03711b090950c76abd7f4",
+      "package_sha256": "494e07f8b5c1ff3bb57c79121491fcaed80ad933283d1d3567040be05ff7b34c",
       "source": "mods/first-party/omd_mini",
       "version": "1.0.0"
     },

@@ -53,13 +53,10 @@ test('the status line names the effective thread model', () => {
   assert.deepEqual(invoke('terminal', { event: 'start', ledger: ledger() }), { status: ['gpt-6-luna'] });
 });
 
-test('a mini session shows a simple prompt and one status line of model, context and limits', () => {
-  const { invoke, calls } = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`);
+test('a mini session shows one status line of model, context and limits', () => {
+  const { invoke } = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`);
   invoke('start', {});
   assert.deepEqual(invoke('terminal', { event: 'start', ledger: ledger() }), { status: ['gpt-6-astra'] });
-  const hint = { component: 'composer_hint', id: 'placeholder', surface: 'inline', viewport: { columns: 80, rows: 24 }, lifecycle: 'live', owner: null, props: { slot: 'placeholder', placeholder: 'Ask Oh My Diff to do anything', input_enabled: true } };
-  invoke('intercept', { surface: 'render', input: hint, original: hint, origin: { caller: 'engine' } }, '0');
-  assert.equal(calls.findLast(call => call.operation === 'continuation.next').args.input.props.placeholder, '');
   invoke('app_notification', notify('thread/tokenUsage/updated', { threadId: thread, tokenUsage: { last: { totalTokens: 88000 }, modelContextWindow: 258000 } }));
   invoke('app_notification', notify('thread/tokenUsage/updated', { threadId: 'child', tokenUsage: { last: { totalTokens: 1000 }, modelContextWindow: 258000 } }, 'child'));
   invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 23, windowDurationMins: 300 } } }, null));

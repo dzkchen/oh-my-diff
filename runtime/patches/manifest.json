@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "ce9b12f0a9e3a7a34b671e188263f9f302493c1c20f7e938d54cb94d1e0aa256"
+    "sha256": "7f687c2686d7b8146804b7a9fd883f57b107a146dffeeab1ef7e57bc58b6e22d"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1835,7 +1835,7 @@
     },
     "codex-rs/tui/src/bottom_pane/chat_composer.rs": {
       "before": "b0cebf0e1697871468c432bd7ceb4839818c62dcf0c14002c2b3dd87c0da311d",
-      "after": "7840bdae241a908cb9705b715e1f86a0178641c560cc8b4f2ed670c48c6c7e1b"
+      "after": "e4926da5cae7f06f2aecce0edd3b089f324bcf24a69d26ff8861e4ec5acaae2b"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs": {
       "before": "0d481f30e9aaeec083e0b9dbce4b8e0883a012c1fa918e2a49dbeb1cc03e2f07",
@@ -1844,6 +1844,10 @@
     "codex-rs/tui/src/bottom_pane/chat_composer/draft_state.rs": {
       "before": "4e5ec20000b59eb08cd64db634668147c9788faea5f098d1ee5b3a57a02051e1",
       "after": "ba1eea74fa4f519942ae4d7f4723c638b8e35a94a4e07b1e2327c09732d4d269"
+    },
+    "codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs": {
+      "before": "95891d56d2c51f4014a1119438873cc65cc06852a1871ddd2765e9225bbc37d7",
+      "after": "ef8f65384f294e28822f57ea08569623108c5a158b37f3af5a2c5d94cd15677b"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs": {
       "before": "7152700f67e4849e11c7cc26777107d6501278576300ff6d7ca7f3592b36b339",

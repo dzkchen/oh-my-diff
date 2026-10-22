@@ -1,4 +1,4 @@
-import type { Json, ModAPI, RenderEvent, TerminalPatch } from '../../api.d.ts';
+import type { Json, ModAPI, TerminalPatch } from '../../api.d.ts';
 
 type Mode = 'mini' | 'full';
 type Usage = { seq: number; model?: string; context?: number; window?: number | null };
@@ -80,12 +80,6 @@ export default function activate(api: ModAPI) {
     const spend = typeof paid === 'number' && paid > 0 ? `$${(paid / 1e6).toFixed(2)}`
       : state.limit ? `${!state.limit.minutes ? 'limit' : state.limit.minutes >= 1440 ? `${Math.round(state.limit.minutes / 1440)}d` : `${Math.round(state.limit.minutes / 60)}h`} ${state.limit.used}%` : null;
     return { status: [usage?.model ?? state.model, percent === null ? null : `ctx ${percent}%`, spend].filter((part): part is string => !!part).map(part => fit(part, 40)) };
-  });
-
-  const mode = api.atom<Json>('mode', null);
-  api.intercept('render', { match: { component: 'composer_hint' } }, (event, next) => {
-    const { props } = event as RenderEvent<'composer_hint'>;
-    return mode.get() === 'mini' && props.slot === 'placeholder' ? next({ ...event, props: { ...props, placeholder: '' } } as RenderEvent<'composer_hint'>) : next(event);
   });
 
   api.command('switch', () => {

@@ -34639,7 +34639,7 @@ index 6e3726352afb15a40c3de0de1558bc2b59def9cc..3e49620c08405df01131ff35d6ad8d45
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1f4a6f5dc 100644
+index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..6d4cb9eb4ac1f982a10a5d5443b0022198ab98d6 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -383,6 +383,7 @@ mod draft_state;
@@ -34999,7 +34999,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
          Block::default().style(style).render(composer_rect, buf);
          if !remote_images_rect.is_empty() {
              let first = self
-@@ -4902,6 +5086,11 @@ impl ChatComposer {
+@@ -4902,11 +5086,20 @@ impl ChatComposer {
                          &highlights,
                      );
                  }
@@ -35011,7 +35011,17 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
              }
          }
          if !self.draft.input_enabled || textarea_is_empty {
-@@ -4915,8 +5104,20 @@ impl ChatComposer {
+             let text = if self.draft.input_enabled {
+-                self.placeholder_text.as_str().to_string()
++                if crate::omd::plain_composer() {
++                    String::new()
++                } else {
++                    self.placeholder_text.as_str().to_string()
++                }
+             } else {
+                 self.draft
+                     .input_disabled_placeholder
+@@ -4915,8 +5108,20 @@ impl ChatComposer {
                      .to_string()
              };
              if !textarea_rect.is_empty() {
@@ -35034,7 +35044,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
              }
          }
          // The reserved right margin indicates hidden rows without changing wrapping.
-@@ -4968,6 +5169,7 @@ impl ChatComposer {
+@@ -4968,6 +5173,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -35042,7 +35052,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9361,6 +9563,7 @@ mod tests {
+@@ -9361,6 +9567,7 @@ mod tests {
                      Some(CommandItem::ServiceTier(command)) => {
                          panic!("expected {expected} command, got service tier {command:?}")
                      }
@@ -35050,7 +35060,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
                      None => panic!("no selected command for '{input}'"),
                  },
                  _ => panic!("slash popup not active after typing '{input}'"),
-@@ -9460,6 +9663,7 @@ mod tests {
+@@ -9460,6 +9667,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -35058,7 +35068,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9477,6 +9681,25 @@ mod tests {
+@@ -9477,6 +9685,25 @@ mod tests {
          );
      }
 
@@ -35084,7 +35094,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -9970,6 +10193,7 @@ mod tests {
+@@ -9970,6 +10197,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -35092,7 +35102,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10170,6 +10394,7 @@ mod tests {
+@@ -10170,6 +10398,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -35100,7 +35110,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -10228,6 +10453,7 @@ mod tests {
+@@ -10228,6 +10457,7 @@ mod tests {
      }
 
      #[test]
@@ -35108,7 +35118,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn file_completion_preserves_large_paste_placeholder_elements() {
          use crossterm::event::KeyCode;
          use crossterm::event::KeyEvent;
-@@ -10312,6 +10538,7 @@ mod tests {
+@@ -10312,6 +10542,7 @@ mod tests {
      }
 
      #[test]
@@ -35116,7 +35126,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn legacy_file_completion_ignores_shell_variable_to_the_right() {
          let (mut composer, _rx) = new_test_composer();
          composer.set_skill_mentions(Some(vec![test_skill_metadata("available")]));
-@@ -10338,6 +10565,7 @@ mod tests {
+@@ -10338,6 +10569,7 @@ mod tests {
      }
 
      #[test]
@@ -35124,7 +35134,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn adjacent_file_completion_inserts_leading_separator() {
          let (mut composer, _rx) = new_test_composer();
          configure_bound_plugin_left_of_unbound_plugin(&mut composer);
-@@ -10371,6 +10599,7 @@ mod tests {
+@@ -10371,6 +10603,7 @@ mod tests {
      }
 
      #[test]
@@ -35132,7 +35142,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn file_completion_preserves_separator_before_existing_suffix() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10386,6 +10615,7 @@ mod tests {
+@@ -10386,6 +10619,7 @@ mod tests {
      }
 
      #[test]
@@ -35140,7 +35150,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn file_completion_preserves_separator_before_sigiled_suffix() {
          for suffix in ["@next", "$next"] {
              let (mut composer, _rx) = new_test_composer();
-@@ -10398,6 +10628,7 @@ mod tests {
+@@ -10398,6 +10632,7 @@ mod tests {
      }
 
      #[test]
@@ -35148,7 +35158,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn file_completion_inserts_separator_before_line_break() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10413,6 +10644,7 @@ mod tests {
+@@ -10413,6 +10648,7 @@ mod tests {
      }
 
      #[test]
@@ -35156,7 +35166,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..0955be27370bd0caa5ad1e2e895961d1
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10435,6 +10667,138 @@ mod tests {
+@@ -10435,6 +10671,138 @@ mod tests {
          }
      }
 
@@ -35380,6 +35390,41 @@ index b219097ee18118ba7be29fd24c514d7e64b2cfb5..192ca81a4d6223645af607083a432f2a
          }
      }
  }
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..1a8ea42dcdbbf9272a70fa0a568bd99f072a8f3a 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
+@@ -15,6 +15,7 @@
+ use std::time::Instant;
+
+ use super::super::footer::footer_height;
++use super::super::footer::passive_footer_status_line;
+ use super::super::footer::reset_mode_after_activity;
+ use super::super::footer::shows_passive_footer_line;
+ use super::ActivePopup;
+@@ -275,10 +276,22 @@ impl super::ChatComposer {
+         self.shortcut_overlay_visible() && options.footer.is_none()
+     }
+
++    fn idle_hint_only(&self, options: ComposerRenderOptions<'_>) -> bool {
++        let props = self.hint_footer_props(options);
++        self.custom_footer_height().is_none()
++            && self.footer.hint_override.is_none()
++            && !self.footer.flash_visible()
++            && shows_passive_footer_line(&props)
++            && passive_footer_status_line(&props).is_none()
++    }
++
+     pub(super) fn footer_hint_height(&self, width: u16, options: ComposerRenderOptions<'_>) -> u16 {
+         if self.show_warning_notice(options) || self.shortcuts_above_composer(options) {
+             return 1;
+         }
++        if crate::omd::plain_composer() && options.footer.is_none() && self.idle_hint_only(options) {
++            return u16::from(options.separate_status_line);
++        }
+         options
+             .footer
+             .map_or_else(
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs b/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs
 index 48f7adff591d5c94eae8b275deb7217be39d864a..2b8c3730a434dabe417928a76f156922783dcc15 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/inline_input.rs

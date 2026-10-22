@@ -5,11 +5,11 @@
   "api": "1.0.0",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Scrollback-first presentation for sessions started with `omd mini`: a simple prompt, one status line (model, context, limits) and switching to the full UI",
+  "description": "Scrollback-first presentation for sessions started with `omd mini`: a bare prompt, one status line (model, context, limits) and switching to the full UI",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_mini"},
   "capabilities": ["terminal", "commands", "lifecycle", "store", "exec", "threads", "sessions", "inventory"],
   "exec_environment": ["OH_MY_DIFF_PRESENTATION", "OH_MY_DIFF_LAUNCH"],
   "subscriptions": {"app": ["thread/settings/updated", "thread/tokenUsage/updated", "account/rateLimits/updated"]},
-  "compatibility": {"required_features": ["app_v1", "exec_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "terminal_lists_v1", "render_hooks_v1"]}
+  "compatibility": {"required_features": ["app_v1", "exec_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "terminal_lists_v1"]}
 }
