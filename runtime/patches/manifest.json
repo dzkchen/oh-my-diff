@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "2ab19da8bc4b64ad73af9784f653cc75068978b6437801ab18f500f52cddf06f"
+    "sha256": "a0f1d880209de3ee3d15c209dced57b575953ecd8da43d0d47901810437f711d"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -951,7 +951,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "8c35a2d7bec2b555dd6f5f7826007195c24fd21eff1ef567d93566de7ce8d875"
+      "after": "9014a29c7f6516d0a5c839a9155ae77ba7f1c0f53c4b41d97cc8a39fd52eb1cd"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -999,7 +999,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_output.rs": {
       "before": null,
-      "after": "13643afa6ef1e02e61041594a95cf7f34ff91176d621fd4d917e9d701c328b91"
+      "after": "9febf4041b841b62824837f73ee5fbf8024feae771270e0eeaa7e17c0fcce34b"
     },
     "codex-rs/ext/omd/src/mods/expansion/tool_specs.rs": {
       "before": null,
@@ -1007,7 +1007,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "7877cec0aae87234935c718230ab9fbe5fcbfc0da4f38e1d313b3217ad29b99f"
+      "after": "7fbe31639697ad376d5acc946718c4346025596b0efaeab431afcf12f47b1d6f"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1027,7 +1027,7 @@
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
-      "after": "7e9e337466ac1fa3fff537917d36f2b283ed1a5f7005df18d4b1cf7c023a6b1f"
+      "after": "003a3e68aa8421ab660e3e019268e02c4729ddea977f97e36630873f9bd71a30"
     },
     "codex-rs/ext/omd/src/mods/peering.rs": {
       "before": null,
@@ -1323,7 +1323,7 @@
     },
     "codex-rs/omd/src/mods/chain.rs": {
       "before": null,
-      "after": "56e0547533d90a57718edd4b2fb9c3bd9a521fbbbf02062664fa5acdb2639d71"
+      "after": "eea0311bc700e876c7e8bda2f8eacde10d89d16161ef7d552fd3a460a098ed10"
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,

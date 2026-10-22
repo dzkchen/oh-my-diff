@@ -38,10 +38,11 @@ and which host call ran each read.
   SHA-256 is the same before and after the read, and only within the same cell of the session's own thread (not in
   sub-agents). The cell gets the same structured
   result the first read got, including its chunk ID and wall time. An identical read started while the first is
-  still running, such as inside one `Promise.all`, waits up to about 2.4 seconds for it and runs on its own after
-  that.
-- Reuse keeps the shared outputs, file contents included, in the mod's repository store until the turn ends; a
-  later cell also clears its thread's older entries and other threads' entries older than ten minutes.
+  still running, such as inside one `Promise.all`, waits up to about 25 seconds for it and runs on its own after
+  that; the first read's result is still kept for later repeats.
+- Relative paths resolve against the thread's current working directory.
+- Reuse keeps the shared outputs, file contents included, in the thread's store until the turn ends; a later cell
+  also clears the thread's older cells, and deleting the thread removes them.
 
 ## Needs and limits
 
@@ -50,7 +51,8 @@ and which host call ran each read.
 - Merged reads run one after another, not in parallel, so a merged step can take longer than the same reads run
   directly. It saves repeated work and context, not time.
 - A merged step holds about 128 KB of output and at most 8 distinct reads. A read whose output doesn't fit still
-  runs, and the model is told to run it again on its own.
+  runs, and the model is told to run it again on its own. A single read's output is cut at 48 KB, and the cut is
+  marked so the model can read the rest.
 - A duplicate read is answered with a pointer to the first one's output rather than a second copy; a duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode

@@ -70,7 +70,7 @@ impl ToolOutputContributor for Mods {
     fn wants_value(&self, call_id: &str) -> bool {
         self.pending
             .lock()
-            .is_ok_and(|pending| pending.contains_key(call_id))
+            .is_ok_and(|pending| pending.get(call_id).is_some_and(|pending| pending.values))
     }
 
     fn replace_tool_output<'a>(

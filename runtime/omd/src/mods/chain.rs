@@ -1740,6 +1740,21 @@ impl ModHost {
             .max()
     }
 
+    pub fn intercepts_with(&self, surface: &str, feature: &str) -> bool {
+        self.loaded.values().any(|loaded| {
+            loaded
+                .package
+                .compatibility
+                .required_features
+                .iter()
+                .any(|required| required == feature)
+                && loaded.registrations.interceptors.iter().any(|interceptor| {
+                    (loaded.error.is_none() || interceptor.required)
+                        && granted(loaded, &interceptor.pattern, surface)
+                })
+        })
+    }
+
     /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.
     pub fn intercept_held(
         &mut self,

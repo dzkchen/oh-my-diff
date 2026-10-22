@@ -34,8 +34,8 @@ It changes a call only when it doesn't match the tool's own schema, and only in 
 - It never changes text the tool expects as text, so commands, paths and file contents are never rewritten. It
   never turns `"05"`, `"+5"`, `"5.0"` or `5.5` into an integer, `"1"` or `"yes"` into a boolean, a single value
   into a list, or a number into text, and never drops a field, even a `null` one.
-- Calls whose arguments already match, freeform tools such as `apply_patch` and tools without a schema pass
-  through untouched.
+- Calls whose arguments already match, freeform tools such as `apply_patch`, tools without a schema and tools
+  whose schema uses `oneOf`, `allOf` or `$ref` pass through untouched.
 - The host checks every fixed call against the tool's registered schema again and applies its usual permissions
   and approvals. A fix the host rejects counts as rejected, and the same call is not fixed a third time. The
   same applies to an ambiguous call the model keeps sending.

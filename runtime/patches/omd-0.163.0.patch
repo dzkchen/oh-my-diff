@@ -63169,10 +63169,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f78442648c186c15a5fd4bba9db74e3158b0e5a4
+index 0000000000000000000000000000000000000000..ed02ef69956f034158404bad007a64a32099be51
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2540 @@
+@@ -0,0 +1,2545 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63360,6 +63360,7 @@ index 0000000000000000000000000000000000000000..f78442648c186c15a5fd4bba9db74e31
 +    thread: String,
 +    result: std::sync::mpsc::Sender<Result<Value, String>>,
 +    chain: tokio::task::JoinHandle<Result<codex_omd::ModChain, String>>,
++    values: bool,
 +    _cancellation: Cancellation,
 +}
 +
@@ -65372,11 +65373,14 @@ index 0000000000000000000000000000000000000000..f78442648c186c15a5fd4bba9db74e31
 +                let _thread = codex_omd::StateThread::enter(Some(thread));
 +                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +                let _ = runtime.event_guarded("tool_call", observed, || true);
-+                Ok::<_, String>(runtime.intercepts(surface))
++                Ok::<_, String>((
++                    runtime.intercepts(surface),
++                    runtime.intercepts_with(surface, "code_mode_values_v1"),
++                ))
 +            })
 +            .await
 +            .map_err(|e| e.to_string())??;
-+            let Some(required) = intercepting else {
++            let (Some(required), values) = intercepting else {
 +                self.cleanup_failed(Some(&lead)).await;
 +                if !spawn {
 +                    self.expansion.validate_call(
@@ -65520,6 +65524,7 @@ index 0000000000000000000000000000000000000000..f78442648c186c15a5fd4bba9db74e31
 +                            thread: lead_thread_id.clone(),
 +                            result,
 +                            chain,
++                            values,
 +                            _cancellation: cancellation,
 +                        },
 +                    );
@@ -72560,7 +72565,7 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0273ff51ab7dcd6e6bfc83ecec0652731ec6b545
+index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8259b16ba
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 @@ -0,0 +1,228 @@
@@ -72636,7 +72641,7 @@ index 0000000000000000000000000000000000000000..0273ff51ab7dcd6e6bfc83ecec065273
 +    fn wants_value(&self, call_id: &str) -> bool {
 +        self.pending
 +            .lock()
-+            .is_ok_and(|pending| pending.contains_key(call_id))
++            .is_ok_and(|pending| pending.get(call_id).is_some_and(|pending| pending.values))
 +    }
 +
 +    fn replace_tool_output<'a>(
@@ -73006,10 +73011,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..70b5d02e2a21ae4149f3faf6335005d63c8c1f01
+index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16521020a7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4254 @@
+@@ -0,0 +1,4318 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73350,6 +73355,46 @@ index 0000000000000000000000000000000000000000..70b5d02e2a21ae4149f3faf6335005d6
 +        .unwrap_err(),
 +        "callback_cancelled"
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn session_info_reports_the_threads_current_cwd() {
++    let Some(mut fixture) = fixture(&[Package {
++        id: "control",
++        capabilities: &["inventory"],
++        manifest: Value::Null,
++        source: "export default () => {}",
++    }]) else {
++        return;
++    };
++    let manager = attach_thread(&mut fixture).await;
++    let repository = fixture.lead.host.repository.clone();
++    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
++    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
++    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
++    std::fs::create_dir_all(&sub).unwrap();
++    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
++    manager
++        .get_thread(fixture.lead.thread)
++        .await
++        .unwrap()
++        .update_thread_settings(codex_protocol::protocol::ThreadSettingsOverrides {
++            environments: Some(codex_protocol::protocol::TurnEnvironmentRequests::new(
++                sub.clone(),
++                vec![codex_protocol::protocol::TurnEnvironmentRequest {
++                    environment_id: "local".into(),
++                    cwd: uri.clone(),
++                    workspace_roots: vec![uri],
++                    config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
++                }],
++            )),
++            ..Default::default()
++        })
++        .await
++        .unwrap();
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
++    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -73851,7 +73896,7 @@ index 0000000000000000000000000000000000000000..70b5d02e2a21ae4149f3faf6335005d6
 +        Package {
 +            id: "cache",
 +            capabilities: &["interception"],
-+            manifest: Value::Null,
++            manifest: json!({"compatibility": {"required_features": ["code_mode_values_v1"]}}),
 +            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true, value: { output: 'from cache', exit_code: 0 } }));\n  api.intercept('tool', { match: { tool: 'huge' } }, () => ({ output: 'huge', success: true, value: 'x'.repeat(70000) }));\n  api.intercept('tool', { match: { tool: 'nullish' } }, () => ({ output: 'nullish', success: true, value: null }));\n}\n",
 +        },
 +        Package {
@@ -73956,6 +74001,30 @@ index 0000000000000000000000000000000000000000..70b5d02e2a21ae4149f3faf6335005d6
 +        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
 +        ToolInterception::Respond { value: None, .. }
 +    ));
++    let Some(plain) = self::fixture(&[Package {
++        id: "plain",
++        capabilities: &["interception"],
++        manifest: Value::Null,
++        source: "export default api => { api.intercept('tool', (e, next) => next(e)); }",
++    }]) else {
++        return;
++    };
++    *plain.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&plain.lead.host, &[]);
++    let unread = self::mods(&plain.core);
++    let plain_thread = ExtensionData::new("thread".to_owned());
++    plain_thread.insert(plain.lead.clone());
++    unread
++        .intercept_tool(ToolStartInput {
++            thread_store: &plain_thread,
++            ..start("call-plain", &READ)
++        })
++        .await
++        .unwrap();
++    assert!(
++        !unread.wants_value("call-plain"),
++        "only an interceptor whose mod requires code_mode_values_v1 gets the value"
++    );
 +
 +    let source = fixture
 +        .core
@@ -78186,10 +78255,10 @@ index 0000000000000000000000000000000000000000..b7e24384928422189574c85bc45abb29
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163ce25a60da
+index 0000000000000000000000000000000000000000..dcd410fdf1293fd51954893ac0a92e85c1f0e653
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,778 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -78820,6 +78889,17 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                .get(&lead.thread.to_string())
 +                .cloned();
 +            let config = super::agents::parent_config(lead).await?;
++            let cwd = host
++                .manager
++                .upgrade()
++                .ok_or("native_thread_manager_stopped")?
++                .get_thread(lead.thread)
++                .await
++                .map_err(|e| e.to_string())?
++                .config_snapshot()
++                .await
++                .cwd()
++                .clone();
 +            let turns = core
 +                .expansion
 +                .turns
@@ -78830,7 +78910,7 @@ index 0000000000000000000000000000000000000000..069ef571e7cf5acc3157e2f9b470163c
 +                .unwrap_or(0);
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
-+                "cwd": config.cwd, "codex_version": env!("CARGO_PKG_VERSION"),
++                "cwd": cwd, "codex_version": env!("CARGO_PKG_VERSION"),
 +                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
 +                "route": account.and_then(|account| account.route), "turns_started": turns}),
@@ -112212,10 +112292,10 @@ index 0000000000000000000000000000000000000000..4492d6aff4d56d6bd7e4099fba47b5e1
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff01135bfb0821dc3c83e85a01bb6552f47d7468
+index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7d6d4d6e0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1953 @@
+@@ -0,0 +1,1968 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -113956,6 +114036,21 @@ index 0000000000000000000000000000000000000000..ff01135bfb0821dc3c83e85a01bb6552
 +                    .map(|interceptor| interceptor.required)
 +            })
 +            .max()
++    }
++
++    pub fn intercepts_with(&self, surface: &str, feature: &str) -> bool {
++        self.loaded.values().any(|loaded| {
++            loaded
++                .package
++                .compatibility
++                .required_features
++                .iter()
++                .any(|required| required == feature)
++                && loaded.registrations.interceptors.iter().any(|interceptor| {
++                    (loaded.error.is_none() || interceptor.required)
++                        && granted(loaded, &interceptor.pattern, surface)
++                })
++        })
 +    }
 +
 +    /// Runs a hostless surface's chain on the held runtime, so no link waits for the lock; `None` when nothing intercepts it.

@@ -1318,8 +1318,8 @@ none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
 - `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started}` for the session thread, also from terminal commands in the same process. `turns_started`
-  counts turns this process started in the thread.
+  route, turns_started}` for the session thread, also from terminal commands in the same process. `cwd` is the
+  thread's current working directory, and `turns_started` counts turns this process started in the thread.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -2082,7 +2082,7 @@ shape.
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
 - Output beyond 48 KiB arrives truncated with `truncated: true`.
-- For a code-mode call, `next` also resolves with `value`, the structured result the cell receives (omitted above
+- For a code-mode call, `next` also resolves with `value` when a mod intercepting `tool` requires `code_mode_values_v1`, the structured result the cell receives (omitted above
   32 KiB or when it and `output` together exceed 48 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
   `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
   ran is ignored: the cell keeps the executed result.

@@ -58,13 +58,13 @@ test('the merged step runs each read once through the host, in order, keeping ea
       invoked.push([tool, args]);
       if (args.cmd === 'cat big') throw new Error('host_result_limit: the 90000-byte result exceeds the 41000 bytes left in this callback');
       if (args.cmd === 'cat denied') throw new Error('mod_tool_denied: guard: no');
-      return { call_id: `mod-omd_tool_absorb-${invoked.length}`, output: `Exit code: ${args.cmd === 'cat missing' ? 1 : 0}\nOutput:\n${args.cmd}`, success: true, truncated: false };
+      return { call_id: `mod-omd_tool_absorb-${invoked.length}`, output: `Exit code: ${args.cmd === 'cat missing' ? 1 : 0}\nOutput:\n${args.cmd}`, success: true, truncated: args.cmd === 'cat long' };
     },
   };
-  const calls = [exec('cat a'), exec('cat missing'), exec('cat big'), exec('cat a'), exec('cat denied'), exec('rm x'), exec('cat big')]
+  const calls = [exec('cat a'), exec('cat missing'), exec('cat big'), exec('cat a'), exec('cat denied'), exec('rm x'), exec('cat big'), exec('cat long')]
     .map((call, index) => ({ call_id: `c${index}`, ...call }));
   const { value, state } = run('tool', 'batch', { batch: 'b1', calls }, { host });
-  assert.deepEqual(invoked.map(([, args]) => args.cmd), ['cat a', 'cat missing', 'cat big', 'cat denied']);
+  assert.deepEqual(invoked.map(([, args]) => args.cmd), ['cat a', 'cat missing', 'cat big', 'cat denied', 'cat long']);
   assert.deepEqual(value.c0, { output: 'Exit code: 0\nOutput:\ncat a', success: true });
   assert.deepEqual(value.c1, { output: 'Exit code: 1\nOutput:\ncat missing', success: true });
   assert.match(value.c2.output, /ran, but its output did not fit in the merged result\. Call it again on its own/);
@@ -74,9 +74,10 @@ test('the merged step runs each read once through the host, in order, keeping ea
   assert.match(value.c5.output, /did not run exec_command: it only runs read-only calls/);
   assert.deepEqual([value.c2.success, value.c5.success], [false, false]);
   assert.deepEqual(value.c6, value.c2, 'a duplicate of a read that did not fit gets its note, not a pointer');
-  assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6']);
-  assert.deepEqual(state.recent[0].invoked, { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2' });
-  assert.deepEqual([state.batches, state.absorbed, state.deduplicated, state.overflowed], [1, 7, 1, 1]);
+  assert.match(value.c7.output, /^Exit code: 0\nOutput:\ncat long\n\[omd_tool_absorb: this output was cut at 48 KiB/, 'a cut output says so');
+  assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
+  assert.deepEqual(state.recent[0].invoked, { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2', c7: 'mod-omd_tool_absorb-5' });
+  assert.deepEqual([state.batches, state.absorbed, state.deduplicated, state.overflowed], [1, 8, 1, 1]);
   const many = Array.from({ length: 10 }, (_, index) => ({ call_id: `d${index}`, ...exec(`cat f${index}`) }));
   const capped = run('tool', 'batch', { batch: 'b2', calls: many }, { host: { 'tools.invoke': () => ({ call_id: 'x', output: 'ok', success: true, truncated: false }) } });
   assert.equal(capped.calls.length, 8);
@@ -89,16 +90,19 @@ const fnv = (text, seed) => {
   return hash.toString(16).padStart(8, '0');
 };
 const hash = text => `${fnv(text, 0x811c9dc5)}${fnv(text, 0x9e3779b9)}`;
-const thread = hash('t');
-const flightOf = (cellId = 'cell-1') => `flight:${thread}:${hash(cellId)}:`;
+const flightOf = (cellId = 'cell-1') => `flight:${hash(cellId)}:`;
 
 function memoryStore() {
   const entries = new Map();
   let revision = 0;
   const record = (value, at = Date.now()) => ({ value, revision: ++revision, provenance: { mod: 'omd_tool_absorb', source_sha256: '', thread_id: 't', origin: 'tool', at } });
+  const thread = handler => args => {
+    assert.equal(args.scope, 'thread', 'flights live in the thread store');
+    return handler(args);
+  };
   return {
     entries, record,
-    ops: {
+    ops: Object.fromEntries(Object.entries({
       'store.put': ({ key, value, expected_revision }) => {
         if ((entries.get(key)?.revision ?? null) !== expected_revision) throw new Error('store_revision_conflict');
         entries.set(key, record(value));
@@ -111,7 +115,7 @@ function memoryStore() {
         return { deleted: true };
       },
       'store.list': ({ prefix: start, limit = 100 }) => ({ keys: [...entries].filter(([key]) => key.startsWith(start ?? '')).slice(0, limit).map(([key, entry]) => ({ key, revision: entry.revision, bytes: 1, provenance: entry.provenance })), cursor: null, generation: 1 }),
-    },
+    }).map(([name, handler]) => [name, thread(handler)])),
   };
 }
 
@@ -140,7 +144,7 @@ test('a code-mode cell reuses an identical read with its structured result while
   const second = cell(read, { store: first.store, state: first.state });
   assert.equal(second.ran, false);
   assert.deepEqual(second.value.result, native, 'the cell gets the same structured value it got the first time');
-  assert.deepEqual(first.store.entries.get(`meta:${thread}:reuse`).value, { reused: 1, saved_bytes: Buffer.byteLength(native.output) });
+  assert.deepEqual(first.store.entries.get('meta:reuse').value, { reused: 1, saved_bytes: Buffer.byteLength(native.output) });
   assert.equal(second.state, null, 'the interceptor never writes api.state, so concurrent reads cannot lose a state race');
   assert.ok(cell(read, { store: first.store, sha: 'b'.repeat(64) }).ran, 'changed file');
   assert.ok(cell(read, { store: first.store, cellId: 'cell-2' }).ran, 'another cell');
@@ -176,11 +180,13 @@ test('a twin that waits too long runs itself, and failed or unfinished reads are
   const stuck = memoryStore();
   cell(read, { store: stuck, next: () => {
     const late = cell(read, { store: stuck });
-    assert.ok(late.ran, 'a claim that never finishes is dropped after the wait');
-    assert.equal(late.calls.filter(entry => entry.operation === 'time.sleep').length, 9);
-    assert.ok(late.calls.length <= 30, `a waiter stays far below the 128-call limit (${late.calls.length})`);
+    assert.ok(late.ran, 'a twin runs itself after about 25 s of waiting');
+    assert.equal(late.calls.filter(entry => entry.operation === 'time.sleep').reduce((sum, entry) => sum + entry.arguments.ms, 0), 25_575);
+    assert.ok(late.calls.length <= 72, `a waiter stays well below the 128-call limit (${late.calls.length})`);
+    assert.equal([...stuck.entries.values()][0].value.status, 'running', 'and leaves the first read\'s claim alone');
     return native;
   } });
+  assert.equal([...stuck.entries.values()][0].value.status, 'done', 'so the first read still publishes for later repeats');
   const asleep = memoryStore();
   cell(read, { store: asleep, next: () => {
     const twin = cell(read, { store: asleep, sleep: false });
@@ -211,24 +217,17 @@ test('reads from another thread, such as a sub-agent, are never shared', () => {
   assert.equal(out.store.entries.size, 0);
 });
 
-test('a new cell sweeps this thread\'s older cells and other threads\' stale entries, and a turn end clears this thread', () => {
+test('a new cell sweeps the thread\'s older cells, and a turn end clears the thread', () => {
   const store = memoryStore();
-  store.entries.set(`meta:${thread}:cell`, store.record(hash('cell-0')));
+  store.entries.set('meta:cell', store.record(hash('cell-0')));
   store.entries.set(`${flightOf('cell-0')}x`, store.record({ key: 'old', status: 'done', output: '', value: null }));
-  store.entries.set('flight:00000000:cell-9:y', store.record({ key: 'stale', status: 'done', output: '', value: null }, 0));
-  store.entries.set('flight:00000000:cell-9:z', store.record({ key: 'fresh', status: 'running' }));
-  store.entries.set('meta:00000000:reuse', store.record({ reused: 1 }, 0));
-  store.entries.set('meta:00000001:reuse', store.record({ reused: 1 }));
+  store.entries.set('meta:reuse', store.record({ reused: 1 }));
   cell(read, { store });
-  assert.deepEqual([...store.entries.keys()].filter(key => !key.startsWith(flightOf())).sort(),
-    [`meta:${thread}:cell`, 'flight:00000000:cell-9:z', 'meta:00000001:reuse'].sort());
-  assert.equal(store.entries.get(`meta:${thread}:cell`).value, hash('cell-1'));
+  assert.deepEqual([...store.entries.keys()].filter(key => !key.startsWith(flightOf())).sort(), ['meta:cell', 'meta:reuse']);
+  assert.equal(store.entries.get('meta:cell').value, hash('cell-1'));
   for (let index = 0; index < 70; index++) store.entries.set(`${flightOf()}${index}`, store.record({ key: `r${index}`, status: 'done', output: '', value: null }));
-  run('turn_end', '', { turn_id: 'turn-1', outcome: 'completed' }, { host: {
-    ...store.ops,
-    'session.info': () => ({ thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
-  } });
-  assert.deepEqual([...store.entries.keys()].filter(key => key.startsWith('flight:')), ['flight:00000000:cell-9:z'], 'file contents do not outlive the turn');
+  run('turn_end', '', { turn_id: 'turn-1', outcome: 'completed' }, { host: store.ops });
+  assert.deepEqual([...store.entries.keys()].filter(key => key.startsWith('flight:')), [], 'file contents do not outlive the turn');
 });
 
 test('a cancelled merged step fails instead of returning partial results', { skip: !process.env.OMD_MOD_BIN && 'needs the omd-mod engine in OMD_MOD_BIN' }, () => {
@@ -243,8 +242,7 @@ test('a cancelled merged step fails instead of returning partial results', { ski
 test('/absorb reports merged calls and their host call IDs', () => {
   const state = { batches: 1, absorbed: 3, deduplicated: 1, overflowed: 0, saved_bytes: 120, recent: [{ batch: 'b1', calls: 3, ran: 2, invoked: { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2' } }] };
   const { value } = run('command', 'absorb', null, { state, host: {
-    'session.info': () => ({ thread_id: 't', root: '/repo', cwd: '/repo', codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
-    'store.get': ({ key }) => key === `meta:${hash('t')}:reuse` ? { value: { reused: 2, saved_bytes: 30 }, revision: 1, provenance: { mod: 'omd_tool_absorb', source_sha256: '', thread_id: 't', origin: 'tool', at: 0 } } : null,
+    'store.get': ({ key, scope }) => key === 'meta:reuse' && scope === 'thread' ? { value: { reused: 2, saved_bytes: 30 }, revision: 1, provenance: { mod: 'omd_tool_absorb', source_sha256: '', thread_id: 't', origin: 'tool', at: 0 } } : null,
   } });
   assert.equal(value.display, 'Tool-call absorption: 1 merged batches · 3 calls · 1 duplicate calls run once · 2 repeated code-mode reads reused · 0 outputs too large to merge · about 150 bytes not repeated\nb1: 3 calls, 2 ran · c0→mod-omd_tool_absorb-1, c1→mod-omd_tool_absorb-2');
 });

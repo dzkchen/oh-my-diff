@@ -341,6 +341,46 @@ async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn session_info_reports_the_threads_current_cwd() {
+    let Some(mut fixture) = fixture(&[Package {
+        id: "control",
+        capabilities: &["inventory"],
+        manifest: Value::Null,
+        source: "export default () => {}",
+    }]) else {
+        return;
+    };
+    let manager = attach_thread(&mut fixture).await;
+    let repository = fixture.lead.host.repository.clone();
+    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
+    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
+    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
+    std::fs::create_dir_all(&sub).unwrap();
+    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
+    manager
+        .get_thread(fixture.lead.thread)
+        .await
+        .unwrap()
+        .update_thread_settings(codex_protocol::protocol::ThreadSettingsOverrides {
+            environments: Some(codex_protocol::protocol::TurnEnvironmentRequests::new(
+                sub.clone(),
+                vec![codex_protocol::protocol::TurnEnvironmentRequest {
+                    environment_id: "local".into(),
+                    cwd: uri.clone(),
+                    workspace_roots: vec![uri],
+                    config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
+                }],
+            )),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
+    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn scoped_environment_reaches_managed_children_and_clears_on_unload() {
     let Some(mut fixture) = fixture(&[Package {
         id: "control",
@@ -839,7 +879,7 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         Package {
             id: "cache",
             capabilities: &["interception"],
-            manifest: Value::Null,
+            manifest: json!({"compatibility": {"required_features": ["code_mode_values_v1"]}}),
             source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true, value: { output: 'from cache', exit_code: 0 } }));\n  api.intercept('tool', { match: { tool: 'huge' } }, () => ({ output: 'huge', success: true, value: 'x'.repeat(70000) }));\n  api.intercept('tool', { match: { tool: 'nullish' } }, () => ({ output: 'nullish', success: true, value: null }));\n}\n",
         },
         Package {
@@ -944,6 +984,30 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
         ToolInterception::Respond { value: None, .. }
     ));
+    let Some(plain) = self::fixture(&[Package {
+        id: "plain",
+        capabilities: &["interception"],
+        manifest: Value::Null,
+        source: "export default api => { api.intercept('tool', (e, next) => next(e)); }",
+    }]) else {
+        return;
+    };
+    *plain.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&plain.lead.host, &[]);
+    let unread = self::mods(&plain.core);
+    let plain_thread = ExtensionData::new("thread".to_owned());
+    plain_thread.insert(plain.lead.clone());
+    unread
+        .intercept_tool(ToolStartInput {
+            thread_store: &plain_thread,
+            ..start("call-plain", &READ)
+        })
+        .await
+        .unwrap();
+    assert!(
+        !unread.wants_value("call-plain"),
+        "only an interceptor whose mod requires code_mode_values_v1 gets the value"
+    );
 
     let source = fixture
         .core

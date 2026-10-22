@@ -20,6 +20,8 @@ const required = (schema: Schema) => Array.isArray(schema.required) ? schema.req
 const same = (left: Json, right: Json) => JSON.stringify(left) === JSON.stringify(right);
 const pointer = (path: string, name: string | number) => `${path}/${String(name).replace(/~/g, '~0').replace(/\//g, '~1')}`;
 const normal = (name: string) => name.toLowerCase().replace(/[_-]/g, '');
+const unmodeled = (schema: Json): boolean => Array.isArray(schema) ? schema.some(unmodeled)
+  : isObject(schema) && Object.entries(schema).some(([key, value]) => ['oneOf', 'allOf', '$ref'].includes(key) || unmodeled(value));
 const show = (value: Json) => { const text = JSON.stringify(value); return text.length > 60 ? `${text.slice(0, 57)}...` : text; };
 
 function valid(schema: Json, value: Json): boolean {
@@ -179,7 +181,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.intercept('tool', async (e, next) => {
-    if (!isObject(e.schema) || !isObject(e.arguments) || valid(e.schema, e.arguments)) return next(e);
+    if (!isObject(e.schema) || !isObject(e.arguments) || valid(e.schema, e.arguments) || unmodeled(e.schema)) return next(e);
     const fix = repair(e.schema, e.arguments);
     const state = load(api);
     const key = loopKey(e.tool, e.raw_arguments);

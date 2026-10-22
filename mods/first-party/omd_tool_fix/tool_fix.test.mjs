@@ -100,8 +100,11 @@ test('a __proto__ key survives a repair and oversized arguments keep only the ch
   assert.deepEqual(evidence[0].changes, [{ path: '/tty', rule: 'boolean_string' }]);
 });
 
-test('freeform, schemaless and unknown tools are never touched', () => {
-  for (const [tool, args, schema] of [['apply_patch', '*** Begin Patch', null], ['mcp__x__y', { a: '1' }, null], ['unknown', { a: '1' }, null]]) {
+test('freeform, schemaless and unknown tools, and schemas using oneOf, allOf or $ref, are never touched', () => {
+  const variants = { type: 'object', properties: { xfoo: { type: 'integer' } }, oneOf: [{ properties: { 'x-foo': { type: 'integer' } } }], additionalProperties: false };
+  const referenced = { type: 'object', properties: { n: { $ref: '#/$defs/n' } }, $defs: { n: { type: 'integer' } }, additionalProperties: false };
+  for (const [tool, args, schema] of [['apply_patch', '*** Begin Patch', null], ['mcp__x__y', { a: '1' }, null], ['unknown', { a: '1' }, null],
+    ['mcp__x__variants', { 'x-foo': 1 }, variants], ['mcp__x__ref', { N: '1' }, referenced]]) {
     const { next, state } = call(args, { tool, schema });
     assert.deepEqual(next.arguments, args);
     assert.equal(state, null);
