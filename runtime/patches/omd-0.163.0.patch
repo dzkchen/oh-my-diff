@@ -89289,10 +89289,10 @@ index 0000000000000000000000000000000000000000..346034fc75578b024e74d90622936982
 +}
 diff --git a/codex-rs/omd/src/app_routes.json b/codex-rs/omd/src/app_routes.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df1918675518374717
+index 0000000000000000000000000000000000000000..fed413978b5fc5ef311190c1c8c74f7e6fac2481
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.json
-@@ -0,0 +1,1934 @@
+@@ -0,0 +1,1936 @@
 +{
 + "schema": 1,
 + "upstream": {
@@ -90491,6 +90491,7 @@ index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df19186755
 +    "disabledPluginIds",
 +    "effort",
 +    "model",
++    "modelProvider",
 +    "multiAgentMode",
 +    "personality",
 +    "summary",
@@ -90500,7 +90501,8 @@ index 0000000000000000000000000000000000000000..59984147552cd59a6e73a8df19186755
 +    "cwd"
 +   ],
 +   "route_fields": [
-+    "model"
++    "model",
++    "modelProvider"
 +   ]
 +  },
 +  "thread/start": {
@@ -91842,10 +91844,10 @@ index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5c
 +mod tests;
 diff --git a/codex-rs/omd/src/app_routes_tests.rs b/codex-rs/omd/src/app_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6faf5fe5943ae8324c7fafb4533f052fb697a418
+index 0000000000000000000000000000000000000000..33320fcd88b63065dcedfb2439cbf1d9c6689933
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes_tests.rs
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,492 @@
 +use super::*;
 +
 +struct Fixture {
@@ -92024,6 +92026,37 @@ index 0000000000000000000000000000000000000000..6faf5fe5943ae8324c7fafb4533f052f
 +    };
 +    assert_eq!(move_before("other"), "ok");
 +    assert_eq!(move_before("stranger"), "app_thread_out_of_scope");
++}
++
++#[test]
++fn settings_updates_move_a_thread_only_to_a_configured_model_and_provider() {
++    let f = fixture(&["threads"]);
++    let update = |params: Value| {
++        let mut params = params;
++        params["threadId"] = json!("current");
++        f.code("thread/settings/update", params, User)
++    };
++    assert_eq!(
++        update(json!({"model": "gpt-test", "modelProvider": "openai"})),
++        "ok"
++    );
++    assert_eq!(update(json!({"modelProvider": "openai"})), "ok");
++    assert_eq!(
++        update(json!({"model": "gpt-test", "modelProvider": "other"})),
++        "app_route_unconfigured"
++    );
++    assert_eq!(
++        update(json!({"modelProvider": "other"})),
++        "app_route_unconfigured"
++    );
++    assert_eq!(
++        f.code(
++            "thread/settings/update",
++            json!({"threadId": "current", "model": "gpt-test", "modelProvider": "openai"}),
++            Event
++        ),
++        "app_context_user_only"
++    );
 +}
 +
 +#[test]

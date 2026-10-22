@@ -17,10 +17,20 @@ A denied or abandoned login leaves any existing enrollment and grant untouched. 
 
 | Command | What it does |
 | --- | --- |
-| `/cursor setup` | Install the SDK, enroll in the browser, list models and publish them to `/model` (`/cursor login` is the same) |
-| `/cursor` | Show the SDK version, account, key expiry, published models and posture |
+| `/cursor setup [NAME]` | Install the SDK, enroll in the browser, list models and publish them to `/model` (`/cursor login` is the same); `NAME` adds another account |
+| `/cursor remove NAME` | Drop an account's models and route, and asks to remove its key |
+| `/cursor` | Show the SDK version, each account and its key expiry, published models and posture |
 | `/cursor usage` | Show each recent run's raw list cost and charged cost, runs still unsettled, and the plan snapshot |
 | `/model` | Pick a Cursor model; the thread switches provider from its next turn and keeps its history |
+
+## Several accounts
+
+Each account is one broker-held secret owned by `omd_cursor` (labels `cursor`, `cursor-work`) and one route
+(`cursor`, `cursor-work`); the single `cursor` service holds every account's key and runs a request with the key of
+the account that owns its model (`cursor-auto.work`). Responses carry the account's last plan usage as a `cursor`
+rate-limit family, which `omd_profiles` shows beside the account. The plan is read at most once a minute after a run,
+so it can be a run behind, and the first request after a restart carries none. At most 16 models are listed across
+accounts, each account's default first.
 
 ## How a turn runs
 

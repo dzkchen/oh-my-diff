@@ -13,7 +13,7 @@ import { runClaude } from './transport.mjs';
 const test = process.env.OMD_TEST_CLAUDE ? nodeTest : nodeTest.skip;
 
 const opus = 'claude-opus-5-5';
-const opusEntry = { slug: opus, cli: opus, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], thinking: true, window: 1000000 };
+const opusEntry = { slug: opus, model: opus, cli: opus, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], thinking: true, window: 1000000 };
 const opusRequest = { model: opus, stream: true, reasoning: { effort: 'max' }, input: [{ type: 'message', role: 'user',
   content: [{ type: 'input_text', text: 'Reply OK.' }] }] };
 
