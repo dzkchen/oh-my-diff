@@ -1541,25 +1541,25 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store")).unwrap();
-    let modern = package(
+    let accepted = package(
         &root,
-        "modern",
+        "accepted",
         json!({"capabilities":["commands","store","exec","builtins","contracts","terminal"],"exec_environment":["FIXTURE_ENV"]}),
         "export default api => { api.builtins({commands:{hide:['plan']},modes:{disable:['plan']}}); \
          api.contract({schema:2,id:'fixture',version:1,description:'Fixture gate',assurance:'checked',gates:{complete:[{receipt:'checks',bind:['candidate']}]}}); \
          api.command('run', () => { api.state.set({ran:true}); const out = api.host.call('exec.run', {program:'sh', argv:['-c','true']}); return api.host.call('store.put', {key:'k', value:out.exit_code, expected_revision:null}); }); }",
         &[],
     );
-    trust(&store, &modern);
-    let legacy_names = package(
+    trust(&store, &accepted);
+    let rejected_names = package(
         &root,
-        "legacy_names",
+        "rejected_names",
         json!({"capabilities":["state","commands"]}),
         "export default api => api.command('x', () => api.state.get())",
         &[],
     );
     assert!(
-        ModStore::inspect_package(&legacy_names)
+        ModStore::inspect_package(&rejected_names)
             .unwrap_err()
             .to_string()
             .contains("capability")
@@ -1613,7 +1613,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         "{}",
         error_of(&runtime, "old_point")
     );
-    assert_eq!(error_of(&runtime, "modern"), "");
+    assert_eq!(error_of(&runtime, "accepted"), "");
     assert_eq!(error_of(&runtime, "adapted"), "");
     assert_eq!(
         runtime
@@ -1635,7 +1635,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
     let mut calls = Vec::new();
     let result = runtime
         .invoke_with(
-            "modern",
+            "accepted",
             runtime.generation(),
             "command",
             "run",
@@ -1653,7 +1653,7 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         .unwrap();
     assert_eq!(result, json!({"revision":1}));
     assert_eq!(calls, vec!["exec.run", "store.put"]);
-    let grants = runtime.grants("modern").unwrap();
+    let grants = runtime.grants("accepted").unwrap();
     assert_eq!(grants.exec_environment, vec!["FIXTURE_ENV"]);
     assert!(grants.capabilities.contains(&"exec".to_owned()));
     store.enable(&old_event, false).unwrap();

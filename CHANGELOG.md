@@ -131,7 +131,7 @@ A smaller launch collection, a planned API freeze and refreshed Codex.
 ### Changed
 
 - Pinned to Codex 0.161.0
-- Warm release targets across batch closeouts
+- Warm release build targets reused between builds
 
 ### Fixed
 
@@ -343,7 +343,7 @@ Features move into mods as the host goes generic.
 
 ### Decided
 
-- Codex themes added to the roadmap
+- Codex themes planned
 
 ## 2026-09-27 — Shared APIs and host rework
 
@@ -400,7 +400,6 @@ Three developer tools, all opt-in.
 ### Changed
 
 - LSP sync rebuilt as a pure mod
-- Roadmap grouped into batches
 
 ## 2026-09-24 — Claude models and subagents
 
@@ -567,7 +566,6 @@ A custom build that still shares your Codex setup.
 
 - Upstream lock file
 - Compatibility checks
-- A skill for each roadmap task
 
 ## 2026-09-11 — Day zero
 
@@ -575,4 +573,4 @@ Started as CAI (“Cheaper AI”), a patch set for Codex.
 
 ### New
 
-- Repo, PRD and roadmap
+- Repository and product plan
