@@ -695,7 +695,8 @@ panels, header, footer, layout and status segments only from the listed mods; ot
 `render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
 `/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
 first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
-blank rows, placeholder or idle hint row. `omd mini` sets all three.
+blank rows, placeholder or idle hint row. `omd mini` sets all three. They are read once at start, and agent tool
+processes don't inherit them or the launcher's `OH_MY_DIFF_*` variables (a mod's `exec_environment` still can).
 
 The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links

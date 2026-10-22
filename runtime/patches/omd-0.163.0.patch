@@ -22157,7 +22157,7 @@ index db1c0e4096a8c39eec4958e0a25829ba0d3257fa..e89b149e262e02b16516ac592c328dca
          normalize::ensure_call_outputs_present(items);
 
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index f72396e38320e838e21b6a9ceaaa433ada62f0c0..b989594fe13cfd7e0fe2cef4ece41dcaf94105ab 100644
+index f72396e38320e838e21b6a9ceaaa433ada62f0c0..d7bfdf7d8557e96b3db8abbc702004c9281f85cb 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -122,6 +122,9 @@ pub enum ExecCapturePolicy {
@@ -22190,17 +22190,21 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..b989594fe13cfd7e0fe2cef4ece41dca
              Self::FullBuffer => false,
          }
      }
-@@ -365,6 +372,9 @@ pub async fn build_exec_request(
+@@ -365,6 +372,13 @@ pub async fn build_exec_request(
          justification: _,
          sandbox_permissions: _,
      } = params;
 +    let narrow_omd_sandbox = env
 +        .remove("OMD_NARROW_SANDBOX")
 +        .is_some_and(|value| value == "1");
++    // A mod's own exec keeps the launcher signals it declared; agent tool processes must not inherit them.
++    if !narrow_omd_sandbox {
++        env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
++    }
 
      let enforce_managed_network = network.is_some();
      let sandbox_type = select_process_exec_tool_sandbox_type(
-@@ -390,7 +400,11 @@ pub async fn build_exec_request(
+@@ -390,7 +404,11 @@ pub async fn build_exec_request(
      let cwd = PathUri::from_abs_path(&cwd);
      let sandbox_policy_cwd_uri = PathUri::from_abs_path(sandbox_cwd);
 
@@ -22213,7 +22217,7 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..b989594fe13cfd7e0fe2cef4ece41dca
      let command = SandboxCommand {
          program: program.clone().into(),
          args: args.to_vec(),
-@@ -1000,6 +1014,21 @@ async fn consume_output(
+@@ -1000,6 +1018,21 @@ async fn consume_output(
          ))
      })?;
 
@@ -22235,7 +22239,7 @@ index f72396e38320e838e21b6a9ceaaa433ada62f0c0..b989594fe13cfd7e0fe2cef4ece41dca
      let retained_bytes_cap = capture_policy.retained_bytes_cap();
      let stdout_handle = tokio::spawn(read_output(
          BufReader::new(stdout_reader),
-@@ -1082,6 +1111,8 @@ async fn consume_output(
+@@ -1082,6 +1115,8 @@ async fn consume_output(
          }
      };
 
@@ -22343,6 +22347,68 @@ index b8dbf30c8583874e4112e0ef686446826460d4ad..e0144d460f278797aadaba1893d512cc
 +    assert!(!manager.forbidden_only_by_user_rules(&command("git push"), Some(&managed)));
 +    assert!(!manager.forbidden_only_by_user_rules(&command("ls && git push"), Some(&managed)));
 +    assert!(!manager.forbidden_only_by_user_rules(&command("ls"), None));
++}
+diff --git a/codex-rs/core/src/exec_tests.rs b/codex-rs/core/src/exec_tests.rs
+index f86df094b80fe364d1c8b137481ecca4b9ebd76c..031e44d9ae5f738357ef1d15477e15ad5af5d781 100644
+--- a/codex-rs/core/src/exec_tests.rs
++++ b/codex-rs/core/src/exec_tests.rs
+@@ -1621,3 +1621,57 @@ fn long_running_command() -> Vec<String> {
+         "Start-Sleep -Seconds 30".to_string(),
+     ]
+ }
++
++#[tokio::test]
++async fn tool_processes_do_not_inherit_launcher_presentation_signals() -> Result<()> {
++    let temp_dir = tempfile::TempDir::new()?;
++    let cwd = temp_dir.path().abs();
++    let env_for = async |narrow: bool| -> Result<HashMap<String, String>> {
++        let mut env = HashMap::from([
++            ("OMD_TUI_COMPOSER".to_string(), "plain".to_string()),
++            ("OH_MY_DIFF_LAUNCH".to_string(), "abc.0".to_string()),
++            ("KEEP".to_string(), "1".to_string()),
++        ]);
++        if narrow {
++            env.insert("OMD_NARROW_SANDBOX".to_string(), "1".to_string());
++        }
++        let request = build_exec_request(
++            ExecParams {
++                command: vec!["echo".to_string(), "ok".to_string()],
++                cwd: cwd.clone(),
++                expiration: ExecExpiration::DefaultTimeout,
++                capture_policy: ExecCapturePolicy::ShellTool,
++                env,
++                network: None,
++                network_environment_id: None,
++                sandbox_permissions: SandboxPermissions::UseDefault,
++                windows_sandbox_level: WindowsSandboxLevel::Disabled,
++                justification: None,
++                arg0: None,
++            },
++            &PermissionProfile::read_only(),
++            &cwd,
++            &[PathUri::from_abs_path(&cwd)],
++            &None,
++            /*codex_self_exe*/ &None,
++            SandboxType::None,
++            /*use_legacy_landlock*/ false,
++        )
++        .await?;
++        Ok(request.env)
++    };
++    let names = |env: HashMap<String, String>| {
++        let mut names = env
++            .into_keys()
++            .filter(|name| !name.starts_with("CODEX_"))
++            .collect::<Vec<_>>();
++        names.sort();
++        names
++    };
++    assert_eq!(names(env_for(false).await?), ["KEEP"]);
++    assert_eq!(
++        names(env_for(true).await?),
++        ["KEEP", "OH_MY_DIFF_LAUNCH", "OMD_TUI_COMPOSER"]
++    );
++    Ok(())
 +}
 diff --git a/codex-rs/core/src/guardian/prompt.rs b/codex-rs/core/src/guardian/prompt.rs
 index 212a66cb219c6f6010010f6172febc96a6caa4f5..05b58aace6149992e75bb666b22095a80f6cf1e8 100644
@@ -29597,10 +29663,10 @@ index ee497de6895073054de1aa5e45eedcaab7f79435..d569294da756cba17c9c2b99dec63e3e
 
  App-server clients can supply the raw token through `environment/add.authBearerToken` or `auth_bearer_token` in an `environments.toml` URL entry; omission preserves unauthenticated behavior.
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index cb7f061961d528a3bf508fb3743b431f146727fc..4b3f7bc26b50330d74d010d8ced9685097b705d7 100644
+index cb7f061961d528a3bf508fb3743b431f146727fc..9d674c001e96a6e2941c011ba76090ba0a7bbc96 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
-@@ -109,8 +109,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+@@ -109,8 +109,14 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
              ));
          }
      }
@@ -29609,10 +29675,14 @@ index cb7f061961d528a3bf508fb3743b431f146727fc..4b3f7bc26b50330d74d010d8ced96850
 +    let narrow_omd_sandbox = env
 +        .remove("OMD_NARROW_SANDBOX")
 +        .is_some_and(|value| value == "1");
++    // A mod's own exec keeps the launcher signals it declared; agent tool processes must not inherit them.
++    if !narrow_omd_sandbox {
++        env.retain(|key, _| !key.starts_with("OMD_TUI_") && !key.starts_with("OH_MY_DIFF_"));
++    }
      #[cfg(target_os = "windows")]
      let network_proxy = if params.sandbox.is_none() {
          // Shared Windows ingress selects a route from the sandbox token's SID. Native launches
-@@ -209,8 +211,12 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
+@@ -209,8 +215,12 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
          &file_system_policy,
          network_policy,
      );
@@ -35306,7 +35376,7 @@ index 2ad3f1cd95ea3b5cb55326c2f56be31b76eeb761..6d4cb9eb4ac1f982a10a5d5443b00221
      fn file_completion_does_not_dismiss_identical_next_token() {
          let (mut composer, _rx) = new_test_composer();
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
-index 949edcf91699d64956826211c335f9ef84854005..f8a751277c22beca9a7e55520d94c75bf4e63265 100644
+index 949edcf91699d64956826211c335f9ef84854005..336d7ee7aeec79918a49a6a5a935c667271f2fea 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs
 @@ -42,10 +42,11 @@ impl ChatComposer {
@@ -35349,9 +35419,12 @@ index 949edcf91699d64956826211c335f9ef84854005..f8a751277c22beca9a7e55520d94c75b
                  Constraint::Max(popup_height),
              ])
              .areas(area);
-@@ -105,9 +106,9 @@ impl ChatComposer {
+@@ -103,11 +104,11 @@ impl ChatComposer {
+         };
+         footer_rect.y = footer_rect.y.saturating_add(status.height);
          // Keep the draft visible when clipped.
-         let voice_rows = voice_rows * u16::from(composer_rect.height >= voice_rows + 3);
+-        let voice_rows = voice_rows * u16::from(composer_rect.height >= voice_rows + 3);
++        let voice_rows = voice_rows * u16::from(composer_rect.height > voice_rows + 2 * padding);
          let mut textarea_rect = composer_rect.inset(Insets::tlbr(
 -            /*top*/ 1 + voice_rows,
 +            /*top*/ padding + voice_rows,
@@ -73380,10 +73453,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..af7c1fdbb8477ef27f1228fdd6923614b2592972
+index 0000000000000000000000000000000000000000..82821fbfb183403ae8d62d651d8d0480c65516ec
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4327 @@
+@@ -0,0 +1,4331 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73727,7 +73800,7 @@ index 0000000000000000000000000000000000000000..af7c1fdbb8477ef27f1228fdd6923614
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
-+async fn session_info_reports_the_threads_current_cwd() {
++async fn session_info_reports_the_threads_current_cwd_and_model() {
 +    let Some(mut fixture) = fixture(&[Package {
 +        id: "control",
 +        capabilities: &["inventory"],
@@ -73758,12 +73831,16 @@ index 0000000000000000000000000000000000000000..af7c1fdbb8477ef27f1228fdd6923614
 +                    config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
 +                }],
 +            )),
++            model: Some("session-info-switched".into()),
 +            ..Default::default()
 +        })
 +        .await
 +        .unwrap();
-+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-+    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
++        .await
++        .unwrap();
++    assert_eq!(info["model"], "session-info-switched");
++    assert_eq!(cwd(info), Some(sub.to_path_buf()));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -78633,10 +78710,10 @@ index 0000000000000000000000000000000000000000..b7e24384928422189574c85bc45abb29
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59c4fd35448b4f1bfbd7e79f9334d916f6153666
+index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2cc378cd4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,787 @@
+@@ -0,0 +1,785 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -79275,7 +79352,7 @@ index 0000000000000000000000000000000000000000..59c4fd35448b4f1bfbd7e79f9334d916
 +                .get(&lead.thread.to_string())
 +                .cloned();
 +            let config = super::agents::parent_config(lead).await?;
-+            let cwd = host
++            let snapshot = host
 +                .manager
 +                .upgrade()
 +                .ok_or("native_thread_manager_stopped")?
@@ -79283,9 +79360,7 @@ index 0000000000000000000000000000000000000000..59c4fd35448b4f1bfbd7e79f9334d916
 +                .await
 +                .map_err(|e| e.to_string())?
 +                .config_snapshot()
-+                .await
-+                .cwd()
-+                .clone();
++                .await;
 +            let turns = core
 +                .expansion
 +                .turns
@@ -79296,8 +79371,8 @@ index 0000000000000000000000000000000000000000..59c4fd35448b4f1bfbd7e79f9334d916
 +                .unwrap_or(0);
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
-+                "cwd": cwd, "codex_version": env!("CARGO_PKG_VERSION"),
-+                "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
++                "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
++                "model": snapshot.model,
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
 +                "route": account.and_then(|account| account.route), "turns_started": turns,
 +                "process_id": crate::accounting::process_id()}),
@@ -91515,10 +91590,10 @@ index 0000000000000000000000000000000000000000..fed413978b5fc5ef311190c1c8c74f7e
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5cdcbb9ab8
+index 0000000000000000000000000000000000000000..b97d4bbf4235b1efdab887b4f8a28c4483574bde
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,607 @@
+@@ -0,0 +1,613 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -91879,6 +91954,12 @@ index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5c
 +            .flatten()
 +    };
 +    let (model, provider) = (text("model"), text("modelProvider"));
++    if provider.is_some() && model.is_none() {
++        return Err(denied(
++            "app_route_model_required",
++            provider.unwrap_or_default(),
++        ));
++    }
 +    let configured = routes.iter().any(|(m, p)| {
 +        model.is_none_or(|model| model == m) && provider.is_none_or(|provider| provider == p)
 +    });
@@ -92128,10 +92209,10 @@ index 0000000000000000000000000000000000000000..b24f25f208aae67b1f08668839d13c5c
 +mod tests;
 diff --git a/codex-rs/omd/src/app_routes_tests.rs b/codex-rs/omd/src/app_routes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..33320fcd88b63065dcedfb2439cbf1d9c6689933
+index 0000000000000000000000000000000000000000..20e9a403e3c4886949bc5409da69b8fcb72c6a9d
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes_tests.rs
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,495 @@
 +use super::*;
 +
 +struct Fixture {
@@ -92324,14 +92405,17 @@ index 0000000000000000000000000000000000000000..33320fcd88b63065dcedfb2439cbf1d9
 +        update(json!({"model": "gpt-test", "modelProvider": "openai"})),
 +        "ok"
 +    );
-+    assert_eq!(update(json!({"modelProvider": "openai"})), "ok");
++    assert_eq!(
++        update(json!({"modelProvider": "openai"})),
++        "app_route_model_required"
++    );
 +    assert_eq!(
 +        update(json!({"model": "gpt-test", "modelProvider": "other"})),
 +        "app_route_unconfigured"
 +    );
 +    assert_eq!(
 +        update(json!({"modelProvider": "other"})),
-+        "app_route_unconfigured"
++        "app_route_model_required"
 +    );
 +    assert_eq!(
 +        f.code(
@@ -105059,10 +105143,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b23efb17cae69ae16cc7354951eda6fa166fd325
+index 0000000000000000000000000000000000000000..413ea724018159e46b20a37113b081b818d246d2
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6220 @@
+@@ -0,0 +1,6226 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105749,14 +105833,20 @@ index 0000000000000000000000000000000000000000..b23efb17cae69ae16cc7354951eda6fa
 +    }
 +}
 +
-+pub fn mod_ui_allowlist() -> Option<Vec<String>> {
-+    std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
-+        ids.split(',')
-+            .map(str::trim)
-+            .filter(|id| !id.is_empty())
-+            .map(str::to_owned)
-+            .collect()
-+    })
++/// `OMD_TUI_MOD_UI`, read once: the TUI consults it on every frame.
++pub fn mod_ui_allowlist() -> Option<&'static [String]> {
++    static ALLOWLIST: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
++    ALLOWLIST
++        .get_or_init(|| {
++            std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
++                ids.split(',')
++                    .map(str::trim)
++                    .filter(|id| !id.is_empty())
++                    .map(str::to_owned)
++                    .collect()
++            })
++        })
++        .as_deref()
 +}
 +pub const MOD_EVENTS: &[(&str, &str)] = &[
 +    ("context", "context"),
@@ -108428,7 +108518,7 @@ index 0000000000000000000000000000000000000000..b23efb17cae69ae16cc7354951eda6fa
 +            valid_views: BTreeMap::new(),
 +            renders: BTreeMap::new(),
 +            clock_reads: BTreeSet::new(),
-+            ui_mods: mod_ui_allowlist(),
++            ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
 +            rendered: HashMap::new(),
 +            chains: Vec::new(),
 +            access: Vec::new(),
@@ -114807,7 +114897,7 @@ index 0000000000000000000000000000000000000000..e6e51e16542ef5f877f739ea97c591f7
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7085d00a4400c2ffd6bc460e798d7db3440528c
+index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d21b3cb35
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114847,7 +114937,7 @@ index 0000000000000000000000000000000000000000..c7085d00a4400c2ffd6bc460e798d7db
 +    "sessions.snapshot": {"arguments":{"type":"object","properties":{"call_ids":{"type":"array","items":{"type":"string"}}},"required":[]},"result":{"type":"object","properties":{"evidence":{"$ref":"#/$defs/1"},"provenance":{"$ref":"#/$defs/30"}},"required":["evidence","provenance"]}},
 +    "routes.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/33"}}},
 +    "routes.add": {"arguments":{"type":"object","properties":{"mod":{"type":"string"}},"required":["mod"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]}},
-+    "routes.write": {"arguments":{"type":"object","properties":{"routes":{"type":"array","items":{"$ref":"#/$defs/36"}},"services":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"mod_id":{"type":"string"},"program":{"type":"string"},"program_sha256":{"type":"string"},"arguments":{"type":"array","items":{"type":"string"}},"secrets":{"$ref":"#/$defs/0"},"route":{"$ref":"#/$defs/36"},"network":{"anyOf":[{"const":false},{"const":true}]},"read_paths":{"type":"array","items":{"type":"string"}},"requests":{"anyOf":[{"const":false},{"const":true}]},"read_hashes":{"$ref":"#/$defs/0"},"code_roots":{"$ref":"#/$defs/0"},"credentials":{"type":"array","items":{"type":"string"}}},"required":["id"]}}},"required":["routes"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"routes":{"type":"array","items":{"type":"string"}},"services":{"type":"array","items":{"type":"string"}},"unchanged":{"const":true}},"required":["routes","services"]}]}},
++    "routes.write": {"arguments":{"type":"object","properties":{"routes":{"type":"array","items":{"$ref":"#/$defs/36"}},"services":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"credentials":{"type":"array","items":{"type":"string"}},"route":{"$ref":"#/$defs/36"}},"required":["id"]}}},"required":["routes"]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"routes":{"type":"array","items":{"type":"string"}},"services":{"type":"array","items":{"type":"string"}},"unchanged":{"const":true}},"required":["routes","services"]}]}},
 +    "task.status": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"ledger":{"type":"object","properties":{"thread_id":{"type":"string"},"cwd":{"type":"string"},"cost":{}},"required":["thread_id","cwd","cost"]},"limits":{},"worker_limits":{}},"required":["ledger","limits","worker_limits"]}},
 +    "task.complete": {"arguments":{"type":"object","properties":{"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"}},"required":["candidate_sha256"]},"result":{"anyOf":[{"type":"object","properties":{"status":{"const":"completed"},"receipts":{"$ref":"#/$defs/42"}},"required":["status","receipts"]},{"type":"object","properties":{"status":{"const":"refused"},"missing":{"$ref":"#/$defs/20"}},"required":["status","missing"]},{"type":"object","properties":{"status":{"const":"refused"},"reason":{"const":"unresolved_blocking_findings"},"outstanding_findings":{"type":"array","items":{"type":"string"}}},"required":["status","reason","outstanding_findings"]}]}},
 +    "receipts.submit": {"arguments":{"type":"object","properties":{"kind":{"type":"string"},"candidate_sha256":{"type":"string"},"acceptance_sha256":{"type":"string"},"outcome":{"anyOf":[{"const":"fail"},{"const":"pass"}]},"evidence":{"$ref":"#/$defs/1"},"agent":{"type":"string"},"execution":{"anyOf":[{"const":false},{"const":true}]},"findings":{"$ref":"#/$defs/40"},"resolves":{"type":"array","items":{"type":"string"}}},"required":["kind","candidate_sha256","outcome","evidence"]},"result":{"$ref":"#/$defs/41"}},
@@ -114932,7 +115022,7 @@ index 0000000000000000000000000000000000000000..c7085d00a4400c2ffd6bc460e798d7db
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
@@ -128231,17 +128321,16 @@ index 0000000000000000000000000000000000000000..22b27ab5601996b5be5f3525c4fda3df
 +}
 diff --git a/codex-rs/omd/src/route_writes.rs b/codex-rs/omd/src/route_writes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a38c764902
+index 0000000000000000000000000000000000000000..d16578a4db689e2e41520107b89acfe847db2c9e
 --- /dev/null
 +++ b/codex-rs/omd/src/route_writes.rs
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,332 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::path::Path;
 +use std::sync::OnceLock;
 +
 +const HOST_CONFIG_BYTES: usize = 262_144;
-+const ROUTE_DATA_BYTES: usize = 2048;
 +
 +pub type HostCheck = fn(&Path, &Value) -> Result<(), String>;
 +
@@ -128336,20 +128425,6 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +) -> Result<Value, String> {
 +    let caller = write.caller.as_str();
 +    let object = host.as_object_mut().ok_or("host_config_invalid")?;
-+    let owned_refs = object
-+        .get("services")
-+        .and_then(Value::as_array)
-+        .into_iter()
-+        .flatten()
-+        .filter(|grant| grant["mod_id"] == caller)
-+        .flat_map(|grant| {
-+            grant["secrets"]
-+                .as_object()
-+                .cloned()
-+                .unwrap_or_default()
-+                .into_values()
-+        })
-+        .collect::<Vec<_>>();
 +    let credentials = crate::credentials::CredentialProfiles::open(store)
 +        .and_then(|profiles| profiles.list())
 +        .map_err(|error| error.to_string())?;
@@ -128373,12 +128448,6 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +        {
 +            return Err(format!("routes_write_allowance_required: {name}"));
 +        }
-+        if route
-+            .get("data")
-+            .is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES)
-+        {
-+            return Err(format!("routes_write_data_too_large: {name}"));
-+        }
 +        Ok(())
 +    };
 +    for route in &write.routes {
@@ -128398,56 +128467,37 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +        .ok_or("host_config_invalid")?;
 +    routes.retain(|route| route["provider"] != caller || route.get("grant").is_some());
 +    routes.extend(write.routes.iter().cloned());
-+    if let Some(services) = &write.services {
-+        let current = object
-+            .entry("services")
-+            .or_insert_with(|| json!([]))
-+            .as_array_mut()
-+            .ok_or("host_config_invalid")?;
-+        let mut next = Vec::new();
-+        for service in services {
-+            let id = service["id"]
-+                .as_str()
-+                .ok_or("routes_write_service_id_required")?;
-+            if current
-+                .iter()
-+                .any(|grant| grant["id"] == id && grant["mod_id"] != caller)
-+            {
-+                return Err(format!("routes_write_service_taken: {id}"));
-+            }
-+            let mut grant = current
-+                .iter()
-+                .find(|grant| grant["id"] == id)
-+                .cloned()
-+                .unwrap_or_else(|| json!({}));
-+            for (key, value) in service.as_object().into_iter().flatten() {
++    for service in write.services.iter().flatten() {
++        let id = service["id"]
++            .as_str()
++            .ok_or("routes_write_service_id_required")?;
++        let fields = service.as_object().into_iter().flatten();
++        if fields
++            .map(|(key, _)| key.as_str())
++            .any(|key| !matches!(key, "id" | "credentials" | "route"))
++        {
++            return Err(format!("routes_write_service_field: {id}"));
++        }
++        let grant = object
++            .get_mut("services")
++            .and_then(Value::as_array_mut)
++            .into_iter()
++            .flatten()
++            .find(|grant| grant["id"] == id && grant["mod_id"] == caller)
++            .ok_or_else(|| format!("routes_write_service_unknown: {id}"))?;
++        for key in ["credentials", "route"] {
++            if let Some(value) = service.get(key) {
 +                grant[key] = value.clone();
 +            }
-+            if grant["mod_id"] != caller {
-+                return Err(format!("routes_write_service_owner_mismatch: {id}"));
-+            }
-+            if let Some(route) = grant.get("route") {
-+                billed(route)?;
-+            }
-+            for reference in grant["secrets"]
-+                .as_object()
-+                .into_iter()
-+                .flatten()
-+                .map(|(_, r)| r)
-+            {
-+                if !owned_refs.contains(reference) {
-+                    return Err(format!("routes_write_secret_ref_unknown: {id}"));
-+                }
-+            }
-+            for credential in grant["credentials"].as_array().into_iter().flatten() {
-+                if !credential.as_str().is_some_and(usable) {
-+                    return Err(format!("routes_write_credential_unknown: {id}"));
-+                }
-+            }
-+            next.push(grant);
 +        }
-+        current.retain(|grant| grant["mod_id"] != caller);
-+        current.extend(next);
++        if let Some(route) = grant.get("route") {
++            billed(route)?;
++        }
++        for credential in grant["credentials"].as_array().into_iter().flatten() {
++            if !credential.as_str().is_some_and(usable) {
++                return Err(format!("routes_write_credential_unknown: {id}"));
++            }
++        }
 +    }
 +    let bytes = serde_json::to_vec(&host).map_err(|error| error.to_string())?;
 +    if bytes.len() > HOST_CONFIG_BYTES {
@@ -128506,12 +128556,6 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +            route["name"].as_str().unwrap_or_default(),
 +            route["model"].as_str().unwrap_or_default()
 +        ),
-+        ("network" | "requests", value) => if value == Some(&json!(true)) {
-+            "on"
-+        } else {
-+            "off"
-+        }
-+        .to_owned(),
 +        (_, Some(Value::Array(items))) => items.iter().map(text).collect::<Vec<_>>().join(" "),
 +        (_, Some(Value::Object(map))) => map
 +            .iter()
@@ -128592,11 +128636,7 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +        grant[key].as_array().cloned().unwrap_or_default()
 +    };
 +    for (id, grant) in &new {
-+        let previous = old.get(id);
-+        if previous.is_none() {
-+            lines.push(format!("Add service {id}"));
-+        }
-+        let before = previous.cloned().unwrap_or_else(|| json!({}));
++        let before = old.get(id).cloned().unwrap_or_else(|| json!({}));
 +        let (was, now) = (list(&before, "credentials"), list(grant, "credentials"));
 +        for credential in now.iter().filter(|c| !was.contains(c)) {
 +            lines.push(format!("Let service {id} use {}", label(credential)));
@@ -128604,28 +128644,12 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +        for credential in was.iter().filter(|c| !now.contains(c)) {
 +            lines.push(format!("Stop service {id} using {}", label(credential)));
 +        }
-+        for key in [
-+            "program",
-+            "program_sha256",
-+            "arguments",
-+            "network",
-+            "read_paths",
-+            "read_hashes",
-+            "code_roots",
-+            "requests",
-+            "secrets",
-+            "route",
-+        ] {
-+            if before.get(key) != grant.get(key) {
-+                field(
-+                    &mut lines,
-+                    format!("Service {id} {key}: {}", shown(key, grant.get(key))),
-+                );
-+            }
++        if before.get("route") != grant.get("route") {
++            field(
++                &mut lines,
++                format!("Service {id} route: {}", shown("route", grant.get("route"))),
++            );
 +        }
-+    }
-+    for id in old.keys().filter(|id| !new.contains_key(*id)) {
-+        lines.push(format!("Remove service {id}"));
 +    }
 +    lines
 +}
@@ -128635,10 +128659,10 @@ index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a3
 +mod tests;
 diff --git a/codex-rs/omd/src/route_writes_tests.rs b/codex-rs/omd/src/route_writes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d6c8571a7
+index 0000000000000000000000000000000000000000..a9fc82862657f889b02ecae5b154e55ae48bb66d
 --- /dev/null
 +++ b/codex-rs/omd/src/route_writes_tests.rs
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,187 @@
 +use super::*;
 +use crate::credentials::CredentialProfiles;
 +
@@ -128703,12 +128727,11 @@ index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d
 +            "Add model route work: work, subscription",
 +            "Remove model route old",
 +            "Let service router use home (chatgpt)",
-+            "Remove service spare",
 +        ]
 +    );
 +    assert_eq!(
 +        apply(&store, Path::new("/repo"), &write).unwrap(),
-+        json!({"routes": ["work", "home"], "services": ["router"]})
++        json!({"routes": ["work", "home"], "services": ["router", "spare"]})
 +    );
 +    let host: Value =
 +        serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
@@ -128721,11 +128744,10 @@ index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d
 +    assert_eq!(names, [json!("theirs"), json!("work"), json!("home")]);
 +    assert_eq!(host["routes"][1]["data"], json!({"upstream": "gpt-6.1"}));
 +    let services = host["services"].as_array().unwrap();
-+    assert_eq!(services.len(), 2);
-+    assert_eq!(services[0]["id"], "foreign");
-+    assert_eq!(services[1]["program"], "/bin/node");
-+    assert_eq!(services[1]["secrets"], json!({"TOKEN": "token"}));
-+    assert_eq!(services[1]["credentials"], json!([work, home]));
++    assert_eq!(services.len(), 3);
++    assert_eq!(services[0]["program"], "/bin/node");
++    assert_eq!(services[0]["secrets"], json!({"TOKEN": "token"}));
++    assert_eq!(services[0]["credentials"], json!([work, home]));
 +}
 +
 +#[test]
@@ -128753,12 +128775,20 @@ index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d
 +            "routes_write_invalid: route invalid is invalid",
 +        ),
 +        (
-+            json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}),
-+            "routes_write_service_taken: foreign",
++            json!({"routes": [], "services": [{"id": "foreign", "credentials": []}]}),
++            "routes_write_service_unknown: foreign",
 +        ),
 +        (
-+            json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}),
-+            "routes_write_secret_ref_unknown: router",
++            json!({"routes": [], "services": [{"id": "new", "credentials": [work]}]}),
++            "routes_write_service_unknown: new",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "router", "secrets": {"TOKEN": "token"}}]}),
++            "routes_write_service_field: router",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "router", "program": "/bin/sh"}]}),
++            "routes_write_service_field: router",
 +        ),
 +        (
 +            json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}),
@@ -128768,33 +128798,22 @@ index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d
 +            json!({"routes": [], "extra": true}),
 +            "routes_write_arguments_invalid",
 +        ),
-+        (
-+            json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}),
-+            "routes_write_secret_ref_unknown: new",
-+        ),
 +    ] {
 +        assert_eq!(refused(arguments), code);
 +    }
 +}
 +
 +#[test]
-+fn a_new_grant_shows_everything_it_is_given_and_a_changed_host_refuses_the_confirmed_write() {
++fn a_grant_route_change_is_shown_and_a_changed_host_refuses_the_confirmed_write() {
 +    let (_temp, store, work, _) = store();
-+    let arguments = json!({"routes": [route("old", "fixture_router", true)], "services": [{"id": "router"}, {"id": "spare"},
-+        {"id": "extra", "mod_id": "fixture_router", "program": "/bin/node", "program_sha256": "b", "arguments": ["serve", "-e"],
-+            "network": true, "read_paths": ["/Users/me/.ssh"], "secrets": {"TOKEN": "token"}, "credentials": [work]}]});
++    let arguments = json!({"routes": [route("old", "fixture_router", true)],
++        "services": [{"id": "spare", "credentials": [work], "route": route("old", "fixture_router", true)}]});
 +    let (write, changes) = plan(&store, Path::new("/repo"), "fixture_router", &arguments).unwrap();
 +    assert_eq!(
 +        changes,
 +        [
-+            "Add service extra",
-+            "Let service extra use work (chatgpt)",
-+            "Service extra program: /bin/node",
-+            "Service extra program_sha256: b",
-+            "Service extra arguments: serve -e",
-+            "Service extra network: on",
-+            "Service extra read_paths: /Users/me/.ssh",
-+            "Service extra secrets: TOKEN=token",
++            "Let service spare use work (chatgpt)",
++            "Service spare route: old (old)",
 +        ]
 +    );
 +    let mut host: Value =
@@ -169964,10 +169983,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab0219f025d0d6c3f224c2843bb7cbda441f54e3
+index 0000000000000000000000000000000000000000..1a21e7dc0cc36ce6ecb1a38a6ef47b1ced086e40
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,756 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -170344,20 +170363,41 @@ index 0000000000000000000000000000000000000000..ab0219f025d0d6c3f224c2843bb7cbda
 +        .map(|value| codex_omd::install_profile(&value))
 +}
 +
++struct Knobs {
++    ascii: bool,
++    mouse_off: bool,
++    header_off: bool,
++    plain_composer: bool,
++}
++
++/// The launcher's `OMD_TUI_*` knobs, read once: they are consulted on every frame.
++fn knobs() -> &'static Knobs {
++    static KNOBS: std::sync::OnceLock<Knobs> = std::sync::OnceLock::new();
++    KNOBS.get_or_init(|| {
++        let is = |name: &str, value: &str| std::env::var(name).as_deref() == Ok(value);
++        Knobs {
++            ascii: is("OMD_TUI_ASCII", "1"),
++            mouse_off: is("OMD_TUI_MOUSE", "off"),
++            header_off: is("OMD_TUI_HEADER", "off"),
++            plain_composer: is("OMD_TUI_COMPOSER", "plain"),
++        }
++    })
++}
++
 +pub(crate) fn unicode_supported() -> bool {
-+    std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1") && locale_supports_unicode()
++    !knobs().ascii && locale_supports_unicode()
 +}
 +
 +pub(crate) fn mouse_enabled() -> bool {
-+    terminal_active() && std::env::var("OMD_TUI_MOUSE").as_deref() != Ok("off")
++    terminal_active() && !knobs().mouse_off
 +}
 +
 +pub(crate) fn session_header_shown() -> bool {
-+    std::env::var("OMD_TUI_HEADER").as_deref() != Ok("off")
++    !knobs().header_off
 +}
 +
 +pub(crate) fn plain_composer() -> bool {
-+    std::env::var("OMD_TUI_COMPOSER").as_deref() == Ok("plain")
++    knobs().plain_composer
 +}
 +
 +fn locale_supports_unicode() -> bool {

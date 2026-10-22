@@ -62,12 +62,11 @@ fn a_write_replaces_only_the_callers_routes_and_merges_its_services() {
             "Add model route work: work, subscription",
             "Remove model route old",
             "Let service router use home (chatgpt)",
-            "Remove service spare",
         ]
     );
     assert_eq!(
         apply(&store, Path::new("/repo"), &write).unwrap(),
-        json!({"routes": ["work", "home"], "services": ["router"]})
+        json!({"routes": ["work", "home"], "services": ["router", "spare"]})
     );
     let host: Value =
         serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
@@ -80,11 +79,10 @@ fn a_write_replaces_only_the_callers_routes_and_merges_its_services() {
     assert_eq!(names, [json!("theirs"), json!("work"), json!("home")]);
     assert_eq!(host["routes"][1]["data"], json!({"upstream": "gpt-6.1"}));
     let services = host["services"].as_array().unwrap();
-    assert_eq!(services.len(), 2);
-    assert_eq!(services[0]["id"], "foreign");
-    assert_eq!(services[1]["program"], "/bin/node");
-    assert_eq!(services[1]["secrets"], json!({"TOKEN": "token"}));
-    assert_eq!(services[1]["credentials"], json!([work, home]));
+    assert_eq!(services.len(), 3);
+    assert_eq!(services[0]["program"], "/bin/node");
+    assert_eq!(services[0]["secrets"], json!({"TOKEN": "token"}));
+    assert_eq!(services[0]["credentials"], json!([work, home]));
 }
 
 #[test]
@@ -112,12 +110,20 @@ fn a_write_refuses_what_the_caller_does_not_own_or_cannot_pay_for() {
             "routes_write_invalid: route invalid is invalid",
         ),
         (
-            json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}),
-            "routes_write_service_taken: foreign",
+            json!({"routes": [], "services": [{"id": "foreign", "credentials": []}]}),
+            "routes_write_service_unknown: foreign",
         ),
         (
-            json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}),
-            "routes_write_secret_ref_unknown: router",
+            json!({"routes": [], "services": [{"id": "new", "credentials": [work]}]}),
+            "routes_write_service_unknown: new",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "router", "secrets": {"TOKEN": "token"}}]}),
+            "routes_write_service_field: router",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "router", "program": "/bin/sh"}]}),
+            "routes_write_service_field: router",
         ),
         (
             json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}),
@@ -127,33 +133,22 @@ fn a_write_refuses_what_the_caller_does_not_own_or_cannot_pay_for() {
             json!({"routes": [], "extra": true}),
             "routes_write_arguments_invalid",
         ),
-        (
-            json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}),
-            "routes_write_secret_ref_unknown: new",
-        ),
     ] {
         assert_eq!(refused(arguments), code);
     }
 }
 
 #[test]
-fn a_new_grant_shows_everything_it_is_given_and_a_changed_host_refuses_the_confirmed_write() {
+fn a_grant_route_change_is_shown_and_a_changed_host_refuses_the_confirmed_write() {
     let (_temp, store, work, _) = store();
-    let arguments = json!({"routes": [route("old", "fixture_router", true)], "services": [{"id": "router"}, {"id": "spare"},
-        {"id": "extra", "mod_id": "fixture_router", "program": "/bin/node", "program_sha256": "b", "arguments": ["serve", "-e"],
-            "network": true, "read_paths": ["/Users/me/.ssh"], "secrets": {"TOKEN": "token"}, "credentials": [work]}]});
+    let arguments = json!({"routes": [route("old", "fixture_router", true)],
+        "services": [{"id": "spare", "credentials": [work], "route": route("old", "fixture_router", true)}]});
     let (write, changes) = plan(&store, Path::new("/repo"), "fixture_router", &arguments).unwrap();
     assert_eq!(
         changes,
         [
-            "Add service extra",
-            "Let service extra use work (chatgpt)",
-            "Service extra program: /bin/node",
-            "Service extra program_sha256: b",
-            "Service extra arguments: serve -e",
-            "Service extra network: on",
-            "Service extra read_paths: /Users/me/.ssh",
-            "Service extra secrets: TOKEN=token",
+            "Let service spare use work (chatgpt)",
+            "Service spare route: old (old)",
         ]
     );
     let mut host: Value =

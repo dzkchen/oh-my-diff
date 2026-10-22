@@ -341,7 +341,7 @@ async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_info_reports_the_threads_current_cwd() {
+async fn session_info_reports_the_threads_current_cwd_and_model() {
     let Some(mut fixture) = fixture(&[Package {
         id: "control",
         capabilities: &["inventory"],
@@ -372,12 +372,16 @@ async fn session_info_reports_the_threads_current_cwd() {
                     config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
                 }],
             )),
+            model: Some("session-info-switched".into()),
             ..Default::default()
         })
         .await
         .unwrap();
-    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(info["model"], "session-info-switched");
+    assert_eq!(cwd(info), Some(sub.to_path_buf()));
 }
 
 #[tokio::test(flavor = "multi_thread")]

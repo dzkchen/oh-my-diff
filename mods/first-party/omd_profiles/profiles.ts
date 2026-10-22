@@ -1,4 +1,4 @@
-import type { HostRoute, Json, ProviderModel, ServiceGrant } from '../../api.d.ts';
+import type { HostRoute, Json, ProviderModel, ServiceGrantUpdate } from '../../api.d.ts';
 
 export const PROVIDER = 'omd_profiles';
 export const PROTOCOLS = ['responses', 'chat', 'anthropic'];
@@ -51,7 +51,7 @@ export function routeFor(profile: Profile): HostRoute {
 export const modelFor = (profile: Profile): ProviderModel => ({ slug: profile.name, display: `${profile.name} · ${profile.model}`, context_window: profile.window!,
   efforts: profile.efforts?.length ? profile.efforts : [profile.effort ?? 'medium'], default_effort: profile.effort ?? 'medium' });
 
-export const serviceFor = (profiles: Profile[]): ServiceGrant[] => profiles.length
+export const serviceFor = (profiles: Profile[]): ServiceGrantUpdate[] => profiles.length
   ? [{ id: PROVIDER, credentials: [...new Set(profiles.map(profile => profile.credential))], route: { ...routeFor(profiles[0]), data: undefined } }] : [];
 
 export const profilesOf = (routes: { provider: string; data?: Json }[]): Profile[] =>

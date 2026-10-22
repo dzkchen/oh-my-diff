@@ -190,14 +190,17 @@ fn settings_updates_move_a_thread_only_to_a_configured_model_and_provider() {
         update(json!({"model": "gpt-test", "modelProvider": "openai"})),
         "ok"
     );
-    assert_eq!(update(json!({"modelProvider": "openai"})), "ok");
+    assert_eq!(
+        update(json!({"modelProvider": "openai"})),
+        "app_route_model_required"
+    );
     assert_eq!(
         update(json!({"model": "gpt-test", "modelProvider": "other"})),
         "app_route_unconfigured"
     );
     assert_eq!(
         update(json!({"modelProvider": "other"})),
-        "app_route_unconfigured"
+        "app_route_model_required"
     );
     assert_eq!(
         f.code(

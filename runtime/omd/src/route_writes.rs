@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 const HOST_CONFIG_BYTES: usize = 262_144;
-const ROUTE_DATA_BYTES: usize = 2048;
 
 pub type HostCheck = fn(&Path, &Value) -> Result<(), String>;
 
@@ -99,20 +98,6 @@ fn merged(
 ) -> Result<Value, String> {
     let caller = write.caller.as_str();
     let object = host.as_object_mut().ok_or("host_config_invalid")?;
-    let owned_refs = object
-        .get("services")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|grant| grant["mod_id"] == caller)
-        .flat_map(|grant| {
-            grant["secrets"]
-                .as_object()
-                .cloned()
-                .unwrap_or_default()
-                .into_values()
-        })
-        .collect::<Vec<_>>();
     let credentials = crate::credentials::CredentialProfiles::open(store)
         .and_then(|profiles| profiles.list())
         .map_err(|error| error.to_string())?;
@@ -136,12 +121,6 @@ fn merged(
         {
             return Err(format!("routes_write_allowance_required: {name}"));
         }
-        if route
-            .get("data")
-            .is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES)
-        {
-            return Err(format!("routes_write_data_too_large: {name}"));
-        }
         Ok(())
     };
     for route in &write.routes {
@@ -161,56 +140,37 @@ fn merged(
         .ok_or("host_config_invalid")?;
     routes.retain(|route| route["provider"] != caller || route.get("grant").is_some());
     routes.extend(write.routes.iter().cloned());
-    if let Some(services) = &write.services {
-        let current = object
-            .entry("services")
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .ok_or("host_config_invalid")?;
-        let mut next = Vec::new();
-        for service in services {
-            let id = service["id"]
-                .as_str()
-                .ok_or("routes_write_service_id_required")?;
-            if current
-                .iter()
-                .any(|grant| grant["id"] == id && grant["mod_id"] != caller)
-            {
-                return Err(format!("routes_write_service_taken: {id}"));
-            }
-            let mut grant = current
-                .iter()
-                .find(|grant| grant["id"] == id)
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            for (key, value) in service.as_object().into_iter().flatten() {
+    for service in write.services.iter().flatten() {
+        let id = service["id"]
+            .as_str()
+            .ok_or("routes_write_service_id_required")?;
+        let fields = service.as_object().into_iter().flatten();
+        if fields
+            .map(|(key, _)| key.as_str())
+            .any(|key| !matches!(key, "id" | "credentials" | "route"))
+        {
+            return Err(format!("routes_write_service_field: {id}"));
+        }
+        let grant = object
+            .get_mut("services")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .find(|grant| grant["id"] == id && grant["mod_id"] == caller)
+            .ok_or_else(|| format!("routes_write_service_unknown: {id}"))?;
+        for key in ["credentials", "route"] {
+            if let Some(value) = service.get(key) {
                 grant[key] = value.clone();
             }
-            if grant["mod_id"] != caller {
-                return Err(format!("routes_write_service_owner_mismatch: {id}"));
-            }
-            if let Some(route) = grant.get("route") {
-                billed(route)?;
-            }
-            for reference in grant["secrets"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .map(|(_, r)| r)
-            {
-                if !owned_refs.contains(reference) {
-                    return Err(format!("routes_write_secret_ref_unknown: {id}"));
-                }
-            }
-            for credential in grant["credentials"].as_array().into_iter().flatten() {
-                if !credential.as_str().is_some_and(usable) {
-                    return Err(format!("routes_write_credential_unknown: {id}"));
-                }
-            }
-            next.push(grant);
         }
-        current.retain(|grant| grant["mod_id"] != caller);
-        current.extend(next);
+        if let Some(route) = grant.get("route") {
+            billed(route)?;
+        }
+        for credential in grant["credentials"].as_array().into_iter().flatten() {
+            if !credential.as_str().is_some_and(usable) {
+                return Err(format!("routes_write_credential_unknown: {id}"));
+            }
+        }
     }
     let bytes = serde_json::to_vec(&host).map_err(|error| error.to_string())?;
     if bytes.len() > HOST_CONFIG_BYTES {
@@ -269,12 +229,6 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
             route["name"].as_str().unwrap_or_default(),
             route["model"].as_str().unwrap_or_default()
         ),
-        ("network" | "requests", value) => if value == Some(&json!(true)) {
-            "on"
-        } else {
-            "off"
-        }
-        .to_owned(),
         (_, Some(Value::Array(items))) => items.iter().map(text).collect::<Vec<_>>().join(" "),
         (_, Some(Value::Object(map))) => map
             .iter()
@@ -355,11 +309,7 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         grant[key].as_array().cloned().unwrap_or_default()
     };
     for (id, grant) in &new {
-        let previous = old.get(id);
-        if previous.is_none() {
-            lines.push(format!("Add service {id}"));
-        }
-        let before = previous.cloned().unwrap_or_else(|| json!({}));
+        let before = old.get(id).cloned().unwrap_or_else(|| json!({}));
         let (was, now) = (list(&before, "credentials"), list(grant, "credentials"));
         for credential in now.iter().filter(|c| !was.contains(c)) {
             lines.push(format!("Let service {id} use {}", label(credential)));
@@ -367,28 +317,12 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         for credential in was.iter().filter(|c| !now.contains(c)) {
             lines.push(format!("Stop service {id} using {}", label(credential)));
         }
-        for key in [
-            "program",
-            "program_sha256",
-            "arguments",
-            "network",
-            "read_paths",
-            "read_hashes",
-            "code_roots",
-            "requests",
-            "secrets",
-            "route",
-        ] {
-            if before.get(key) != grant.get(key) {
-                field(
-                    &mut lines,
-                    format!("Service {id} {key}: {}", shown(key, grant.get(key))),
-                );
-            }
+        if before.get("route") != grant.get("route") {
+            field(
+                &mut lines,
+                format!("Service {id} route: {}", shown("route", grant.get("route"))),
+            );
         }
-    }
-    for id in old.keys().filter(|id| !new.contains_key(*id)) {
-        lines.push(format!("Remove service {id}"));
     }
     lines
 }

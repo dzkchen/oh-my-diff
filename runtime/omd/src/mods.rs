@@ -684,14 +684,20 @@ pub fn install_profile(value: &str) -> &'static str {
     }
 }
 
-pub fn mod_ui_allowlist() -> Option<Vec<String>> {
-    std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
-        ids.split(',')
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(str::to_owned)
-            .collect()
-    })
+/// `OMD_TUI_MOD_UI`, read once: the TUI consults it on every frame.
+pub fn mod_ui_allowlist() -> Option<&'static [String]> {
+    static ALLOWLIST: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    ALLOWLIST
+        .get_or_init(|| {
+            std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
+                ids.split(',')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+        })
+        .as_deref()
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -3363,7 +3369,7 @@ impl ModHost {
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
             clock_reads: BTreeSet::new(),
-            ui_mods: mod_ui_allowlist(),
+            ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
