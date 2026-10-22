@@ -50,8 +50,8 @@ export type FinalRequestPage = {
   segments: FinalRequestSegment[]; opaque: { id: string; kind: string }[]; opaque_total: number;
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
-/** `turns_started` counts turns this process started in the thread. */
-export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number };
+/** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string | null; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
@@ -421,8 +421,9 @@ export interface HostOperations {
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
   'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
-  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
-  'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
+  /** A `key` (1-64 bytes, needs `workspace_watch_key_v1`) keeps or replaces the mod's watch with that key in this OMD process. */
+  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean; key?: string }; result: { watch_id: string } };
+  'workspace.unwatch': { arguments: { watch_id: string } | { key: string }; result: { stopped: boolean } };
   /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */
@@ -525,7 +526,7 @@ export interface Events {
   tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
-  tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
+  tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json; success_per_call?: boolean }[] } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   /** Independent per-channel sequence; restarts at 1 after publisher reclamation (15 minutes idle and no queued events). */
@@ -562,7 +563,7 @@ export type AdmissionPackage = { id: string; version: string; sha256: string; so
 export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };

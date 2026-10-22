@@ -10,7 +10,7 @@ type Entry = {
 };
 type Sample = { scope: string; minutes: number | null; used: number; resets: number | null; at: number; seen: number };
 type Hud = {
-  thread: string | null; entries: Entry[]; dropped: number; since: number | null; turn: string | null; detail: boolean;
+  thread: string | null; entries: Entry[]; dropped: number; shed: number; counted: [string, number][]; owed: [number, string][]; alerted: { budget: number; level: number } | null; since: number | null; turn: string | null; detail: boolean;
   current: { model: string | null; provider: string | null; effort: string | null }; tick: number; room: { size: number | null; compact: number | null };
   compaction: { started: number; installed: number; start: number | null; end: number | null; trigger: string | null };
   reverted: number | null; samples: Sample[]; credits: string | null;
@@ -25,8 +25,10 @@ type Charge = { kind: 'billed' | 'estimate' | 'pending' | 'included' | 'unknown'
 const MAX_ENTRIES = 120;
 const MAX_BYTES = 52_000;
 const MAX_SAMPLES = 32;
+const MAX_COUNTED = 512;
+const tag = (key: string) => { let hash = 2166136261; for (const char of key) hash = Math.imul(hash ^ char.codePointAt(0)!, 16777619) >>> 0; return hash.toString(36); };
 const HUD: Hud = {
-  thread: null, entries: [], dropped: 0, since: null, turn: null, detail: false, current: { model: null, provider: null, effort: null }, tick: 0, room: { size: null, compact: null },
+  thread: null, entries: [], dropped: 0, shed: 0, counted: [], owed: [], alerted: null, since: null, turn: null, detail: false, current: { model: null, provider: null, effort: null }, tick: 0, room: { size: null, compact: null },
   compaction: { started: 0, installed: 0, start: null, end: null, trigger: null }, reverted: null, samples: [], credits: null, agents: {}, tools: {}, plan: null, assembled: null,
 };
 const EMPTY: Snapshot = { open: false, ledger: null, error: null, allowance: null, hud: HUD };
@@ -66,12 +68,22 @@ export default function activate(api: ModAPI) {
       return entry.cost.basis === 'unsettled' && settled && number(settled.settled_microusd) !== null
         ? { ...entry, cost: { microusd: settled.settled_microusd, basis: (settled.provider_billed === true ? 'provider_reported' : 'settled') as CostBasis }, revision: entry.revision + 1 } : entry;
     });
+    let shed = state.hud.shed;
+    let counted = state.hud.counted;
+    const owed = state.hud.owed.filter(([id, name]) => {
+      const microusd = number(attempts.find(attempt => attempt.request === id)?.settled_microusd);
+      if (microusd === null) return true;
+      const seen = counted.find(([other]) => other === name)?.[1] ?? 0;
+      shed += Math.max(0, microusd / 1e6 - seen);
+      counted = [...counted.filter(([other]) => other !== name), [name, Math.max(microusd / 1e6, seen)] as [string, number]].slice(-MAX_COUNTED);
+      return false;
+    });
     return {
       ...state,
       ledger: task.ok ? { ...task.value.ledger, cost: { settled_task_charge_microusd: number(cost.settled_task_charge_microusd) } } : state.ledger,
       error: task.ok ? null : `Task status unavailable: ${visible(task.error, 120)}`,
       allowance: task.ok && number(limits.exposure_microusd) ? { used: number(cost.retained_exposure_upper_bound_microusd) ?? 0, limit: limits.exposure_microusd, requests: attempts.length, max: number(limits.requests) ?? 0 } : null,
-      hud: { ...state.hud, entries },
+      hud: { ...state.hud, entries, owed, shed, counted },
     };
   };
 
@@ -95,6 +107,9 @@ export default function activate(api: ModAPI) {
     sum.included ? `${sum.included} included${sum.list ? ` (~${usd(sum.list)} list-equivalent)` : ''}` : '',
     sum.pending ? `${sum.pending} unsettled` : '', sum.unknown ? `${sum.unknown} unknown cost` : '',
   ].filter(Boolean).join(' · ') || 'no priced requests';
+
+  const outlay = (hud: Hud) => { const sum = totals(hud.entries); return sum.billed + sum.estimate + hud.shed; };
+  const level = (spent: number) => budget === null ? 0 : spent >= budget ? 100 : spent >= budget * 0.8 ? 80 : 0;
 
   const isLead = (hud: Hud, entry: Entry) => entry.kind === 'main' && !entry.agent && (hud.thread === null || entry.thread === hud.thread);
   const leads = (hud: Hud) => hud.entries.filter(entry => isLead(hud, entry) && entry.tokens?.input !== null && entry.tokens !== null);
@@ -140,7 +155,7 @@ export default function activate(api: ModAPI) {
       cache: last && last.tokens?.input ? { ratio: (last.tokens.cached ?? 0) / last.tokens.input, expires: cacheTtl(state.hud, last) } : null,
       spend: { usd: spent || null, kind: sum.billed && sum.estimate ? 'mixed' : sum.billed ? 'billed' : sum.estimate ? 'estimate' : sum.included ? 'included' : 'none', uncertain: sum.unknown + sum.pending > 0, list: sum.list || null },
       quota: tight ? { name: tight.name, used: tight.current.used, resets: tight.current.resets, observed: tight.current.seen } : null,
-      budget: budget === null ? null : spent >= budget ? 'over' : spent >= budget * 0.8 ? 'warn' : null,
+      budget: ({ 0: null, 80: 'warn', 100: 'over' } as const)[level(outlay(state.hud))],
     } });
   };
 
@@ -154,7 +169,17 @@ export default function activate(api: ModAPI) {
     hud.entries.sort((a, b) => a.at - b.at);
     const before = hud.entries.length;
     let size = JSON.stringify(hud).length;
-    while (hud.entries.length > 1 && (hud.entries.length > MAX_ENTRIES || size > MAX_BYTES)) size -= JSON.stringify(hud.entries.shift()).length + 1;
+    while (hud.entries.length > 1 && (hud.entries.length > MAX_ENTRIES || size > MAX_BYTES)) {
+      const gone = hud.entries.shift()!;
+      const item = charge(gone);
+      const cost = item.kind === 'billed' || item.kind === 'estimate' ? item.usd! : 0;
+      const name = tag(gone.key);
+      const seen = hud.counted.find(([other]) => other === name)?.[1] ?? 0;
+      hud.shed += Math.max(0, cost - seen);
+      if (cost) hud.counted = [...hud.counted.filter(([other]) => other !== name), [name, Math.max(cost, seen)] as [string, number]].slice(-MAX_COUNTED);
+      if (item.kind === 'pending' && gone.billing !== null) hud.owed = [...hud.owed.filter(([, other]) => other !== name), [gone.billing, name] as [number, string]].slice(-64);
+      size -= JSON.stringify(gone).length + 1;
+    }
     const extra = before - hud.entries.length;
     if (extra > 0) {
       hud.dropped += extra;
@@ -187,6 +212,15 @@ export default function activate(api: ModAPI) {
     hud.samples = kept.slice(-4 * MAX_SAMPLES);
   };
 
+  const warn = () => {
+    if (budget === null) return;
+    const state = saved(); const spent = outlay(state.hud); const reached = level(spent);
+    const seen = state.hud.alerted?.budget === budget ? state.hud.alerted.level : 0;
+    if (reached === seen) return;
+    const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent)`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
+    if (shown) hud(h => { h.alerted = { budget, level: reached }; });
+  };
+
   const prompt = (state: Snapshot, now: number): TerminalComponent[] => {
     const h = state.hud; const current = context(h); const sum = totals(h.entries);
     const usage: string[] = [];
@@ -200,14 +234,15 @@ export default function activate(api: ModAPI) {
       const filled = Math.min(10, Math.round(state.allowance.used / state.allowance.limit * 10));
       usage.push(`[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}] ${usd(state.allowance.used / 1e6)}/${usd(state.allowance.limit / 1e6)}`);
     }
-    if (budget !== null) usage.push(`Budget ${usd(sum.billed + sum.estimate)} of ${usd(budget)} (soft)`);
+    if (budget !== null) usage.push(`Budget ${usd(outlay(h))} of ${usd(budget)} (soft)`);
     const agents = Object.entries(h.agents).filter(([, agent]) => agent.status === 'running');
     const workers = [
       ...(h.plan ? [`Tasks ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · ${h.plan.step}` : ''}`] : []),
       ...agents.slice(0, 4).map(([id, agent]) => `${agent.role} · ${id.slice(0, 8)}`),
       ...Object.values(h.tools).slice(0, 3).map(tool => `running ${tool.tool}`),
     ];
-    const tone = (body: string): TerminalTone => /stale|passed|unknown|unsettled/.test(body) ? 'attention' : 'muted';
+    const reached = level(outlay(h));
+    const tone = (body: string): TerminalTone => body.startsWith('Budget ') && reached ? (reached === 100 ? 'failure' : 'attention') : /stale|passed|unknown|unsettled/.test(body) ? 'attention' : 'muted';
     const spans = (parts: string[]) => parts.slice(0, 6).flatMap((body, index) => [...(index ? [{ text: ' · ', tone: 'muted' as const }] : []), { text: fit(body, 40), tone: tone(body) }]);
     return [{ type: 'box', id: 'omd_usage_prompt', label: 'Usage', style: { direction: 'row', gap: 2, padding: [0, 1] }, children: [
       { type: 'line', id: 'omd_usage_prompt_usage', label: 'Usage', spans: spans(usage) },
@@ -254,7 +289,7 @@ export default function activate(api: ModAPI) {
       ...(h.entries.some(entry => entry.overage) ? ['Subscription overage: not reported by the provider (unknown)'] : []),
       `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
-      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(totals(h.entries).billed + totals(h.entries).estimate)} spent (warning only, not a spending limit)`] : [])];
+      ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
     quotaLines.unshift('Current route quota: unavailable (account-to-route binding is not reported)');
     if (h.credits) quotaLines.push(`Codex account Extra-usage credits: ${h.credits}`);
@@ -338,6 +373,9 @@ export default function activate(api: ModAPI) {
     publish();
   });
   api.on('terminal', input => view(input.ledger));
+  api.on('component_event', event => {
+    if (event.component === 'omd_usage_dialog' && event.kind === 'close') save({ ...saved(), open: false });
+  });
 
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
@@ -380,6 +418,7 @@ export default function activate(api: ModAPI) {
       overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds),
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
     }));
+    warn();
     publish();
     if (expiry() !== null) ticker.start();
   });
@@ -388,6 +427,7 @@ export default function activate(api: ModAPI) {
     const state = capture(saved());
     state.hud.tools = {};
     save(state);
+    warn();
     publish();
   });
   api.on('compaction_start', ({ trigger }) => hud(state => { state.compaction = { ...state.compaction, started: state.compaction.started + 1, start: Date.now(), trigger }; }));

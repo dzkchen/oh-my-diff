@@ -477,6 +477,18 @@
       "why_mod": "Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_tool_absorb",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns which parallel read calls merge through the exclusive tool_batch replacement, the merged tool that runs each distinct original once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_tool_fix",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Owns schema-aware argument repair as a tool interceptor and JSON syntax repair as a response_stream interceptor, with evidence records and loop limits; host admission revalidates every rewrite; installed inactive in OMD+."
+    },
+    {
       "path": "mods/first-party/omd_profiles",
       "extension_type": "mod",
       "role": "bundled",
