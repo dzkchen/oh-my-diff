@@ -4,8 +4,7 @@ What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
 - **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
-- **Beta:** OMD `1.0.0` is labeled beta: not every planned capability is included yet. Mod API surfaces marked
-  experimental can change between releases.
+- **Experimental:** mod API surfaces marked experimental can change between releases. There may be missing API capabilities, just open a issue for it to be added!
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
 
@@ -95,7 +94,7 @@ OMD Core stages none.
 
 ## Not included
 
-Further first-party mods and plugins are planned. After release the creator expects to focus mainly on critical
-fixes, so treat plans as intentions, not commitments.
+Further first-party mods and plugins are planned. After release I'll focus mainly on critical fixes and on adding
+API capabilities for mods, so treat plans as intentions, not commitments.
 
 OMD has no desktop app, VS Code extension, Linux build or hosted service.

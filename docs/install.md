@@ -14,11 +14,10 @@
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/dzkchen/oh-my-diff/releases/latest/download/install.sh | sh -s -- --profile full
 ```
 
-- `--profile full` is **OMD+**: OMD plus the [mod collection](collection.md). Some mods start on; turn on the rest
-  with `/mods`.
-- `--profile platform` is **OMD Core**: OMD, the mod manager and update notices.
-
-OMD `1.0` is labeled beta: not every planned capability is included yet. The label does not mean unstable.
+- `--profile full` is **OMD+**, the one most people want: OMD plus the [mod collection](collection.md). Some mods
+  start on; turn on the rest with `/mods`.
+- `--profile platform` is **OMD Core**: only OMD, the mod manager and update notices, for adding just the mods you
+  pick or writing your own.
 
 Installs and updates check the release signature and checksum. Commands go in `~/.local/bin`; your Codex settings,
 sign-in and sessions aren't touched.

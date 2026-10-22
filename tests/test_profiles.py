@@ -95,12 +95,18 @@ class ProfileModeTests(unittest.TestCase):
                     (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
                     (managed, ["update"], "installer update --root /omd/root"),
                     (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
-                    (record, ["update"], "tool update /omd/store")):
+                    (record, ["update"], "tool update /omd/store"),
+                    (record, ["help", "--all"], "tool --help")):
                 with self.subTest(managed="update" in current, argv=argv):
                     launcher = base / "omd"
                     launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
                     run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
                     self.assertEqual(run.stdout.strip(), expected)
+            for current in (managed, record):
+                launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
+                shown = subprocess.run(["sh", launcher], capture_output=True, text=True, check=True).stdout
+                self.assertIn("omd mods list", shown)
+                self.assertEqual("omd update rollback" in shown, current is managed)
 
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):

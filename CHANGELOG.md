@@ -122,7 +122,6 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 
 ### Decided
 
-- 1.0.0 ships labeled beta: not every planned capability is in yet.
 - Packages outside the launch collection return in post-launch waves.
 
 ## 2026-10-08 — Launch scope and upstream pin

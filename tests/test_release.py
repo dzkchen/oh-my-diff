@@ -28,7 +28,6 @@ class ReleaseTests(unittest.TestCase):
                 release.check("1.0.0")
                 notes = release.notes(entries, "1.0.0")
                 self.assertIn("### Fixed\n\n- Update path", notes)
-                self.assertIn("labeled beta", notes)
                 self.assertIn("v1.0.0/install.sh | sh -s -- --profile full", notes)
                 with self.assertRaisesRegex(SystemExit, "release.lock.json is 1.0.0, not 1.0.1"):
                     release.check("1.0.1")
