@@ -218,14 +218,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "client.ts": "70d87b7dc165f74625629de24e435a032191208b5cc7ef1ddf0a04f4c27c321b",
+        "client.ts": "72a0a5a0eb94ffd7aaa6169ef7d7f55d76c96af13fd3956fa39335e95ac2b6f4",
         "index.ts": "e756c9cbdd915248c898ff0cbb50a01b7a7d1047a6393d8dc680f8297cffbd5a",
         "mod.json": "b258128aa64608732129fc2e734a77a19954ea952ba756495e6b1493d5dba1e4",
         "protocol.ts": "e9b39b5257359828906b293993e3b4afd384774a4956fb07d66c40798579f5a0",
         "semantic.ts": "c924b13b2921dde58dff087ddaf90f22f60ce990c2edb9f48334e9ca78cb564d"
       },
       "id": "omd_lsp_sync",
-      "package_sha256": "fadf016f7d2ec283f964f46141915c1f9468a3fe4ee8998debec22e55edd0f47",
+      "package_sha256": "74a1c1ab0c61671728902fdd19621ba68a1a6b9f0513b486c914029287939bad",
       "source": "mods/first-party/omd_lsp_sync",
       "version": "1.0.0"
     },
