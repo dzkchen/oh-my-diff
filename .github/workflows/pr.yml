@@ -20,11 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
           persist-credentials: false
       - id: select
         env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PR_BASE_SHA: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
         run: python3 scripts/pr_ci.py select
 
   portable:
@@ -43,6 +43,10 @@ jobs:
       - run: pnpm --dir mods install --frozen-lockfile
       - run: mise run mods:check
       - run: mise run native:ownership
+      - name: Generated locks match sources
+        run: |
+          python3 -m scripts.mods_lock
+          python3 -m scripts.plugin_lock
       - name: Host-free Python tests
         run: python3 -m unittest tests.test_pr_ci tests.test_native_ownership tests.test_mod_conformance tests.test_build_provenance
       - name: Workflow lint
@@ -56,7 +60,6 @@ jobs:
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
-      CARGO_PROFILE_DEV_DEBUG: '0'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -69,7 +72,7 @@ jobs:
           OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
           rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry/index
@@ -81,6 +84,7 @@ jobs:
         run: |
           python3 .github/scripts/build.py setup pr
           python3 .github/scripts/build.py sync pr
+          git add --intent-to-add -- runtime upstream.lock.json
           git diff --exit-code -- runtime upstream.lock.json
       - name: Compile native code and tests
         run: |

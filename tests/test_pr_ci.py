@@ -8,23 +8,28 @@ import unittest
 
 from scripts.pr_ci import gate, needs_native
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github/scripts"))
+import ci
+
+
+def git(root, *args):
+    return subprocess.check_output(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                                    "-c", "commit.gpgsign=false", *args],
+                                   cwd=root, stderr=subprocess.PIPE).decode().strip()
+
 
 class PullRequestChecks(unittest.TestCase):
     def test_selector_checks_deleted_side_of_rename_and_fails_on_missing_base(self):
         script = Path(__file__).resolve().parents[1] / "scripts/pr_ci.py"
         with TemporaryDirectory() as directory:
             root = Path(directory)
-
-            def git(*args):
-                return subprocess.check_output(["git", *args], cwd=root, stderr=subprocess.PIPE).decode().strip()
-
-            git("init", "-q")
+            git(root, "init", "-q")
             (root / "build-input").write_text("contents\n")
-            git("add", ".")
-            git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base")
-            base = git("rev-parse", "HEAD")
-            git("mv", "build-input", "README.md")
-            git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "rename")
+            git(root, "add", ".")
+            git(root, "commit", "-qm", "base")
+            base = git(root, "rev-parse", "HEAD")
+            git(root, "mv", "build-input", "README.md")
+            git(root, "commit", "-qm", "rename")
             output = root / "output"
             env = os.environ | {"PR_BASE_SHA": base, "GITHUB_OUTPUT": str(output)}
             result = subprocess.run([sys.executable, script, "select"], cwd=root, env=env, capture_output=True)
@@ -64,3 +69,15 @@ class PullRequestChecks(unittest.TestCase):
             )
             with self.subTest(results=results):
                 self.assertEqual(gate(results), expected)
+
+    def test_drift_reports_untracked_files(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            git(root, "init", "-q")
+            (root / "runtime").mkdir()
+            (root / "runtime/lib.rs").write_text("contents\n")
+            git(root, "add", ".")
+            git(root, "commit", "-qm", "base")
+            self.assertEqual(subprocess.run(ci.drift("runtime"), cwd=root, capture_output=True).returncode, 0)
+            (root / "runtime/new.rs").write_text("contents\n")
+            self.assertNotEqual(subprocess.run(ci.drift("runtime"), cwd=root, capture_output=True).returncode, 0)

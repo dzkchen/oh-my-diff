@@ -9,20 +9,22 @@
 
 ## Pull requests
 
-Every PR runs mod type/static checks, native ownership, selected host-free Python tests and workflow linting on
-Linux. Superseded runs are cancelled. There is no workflow-level path filter, so documentation PRs also report
-`PR gate`. The gate requires successful selection and portable checks, and successful native checks when selected;
-only an intentionally unselected native job may be skipped.
+Every PR runs mod type/static checks, native ownership, first-party mod and plugin lock freshness, selected
+host-free Python tests and workflow linting on Linux. Superseded runs are cancelled. There is no workflow-level path
+filter, so documentation PRs also report `PR gate`. The gate requires successful selection and portable checks, and
+successful native checks when selected; only an intentionally unselected native job may be skipped.
 
 Changes outside Markdown, `docs/`, mod examples/first-party packages, plugins and Python/Node `tests/` select macOS
-patch replay, drift checking and compilation of the native crates and their tests. This conservative default
-includes unknown paths, API definitions, dependency locks, shared scripts and workflow changes. Renames examine
-both paths. All `runtime/` changes, including Markdown mirrors, select native checks to detect patch drift.
-Other package-only and documentation-only changes avoid Rust builds. Native tests are compiled here;
-their execution and full validation remain in nightly and release workflows.
+patch replay, drift checking and compilation, tests included, of the crates nightly tests plus `codex-cli` and
+`codex-exec`. This conservative default includes unknown paths, API definitions, dependency locks, shared scripts
+and workflow changes. Pull requests compare the merge commit with its first parent. Renames examine both paths. All
+`runtime/` changes, including Markdown mirrors, select native checks to detect patch drift. Other package-only and
+documentation-only changes avoid Rust builds. Native tests are compiled here; their execution and full validation
+remain in nightly and release workflows.
 
-PR, nightly and release jobs use the same Cargo download-cache keys. Patch edits can restore a previous cache
-for the same platform and upstream pin, then save newly downloaded dependencies under the new patch key.
+PR, nightly and release jobs use the same Cargo download-cache keys. PR runs only restore: a patch edit falls back
+to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
+by a PR is visible to that PR alone.
 
 After this workflow lands and a hosted PR run succeeds, apply `.github/settings.json` to require **PR gate** on
 `main` with an up-to-date branch. The checked-in setting alone does not change GitHub protection. Verify the live
