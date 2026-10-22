@@ -16,7 +16,7 @@
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.307",
+      "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; Node 24.18.0; official Claude CLI 2.1.307 or newer 2.x",
       "tested_versions": [
         "Codex 0.163.0",
         "OMD 1.0.0-rc.2",
@@ -268,7 +268,7 @@
       "id": "omd_tool_absorb",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Opt-in tool-call absorption: a response's parallel read-only calls run as one merged step through tools.invoke with per-call results and success, identical reads in it run once, and unchanged file reads, including concurrent ones, are reused with their structured result inside a code-mode cell",
+      "capability": "Opt-in tool-call absorption: identical read-only calls in a response run once through tools.invoke with per-call results and success, distinct reads stay parallel, and unchanged file reads, including concurrent ones, are reused with their structured result inside a code-mode cell",
       "source": "mods/first-party/omd_tool_absorb",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -435,7 +435,7 @@
       "compatibility": "Codex 0.163.0; OMD 1.0.0; mod API 1.0.0; contracts_v2, workspace_snapshots_v1, workspace_fingerprint_v1, store_v1, routes_v1, snapshot_exec_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.163.0",
-        "OMD 1.0.0-rc.2",
+        "OMD 1.0.1",
         "mod API 1.0.0",
         "Node 24.18.0"
       ],

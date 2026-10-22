@@ -12,6 +12,7 @@ async function worker() {
   const bridgeContext = new AsyncLocalStorage();
   let bridgeFailed = false;
   let outputBytes = 0;
+  let strays;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   const writeAll = (fd, text) => {
     for (let data = Buffer.from(text); data.length;) {
@@ -70,9 +71,14 @@ async function worker() {
   };
   const hooks = [...["log", "error", "warn", "info", "debug"].map((name) => [console, name, capture]), [process.stdout, "write", captureWrite], [process.stderr, "write", captureWrite]];
 
+  const stray = (error) => { strays?.push(String(error)); };
+  process.on("uncaughtException", stray);
+  process.on("unhandledRejection", stray);
+
   for await (const line of readline.createInterface({ input: process.stdin })) {
     outputBytes = 0;
     bridgeFailed = false;
+    strays = [];
     let response;
     let bridge;
     try {
@@ -84,7 +90,7 @@ async function worker() {
       try {
         const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
         await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
-        response = { ok: true, bridge_failed: bridgeFailed };
+        response = strays.length ? { ok: false, error: strays[0], bridge_failed: bridgeFailed } : { ok: true, bridge_failed: bridgeFailed };
       } finally {
         hooks.forEach(([target, name], index) => { target[name] = prior[index]; });
       }
@@ -92,6 +98,7 @@ async function worker() {
       response = { ok: false, error: String(error), bridge_failed: bridgeFailed };
     } finally {
       if (bridge) bridge.active = false;
+      strays = undefined;
     }
     writeAll(3, frame + JSON.stringify(response) + "\n");
     writeAll(1, frame + "\n");

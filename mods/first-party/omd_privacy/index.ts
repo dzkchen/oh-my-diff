@@ -222,7 +222,8 @@ function coalesce({ segment, own, taken }: Pending) {
 type PathPattern = { pattern: string; parts: string[]; want: RegExp[]; directory: boolean; parent?: PathPattern };
 
 const pathEntry = (pattern: string, source: string, parent?: PathPattern): PathPattern => {
-  const parts = source.replace(/\/+$/, '').split('/');
+  const parts = source.split('/');
+  while (parts.length > 1 && !parts[parts.length - 1]) parts.pop();
   return { pattern, parts, directory: source.endsWith('/'), parent,
     want: parts.map(part => new RegExp(`^${part.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i')) };
 };
@@ -234,7 +235,7 @@ const pathPattern = (pattern: string) => {
 
 type Atom = '*' | ((char: string) => boolean);
 
-const BRACES = /\{([^{},]*(?:,[^{},]*){1,16})\}/;
+const BRACES = /\{([^{},]*(?:,[^{},]*)+)\}/;
 
 function braces(glob: string) {
   let out = [glob];
@@ -294,11 +295,13 @@ function globMatches(glob: Atom[], text: string) {
 const globReaches = (token: string, part: string) => {
   const glob = token.toLowerCase().replace(/\*+/g, '*');
   const wildcards = glob.match(/[*?[{]/g)?.length ?? 0;
-  if (wildcards === 0 || part.includes('*') && !/[^*?]/.test(glob)) return false;
+  const plain = (value: string) => part.includes('*') && !/[^*?]/.test(value);
+  if (wildcards === 0 || plain(glob)) return false;
   const choices = token.length > 256 || wildcards > 8 ? null : braces(glob);
   if (!choices) return true;
   const text = part.replace(/\*/g, '_').toLowerCase();
-  return choices.some(choice => (choice.startsWith('.') ? /^\.[^*?]/.test(choice) : !text.startsWith('.')) && globMatches(atoms(choice), text));
+  return choices.map(choice => choice.replace(/\{[^{}]*\}/g, '*')).some(choice =>
+    !plain(choice) && (choice.startsWith('.') ? choice !== '.*' : !text.startsWith('.')) && globMatches(atoms(choice), text));
 };
 
 function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]) {
@@ -309,8 +312,12 @@ function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]
     }
     return false;
   };
-  for (const token of command.split(/[\s'"`;|&<>()=]+/).filter(Boolean)) {
-    const parts = token.replace(/\/+$/, '').split('/');
+  for (const word of command.split(/[\s;|&<>()=:]+/)) {
+    const parts: string[] = [];
+    for (const part of word.replace(/['"`\\]/g, '').split('/')) {
+      if (part === '..') parts.pop();
+      else if (part && part !== '.') parts.push(part);
+    }
     if (exempt.some(pattern => names(parts, pattern))) continue;
     const hit = patterns.find(pattern => names(parts, pattern, true) || pattern.parent && names(parts, pattern.parent, true));
     if (hit) return hit.pattern;

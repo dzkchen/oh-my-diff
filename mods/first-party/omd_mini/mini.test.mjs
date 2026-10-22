@@ -19,7 +19,7 @@ function session(env, current = thread, turns = 1, model = undefined) {
       calls.push({ operation, args });
       const key = `${args?.scope ?? 'repository'}:${args?.key}`;
       let value = null;
-      if (operation === 'exec.run') value = { exit_code: 0, stdout: env, stderr: '', signal: null, stdout_truncated: false, stderr_truncated: false, timed_out: false, duration_ms: 3, program: { path: '/usr/bin/env', sha256: 'a'.repeat(64) } };
+      if (operation === 'environment.read') value = { values: Object.fromEntries(args.names.map(name => { const line = env.split('\n').find(item => item.startsWith(`${name}=`)); return [name, line ? { set: true, value: line.slice(name.length + 1) } : { set: false, value: null }]; })) };
       if (operation === 'store.get') value = store[key] ?? null;
       if (operation === 'store.put') { store[key] = { value: args.value, revision: (store[key]?.revision ?? 0) + 1, provenance: { thread_id: thread } }; value = { revision: store[key].revision }; }
       if (operation === 'store.delete') { value = { deleted: key in store }; delete store[key]; }
@@ -40,7 +40,7 @@ const notify = (method, params, threadId = thread) => ({ method, params, thread_
 test('outside an omd mini launch the mod stays inert and points to the launcher', () => {
   const { invoke, calls } = session('PATH=/usr/bin\n');
   invoke('start', {});
-  assert.deepEqual(calls.map(call => call.operation), ['exec.run']);
+  assert.deepEqual(calls.map(call => call.operation), ['environment.read']);
   assert.equal(invoke('terminal', { event: 'turn_end', ledger: ledger() }), null);
   invoke('app_notification', notify('thread/settings/updated', { threadId: thread, threadSettings: { model: 'x' } }));
   assert.equal(calls.length, 1);
@@ -60,6 +60,7 @@ test('a mini session shows one status line of model, context and limits', () => 
   invoke('app_notification', notify('thread/tokenUsage/updated', { threadId: thread, tokenUsage: { last: { totalTokens: 88000 }, modelContextWindow: 258000 } }));
   invoke('app_notification', notify('thread/tokenUsage/updated', { threadId: 'child', tokenUsage: { last: { totalTokens: 1000 }, modelContextWindow: 258000 } }, 'child'));
   invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 23, windowDurationMins: 300 } } }, null));
+  invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { limitId: 'claude', primary: { usedPercent: 99, windowDurationMins: 300 } } }, null));
   assert.deepEqual(invoke('terminal', { event: 'turn_end', ledger: ledger() }).status, ['gpt-6-astra', 'ctx 34%', '5h 23%']);
   invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 30, windowDurationMins: 10080 } } }, null));
   assert.deepEqual(invoke('terminal', { event: 'turn_end', ledger: ledger() }).status, ['gpt-6-astra', 'ctx 34%', '7d 30%']);
@@ -82,7 +83,7 @@ test('switching records a request for this launch run, refuses mid-turn and can 
   assert.deepEqual(store[`user:switch_${launch}`].value, { run: 2, target: 'full', thread });
   assert.match(invoke('command', '', 'switch').display, /^Switch cancelled/);
   assert.equal(store[`user:switch_${launch}`], undefined);
-  assert.ok(calls.every(call => call.operation !== 'exec.run' || call.args.program === 'env'));
+  assert.ok(calls.every(call => call.operation !== 'exec.run'));
 });
 
 test('a full session started by the launcher switches back to mini', () => {

@@ -27,10 +27,11 @@ export default function activate(api: ModAPI) {
   };
 
   const detect = (resumed: boolean) => {
-    const env = api.host.tryCall('exec.run', { program: 'env', timeout_ms: 2000, max_output_bytes: 8192 });
-    const vars = Object.fromEntries((env.ok && env.value.exit_code === 0 ? env.value.stdout : '').split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+    const read = api.host.tryCall('environment.read', { names: ['OH_MY_DIFF_PRESENTATION', 'OH_MY_DIFF_LAUNCH'] });
+    const vars = Object.fromEntries(Object.entries(read.ok ? read.value.values : {}).map(([name, item]) => [name, item.value]));
     const mode = vars.OH_MY_DIFF_PRESENTATION === 'mini' || vars.OH_MY_DIFF_PRESENTATION === 'full' ? vars.OH_MY_DIFF_PRESENTATION : null;
-    const launch = mode && LAUNCH.test(vars.OH_MY_DIFF_LAUNCH ?? '') ? vars.OH_MY_DIFF_LAUNCH : null;
+    const id = vars.OH_MY_DIFF_LAUNCH ?? '';
+    const launch = mode && LAUNCH.test(id) ? id : null;
     save({ mode, launch, resumed, busy: false, model: mode === 'mini' ? sessionModel() : null });
     // The launcher acts on a request after the run that wrote it exits, so a request left from an earlier run is spent.
     const request = requestKey(launch);
@@ -53,10 +54,10 @@ export default function activate(api: ModAPI) {
       threadId?: string;
       threadSettings?: { model?: string };
       tokenUsage?: { last?: { totalTokens?: number }; modelContextWindow?: number | null };
-      rateLimits?: { primary?: { usedPercent?: number; windowDurationMins?: number | null } | null };
+      rateLimits?: { limitId?: string | null; primary?: { usedPercent?: number; windowDurationMins?: number | null } | null };
     };
     if (method === 'account/rateLimits/updated') {
-      const primary = update.rateLimits?.primary;
+      const primary = (update.rateLimits?.limitId ?? 'codex') === 'codex' ? update.rateLimits?.primary : null;
       if (typeof primary?.usedPercent === 'number') save({ limit: { used: primary.usedPercent, minutes: primary.windowDurationMins ?? null } });
       return;
     }

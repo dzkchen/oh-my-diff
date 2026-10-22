@@ -10,17 +10,15 @@ const usageMod = {
 const NOW = 1_800_000_000_000;
 
 function call({ source, capabilities }, input, answer = () => ({ delivered: 1, dropped: 0 })) {
-  const published = [];
   const calls = [];
   const output = callback({ source, filename: 'index.ts', api: '1.0.0', capabilities, settings: {}, state: null, virtual_time_ms: NOW, ...input }, hostCall => {
     calls.push(hostCall);
-    if (hostCall.operation === 'events.publish') published.push(hostCall.arguments);
     const value = answer(hostCall);
     if (value instanceof Error) throw value;
     return value;
   });
   assert.equal(output.error, undefined, output.error);
-  return { ...output, published, calls };
+  return { ...output, calls };
 }
 
 const hud = { categories: true };
@@ -47,7 +45,8 @@ test('costs follow the ledger basis: an unpriced native response stays unknown',
   assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /Lead: 1 unknown cost/);
 });
 
-test('usage draws nothing above the prompt; the status line shows it', () => {
+test('usage draws nothing above the prompt and publishes to no channel', () => {
+  assert.deepEqual(call(usageMod, { event: 'model_response', payload: response('h1'), state: start(), settings: hud }).calls.filter(item => item.operation === 'events.publish'), []);
   const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state: feed(start(), [['model_response', response('r1')]]), settings: hud }).value;
   assert.deepEqual(view, { keybindings: { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } } });
 });
@@ -87,6 +86,21 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
   assert.match(dialog(state).text, new RegExp(`${state.hud.dropped} older dropped \\(not in these totals\\)`));
 });
 
+
+test('quota windows stay with the account that reported them and only Codex sets credits', () => {
+  const update = (state, rateLimits) => call(usageMod, { event: 'app_notification', payload: { method: 'account/rateLimits/updated', params: { rateLimits }, thread_id: null, coalesced: 0, dropped: 0 }, state, settings: hud }).state;
+  const window = (used, windowDurationMins) => ({ usedPercent: used, windowDurationMins, resetsAt: NOW / 1000 + 3600 });
+  let state = start();
+  state = update(state, { limitId: 'codex', primary: window(20, 300), credits: { hasCredits: true, balance: '5' } });
+  state = update(state, { limitId: 'claude', primary: window(70, 300), credits: { unlimited: true } });
+  state = update(state, { limitId: 'cursor', primary: window(40, 43200) });
+  const { text } = dialog(state);
+  assert.match(text, /Claude account 5h: 70% used/);
+  assert.match(text, /Codex account 5h: 20% used/);
+  assert.match(text, /Cursor account 30d: 40% used/);
+  assert.match(text, /Codex account Extra-usage credits: balance 5/);
+  assert.doesNotMatch(text, /unlimited/);
+});
 
 const billed = (id, usd, patch = {}) => response(id, { cost: { microusd: null, basis: 'unpriced' }, usage: { input_tokens: 10_000, output_tokens: 500, omd_reported_cost: { usd, basis: 'provider_billed' } }, ...patch });
 const notices = calls => calls.filter(item => item.operation === 'terminal.notice').map(item => item.arguments);
@@ -139,6 +153,5 @@ test('the budget counts spend that left the rolling window or settled late, warn
   const settled = call(usageMod, { event: 'turn_end', payload: { turn_id: 't1' }, state: again, settings }, settle);
   assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
   assert.equal(notices(settled.calls).length, 1);
-  assert.deepEqual(settled.published.at(-1).data.budget, 'warn');
   assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
 });

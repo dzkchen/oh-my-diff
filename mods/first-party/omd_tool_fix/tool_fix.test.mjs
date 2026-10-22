@@ -146,6 +146,18 @@ test('a repeated ambiguous or host-rejected call stops being corrected after two
   assert.deepEqual([quoted.failed, quoted.rejected], [1, 0]);
 });
 
+test('a repeat counter that keeps updating is not evicted by newer repeat keys', () => {
+  const schema = { ...exec, properties: { ...exec.properties, mode: { type: 'string', enum: ['fast', 'FAST'] } } };
+  const ambiguous = cmd => ({ cmd, mode: 'Fast' });
+  const key = cmd => `exec_command:${JSON.stringify(ambiguous(cmd)).length}:${JSON.stringify(ambiguous(cmd))}`;
+  const seed = { corrected: 0, json: 0, ambiguous: 0, ran: 0, failed: 0, rejected: 0, unrepaired: 0, released: 0, recent: [],
+    loops: { [key('ls')]: 1, ...Object.fromEntries(Array.from({ length: 31 }, (_, index) => [`other:${index}`, 1])) } };
+  const second = call(ambiguous('ls'), { schema, state: seed }).state;
+  const newer = call(ambiguous('pwd'), { schema, state: second }).state;
+  assert.equal(newer.loops[key('ls')], 2);
+  assert.equal(call(ambiguous('ls'), { schema, state: newer }).state.released, 1);
+});
+
 test('broken JSON is repaired only for trailing commas and a code fence', () => {
   const comma = stream('{"cmd": "echo a,}", "paths": ["x",],}');
   assert.equal(comma.next.arguments, '{"cmd": "echo a,}", "paths": ["x"]}');

@@ -34,6 +34,7 @@ function fixture(files = {}) {
   let evidenceAvailable = true;
   let hashStale = false;
   const binary = new Set();
+  let readFailure = null;
   return {
     files, calls, binary,
     set stale(value) { stale = value; },
@@ -41,6 +42,7 @@ function fixture(files = {}) {
     set evidenceAvailable(value) { evidenceAvailable = value; },
     set evidenceText(value) { retainedText = value; },
     set hashStale(value) { hashStale = value; },
+    set readFailure(value) { readFailure = value; },
     get saved() { return saved; },
     set saved(value) { saved = value; revision = value ? revision + 1 : 0; },
     run(name, payload, event = 'tool') {
@@ -62,6 +64,7 @@ function fixture(files = {}) {
             : { kind: 'file', size: Buffer.byteLength(files[path]), mtime_ms: 1,
               ...(call.arguments.hash ? { sha256: hashStale ? candidate : sha(files[path]) } : {}) }])) };
         } else if (call.operation === 'workspace.read') {
+          if (readFailure) refuse(readFailure);
           if (call.arguments.paths.some(path => binary.has(path))) refuse('workspace_text_not_utf8');
           value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] === undefined ? null
             : { text: files[path], sha256: sha(files[path]) }])) };
@@ -219,6 +222,7 @@ test('retention refuses oversized state before the native store write', () => {
   f.calls.length = 0;
   assert.match(f.run('retain_source', { ...value, id: 'second', expected_revision: 1 }).error, /knowledge_state_limit/);
   assert.equal(JSON.stringify(f.saved), before);
+  f.readFailure = null;
   assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
 
@@ -248,7 +252,7 @@ test('a source that is no longer UTF-8 invalidates only its own fact', () => {
   assert.equal(f.run('inspect', common).value.facts.find(fact => fact.id === 'a.txt').reason, 'source_unavailable');
 });
 
-test('reuse rereads at most 48 KiB of changed files and catches up on the next session', () => {
+test('reuse rereads at most 48 KiB of changed files, leaves the rest unverified and catches up on the next session', () => {
   const f = fixture();
   for (const [index, path] of ['a.txt', 'b.txt'].entries()) {
     f.files[path] = 'small\n';
@@ -257,12 +261,25 @@ test('reuse rereads at most 48 KiB of changed files and catches up on the next s
   }
   f.calls.length = 0;
   const reuse = f.run('session', { ...common, mode: 'reuse' }).value;
-  assert.deepEqual(reuse.invalidated_ids, ['b.txt']);
-  assert.equal(f.saved.facts.find(fact => fact.id === 'b.txt').reason, 'source_unavailable');
+  assert.deepEqual([reuse.invalidated_ids, reuse.facts.map(fact => fact.id)], [[], ['a.txt']]);
+  assert.deepEqual(f.saved.facts.map(fact => [fact.id, fact.status, fact.reason]), [['a.txt', 'fresh', null], ['b.txt', 'fresh', null]]);
   assert.deepEqual(f.calls.filter(call => call.operation === 'workspace.read').map(call => call.arguments.paths), [['a.txt']]);
   f.calls.length = 0;
   assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.facts.map(fact => fact.id), ['a.txt', 'b.txt']);
   assert.deepEqual(f.calls.filter(call => call.operation === 'workspace.read').map(call => call.arguments.paths), [['b.txt']]);
+});
+
+test('a skipped or transiently unreadable file leaves its fact and the store revision untouched', () => {
+  const f = fixture({ 'a.txt': 'small\n' });
+  assert.equal(f.run('retain_source', { ...retain, id: 'a.txt', source: { path: 'a.txt', start_line: 1, end_line: 1 } }).error, undefined);
+  const before = JSON.stringify(f.saved);
+  f.files['a.txt'] = 'changed\n';
+  f.readFailure = 'workspace_read_busy';
+  const reuse = f.run('session', { ...common, mode: 'reuse' });
+  assert.deepEqual([reuse.error, reuse.value.revision, reuse.value.refreshed_fact_ids, reuse.value.invalidated_ids, reuse.value.facts], [undefined, 1, [], [], []]);
+  assert.equal(JSON.stringify(f.saved), before);
+  f.readFailure = null;
+  assert.equal(f.run('retain_source', { ...retain, id: 'b.txt', expected_revision: 1, source: { path: 'a.txt', start_line: 1, end_line: 1 } }).error, undefined);
 });
 
 test('source policy permits harmless hidden files and rejects a changed post-read hash', () => {

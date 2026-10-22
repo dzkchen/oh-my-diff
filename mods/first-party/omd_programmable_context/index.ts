@@ -165,13 +165,19 @@ function describe(sections: Sections) {
   });
 }
 
+const owned = (mirror: Mirror, thread: string) => mirror.thread === thread;
+
+// Index 0 changes only when the harness does, so the provider prefix cache survives keeps.
 function render(mirror: Mirror, thread: string) {
-  const own = mirror.thread === thread;
-  const vars = Object.entries(own ? mirror.vars : {});
+  const own = owned(mirror, thread);
   return [`Programmable context (omd_programmable_context), session harness v${own ? mirror.version : 0}. It is supplemental and lower priority than user, project and system instructions.`,
-    `In a code-mode python kernel cell, run exec(tool("${TOOL}_python_api", {})["source"]) once, then use rlm.load, rlm.keep, rlm.restore, rlm.spawn, rlm.map, rlm.complete, rlm.harness and rlm.refine. If the kernel or these tools are unavailable, continue with ordinary tools.`,
-    ...(vars.length ? ['Kept variables (restore by name):', ...vars.map(([name, kept]) => `- ${name}: ${kept.chars} characters, sha256 ${kept.sha256.slice(0, 12)}, sources ${kept.sources.join(', ') || 'none'}`)] : []),
+    `In a code-mode python kernel cell, run exec(tool("${TOOL}_python_api", {})["source"]) once, then use rlm.load, rlm.keep, rlm.vars, rlm.restore, rlm.spawn, rlm.map, rlm.complete, rlm.harness and rlm.refine. If the kernel or these tools are unavailable, continue with ordinary tools.`,
     ...describe(merged(mirror.base, own ? mirror.sections : empty()))].join('\n');
+}
+
+function renderVars(mirror: Mirror, thread: string) {
+  const vars = Object.entries(owned(mirror, thread) ? mirror.vars : {});
+  return vars.length ? ['Kept variables (restore by name; rlm.vars() lists their sources):', ...vars.map(([name, kept]) => `- ${name}: ${kept.chars} characters, sha256 ${kept.sha256.slice(0, 12)}`)].join('\n') : null;
 }
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
@@ -226,7 +232,13 @@ export default function activate(api: ModAPI) {
     const vars = api.host.call('store.get', { key: 'vars', scope: 'thread' })?.value as unknown as Record<string, Kept> | undefined;
     publish({ base: merged(layer('user'), layer('repository')), version: record.value.version, sections: snapshot(record.value.version), vars: vars ?? {} });
   });
-  api.replace('history', event => event.agent_id ? null : { insert: [{ before: 0, role: 'developer', text: render(mirror(), event.thread_id) }] });
+  api.replace('history', event => {
+    if (event.agent_id) return null;
+    const current = mirror();
+    const vars = renderVars(current, event.thread_id);
+    const tail = event.items.length ? event.items[event.items.length - 1].index : 0;
+    return { insert: [{ before: 0, role: 'developer', text: render(current, event.thread_id) }, ...(vars ? [{ before: tail, role: 'developer' as const, text: vars }] : [])] };
+  });
 
   tool({ name: 'python_api', description: 'Return the Python source of the rlm helper for the persistent python kernel. Run it once per kernel with exec(...).', parameters: schema({}) },
     () => ({ source: PYTHON_API }));

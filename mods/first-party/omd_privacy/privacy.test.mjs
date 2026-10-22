@@ -166,11 +166,17 @@ test('sensitive path policy asks before shell reads, ignores case, covers parent
   assert.equal(approval(['cat', 'local.env'], { exempt: ['path:local.env'], sensitive_paths: ['*.env'] }), null);
   for (const command of ['cat .ENV', 'cat ID_RSA', 'cat ~/.AWS/Credentials', 'cat ~/.aws/*', 'cat ~/.aws/cred*', 'cat ~/.kube/c*', 'grep -r key ~/.aws',
     'grep -r token ~/.kube/', 'cat .env*', 'cat id_r*', 'cat *.pe?', 'cat ~/.config/gh/hosts.yml', 'cat .e*', 'cat ~/.docker/config.js?n', 'cat .env{,.local}', 'cat .[e]nv', 'cat ~/.ssh/id_{rsa,ed25519}', 'cat ~/.aws/[c]redentials', 'cat {.env,x}', 'cat ~/{.aws,.ssh}/credentials',
-    'cat .e{n,x,a,b,c,d,e,f,g}{v,w,x,y,z,a,b,c}', `cat .e${'?'.repeat(9)}`, `cat .${'e'.repeat(260)}*`]) {
+    'cat .e{n,x,a,b,c,d,e,f,g}{v,w,x,y,z,a,b,c}', `cat .e${'?'.repeat(9)}`, `cat .${'e'.repeat(260)}*`,
+    'git show HEAD:.env', 'cat .?nv', 'cat .aws//credentials', 'cat ~/.aws/./credentials', 'cat ~/.aws/x/../credentials', "cat .e''nv", 'cat ".e"nv', 'cat .e\\nv', 'cat .env///',
+    `cat {.env,${'abcdefghijklmnopqr'.split('').join(',')}}`, 'cat .e{n..n}v']) {
     assert.match(approval(['bash', '-lc', command])?.ask ?? '', /sensitive path/, command);
   }
   for (const command of ['ls ~/.config', 'cat *', 'ls *.md', 'cat ~/src/c*', 'grep -r key --include=*.json src', 'cat ~/.kube-notes.md',
-    'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`]) {
+    'mkdir -p ~/.docker/cli-plugins', 'ls ~/.kube/cache', 'cat ~/.aws/config', "sed 's/foo/.*/' f", 'grep -E ".*" f', 'find . -name ".*"', 'ls -la .*', 'echo {a,b}', 'ls [z-a]', 'ls [^]', `cat ${'*'.repeat(60)}z`,
+    'git show HEAD:src/index.ts', 'cat src//a.ts ./b.ts', "echo 'hi' \"there\"", 'find . -exec cat {} +', "awk '{print $1}' f", 'ls .?', 'cat *.ts', 'ls src/*']) {
     assert.equal(approval(['bash', '-lc', command]), null, command);
   }
+  const started = Date.now();
+  assert.equal(approval(`cat ${'/'.repeat(80000)}x`), null);
+  assert.ok(Date.now() - started < 1000);
 });

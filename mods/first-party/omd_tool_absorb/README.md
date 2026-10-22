@@ -1,8 +1,8 @@
 # omd_tool_absorb
 
-When the model asks for several reads at once, such as a few `sed -n`, `cat` and `rg` commands in one response,
-this runs them as one merged step. A read that appears twice in the response runs once. Inside a code-mode cell, a
-file read that was already done is reused while the file is unchanged.
+When the model asks for the same read more than once in one response, this runs it once and answers the repeats
+with a pointer to the first output. Distinct reads are left to Codex, which runs them in parallel. Inside a
+code-mode cell, a file read that was already done is reused while the file is unchanged.
 
 ## Turn it on
 
@@ -14,16 +14,12 @@ omd-package mod enable omd_tool_absorb
 
 ## Use it
 
-There is nothing to run. `/absorb` shows the merged batches in this thread, how many duplicate reads were skipped
-and which host call ran each read.
-
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `max_calls` | `4` | Distinct reads in one merged step (2 to 8). A larger response is split into several steps. |
+There is nothing to run, and there are no settings. `/absorb` shows the merged batches in this thread, how many
+duplicate reads were skipped and which host call ran each read.
 
 ## What it merges
 
-- Only a response whose calls are all reads. One write, or any other tool, leaves the whole response to Codex.
+- Only a response whose calls are all reads, and only reads that appear at least twice with the same tool and arguments (up to 32 such reads per response). A response of distinct reads, one write, or any other tool leaves the whole response to Codex.
 - `exec_command` running `cat`, `head`, `tail`, `wc`, `ls`, `grep`, `rg`, `sed -n N,Mp`, or `git status`, `diff`, `log`, `show`, `blame`, `ls-files` or `rev-parse`. Each command
   has a short list of allowed options: `tail -f`, `rg --pre`, `git --output` and every unlisted option keep the
   call out.
@@ -48,11 +44,10 @@ and which host call ran each read.
 
 - Each read still runs through Codex with its own call ID, permissions, approvals, sandbox, accounting and result
   record, and the model gets each read's own output and success.
-- Merged reads run one after another, not in parallel, so a merged step can take longer than the same reads run
-  directly. It saves repeated work and context, not time.
-- A merged step holds about 128 KB of output and at most 8 distinct reads. A read whose output doesn't fit still
-  runs, and the model is told to run it again on its own. A single read's output is cut at 48 KB, and the cut is
-  marked so the model can read the rest.
+- Distinct reads are never merged: merged reads run one after another, so merging them would only add latency.
+- A merged step holds about 128 KB of output. A read whose output doesn't fit still runs, and the model is told to
+  run it again on its own. A single read's output is cut at 48 KB, and the cut is marked so the model can read the
+  rest.
 - A duplicate read is answered with a pointer to the first one's output rather than a second copy; a duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.
 - Reads issued one at a time are left alone, and reads inside code-mode cells are never merged, since code mode
