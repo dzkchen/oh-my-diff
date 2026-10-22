@@ -6,7 +6,6 @@ const DIR = '.omd/preview';
 const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
 const MAX_WATCHES = 8;
-const MAX_PROCESSES = 16;
 const RETRY_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 const MAX_IMAGES = 16;
@@ -17,7 +16,6 @@ const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview
 type Inline = { title: string; kind: string; text: string; source?: string; image?: ResourceRef };
 type Picture = { id: string; label: string; owner: string; image: ResourceRef | null; aspect: number };
 type State = { inline: Inline | null; revision: number; images: Picture[]; attachments?: number; retry?: number };
-type Held = { id: string; paths: string[]; at: number };
 type Watches = { watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
@@ -217,23 +215,11 @@ export default function activate(api: ModAPI) {
     if (rendered) keep(revision, { watch, hashes: next });
     const present = watch.filter(path => files[path]);
     let placed = present.length === watch.length;
-    if (rewatch || rendered) {
-      const session = api.host.tryCall('session.info', null), own = api.host.tryCall('store.get', { key: 'watch_id' });
-      if (!session.ok || !own.ok) return retry();
-      const id = session.value.process_id, map = (own.value?.value ?? {}) as unknown as Record<string, Held>, held = map[id];
-      const need = force || JSON.stringify(held?.paths) !== JSON.stringify(present.length ? present : undefined);
-      if (need || held) {
-        if (need && held) api.host.tryCall('workspace.unwatch', { watch_id: held.id });
-        const started = need && present.length ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true }) : null;
-        const mine = need ? started?.ok ? { id: started.value.watch_id, paths: present } : null : held;
-        const entries = Object.entries(map).filter(([key]) => key !== id);
-        if (mine) entries.push([id, { ...mine, at: Date.now() }]);
-        const kept = Object.fromEntries(entries.sort((left, right) => right[1].at - left[1].at).slice(0, MAX_PROCESSES));
-        const saved = entries.length
-          ? api.host.tryCall('store.put', { key: 'watch_id', value: kept as unknown as Exclude<Json, null>, expected_revision: own.value?.revision ?? null })
-          : own.value ? api.host.tryCall('store.delete', { key: 'watch_id', expected_revision: own.value.revision }) : null;
-        placed &&= (!need || !present.length || Boolean(started?.ok)) && saved?.ok !== false;
-      }
+    if (rewatch) {
+      const watched = present.length
+        ? api.host.tryCall('workspace.watch', { paths: present, include_ignored: true, key: 'files' })
+        : api.host.tryCall('workspace.unwatch', { key: 'files' });
+      placed &&= watched.ok;
     }
     if (!placed) retry();
     else if (load().retry !== undefined && load().retry !== RETRY_MS) save({ retry: RETRY_MS });
@@ -258,13 +244,6 @@ export default function activate(api: ModAPI) {
   api.on('channel', event => { if (event.channel === 'omd_preview/watch') poll(true); });
   api.on('timer', () => poll(true, false));
   api.on('workspace_change', event => {
-    const session = event.watch_id ? api.host.tryCall('session.info', null) : null, own = session ? api.host.tryCall('store.get', { key: 'watch_id' }) : null;
-    const held = session?.ok && own?.ok ? (own.value?.value as unknown as Record<string, Held> | undefined)?.[session.value.process_id] : undefined;
-    if (event.watch_id && session?.ok && own?.ok && held?.id !== event.watch_id) {
-      api.host.tryCall('workspace.unwatch', { watch_id: event.watch_id });
-      if (!held) poll(true);
-      return;
-    }
     const stored = api.host.tryCall('store.get', { key: 'watch' });
     const { watch } = watches(stored.ok ? stored.value : null);
     if (event.changes.some(change => watch.includes(change.path))) poll(false, false);

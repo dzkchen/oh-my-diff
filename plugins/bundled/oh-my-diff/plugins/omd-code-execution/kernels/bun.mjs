@@ -12,6 +12,17 @@ async function worker() {
   const bridgeContext = new AsyncLocalStorage();
   let bridgeFailed = false;
   let outputBytes = 0;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const writeAll = (fd, text) => {
+    for (let data = Buffer.from(text); data.length;) {
+      try {
+        data = data.subarray(fs.writeSync(fd, data));
+      } catch (error) {
+        if (error.code !== "EAGAIN") throw error;
+        Atomics.wait(pause, 0, 0, 1);
+      }
+    }
+  };
 
   globalThis.tool = async (name, args = {}) => {
     const bridge = bridgeContext.getStore();
@@ -49,7 +60,7 @@ async function worker() {
     const size = Buffer.byteLength(text);
     if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
     outputBytes += size;
-    fs.writeSync(1, text);
+    writeAll(1, text);
   };
   const capture = (...values) => record(values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ") + "\n");
   const captureWrite = (chunk, encoding, callback) => {
@@ -82,8 +93,8 @@ async function worker() {
     } finally {
       if (bridge) bridge.active = false;
     }
-    fs.writeSync(3, frame + JSON.stringify(response) + "\n");
-    fs.writeSync(1, frame + "\n");
+    writeAll(3, frame + JSON.stringify(response) + "\n");
+    writeAll(1, frame + "\n");
   }
 }
 

@@ -428,7 +428,7 @@ test('explicit workflow cancellation releases pending reviewer and writer withou
   assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
 });
 
-test('a fenced or prefaced reviewer reply is accepted and an unparseable one is re-reviewed once before the agents are released', () => {
+test('a fenced or prefaced reviewer reply is accepted and an unparseable or self-contradicting one is re-reviewed once before the agents are released', () => {
   const reviewed = text => {
     const run = fixture();
     begin(run.host);
@@ -438,7 +438,9 @@ test('a fenced or prefaced reviewer reply is accepted and an unparseable one is 
     return { run, result: invoke('advance', {}, run.host).value };
   };
   const json = JSON.stringify(verdict);
-  for (const text of [`\`\`\`json\n${json}\n\`\`\``, `Here is {my} verdict: ${json}\nDone.`, `Shape: {"example": 1} and {}.\n${json}`]) assert.equal(reviewed(text).result.status, 'integrated');
+  for (const text of [`\`\`\`json\n${json}\n\`\`\``, `Here is {my} verdict: ${json}\nDone.`, `Shape: {"example": 1} and {}.\n${json}`, `${json}\nAgain: ${json}`, `${json}\nReordered: ${JSON.stringify({ findings: [], assessments: verdict.assessments, summary: verdict.summary })}`]) assert.equal(reviewed(text).result.status, 'integrated');
+  const failing = JSON.stringify({ ...verdict, assessments: [{ ...verdict.assessments[0], verdict: 'fail' }] });
+  assert.equal(reviewed(`Draft: ${json}\nOn re-checking, the criterion fails: ${failing}`).result.recovery, 'review_retry');
   const { run, result } = reviewed('I could not produce a verdict.');
   assert.deepEqual([result.status, result.recovery], ['running', 'review_retry']);
   assert.deepEqual([...run.agents.keys()], ['worker-1', 'worker-3']);
@@ -460,15 +462,15 @@ test('a fenced or prefaced reviewer reply is accepted and an unparseable one is 
   assert.deepEqual([spawned.length, spawned[1].arguments.snapshot.sha256, spawned[1].arguments.prompt], [2, candidate, spawned[0].arguments.prompt]);
 });
 
-test('an initial task waits for a selected contract and an invalid one is skipped instead of failing every turn', () => {
+test('an initial task waits for a selected contract and an invalid one stops the mod from loading', () => {
   const settings = { check: { program: 'check', argv: [] }, initial_task: { objective: 'Make the requested change', acceptance_criteria: [criterion] } };
   const waiting = fixture({ 'contract.status': () => ({ status: 'inactive', active: null, receipts: [], restrictions: [], finding_ledger: {} }) });
   invoke('', {}, waiting.host, { event: 'turn_start', settings });
   assert.equal(waiting.state.get('task'), undefined);
   for (const initial_task of [{ objective: 'x'.repeat(4096), acceptance_criteria: ['y'.repeat(500), 'z'.repeat(500)] }, { objective: 'Make the change' }]) {
-    const skipped = fixture();
-    invoke('', {}, skipped.host, { event: 'turn_start', settings: { ...settings, initial_task } });
-    assert.equal(skipped.state.get('task'), undefined);
+    const refused = fixture();
+    assert.throws(() => invoke('', {}, refused.host, { event: 'turn_start', settings: { ...settings, initial_task } }), /task_too_large_for_review|task_objective_and_acceptance_required/);
+    assert.equal(refused.state.get('task'), undefined);
   }
   const selected = fixture();
   invoke('', {}, selected.host, { event: 'turn_start', settings });

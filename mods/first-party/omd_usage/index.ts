@@ -73,8 +73,9 @@ export default function activate(api: ModAPI) {
     const owed = state.hud.owed.filter(([id, name]) => {
       const microusd = number(attempts.find(attempt => attempt.request === id)?.settled_microusd);
       if (microusd === null) return true;
-      shed += microusd / 1e6;
-      counted = [...counted.filter(([other]) => other !== name), [name, microusd / 1e6] as [string, number]].slice(-MAX_COUNTED);
+      const seen = counted.find(([other]) => other === name)?.[1] ?? 0;
+      shed += Math.max(0, microusd / 1e6 - seen);
+      counted = [...counted.filter(([other]) => other !== name), [name, Math.max(microusd / 1e6, seen)] as [string, number]].slice(-MAX_COUNTED);
       return false;
     });
     return {
@@ -152,8 +153,9 @@ export default function activate(api: ModAPI) {
     api.host.tryCall('events.publish', { channel: 'hud', data: {
       thread: state.hud.thread ?? last?.thread ?? null,
       cache: last && last.tokens?.input ? { ratio: (last.tokens.cached ?? 0) / last.tokens.input, expires: cacheTtl(state.hud, last) } : null,
-      spend: { window_usd: spent || null, kind: sum.billed && sum.estimate ? 'mixed' : sum.billed ? 'billed' : sum.estimate ? 'estimate' : sum.included ? 'included' : 'none', uncertain: sum.unknown + sum.pending > 0, list: sum.list || null },
+      spend: { usd: spent || null, kind: sum.billed && sum.estimate ? 'mixed' : sum.billed ? 'billed' : sum.estimate ? 'estimate' : sum.included ? 'included' : 'none', uncertain: sum.unknown + sum.pending > 0, list: sum.list || null },
       quota: tight ? { name: tight.name, used: tight.current.used, resets: tight.current.resets, observed: tight.current.seen } : null,
+      budget: ({ 0: null, 80: 'warn', 100: 'over' } as const)[level(outlay(state.hud))],
     } });
   };
 
@@ -175,7 +177,7 @@ export default function activate(api: ModAPI) {
       const seen = hud.counted.find(([other]) => other === name)?.[1] ?? 0;
       hud.shed += Math.max(0, cost - seen);
       if (cost) hud.counted = [...hud.counted.filter(([other]) => other !== name), [name, Math.max(cost, seen)] as [string, number]].slice(-MAX_COUNTED);
-      if (item.kind === 'pending' && gone.billing !== null) hud.owed = [...hud.owed, [gone.billing, name] as [number, string]].slice(-64);
+      if (item.kind === 'pending' && gone.billing !== null) hud.owed = [...hud.owed.filter(([, other]) => other !== name), [gone.billing, name] as [number, string]].slice(-64);
       size -= JSON.stringify(gone).length + 1;
     }
     const extra = before - hud.entries.length;

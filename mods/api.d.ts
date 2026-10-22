@@ -414,8 +414,9 @@ export interface HostOperations {
   /** Requires app_respond_v1: answers a pending server request this mod subscribes to; approvals and elicitations only decline or cancel, permissions grant nothing. */
   'app.respond': { arguments: { request_id: Json; result: Json }; result: { resolved: true } };
   'app.routes': { arguments: null; result: AppRoute[] };
-  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean }; result: { watch_id: string } };
-  'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
+  /** A `key` (1-64 bytes, needs `workspace_watch_key_v1`) keeps or replaces the mod's watch with that key in this OMD process. */
+  'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number; include_ignored?: boolean; key?: string }; result: { watch_id: string } };
+  'workspace.unwatch': { arguments: { watch_id: string } | { key: string }; result: { stopped: boolean } };
   /** New channels fail with channel_sequence_limit at 256 counters per publisher or 4096 process-wide. */
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
   /** Require timers_16ms_v1 for delays below 1000 ms. */

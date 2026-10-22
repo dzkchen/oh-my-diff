@@ -175,3 +175,21 @@ test('javascript kernel survives a background child writing while the result fra
   await cell(stopNoise);
   assert.deepEqual(await cell('console.log("next")'), { ok: true, output: 'next\n', bridge_failed: false });
 });
+
+test('javascript kernel waits out a full stdout pipe instead of dropping output or exiting', { timeout: 30_000 }, async t => {
+  const child = spawn(process.env.OMD_TEST_BUN ?? process.execPath, [new URL('../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/bun.mjs', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit');
+  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  t.after(async () => {
+    child.kill('SIGCONT');
+    child.kill();
+    await exited;
+  });
+  child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code: 'await new Promise(resolve => setTimeout(resolve, 300));\nconsole.log("x".repeat(65499));' }) + '\n');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  child.kill('SIGSTOP');
+  await new Promise(resolve => setTimeout(resolve, 700));
+  child.kill('SIGCONT');
+  const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
+  assert.deepEqual(JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length)), { ok: true, output: 'x'.repeat(65499) + '\n', bridge_failed: false });
+});

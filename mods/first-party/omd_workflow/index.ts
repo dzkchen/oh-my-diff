@@ -53,6 +53,12 @@ const jsonObjects = (value: string): unknown[] => {
   }
   return found;
 };
+const taskInput = (input: Json) => {
+  if (!object(input) || Object.keys(input).some(name => !['objective', 'acceptance_criteria'].includes(name)) || !text(input.objective, 4096)
+      || !strings(input.acceptance_criteria, 16, 512) || !input.acceptance_criteria.length) throw new Error('task_objective_and_acceptance_required');
+  if (bytes(JSON.stringify(input)) > TASK_BYTES) throw new Error('task_too_large_for_review');
+  return { objective: input.objective, acceptance_criteria: input.acceptance_criteria };
+};
 const OPERATION_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 const mutation = (properties: Record<string, Json> = {}, required: string[] = []): ToolSpec['parameters'] => ({ type: 'object', properties: { ...properties,
   operation_id: { type: 'string', description: 'Unique ID of this intended change; reuse it only to retry the same call' },
@@ -335,13 +341,11 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
   };
   const begin = (op: Op, input: Json): Json => {
     selected();
-    if (!object(input) || Object.keys(input).some(name => !['objective', 'acceptance_criteria'].includes(name)) || !text(input.objective, 4096)
-        || !strings(input.acceptance_criteria, 16, 512) || !input.acceptance_criteria.length) throw new Error('task_objective_and_acceptance_required');
-    if (bytes(JSON.stringify(input)) > TASK_BYTES) throw new Error('task_too_large_for_review');
+    const task = taskInput(input);
     if (op.entry) throw new Error('task_already_initialized');
-    const acceptance = api.host.call('evidence.write', { media_type: 'application/json', label: 'Task acceptance', content: input });
-    const value: Checkpoint = { schema: 1, objective: input.objective, acceptance_criteria: input.acceptance_criteria, acceptance,
-      remaining_work: input.acceptance_criteria, failed_hypotheses: [], status: 'active', decisions: [], progress_revision: 1, calls: {}, revision: 0, operations: [] };
+    const acceptance = api.host.call('evidence.write', { media_type: 'application/json', label: 'Task acceptance', content: task });
+    const value: Checkpoint = { schema: 1, ...task, acceptance,
+      remaining_work: task.acceptance_criteria, failed_hypotheses: [], status: 'active', decisions: [], progress_revision: 1, calls: {}, revision: 0, operations: [] };
     return commit(op, value, { ...summary(value), acceptance });
   };
   const checkpoint = (op: Op, input: Json): Json => {
@@ -370,6 +374,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
   const noProgressLimit = api.settings.max_no_progress_calls;
   if (noProgressLimit !== undefined && (typeof noProgressLimit !== 'number' || !Number.isInteger(noProgressLimit)
       || noProgressLimit < 0 || noProgressLimit > 32)) throw new Error('invalid_no_progress_limit');
+  if (object(api.settings.initial_task) && Object.keys(api.settings.initial_task).length) taskInput(api.settings.initial_task);
   if (object(api.settings.initial_task) && Object.keys(api.settings.initial_task).length
       || typeof noProgressLimit === 'number' && noProgressLimit > 0) {
     api.on('turn_start', () => {
@@ -498,17 +503,18 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
           handle => ({ status: 'running', handle, next: 'advance' }));
       }
       if (!pending.snapshot || result.candidate_sha256 !== pending.snapshot.sha256) throw new Error('review_candidate_changed');
-      let verdict: Review | AdversarialReview | undefined;
+      const verdicts = new Map<string, Review | AdversarialReview>();
       for (const reply of jsonObjects(result.text)) {
         try {
-          verdict = pending.kind === 'adversarial_verification'
+          const parsed = pending.kind === 'adversarial_verification'
             ? adversarialReview(reply, entry.value.acceptance_criteria, pending.snapshot.sha256, entry.value.acceptance.sha256)
             : review(reply, entry.value.acceptance_criteria, true, { candidate: pending.snapshot.sha256, acceptance: entry.value.acceptance.sha256 });
-          break;
+          verdicts.set(JSON.stringify(canonical(reply as Json)), parsed);
         } catch (error) {
           if (!(error instanceof Error)) throw error;
         }
       }
+      const verdict = verdicts.size === 1 ? [...verdicts.values()][0] : undefined;
       if (!verdict) {
         if (!pending.review_retries) {
           const plan = reviewPlan(pending.kind, pending.snapshot, entry.value, pending.delegation?.reviewer);

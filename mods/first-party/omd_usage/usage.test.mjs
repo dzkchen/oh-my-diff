@@ -139,10 +139,13 @@ test('the budget counts spend that left the rolling window or settled late, warn
   for (let index = 0; index < 125; index++) state.hud.entries.push({ ...state.hud.entries[0], key: `x${index}#1`, request: `x${index}`, billing: null, cost: { microusd: 0, basis: 'included_subscription' }, at: NOW - 40_000 + index });
   const dropped = call(usageMod, { event: 'model_response', payload: response('r9'), state, settings }).state;
   assert.deepEqual(dropped.hud.owed.map(([id]) => id), [7]);
+  const again = call(usageMod, { event: 'model_response', payload: pending, state: dropped, settings }).state;
+  assert.deepEqual(again.hud.owed.map(([id]) => id), [7]);
   const settle = hostCall => hostCall.operation === 'task.status'
     ? { ledger: { thread_id: 'lead', cost: { attempts: [{ request: 7, settled_microusd: 9_000_000 }] } }, limits: {}, worker_limits: {} } : { delivered: 1, dropped: 0 };
-  const settled = call(usageMod, { event: 'turn_end', payload: { turn_id: 't1' }, state: dropped, settings }, settle);
+  const settled = call(usageMod, { event: 'turn_end', payload: { turn_id: 't1' }, state: again, settings }, settle);
   assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
   assert.equal(notices(settled.calls).length, 1);
+  assert.deepEqual(settled.published.at(-1).data.budget, 'warn');
   assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
 });

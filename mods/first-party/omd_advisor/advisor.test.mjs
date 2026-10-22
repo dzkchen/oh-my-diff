@@ -142,8 +142,9 @@ test('the observer skips turns that did not complete and, by default, an advisor
   const first = invoke({ ...completed, evidence: { ...reference, sha256: digest(JSON.stringify(long)) } }, fresh.host, options).state.observer;
   assert.equal(first.status, 'observing', first.reason);
   const same = advisorHost({ ...spawn, 'routes.list': () => [{ name: 'astra', model: 'lead-model' }] }, long);
-  invoke(completed, same.host, options);
+  invoke(completed, same.host, { ...options, settings: { ...options.settings, every_turn: true } });
   assert.equal(spawned(same), false);
+  assert.equal(same.calls.filter(call => call.operation === 'app.request').length, 1);
   const kept = advisorHost(routes, long);
   invoke({ ...completed, outcome: 'interrupted' }, kept.host, options);
   assert.equal(spawned(kept), false);

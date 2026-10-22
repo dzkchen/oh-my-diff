@@ -43,6 +43,7 @@ These reject older hosts before activation, even when the API version matches.
 | `environment.set` | `environment_overrides_v1` |
 | Timers of 16-999 ms | `timers_16ms_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
+| `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |
 | Declared assets | `package_text_assets_v1` |
 | Relative asset imports | `package_imports_v1` |
 | `api.component` | `component_modules_v1` |

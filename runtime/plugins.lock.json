@@ -50,7 +50,7 @@
     "plugins/omd-artifact-reading/scripts/read_artifact.py": "fd037db4ff91779538c2fb42979a8f08ba59d454ea42cb3b81868897f72f7eb3",
     "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "aa223c67dc91727f7438e8381748a149516bc4de3fad4987be8ca08da0746425",
-    "plugins/omd-code-execution/kernels/bun.mjs": "32a4f987c9cc8462cd0fe71ba1e2019ef46d2b4f457f714c98469ff8f218f7d6",
+    "plugins/omd-code-execution/kernels/bun.mjs": "7aa610d17c98eebfb73a2ee46b68c9c8da99a1320c44e0eafabfe92e4a70724c",
     "plugins/omd-code-execution/kernels/python.py": "6658ab04450138851f970630a037fde5eaaeb13f516a7248ae356ffccc32d111",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "b77bb900ba2977c99bd2d9c7a7ac8c26c2d67925322d4f81102e4d180b7c407a"
   }

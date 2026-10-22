@@ -247,7 +247,7 @@ function braces(glob: string) {
       return match[1].split(',').map(choice => item.slice(0, match.index) + choice + item.slice(match.index + match[0].length));
     });
   }
-  return out.length > 64 ? [] : out;
+  return out.length > 64 ? null : out;
 }
 
 function charClass(negate: boolean, body: string): Atom | null {
@@ -294,10 +294,11 @@ function globMatches(glob: Atom[], text: string) {
 const globReaches = (token: string, part: string) => {
   const glob = token.toLowerCase().replace(/\*+/g, '*');
   const wildcards = glob.match(/[*?[{]/g)?.length ?? 0;
-  if (token.length > 256 || wildcards === 0 || wildcards > 8) return false;
-  if (part.includes('*') && !/[^*?]/.test(glob)) return false;
+  if (wildcards === 0 || part.includes('*') && !/[^*?]/.test(glob)) return false;
+  const choices = token.length > 256 || wildcards > 8 ? null : braces(glob);
+  if (!choices) return true;
   const text = part.replace(/\*/g, '_').toLowerCase();
-  return braces(glob).some(choice => (choice.startsWith('.') ? /^\.[^*?]/.test(choice) : !text.startsWith('.')) && globMatches(atoms(choice), text));
+  return choices.some(choice => (choice.startsWith('.') ? /^\.[^*?]/.test(choice) : !text.startsWith('.')) && globMatches(atoms(choice), text));
 };
 
 function pathHit(command: string, patterns: PathPattern[], exempt: PathPattern[]) {

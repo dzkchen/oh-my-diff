@@ -53,12 +53,15 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       assert.equal(stores.get(key)?.revision, args.expected_revision);
       return { deleted: stores.delete(key) };
     }
+    const keyed = () => [...live].find(([, watch]) => args.key && watch.key === args.key)?.[0];
     if (operation === 'workspace.watch') {
-      if (live.size >= 16) throw new Error('watch_limit');
-      live.set(`w${watchIds + 1}`, thread);
-      return { watch_id: `w${++watchIds}` };
+      const previous = keyed();
+      if (previous) live.delete(previous);
+      else if (live.size >= 16) throw new Error('watch_limit');
+      live.set(`w${++watchIds}`, { thread, key: args.key });
+      return { watch_id: `w${watchIds}` };
     }
-    if (operation === 'workspace.unwatch') return { stopped: live.delete(args.watch_id) };
+    if (operation === 'workspace.unwatch') return { stopped: live.delete(args.watch_id ?? keyed()) };
     if (operation === 'store.put') {
       assert.notEqual(args.value, null, 'store_value_required');
       racing?.(key);
@@ -133,7 +136,7 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.equal(watching(repository).hashes['docs/a.md'], createHash('sha256').update(readFileSync(join(repository, 'docs/a.md'))).digest('hex'));
     const early = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
     assert.deepEqual(early.calls.filter(call => call.operation.startsWith('workspace.') && call.operation !== 'workspace.stat').map(call => [call.operation, call.arguments]),
-      [['workspace.watch', { paths: ['docs/a.md'], include_ignored: true }]]);
+      [['workspace.watch', { paths: ['docs/a.md'], include_ignored: true, key: 'files' }]]);
     assert.equal(early.calls.some(call => call.operation === 'events.schedule'), false);
     const page = readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8');
     assert.match(page, /data-watch="1"/);
@@ -143,7 +146,7 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
 
     const change = path => ({ repository, source: 'external', call_id: null, watch_id: 'w1', changes: [{ path, before: null, after: null }], status: 'observed' });
     writeFileSync(join(repository, 'docs/a.md'), '# First change\n');
-    assert.deepEqual(invoke(repository, watched.state, 'workspace_change', change('docs/other.md')).calls.map(call => call.operation), ['session.info', 'store.get', 'store.get']);
+    assert.deepEqual(invoke(repository, watched.state, 'workspace_change', change('docs/other.md')).calls.map(call => call.operation), ['store.get']);
     const synced = invoke(repository, watched.state, 'workspace_change', change('docs/a.md'));
     assert.match(readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8'), /First change/);
     assert.equal(synced.calls.some(call => ['events.schedule', 'workspace.watch'].includes(call.operation)), false);
@@ -154,8 +157,8 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     command('unwatch');
     assert.deepEqual(watching(repository).watch, []);
     const stopped = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
-    assert.deepEqual(stopped.calls.map(call => call.operation), ['store.get', 'session.info', 'store.get', 'workspace.unwatch', 'store.delete']);
-    assert.deepEqual(invoke(repository, null, 'timer', { key: 'poll' }).calls.map(call => call.operation), ['store.get', 'session.info', 'store.get']);
+    assert.deepEqual(stopped.calls.map(call => [call.operation, call.arguments]), [['store.get', { key: 'watch' }], ['workspace.unwatch', { key: 'files' }]]);
+    assert.deepEqual(invoke(repository, null, 'timer', { key: 'poll' }).calls.map(call => call.operation), ['store.get', 'workspace.unwatch']);
 
     const inline = command('docs/a.md --inline');
     const view = invoke(repository, inline.state, 'terminal', { event: 'redraw', ledger: null }).value;
@@ -187,15 +190,15 @@ const lifecycle = (repository, event, owner, restarted = false) => {
   return invoke(repository, null, event, event === 'resume' ? { thread_id: owner, last_turn: null, restarted } : null);
 };
 
-test('one watch serves the whole process: threads replace it, a displaced watch ends at its first event, and retries only stat', () => {
+test('one keyed watch serves each process: threads replace it, processes keep their own, and retries re-place it with backoff', () => {
   const repository = watchedRepository();
   const renders = run => run.calls.filter(call => call.operation === 'exec.run').length;
   const change = id => ({ repository, source: 'external', call_id: null, watch_id: id, changes: [{ path: 'docs/a.md', before: null, after: null }], status: 'observed' });
   try {
     for (let index = 0; index < 20; index += 1) lifecycle(repository, 'start', `thread-${index}`);
-    assert.deepEqual([...live].map(([, owner]) => owner), ['thread-19']);
+    assert.deepEqual([...live].map(([, watch]) => watch.thread), ['thread-19']);
     lifecycle(repository, 'resume', 'thread-3', true);
-    assert.deepEqual([...live].map(([, owner]) => owner), ['thread-3']);
+    assert.deepEqual([...live].map(([, watch]) => watch.thread), ['thread-3']);
 
     restart();
     lifecycle(repository, 'start', 'thread-1');
@@ -206,20 +209,13 @@ test('one watch serves the whole process: threads replace it, a displaced watch 
     assert.deepEqual([...live.keys()], ['w3']);
     enter('A');
     assert.deepEqual([...live.keys()], ['w1']);
-    live.set('w9', 'thread-0');
     writeFileSync(join(repository, 'docs/a.md'), '# Edited once\n');
-    const leaked = invoke(repository, null, 'workspace_change', change('w9'));
-    assert.equal(leaked.calls.some(call => call.operation === 'workspace.unwatch' && call.arguments.watch_id === 'w9'), true);
-    assert.equal(renders(leaked), 0);
     const first = invoke(repository, null, 'workspace_change', change('w1'));
     enter('B');
     const second = invoke(repository, null, 'workspace_change', change('w3'));
     assert.equal(renders(first) + renders(second), 1);
     assert.deepEqual([...live.keys()], ['w3']);
     enter('A');
-    delete stores.get(`${repository}\0watch_id`).value.A;
-    invoke(repository, null, 'workspace_change', change('w1'));
-    assert.deepEqual([...live.keys()], ['w2']);
 
     restart();
     writeFileSync(join(repository, 'docs/b.md'), '# B\n');
@@ -235,7 +231,8 @@ test('one watch serves the whole process: threads replace it, a displaced watch 
       return run.calls.map(call => call.operation);
     };
     assert.ok(poll().includes('workspace.watch'));
-    for (let pass = 0; pass < 3; pass += 1) assert.deepEqual(poll(), ['store.get', 'workspace.stat', 'session.info', 'store.get', 'store.put', 'events.schedule']);
+    for (let pass = 0; pass < 3; pass += 1) assert.deepEqual(poll(), ['store.get', 'workspace.stat', 'workspace.watch', 'events.schedule']);
+    assert.deepEqual([...live].map(([, watch]) => watch.key), ['files']);
     writeFileSync(join(repository, 'docs/b.md'), '# B\n');
     assert.ok(poll().includes('workspace.watch'));
     assert.equal(poll().includes('events.schedule'), false);
