@@ -40,4 +40,8 @@ Set `review_route`, `verify_route` or `fallback_route` to `opposite_lead` to use
 - Nothing is delegated until you pick a contract and the agent starts a task.
 - Routes must exist in `host.json`; Add a helper model in `/mods` (Workflow) adds one on your ChatGPT plan. This mod doesn't grant provider access or turn on paid fallback.
 - The final reviewer and verifier must differ from the model you are using.
+- A task's objective and criteria together must stay under about 5 KB so the reviewer prompt fits; a larger one is refused when the task starts.
+- Delegating needs the `check` setting; without it the delegation is refused before any agent starts.
+- A reviewer reply with no readable JSON verdict, or with two different ones, is reviewed again once on the same candidate; a second one leaves the task at `needs_repair` and releases the agents.
+- `initial_task` waits until you have picked a contract. One that is invalid or too large stops the mod from loading.
 - A contract you pick applies to this repository from your next session.

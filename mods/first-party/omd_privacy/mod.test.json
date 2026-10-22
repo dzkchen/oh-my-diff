@@ -51,7 +51,7 @@
       "name": "privacy",
       "payload": null,
       "expect": {
-        "display": "Model-bound privacy policy on every provider request; while enabled, requests are refused if it is unavailable, fails or times out.\nSecret rules: private_key, aws_access_key, github_token, gitlab_token, slack_token, stripe_key, ai_api_key, google_api_key, npm_token, jwt, bearer_token, url_credentials, assigned_secret\nPII rules: off\nScopes: prompt, context, tools, replies\nSensitive paths: ask (20 patterns)\nUnscanned images, audio and files: allow\nExemptions: 0 fingerprints, 0 domains, 4 paths\nTerminal display: unchanged; the screen, transcript, rollout and resume data keep the originals.\nRedacted: assigned_secret 2 · denied 0 · last: redacted 1 (main)\nPlaceholders: 1 known"
+        "display": "Model-bound privacy policy on every provider request; while enabled, requests are refused if it is unavailable, fails or times out.\nSecret rules: private_key, aws_access_key, github_token, gitlab_token, slack_token, stripe_key, ai_api_key, google_api_key, npm_token, jwt, bearer_token, url_credentials, assigned_secret\nPII rules: off\nScopes: prompt, context, tools, replies\nSensitive paths: ask (21 patterns)\nUnscanned images, audio and files: allow\nExemptions: 0 fingerprints, 0 domains, 4 paths\nTerminal display: unchanged; the screen, transcript, rollout and resume data keep the originals.\nRedacted: assigned_secret 2 · denied 0 · last: redacted 1 (main)\nPlaceholders: 1 known"
       }
     },
     {

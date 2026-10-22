@@ -652,7 +652,8 @@ async fn run(
                 "cwd": cwd, "codex_version": env!("CARGO_PKG_VERSION"),
                 "model": account.as_ref().map_or(config.model.clone(), |account| Some(account.model.clone())),
                 "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
-                "route": account.and_then(|account| account.route), "turns_started": turns}),
+                "route": account.and_then(|account| account.route), "turns_started": turns,
+                "process_id": crate::accounting::process_id()}),
             )
         }
         "task.status" => {

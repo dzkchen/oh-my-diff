@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import readline from "node:readline";
 
 async function worker() {
@@ -10,8 +11,18 @@ async function worker() {
   delete process.env.OMD_KERNEL_FRAME;
   const bridgeContext = new AsyncLocalStorage();
   let bridgeFailed = false;
-  let output = [];
   let outputBytes = 0;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const writeAll = (fd, text) => {
+    for (let data = Buffer.from(text); data.length;) {
+      try {
+        data = data.subarray(fs.writeSync(fd, data));
+      } catch (error) {
+        if (error.code !== "EAGAIN") throw error;
+        Atomics.wait(pause, 0, 0, 1);
+      }
+    }
+  };
 
   globalThis.tool = async (name, args = {}) => {
     const bridge = bridgeContext.getStore();
@@ -49,7 +60,7 @@ async function worker() {
     const size = Buffer.byteLength(text);
     if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
     outputBytes += size;
-    output.push(text);
+    writeAll(1, text);
   };
   const capture = (...values) => record(values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ") + "\n");
   const captureWrite = (chunk, encoding, callback) => {
@@ -60,7 +71,6 @@ async function worker() {
   const hooks = [...["log", "error", "warn", "info", "debug"].map((name) => [console, name, capture]), [process.stdout, "write", captureWrite], [process.stderr, "write", captureWrite]];
 
   for await (const line of readline.createInterface({ input: process.stdin })) {
-    output = [];
     outputBytes = 0;
     bridgeFailed = false;
     let response;
@@ -74,56 +84,72 @@ async function worker() {
       try {
         const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
         await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
-        response = { ok: true, output: output.join(""), bridge_failed: bridgeFailed };
+        response = { ok: true, bridge_failed: bridgeFailed };
       } finally {
         hooks.forEach(([target, name], index) => { target[name] = prior[index]; });
       }
     } catch (error) {
-      response = { ok: false, output: output.join(""), error: String(error), bridge_failed: bridgeFailed };
+      response = { ok: false, error: String(error), bridge_failed: bridgeFailed };
     } finally {
       if (bridge) bridge.active = false;
     }
-    process.stdout.write(frame + JSON.stringify(response) + "\n");
+    writeAll(3, frame + JSON.stringify(response) + "\n");
+    writeAll(1, frame + "\n");
   }
 }
 
 const frame = randomUUID() + ":";
+const limit = "kernel output limit exceeded";
 const child = spawn("/bin/sh", ["-c", 'exec "$@" 2>&1', "sh", process.execPath, "-e", `(${worker})()`], {
   env: { ...process.env, OMD_KERNEL_FRAME: frame },
-  stdio: ["pipe", "pipe", "ignore"],
+  stdio: ["pipe", "pipe", "ignore", "pipe"],
 });
 let extra = Buffer.alloc(0);
 let overflow = false;
 let held = Buffer.alloc(0);
+let ended = false;
+let response;
 const keep = (chunk) => {
   const room = 65536 - extra.length;
   if (chunk.length > room) overflow = true;
   extra = Buffer.concat([extra, chunk.subarray(0, room)]);
 };
-child.stdout.on("data", (chunk) => {
-  held = Buffer.concat([held, chunk]);
-  for (let start; (start = held.indexOf(frame)) >= 0;) {
-    const end = held.indexOf("\n", start);
-    keep(held.subarray(0, start));
-    if (end < 0) { held = held.subarray(start); return; }
-    const response = JSON.parse(held.subarray(start + frame.length, end).toString("utf8"));
-    held = held.subarray(end + 1);
-    const room = 65536 - Buffer.byteLength(response.output);
-    if (overflow || extra.length > room) {
-      response.ok = false;
-      response.error = "Error: kernel output limit exceeded";
-    }
-    response.output += extra.subarray(0, room).toString("utf8");
-    process.stdout.write("CODE_KERNEL_RESULT:" + JSON.stringify(response) + "\n");
+const finish = () => {
+  if (!ended || !response) return;
+  response.output = extra.toString("utf8");
+  if (overflow && !String(response.error).includes(limit)) {
+    response.error = response.ok ? `Error: ${limit}` : `${response.error}\nError: ${limit}`;
+    response.ok = false;
   }
-  const cut = Math.max(held.length - frame.length + 1, 0);
+  process.stdout.write("CODE_KERNEL_RESULT:" + JSON.stringify(response) + "\n");
+  response = undefined;
+};
+child.stdout.on("data", (chunk) => {
+  if (ended) return;
+  held = Buffer.concat([held, chunk]);
+  const start = held.indexOf(frame + "\n");
+  if (start >= 0) {
+    keep(held.subarray(0, start));
+    held = held.subarray(start + frame.length + 1);
+    ended = true;
+    finish();
+    return;
+  }
+  const cut = Math.max(held.length - frame.length, 0);
   keep(held.subarray(0, cut));
   held = held.subarray(cut);
+});
+readline.createInterface({ input: child.stdio[3] }).on("line", (line) => {
+  if (!line.startsWith(frame)) return;
+  response = JSON.parse(line.slice(frame.length));
+  finish();
 });
 child.on("exit", (code) => process.exit(code ?? 1));
 process.on("exit", () => child.kill("SIGKILL"));
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   extra = held = Buffer.alloc(0);
   overflow = false;
+  ended = false;
+  response = undefined;
   child.stdin.write(line + "\n");
 }).on("close", () => child.stdin.end());

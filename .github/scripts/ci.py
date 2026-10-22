@@ -44,7 +44,7 @@ def packages(names):
 
 
 def drift(*paths):
-    return ["git", "diff", "--exit-code", "--stat", "--", *paths]
+    return ["sh", "-c", 'git add --intent-to-add -- "$@" && git diff --exit-code --stat -- "$@"', "drift", *paths]
 
 
 def own_paths_only(status, text):

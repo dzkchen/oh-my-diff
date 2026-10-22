@@ -330,6 +330,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "package_index_paging_v1",
     "tool_batch_success_v1",
     "code_mode_values_v1",
+    "workspace_watch_key_v1",
     "terminal_surface_v1",
     "credentials_v1",
     "completion_v1",

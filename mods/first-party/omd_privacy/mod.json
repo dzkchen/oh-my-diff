@@ -38,7 +38,7 @@
         "description": "File patterns that count as sensitive, such as .env, keys and SSH or cloud credentials",
         "type": "array",
         "default": [".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".ssh/",
-          ".gnupg/", ".aws/credentials", ".docker/config.json", ".kube/config", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials"]
+          ".gnupg/", ".aws/credentials", ".docker/config.json", ".kube/config", ".config/gh/hosts.yml", ".netrc", ".npmrc", ".pypirc", ".pgpass", ".git-credentials"]
       },
       "exempt": {"type": "array", "default": ["path:.env.example", "path:.env.sample", "path:.env.template", "path:*.pub"], "title": "Exemptions", "description": "Allowed exceptions: sha256:HEX, domain:NAME or path:PATTERN, such as .env.example"},
       "unscanned": {"type": "string", "enum": ["allow", "deny"], "default": "allow", "title": "Unscanned attachments", "description": "Images, audio and files can't be scanned: allow sends them, deny refuses the request"}
