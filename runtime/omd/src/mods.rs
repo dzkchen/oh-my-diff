@@ -2715,14 +2715,22 @@ mod reload_tests {
         ModStore::create(root.clone()).unwrap();
         let mut host = ModHost::open(root).unwrap();
         host.ui_mods = Some(vec!["b".into()]);
-        let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+        let text =
+            |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
         let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
-        let composed = host.compose_terminal(vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))], "terminal", None);
+        let composed = host.compose_terminal(
+            vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))],
+            "terminal",
+            None,
+        );
         assert_eq!(composed.view.status, ["b"]);
         assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
         assert_eq!(
             view::site_component_ids(&composed.view.sites),
-            ["a_dialog", "b_above", "b_below", "b_header"].map(String::from).into_iter().collect()
+            ["a_dialog", "b_above", "b_below", "b_header"]
+                .map(String::from)
+                .into_iter()
+                .collect()
         );
     }
 

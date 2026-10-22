@@ -1325,8 +1325,7 @@ impl ResponseObserver for Accounts {
         inject_credential(request, account.credential.as_deref(), &url)?;
         let Some(rates) = account.rates.clone() else {
             let model = requested.unwrap_or_else(|| account.model.clone());
-            let mut attempt =
-                self.attempt(account, thread, request_id, attempt, model, None, None);
+            let mut attempt = self.attempt(account, thread, request_id, attempt, model, None, None);
             attempt.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
                 && request.headers.contains_key("chatgpt-account-id");
             return Ok(Some(Box::new(attempt)));

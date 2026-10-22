@@ -2,7 +2,12 @@ use super::*;
 use crate::credentials::CredentialProfiles;
 
 fn check(_: &Path, host: &Value) -> Result<(), String> {
-    match host["routes"].as_array().into_iter().flatten().any(|route| route["name"] == "invalid") {
+    match host["routes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|route| route["name"] == "invalid")
+    {
         true => Err("route invalid is invalid".into()),
         false => Ok(()),
     }
@@ -44,9 +49,14 @@ fn a_write_replaces_only_the_callers_routes_and_merges_its_services() {
     let arguments = json!({"routes": [route("work", "fixture_router", true), route("home", "fixture_router", true)],
         "services": [{"id": "router", "credentials": [work, home]}]});
     let (write, changes) = plan(&store, Path::new("/repo"), "fixture_router", &arguments).unwrap();
-    assert!(changes.contains(&"Route home responses_url: http://127.0.0.1:9/v1/responses".to_owned()));
+    assert!(
+        changes.contains(&"Route home responses_url: http://127.0.0.1:9/v1/responses".to_owned())
+    );
     assert_eq!(
-        changes.iter().filter(|line| !line.starts_with("Route ")).collect::<Vec<_>>(),
+        changes
+            .iter()
+            .filter(|line| !line.starts_with("Route "))
+            .collect::<Vec<_>>(),
         [
             "Add model route home: home, subscription",
             "Add model route work: work, subscription",
@@ -59,8 +69,14 @@ fn a_write_replaces_only_the_callers_routes_and_merges_its_services() {
         apply(&store, Path::new("/repo"), &write).unwrap(),
         json!({"routes": ["work", "home"], "services": ["router"]})
     );
-    let host: Value = serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
-    let names = host["routes"].as_array().unwrap().iter().map(|r| r["name"].clone()).collect::<Vec<_>>();
+    let host: Value =
+        serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
+    let names = host["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].clone())
+        .collect::<Vec<_>>();
     assert_eq!(names, [json!("theirs"), json!("work"), json!("home")]);
     assert_eq!(host["routes"][1]["data"], json!({"upstream": "gpt-6.1"}));
     let services = host["services"].as_array().unwrap();
@@ -82,15 +98,39 @@ fn a_write_refuses_what_the_caller_does_not_own_or_cannot_pay_for() {
     let mut worker = route("w", "fixture_router", true);
     worker["roles"] = json!(["worker"]);
     for (arguments, code) in [
-        (json!({"routes": [route("x", "other", true)]}), "routes_write_provider_mismatch: x"),
+        (
+            json!({"routes": [route("x", "other", true)]}),
+            "routes_write_provider_mismatch: x",
+        ),
         (json!({"routes": [worker]}), "routes_write_lead_only: w"),
-        (json!({"routes": [route("paid", "fixture_router", false)]}), "routes_write_allowance_required: paid"),
-        (json!({"routes": [route("invalid", "fixture_router", true)]}), "routes_write_invalid: route invalid is invalid"),
-        (json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}), "routes_write_service_taken: foreign"),
-        (json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}), "routes_write_secret_ref_unknown: router"),
-        (json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}), "routes_write_credential_unknown: router"),
-        (json!({"routes": [], "extra": true}), "routes_write_arguments_invalid"),
-        (json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}), "routes_write_secret_ref_unknown: new"),
+        (
+            json!({"routes": [route("paid", "fixture_router", false)]}),
+            "routes_write_allowance_required: paid",
+        ),
+        (
+            json!({"routes": [route("invalid", "fixture_router", true)]}),
+            "routes_write_invalid: route invalid is invalid",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}),
+            "routes_write_service_taken: foreign",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}),
+            "routes_write_secret_ref_unknown: router",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}),
+            "routes_write_credential_unknown: router",
+        ),
+        (
+            json!({"routes": [], "extra": true}),
+            "routes_write_arguments_invalid",
+        ),
+        (
+            json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}),
+            "routes_write_secret_ref_unknown: new",
+        ),
     ] {
         assert_eq!(refused(arguments), code);
     }
@@ -116,8 +156,12 @@ fn a_new_grant_shows_everything_it_is_given_and_a_changed_host_refuses_the_confi
             "Service extra secrets: TOKEN=token",
         ]
     );
-    let mut host: Value = serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
-    host["routes"].as_array_mut().unwrap().push(route("late", "fixture_router", true));
+    let mut host: Value =
+        serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
+    host["routes"]
+        .as_array_mut()
+        .unwrap()
+        .push(route("late", "fixture_router", true));
     std::fs::write(store.join("host.json"), host.to_string()).unwrap();
     assert_eq!(
         apply(&store, Path::new("/repo"), &write).unwrap_err(),
@@ -131,9 +175,18 @@ fn a_changed_route_shows_each_field_it_changes() {
     let mut moved = route("old", "fixture_router", true);
     moved["responses_url"] = json!("https://elsewhere.example/v1/responses");
     moved["rates"]["input_token_ceiling"] = json!(50);
-    let (_, changes) = plan(&store, Path::new("/repo"), "fixture_router", &json!({"routes": [moved]})).unwrap();
+    let (_, changes) = plan(
+        &store,
+        Path::new("/repo"),
+        "fixture_router",
+        &json!({"routes": [moved]}),
+    )
+    .unwrap();
     assert_eq!(changes.len(), 3);
     assert_eq!(changes[0], "Change model route old: old, subscription");
     assert_eq!(changes[1], "Route old rates: input_token_ceiling=50");
-    assert_eq!(changes[2], "Route old responses_url: https://elsewhere.example/v1/responses");
+    assert_eq!(
+        changes[2],
+        "Route old responses_url: https://elsewhere.example/v1/responses"
+    );
 }

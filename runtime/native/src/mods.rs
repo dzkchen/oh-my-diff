@@ -2403,7 +2403,11 @@ impl ToolLifecycleContributor for Mods {
                     .unwrap_or_default()
                     .to_owned(),
                 success: chain.result["success"].as_bool().unwrap_or(false),
-                value: chain.result.get("value").filter(|value| !value.is_null()).cloned(),
+                value: chain
+                    .result
+                    .get("value")
+                    .filter(|value| !value.is_null())
+                    .cloned(),
             })
         })
     }

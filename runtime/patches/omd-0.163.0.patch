@@ -35391,7 +35391,7 @@ index b219097ee18118ba7be29fd24c514d7e64b2cfb5..192ca81a4d6223645af607083a432f2a
      }
  }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
-index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..1a8ea42dcdbbf9272a70fa0a568bd99f072a8f3a 100644
+index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..44019dffb173966db840312a0032cfccdb3ac994 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs
 @@ -15,6 +15,7 @@
@@ -35402,7 +35402,7 @@ index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..1a8ea42dcdbbf9272a70fa0a568bd99f
  use super::super::footer::reset_mode_after_activity;
  use super::super::footer::shows_passive_footer_line;
  use super::ActivePopup;
-@@ -275,10 +276,22 @@ impl super::ChatComposer {
+@@ -275,10 +276,23 @@ impl super::ChatComposer {
          self.shortcut_overlay_visible() && options.footer.is_none()
      }
 
@@ -35419,7 +35419,8 @@ index bcc92a3ed5762c077dd15fc3ef5aafab655975b5..1a8ea42dcdbbf9272a70fa0a568bd99f
          if self.show_warning_notice(options) || self.shortcuts_above_composer(options) {
              return 1;
          }
-+        if crate::omd::plain_composer() && options.footer.is_none() && self.idle_hint_only(options) {
++        if crate::omd::plain_composer() && options.footer.is_none() && self.idle_hint_only(options)
++        {
 +            return u16::from(options.separate_status_line);
 +        }
          options
@@ -49214,10 +49215,10 @@ index 0000000000000000000000000000000000000000..87b5e4661cabfc0a8cbebabb8469cf51
 +mod tests;
 diff --git a/codex-rs/core/src/tools/batch_tests.rs b/codex-rs/core/src/tools/batch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..065d02f30a2e639c04c632ba538a1d60525566f3
+index 0000000000000000000000000000000000000000..5d7da689b705ee591e9bd048fd2c1fc91158c27c
 --- /dev/null
 +++ b/codex-rs/core/src/tools/batch_tests.rs
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,70 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -49256,19 +49257,37 @@ index 0000000000000000000000000000000000000000..065d02f30a2e639c04c632ba538a1d60
 +            .to_owned(),
 +        true,
 +    ));
-+    assert_eq!(text(fan_out("a", &merged, true)), ("read".to_owned(), Some(true)));
-+    assert_eq!(text(fan_out("b", &merged, true)), ("missing".to_owned(), Some(false)));
++    assert_eq!(
++        text(fan_out("a", &merged, true)),
++        ("read".to_owned(), Some(true))
++    );
++    assert_eq!(
++        text(fan_out("b", &merged, true)),
++        ("missing".to_owned(), Some(false))
++    );
 +    assert_eq!(
 +        text(fan_out("c", &merged, true)),
-+        (r#"{"extra":1,"output":"x","success":true}"#.to_owned(), Some(true))
++        (
++            r#"{"extra":1,"output":"x","success":true}"#.to_owned(),
++            Some(true)
++        )
 +    );
 +    assert_eq!(
 +        text(fan_out("b", &merged, false)),
-+        (r#"{"output":"missing","success":false}"#.to_owned(), Some(true)),
++        (
++            r#"{"output":"missing","success":false}"#.to_owned(),
++            Some(true)
++        ),
 +        "without the flag the value stays text, as before"
 +    );
-+    let failed = Ok((r#"{"a":{"output":"read","success":true}}"#.to_owned(), false));
-+    assert_eq!(text(fan_out("a", &failed, true)), ("read".to_owned(), Some(false)));
++    let failed = Ok((
++        r#"{"a":{"output":"read","success":true}}"#.to_owned(),
++        false,
++    ));
++    assert_eq!(
++        text(fan_out("a", &failed, true)),
++        ("read".to_owned(), Some(false))
++    );
 +}
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
@@ -51903,10 +51922,10 @@ index 0000000000000000000000000000000000000000..d896468a6f90be5bb836de173ef014bd
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36f87f22bd585c157e5c705965e0e91589c4a2fb
+index 0000000000000000000000000000000000000000..28a9661c9f0254ab23e494ab9de13ab4781d9c4a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2325 @@
+@@ -0,0 +1,2324 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -53234,8 +53253,7 @@ index 0000000000000000000000000000000000000000..36f87f22bd585c157e5c705965e0e915
 +        inject_credential(request, account.credential.as_deref(), &url)?;
 +        let Some(rates) = account.rates.clone() else {
 +            let model = requested.unwrap_or_else(|| account.model.clone());
-+            let mut attempt =
-+                self.attempt(account, thread, request_id, attempt, model, None, None);
++            let mut attempt = self.attempt(account, thread, request_id, attempt, model, None, None);
 +            attempt.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
 +                && request.headers.contains_key("chatgpt-account-id");
 +            return Ok(Some(Box::new(attempt)));
@@ -54234,10 +54252,10 @@ index 0000000000000000000000000000000000000000..36f87f22bd585c157e5c705965e0e915
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6ff55fd58aa01a1e1fe9c09c66b21e2ce667dbec
+index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8b489a358
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1302 @@
+@@ -0,0 +1,1311 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -55525,7 +55543,10 @@ index 0000000000000000000000000000000000000000..6ff55fd58aa01a1e1fe9c09c66b21e2c
 +        } else {
 +            request.headers.remove("chatgpt-account-id");
 +        }
-+        let mut attempt = accounts.before_send(&mut request, Some(&body)).unwrap().unwrap();
++        let mut attempt = accounts
++            .before_send(&mut request, Some(&body))
++            .unwrap()
++            .unwrap();
 +        let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}});
 +        attempt.observe(&mut completed, true).unwrap();
 +        drop(attempt);
@@ -55536,8 +55557,14 @@ index 0000000000000000000000000000000000000000..6ff55fd58aa01a1e1fe9c09c66b21e2c
 +        basis(SUBSCRIPTION_RESPONSES_URL, true),
 +        json!({"microusd": 0, "basis": "included_subscription"})
 +    );
-+    assert_eq!(basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"], "unpriced");
-+    assert_eq!(basis("https://api.openai.com/v1/responses", true)["basis"], "unpriced");
++    assert_eq!(
++        basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"],
++        "unpriced"
++    );
++    assert_eq!(
++        basis("https://api.openai.com/v1/responses", true)["basis"],
++        "unpriced"
++    );
 +    assert!(task.attempts().unwrap().is_empty());
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
@@ -57501,10 +57528,10 @@ index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/config_tests.rs b/codex-rs/ext/omd/src/config_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9c27ca67b6d17c1d4465f853f553a916c0918f4c
+index 0000000000000000000000000000000000000000..77a9812a78e950d8a229b2d685f836f1017920a4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/config_tests.rs
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,21 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -57517,7 +57544,10 @@ index 0000000000000000000000000000000000000000..9c27ca67b6d17c1d4465f853f553a916
 +                "reservation_microusd": 0, "max_output_tokens": 10, "input_token_ceiling": 100, "included_subscription": true}}]})
 +    };
 +    let repository = Path::new("/repo");
-+    assert_eq!(HostConfig::check(repository, &route(json!({"upstream": "gpt-6.1"}))), Ok(()));
++    assert_eq!(
++        HostConfig::check(repository, &route(json!({"upstream": "gpt-6.1"}))),
++        Ok(())
++    );
 +    assert_eq!(
 +        HostConfig::check(repository, &route(json!("x".repeat(2048)))),
 +        Err("host.json route work is invalid".into())
@@ -63490,10 +63520,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed02ef69956f034158404bad007a64a32099be51
+index 0000000000000000000000000000000000000000..0e4483702602d11c6bf3dd707276a9c00d47170e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2545 @@
+@@ -0,0 +1,2549 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65899,7 +65929,11 @@ index 0000000000000000000000000000000000000000..ed02ef69956f034158404bad007a64a3
 +                    .unwrap_or_default()
 +                    .to_owned(),
 +                success: chain.result["success"].as_bool().unwrap_or(false),
-+                value: chain.result.get("value").filter(|value| !value.is_null()).cloned(),
++                value: chain
++                    .result
++                    .get("value")
++                    .filter(|value| !value.is_null())
++                    .cloned(),
 +            })
 +        })
 +    }
@@ -73346,10 +73380,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16521020a7
+index 0000000000000000000000000000000000000000..af7c1fdbb8477ef27f1228fdd6923614b2592972
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4318 @@
+@@ -0,0 +1,4327 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -74318,12 +74352,15 @@ index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16
 +        }
 +    );
 +    assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
-+    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
++    static HUGE: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("huge"));
 +    static NULLISH: std::sync::LazyLock<ToolName> =
 +        std::sync::LazyLock::new(|| ToolName::plain("nullish"));
 +    assert!(
 +        matches!(
-+            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
++            mods.intercept_tool(start("call-huge", &HUGE))
++                .await
++                .unwrap(),
 +            ToolInterception::Continue(Some(_))
 +        ),
 +        "an answer whose value exceeds 64 KiB is invalid, so the call runs"
@@ -74333,7 +74370,9 @@ index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16
 +    mods.replace_tool_output(output("call-huge", "ok")).await;
 +    assert!(!mods.wants_value("call-huge"));
 +    assert!(matches!(
-+        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
++        mods.intercept_tool(start("call-nullish", &NULLISH))
++            .await
++            .unwrap(),
 +        ToolInterception::Respond { value: None, .. }
 +    ));
 +    let Some(plain) = self::fixture(&[Package {
@@ -74506,7 +74545,9 @@ index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16
 +    static CODED: std::sync::LazyLock<ToolName> =
 +        std::sync::LazyLock::new(|| ToolName::plain("coded"));
 +    assert_eq!(
-+        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
++        mods.intercept_tool(start("call-coded", &CODED))
++            .await
++            .unwrap(),
 +        ToolInterception::Continue(None)
 +    );
 +    let structured = json!({"exit_code": 0, "output": "x"});
@@ -74527,7 +74568,9 @@ index 0000000000000000000000000000000000000000..7243c0d396417ebb40b2df372930bd16
 +    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
 +    let long = "y".repeat(48 * 1024 - 8);
 +    assert_eq!(
-+        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
++        mods.intercept_tool(start("call-coded-long", &CODED))
++            .await
++            .unwrap(),
 +        ToolInterception::Continue(None)
 +    );
 +    let omitted = mods
@@ -80117,10 +80160,10 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bb45ff3e9ae5bd9433e80e90bdaff4fa81cc1585
+index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5f9f31ecb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1069 @@
+@@ -0,0 +1,1071 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -80510,7 +80553,9 @@ index 0000000000000000000000000000000000000000..bb45ff3e9ae5bd9433e80e90bdaff4fa
 +                .get(&selection.id)
 +                .filter(|r| r.mod_id == mod_id && r.generation == generation)
 +                .ok_or("unknown_or_foreign_sidecar")?;
-+            return Ok(json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}));
++            return Ok(
++                json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}),
++            );
 +        }
 +        if records.contains_key(&selection.id) {
 +            return Err("service_already_registered".into());
@@ -83142,10 +83187,10 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c93d96847f613c39e187ce7f4eacc489ba77ead
+index 0000000000000000000000000000000000000000..131c5adf9056d4fbfc3ff005b8d72cfb4eb622e3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch.rs
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,224 @@
 +use codex_file_watcher::DebouncedWatchReceiver;
 +use codex_file_watcher::FileWatcher;
 +use codex_file_watcher::WatchPath;
@@ -83247,6 +83292,7 @@ index 0000000000000000000000000000000000000000..7c93d96847f613c39e187ce7f4eacc48
 +        Ok(resolved)
 +    }
 +
++    #[allow(clippy::too_many_arguments)]
 +    pub(crate) fn watch(
 +        &self,
 +        owner: &str,
@@ -83371,10 +83417,10 @@ index 0000000000000000000000000000000000000000..7c93d96847f613c39e187ce7f4eacc48
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/workspace_watch_tests.rs b/codex-rs/ext/omd/src/workspace_watch_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9ca43129c83316bb039bf050499026743444a06
+index 0000000000000000000000000000000000000000..ee14629682fc21f748b478eb290d1986f4e611fe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_watch_tests.rs
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,143 @@
 +use super::*;
 +use std::collections::BTreeMap;
 +use std::sync::mpsc;
@@ -83455,7 +83501,11 @@ index 0000000000000000000000000000000000000000..f9ca43129c83316bb039bf0504990267
 +            .is_err()
 +    );
 +    let (sink, _rx) = channel_sink();
-+    assert!(watches.watch("m", "sha", &[], false, None, None, sink).is_err());
++    assert!(
++        watches
++            .watch("m", "sha", &[], false, None, None, sink)
++            .is_err()
++    );
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -83470,7 +83520,15 @@ index 0000000000000000000000000000000000000000..f9ca43129c83316bb039bf0504990267
 +    let (sink, _rx) = channel_sink();
 +    assert!(
 +        watches
-+            .watch("m", "sha", &["src".to_owned()], false, None, None, sink.clone())
++            .watch(
++                "m",
++                "sha",
++                &["src".to_owned()],
++                false,
++                None,
++                None,
++                sink.clone()
++            )
 +            .is_err()
 +    );
 +    assert!(
@@ -103108,7 +103166,7 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f3dd2e714f4b63bfb06f6c8d17076ada10b705af
+index 0000000000000000000000000000000000000000..06e97e5beb210094fe8e2d7220ed6d1400ffd17c
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,252 @@
@@ -103136,9 +103194,9 @@ index 0000000000000000000000000000000000000000..f3dd2e714f4b63bfb06f6c8d17076ada
 +pub mod package_controls;
 +pub mod peers;
 +pub mod plan_routes;
-+pub mod route_writes;
 +pub mod process_raster;
 +pub mod resource_data;
++pub mod route_writes;
 +pub mod scoped_data;
 +pub mod sessions;
 +pub mod tool_schema;
@@ -105001,10 +105059,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..29cd071d58ae9a5762a6b634b16d3bf89652a239
+index 0000000000000000000000000000000000000000..b23efb17cae69ae16cc7354951eda6fa166fd325
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6212 @@
+@@ -0,0 +1,6220 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -107722,14 +107780,22 @@ index 0000000000000000000000000000000000000000..29cd071d58ae9a5762a6b634b16d3bf8
 +        ModStore::create(root.clone()).unwrap();
 +        let mut host = ModHost::open(root).unwrap();
 +        host.ui_mods = Some(vec!["b".into()]);
-+        let text = |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
++        let text =
++            |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
 +        let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
-+        let composed = host.compose_terminal(vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))], "terminal", None);
++        let composed = host.compose_terminal(
++            vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))],
++            "terminal",
++            None,
++        );
 +        assert_eq!(composed.view.status, ["b"]);
 +        assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
 +        assert_eq!(
 +            view::site_component_ids(&composed.view.sites),
-+            ["a_dialog", "b_above", "b_below", "b_header"].map(String::from).into_iter().collect()
++            ["a_dialog", "b_above", "b_below", "b_header"]
++                .map(String::from)
++                .into_iter()
++                .collect()
 +        );
 +    }
 +
@@ -128165,10 +128231,10 @@ index 0000000000000000000000000000000000000000..22b27ab5601996b5be5f3525c4fda3df
 +}
 diff --git a/codex-rs/omd/src/route_writes.rs b/codex-rs/omd/src/route_writes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdcc51867ef
+index 0000000000000000000000000000000000000000..b8e7c5ffc3ad26b78351224d6b6ce7a38c764902
 --- /dev/null
 +++ b/codex-rs/omd/src/route_writes.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,398 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::path::Path;
@@ -128201,7 +128267,11 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +) -> Result<(RouteWrite, Vec<String>), String> {
 +    let object = arguments
 +        .as_object()
-+        .filter(|object| object.keys().all(|key| key == "routes" || key == "services"))
++        .filter(|object| {
++            object
++                .keys()
++                .all(|key| key == "routes" || key == "services")
++        })
 +        .ok_or("routes_write_arguments_invalid")?;
 +    let list = |key: &str| -> Result<Option<Vec<Value>>, String> {
 +        match object.get(key) {
@@ -128231,7 +128301,9 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +    let current = read(store)?;
 +    let merged = merged(store, repository, write, current.clone())?;
 +    if changes(store, &write.caller, &current, &merged) != write.changes {
-+        return Err("routes_write_changed: host.json changed after the confirmation; try again".into());
++        return Err(
++            "routes_write_changed: host.json changed after the confirmation; try again".into(),
++        );
 +    }
 +    crate::broker::write_private(&store.join("host.json"), &merged)
 +        .map_err(|error| error.to_string())?;
@@ -128270,14 +128342,21 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +        .into_iter()
 +        .flatten()
 +        .filter(|grant| grant["mod_id"] == caller)
-+        .flat_map(|grant| grant["secrets"].as_object().cloned().unwrap_or_default().into_values())
++        .flat_map(|grant| {
++            grant["secrets"]
++                .as_object()
++                .cloned()
++                .unwrap_or_default()
++                .into_values()
++        })
 +        .collect::<Vec<_>>();
 +    let credentials = crate::credentials::CredentialProfiles::open(store)
 +        .and_then(|profiles| profiles.list())
 +        .map_err(|error| error.to_string())?;
 +    let usable = |id: &str| {
 +        credentials.iter().any(|profile| {
-+            profile.id == id && (profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
++            profile.id == id
++                && (profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
 +        })
 +    };
 +    let allowance = object
@@ -128294,7 +128373,10 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +        {
 +            return Err(format!("routes_write_allowance_required: {name}"));
 +        }
-+        if route.get("data").is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES) {
++        if route
++            .get("data")
++            .is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES)
++        {
 +            return Err(format!("routes_write_data_too_large: {name}"));
 +        }
 +        Ok(())
@@ -128324,7 +128406,9 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +            .ok_or("host_config_invalid")?;
 +        let mut next = Vec::new();
 +        for service in services {
-+            let id = service["id"].as_str().ok_or("routes_write_service_id_required")?;
++            let id = service["id"]
++                .as_str()
++                .ok_or("routes_write_service_id_required")?;
 +            if current
 +                .iter()
 +                .any(|grant| grant["id"] == id && grant["mod_id"] != caller)
@@ -128345,7 +128429,11 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +            if let Some(route) = grant.get("route") {
 +                billed(route)?;
 +            }
-+            for reference in grant["secrets"].as_object().into_iter().flatten().map(|(_, r)| r)
++            for reference in grant["secrets"]
++                .as_object()
++                .into_iter()
++                .flatten()
++                .map(|(_, r)| r)
 +            {
 +                if !owned_refs.contains(reference) {
 +                    return Err(format!("routes_write_secret_ref_unknown: {id}"));
@@ -128378,10 +128466,10 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +        .unwrap_or_default();
 +    let label = |id: &Value| {
 +        let id = id.as_str().unwrap_or_default();
-+        labels
-+            .iter()
-+            .find(|profile| profile.id == id)
-+            .map_or_else(|| id.to_owned(), |profile| format!("{} ({})", profile.label, profile.kind))
++        labels.iter().find(|profile| profile.id == id).map_or_else(
++            || id.to_owned(),
++            |profile| format!("{} ({})", profile.label, profile.kind),
++        )
 +    };
 +    let owned = |host: &Value, key: &str, owner: &str, field: &str| {
 +        host[key]
@@ -128389,7 +128477,12 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +            .into_iter()
 +            .flatten()
 +            .filter(|item| item[owner] == caller)
-+            .map(|item| (item[field].as_str().unwrap_or_default().to_owned(), item.clone()))
++            .map(|item| {
++                (
++                    item[field].as_str().unwrap_or_default().to_owned(),
++                    item.clone(),
++                )
++            })
 +            .collect::<std::collections::BTreeMap<_, _>>()
 +    };
 +    let billing = |route: &Value| {
@@ -128402,12 +128495,29 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +            "paid API, per request"
 +        }
 +    };
-+    let text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), str::to_owned);
++    let text = |value: &Value| {
++        value
++            .as_str()
++            .map_or_else(|| value.to_string(), str::to_owned)
++    };
 +    let shown = |key: &str, value: Option<&Value>| match (key, value) {
-+        ("route", Some(route)) => format!("{} ({})", route["name"].as_str().unwrap_or_default(), route["model"].as_str().unwrap_or_default()),
-+        ("network" | "requests", value) => if value == Some(&json!(true)) { "on" } else { "off" }.to_owned(),
++        ("route", Some(route)) => format!(
++            "{} ({})",
++            route["name"].as_str().unwrap_or_default(),
++            route["model"].as_str().unwrap_or_default()
++        ),
++        ("network" | "requests", value) => if value == Some(&json!(true)) {
++            "on"
++        } else {
++            "off"
++        }
++        .to_owned(),
 +        (_, Some(Value::Array(items))) => items.iter().map(text).collect::<Vec<_>>().join(" "),
-+        (_, Some(Value::Object(map))) => map.iter().map(|(key, value)| format!("{key}={}", text(value))).collect::<Vec<_>>().join(" "),
++        (_, Some(Value::Object(map))) => map
++            .iter()
++            .map(|(key, value)| format!("{key}={}", text(value)))
++            .collect::<Vec<_>>()
++            .join(" "),
 +        (_, value) => value.map_or_else(|| "none".to_owned(), text),
 +    };
 +    let field = |lines: &mut Vec<String>, mut line: String| {
@@ -128426,27 +128536,48 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +        let model = route["model"].as_str().unwrap_or_default();
 +        let previous = match old.get(name) {
 +            None => {
-+                lines.push(format!("Add model route {name}: {model}, {}", billing(route)));
++                lines.push(format!(
++                    "Add model route {name}: {model}, {}",
++                    billing(route)
++                ));
 +                json!({})
 +            }
 +            Some(previous) if previous != route => {
-+                lines.push(format!("Change model route {name}: {model}, {}", billing(route)));
++                lines.push(format!(
++                    "Change model route {name}: {model}, {}",
++                    billing(route)
++                ));
 +                previous.clone()
 +            }
 +            Some(_) => continue,
 +        };
-+        let keys = route.as_object().into_iter().chain(previous.as_object()).flat_map(|map| map.keys());
++        let keys = route
++            .as_object()
++            .into_iter()
++            .chain(previous.as_object())
++            .flat_map(|map| map.keys());
 +        for key in keys.collect::<std::collections::BTreeSet<_>>() {
-+            if !matches!(key.as_str(), "name" | "provider" | "roles" | "model") && previous.get(key) != route.get(key) {
++            if !matches!(key.as_str(), "name" | "provider" | "roles" | "model")
++                && previous.get(key) != route.get(key)
++            {
 +                let value = match (previous.get(key), route.get(key)) {
 +                    (Some(Value::Object(was)), Some(Value::Object(now))) => Some(Value::Object(
-+                        now.iter().filter(|(inner, value)| was.get(*inner) != Some(*value)).map(|(inner, value)| (inner.clone(), value.clone()))
-+                            .chain(was.keys().filter(|inner| !now.contains_key(*inner)).map(|inner| (inner.clone(), Value::Null)))
++                        now.iter()
++                            .filter(|(inner, value)| was.get(*inner) != Some(*value))
++                            .map(|(inner, value)| (inner.clone(), value.clone()))
++                            .chain(
++                                was.keys()
++                                    .filter(|inner| !now.contains_key(*inner))
++                                    .map(|inner| (inner.clone(), Value::Null)),
++                            )
 +                            .collect(),
 +                    )),
 +                    (_, value) => value.cloned(),
 +                };
-+                field(&mut lines, format!("Route {name} {key}: {}", shown(key, value.as_ref())));
++                field(
++                    &mut lines,
++                    format!("Route {name} {key}: {}", shown(key, value.as_ref())),
++                );
 +            }
 +        }
 +    }
@@ -128473,9 +128604,23 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +        for credential in was.iter().filter(|c| !now.contains(c)) {
 +            lines.push(format!("Stop service {id} using {}", label(credential)));
 +        }
-+        for key in ["program", "program_sha256", "arguments", "network", "read_paths", "read_hashes", "code_roots", "requests", "secrets", "route"] {
++        for key in [
++            "program",
++            "program_sha256",
++            "arguments",
++            "network",
++            "read_paths",
++            "read_hashes",
++            "code_roots",
++            "requests",
++            "secrets",
++            "route",
++        ] {
 +            if before.get(key) != grant.get(key) {
-+                field(&mut lines, format!("Service {id} {key}: {}", shown(key, grant.get(key))));
++                field(
++                    &mut lines,
++                    format!("Service {id} {key}: {}", shown(key, grant.get(key))),
++                );
 +            }
 +        }
 +    }
@@ -128490,15 +128635,20 @@ index 0000000000000000000000000000000000000000..9ac72e3e4d551fabf363132985921fdc
 +mod tests;
 diff --git a/codex-rs/omd/src/route_writes_tests.rs b/codex-rs/omd/src/route_writes_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c159e5f2f9
+index 0000000000000000000000000000000000000000..7253c9413ccf769492206f8f02123d9d6c8571a7
 --- /dev/null
 +++ b/codex-rs/omd/src/route_writes_tests.rs
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,192 @@
 +use super::*;
 +use crate::credentials::CredentialProfiles;
 +
 +fn check(_: &Path, host: &Value) -> Result<(), String> {
-+    match host["routes"].as_array().into_iter().flatten().any(|route| route["name"] == "invalid") {
++    match host["routes"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .any(|route| route["name"] == "invalid")
++    {
 +        true => Err("route invalid is invalid".into()),
 +        false => Ok(()),
 +    }
@@ -128540,9 +128690,14 @@ index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c1
 +    let arguments = json!({"routes": [route("work", "fixture_router", true), route("home", "fixture_router", true)],
 +        "services": [{"id": "router", "credentials": [work, home]}]});
 +    let (write, changes) = plan(&store, Path::new("/repo"), "fixture_router", &arguments).unwrap();
-+    assert!(changes.contains(&"Route home responses_url: http://127.0.0.1:9/v1/responses".to_owned()));
++    assert!(
++        changes.contains(&"Route home responses_url: http://127.0.0.1:9/v1/responses".to_owned())
++    );
 +    assert_eq!(
-+        changes.iter().filter(|line| !line.starts_with("Route ")).collect::<Vec<_>>(),
++        changes
++            .iter()
++            .filter(|line| !line.starts_with("Route "))
++            .collect::<Vec<_>>(),
 +        [
 +            "Add model route home: home, subscription",
 +            "Add model route work: work, subscription",
@@ -128555,8 +128710,14 @@ index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c1
 +        apply(&store, Path::new("/repo"), &write).unwrap(),
 +        json!({"routes": ["work", "home"], "services": ["router"]})
 +    );
-+    let host: Value = serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
-+    let names = host["routes"].as_array().unwrap().iter().map(|r| r["name"].clone()).collect::<Vec<_>>();
++    let host: Value =
++        serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
++    let names = host["routes"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|r| r["name"].clone())
++        .collect::<Vec<_>>();
 +    assert_eq!(names, [json!("theirs"), json!("work"), json!("home")]);
 +    assert_eq!(host["routes"][1]["data"], json!({"upstream": "gpt-6.1"}));
 +    let services = host["services"].as_array().unwrap();
@@ -128578,15 +128739,39 @@ index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c1
 +    let mut worker = route("w", "fixture_router", true);
 +    worker["roles"] = json!(["worker"]);
 +    for (arguments, code) in [
-+        (json!({"routes": [route("x", "other", true)]}), "routes_write_provider_mismatch: x"),
++        (
++            json!({"routes": [route("x", "other", true)]}),
++            "routes_write_provider_mismatch: x",
++        ),
 +        (json!({"routes": [worker]}), "routes_write_lead_only: w"),
-+        (json!({"routes": [route("paid", "fixture_router", false)]}), "routes_write_allowance_required: paid"),
-+        (json!({"routes": [route("invalid", "fixture_router", true)]}), "routes_write_invalid: route invalid is invalid"),
-+        (json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}), "routes_write_service_taken: foreign"),
-+        (json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}), "routes_write_secret_ref_unknown: router"),
-+        (json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}), "routes_write_credential_unknown: router"),
-+        (json!({"routes": [], "extra": true}), "routes_write_arguments_invalid"),
-+        (json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}), "routes_write_secret_ref_unknown: new"),
++        (
++            json!({"routes": [route("paid", "fixture_router", false)]}),
++            "routes_write_allowance_required: paid",
++        ),
++        (
++            json!({"routes": [route("invalid", "fixture_router", true)]}),
++            "routes_write_invalid: route invalid is invalid",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "foreign", "mod_id": "fixture_router"}]}),
++            "routes_write_service_taken: foreign",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "router", "secrets": {"T": "missing"}}]}),
++            "routes_write_secret_ref_unknown: router",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "router", "credentials": [work, "p404"]}]}),
++            "routes_write_credential_unknown: router",
++        ),
++        (
++            json!({"routes": [], "extra": true}),
++            "routes_write_arguments_invalid",
++        ),
++        (
++            json!({"routes": [], "services": [{"id": "router"}, {"id": "new", "mod_id": "fixture_router", "secrets": {"T": "theirs"}}]}),
++            "routes_write_secret_ref_unknown: new",
++        ),
 +    ] {
 +        assert_eq!(refused(arguments), code);
 +    }
@@ -128612,8 +128797,12 @@ index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c1
 +            "Service extra secrets: TOKEN=token",
 +        ]
 +    );
-+    let mut host: Value = serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
-+    host["routes"].as_array_mut().unwrap().push(route("late", "fixture_router", true));
++    let mut host: Value =
++        serde_json::from_slice(&std::fs::read(store.join("host.json")).unwrap()).unwrap();
++    host["routes"]
++        .as_array_mut()
++        .unwrap()
++        .push(route("late", "fixture_router", true));
 +    std::fs::write(store.join("host.json"), host.to_string()).unwrap();
 +    assert_eq!(
 +        apply(&store, Path::new("/repo"), &write).unwrap_err(),
@@ -128627,11 +128816,20 @@ index 0000000000000000000000000000000000000000..57c308459cf2ede5ff04dc972cb6a1c1
 +    let mut moved = route("old", "fixture_router", true);
 +    moved["responses_url"] = json!("https://elsewhere.example/v1/responses");
 +    moved["rates"]["input_token_ceiling"] = json!(50);
-+    let (_, changes) = plan(&store, Path::new("/repo"), "fixture_router", &json!({"routes": [moved]})).unwrap();
++    let (_, changes) = plan(
++        &store,
++        Path::new("/repo"),
++        "fixture_router",
++        &json!({"routes": [moved]}),
++    )
++    .unwrap();
 +    assert_eq!(changes.len(), 3);
 +    assert_eq!(changes[0], "Change model route old: old, subscription");
 +    assert_eq!(changes[1], "Route old rates: input_token_ceiling=50");
-+    assert_eq!(changes[2], "Route old responses_url: https://elsewhere.example/v1/responses");
++    assert_eq!(
++        changes[2],
++        "Route old responses_url: https://elsewhere.example/v1/responses"
++    );
 +}
 diff --git a/codex-rs/omd/src/scoped_data.rs b/codex-rs/omd/src/scoped_data.rs
 new file mode 100644
@@ -147439,10 +147637,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..752acd46ecd0979069e567d1c0bfbd77949a3796
+index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cadc87eaee3
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2176 @@
+@@ -0,0 +1,2178 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -148409,7 +148607,9 @@ index 0000000000000000000000000000000000000000..752acd46ecd0979069e567d1c0bfbd77
 +            });
 +            match planned {
 +                Ok((_, changes)) if changes.is_empty() => {
-+                    let _ = call.reply.send(Ok(json!({"routes": [], "services": [], "unchanged": true})));
++                    let _ = call
++                        .reply
++                        .send(Ok(json!({"routes": [], "services": [], "unchanged": true})));
 +                }
 +                Ok((write, changes)) => {
 +                    let title = format!("Let {} change its model routes?", call.caller);
@@ -162469,10 +162669,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7cb49c745be8908d45f734c806ae1aff9f5ff43
+index 0000000000000000000000000000000000000000..946d58c86403f9fec18086a50d7fa4ea417495ba
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4857 @@
+@@ -0,0 +1,4861 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -165981,7 +166181,11 @@ index 0000000000000000000000000000000000000000..a7cb49c745be8908d45f734c806ae1af
 +        .0
 +        .iter()
 +        .filter(|notice| notice.placement == placement)
-+        .filter(|notice| ui_mods.as_ref().is_none_or(|ids| ids.contains(&notice.owner)))
++        .filter(|notice| {
++            ui_mods
++                .as_ref()
++                .is_none_or(|ids| ids.contains(&notice.owner))
++        })
 +        .rev()
 +        .take(3)
 +        .cloned()
@@ -169760,10 +169964,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f04d186a13f5e5f5ac8f5debf90087d8d9146ef4
+index 0000000000000000000000000000000000000000..ab0219f025d0d6c3f224c2843bb7cbda441f54e3
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,735 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -170288,7 +170492,9 @@ index 0000000000000000000000000000000000000000..f04d186a13f5e5f5ac8f5debf90087d8
 +                {
 +                    "Oh My Diff · mods inactive · see /omd".to_string()
 +                }
-+                Ok(snapshot) if snapshot.failed_mods == 0 && codex_omd::mod_ui_allowlist().is_some() => {
++                Ok(snapshot)
++                    if snapshot.failed_mods == 0 && codex_omd::mod_ui_allowlist().is_some() =>
++                {
 +                    return None;
 +                }
 +                Ok(snapshot) if status.is_some() => format!(

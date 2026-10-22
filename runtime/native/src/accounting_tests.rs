@@ -1285,7 +1285,10 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
         } else {
             request.headers.remove("chatgpt-account-id");
         }
-        let mut attempt = accounts.before_send(&mut request, Some(&body)).unwrap().unwrap();
+        let mut attempt = accounts
+            .before_send(&mut request, Some(&body))
+            .unwrap()
+            .unwrap();
         let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}});
         attempt.observe(&mut completed, true).unwrap();
         drop(attempt);
@@ -1296,7 +1299,13 @@ fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
         basis(SUBSCRIPTION_RESPONSES_URL, true),
         json!({"microusd": 0, "basis": "included_subscription"})
     );
-    assert_eq!(basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"], "unpriced");
-    assert_eq!(basis("https://api.openai.com/v1/responses", true)["basis"], "unpriced");
+    assert_eq!(
+        basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"],
+        "unpriced"
+    );
+    assert_eq!(
+        basis("https://api.openai.com/v1/responses", true)["basis"],
+        "unpriced"
+    );
     assert!(task.attempts().unwrap().is_empty());
 }

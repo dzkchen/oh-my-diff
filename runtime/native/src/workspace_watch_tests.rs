@@ -78,7 +78,11 @@ async fn paths_outside_git_and_protected_areas_are_refused() {
             .is_err()
     );
     let (sink, _rx) = channel_sink();
-    assert!(watches.watch("m", "sha", &[], false, None, None, sink).is_err());
+    assert!(
+        watches
+            .watch("m", "sha", &[], false, None, None, sink)
+            .is_err()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -93,7 +97,15 @@ async fn watches_are_limited_per_mod_and_released_with_their_source() {
     let (sink, _rx) = channel_sink();
     assert!(
         watches
-            .watch("m", "sha", &["src".to_owned()], false, None, None, sink.clone())
+            .watch(
+                "m",
+                "sha",
+                &["src".to_owned()],
+                false,
+                None,
+                None,
+                sink.clone()
+            )
             .is_err()
     );
     assert!(

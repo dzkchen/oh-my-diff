@@ -966,12 +966,15 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         }
     );
     assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
-    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
+    static HUGE: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("huge"));
     static NULLISH: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("nullish"));
     assert!(
         matches!(
-            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
+            mods.intercept_tool(start("call-huge", &HUGE))
+                .await
+                .unwrap(),
             ToolInterception::Continue(Some(_))
         ),
         "an answer whose value exceeds 64 KiB is invalid, so the call runs"
@@ -981,7 +984,9 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
     mods.replace_tool_output(output("call-huge", "ok")).await;
     assert!(!mods.wants_value("call-huge"));
     assert!(matches!(
-        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
+        mods.intercept_tool(start("call-nullish", &NULLISH))
+            .await
+            .unwrap(),
         ToolInterception::Respond { value: None, .. }
     ));
     let Some(plain) = self::fixture(&[Package {
@@ -1154,7 +1159,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     static CODED: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("coded"));
     assert_eq!(
-        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
+        mods.intercept_tool(start("call-coded", &CODED))
+            .await
+            .unwrap(),
         ToolInterception::Continue(None)
     );
     let structured = json!({"exit_code": 0, "output": "x"});
@@ -1175,7 +1182,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
     let long = "y".repeat(48 * 1024 - 8);
     assert_eq!(
-        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
+        mods.intercept_tool(start("call-coded-long", &CODED))
+            .await
+            .unwrap(),
         ToolInterception::Continue(None)
     );
     let omitted = mods

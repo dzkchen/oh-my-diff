@@ -30,7 +30,11 @@ pub fn plan(
 ) -> Result<(RouteWrite, Vec<String>), String> {
     let object = arguments
         .as_object()
-        .filter(|object| object.keys().all(|key| key == "routes" || key == "services"))
+        .filter(|object| {
+            object
+                .keys()
+                .all(|key| key == "routes" || key == "services")
+        })
         .ok_or("routes_write_arguments_invalid")?;
     let list = |key: &str| -> Result<Option<Vec<Value>>, String> {
         match object.get(key) {
@@ -60,7 +64,9 @@ pub fn apply(store: &Path, repository: &Path, write: &RouteWrite) -> Result<Valu
     let current = read(store)?;
     let merged = merged(store, repository, write, current.clone())?;
     if changes(store, &write.caller, &current, &merged) != write.changes {
-        return Err("routes_write_changed: host.json changed after the confirmation; try again".into());
+        return Err(
+            "routes_write_changed: host.json changed after the confirmation; try again".into(),
+        );
     }
     crate::broker::write_private(&store.join("host.json"), &merged)
         .map_err(|error| error.to_string())?;
@@ -99,14 +105,21 @@ fn merged(
         .into_iter()
         .flatten()
         .filter(|grant| grant["mod_id"] == caller)
-        .flat_map(|grant| grant["secrets"].as_object().cloned().unwrap_or_default().into_values())
+        .flat_map(|grant| {
+            grant["secrets"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+                .into_values()
+        })
         .collect::<Vec<_>>();
     let credentials = crate::credentials::CredentialProfiles::open(store)
         .and_then(|profiles| profiles.list())
         .map_err(|error| error.to_string())?;
     let usable = |id: &str| {
         credentials.iter().any(|profile| {
-            profile.id == id && (profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
+            profile.id == id
+                && (profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
         })
     };
     let allowance = object
@@ -123,7 +136,10 @@ fn merged(
         {
             return Err(format!("routes_write_allowance_required: {name}"));
         }
-        if route.get("data").is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES) {
+        if route
+            .get("data")
+            .is_some_and(|data| data.to_string().len() > ROUTE_DATA_BYTES)
+        {
             return Err(format!("routes_write_data_too_large: {name}"));
         }
         Ok(())
@@ -153,7 +169,9 @@ fn merged(
             .ok_or("host_config_invalid")?;
         let mut next = Vec::new();
         for service in services {
-            let id = service["id"].as_str().ok_or("routes_write_service_id_required")?;
+            let id = service["id"]
+                .as_str()
+                .ok_or("routes_write_service_id_required")?;
             if current
                 .iter()
                 .any(|grant| grant["id"] == id && grant["mod_id"] != caller)
@@ -174,7 +192,11 @@ fn merged(
             if let Some(route) = grant.get("route") {
                 billed(route)?;
             }
-            for reference in grant["secrets"].as_object().into_iter().flatten().map(|(_, r)| r)
+            for reference in grant["secrets"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(_, r)| r)
             {
                 if !owned_refs.contains(reference) {
                     return Err(format!("routes_write_secret_ref_unknown: {id}"));
@@ -207,10 +229,10 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         .unwrap_or_default();
     let label = |id: &Value| {
         let id = id.as_str().unwrap_or_default();
-        labels
-            .iter()
-            .find(|profile| profile.id == id)
-            .map_or_else(|| id.to_owned(), |profile| format!("{} ({})", profile.label, profile.kind))
+        labels.iter().find(|profile| profile.id == id).map_or_else(
+            || id.to_owned(),
+            |profile| format!("{} ({})", profile.label, profile.kind),
+        )
     };
     let owned = |host: &Value, key: &str, owner: &str, field: &str| {
         host[key]
@@ -218,7 +240,12 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
             .into_iter()
             .flatten()
             .filter(|item| item[owner] == caller)
-            .map(|item| (item[field].as_str().unwrap_or_default().to_owned(), item.clone()))
+            .map(|item| {
+                (
+                    item[field].as_str().unwrap_or_default().to_owned(),
+                    item.clone(),
+                )
+            })
             .collect::<std::collections::BTreeMap<_, _>>()
     };
     let billing = |route: &Value| {
@@ -231,12 +258,29 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
             "paid API, per request"
         }
     };
-    let text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), str::to_owned);
+    let text = |value: &Value| {
+        value
+            .as_str()
+            .map_or_else(|| value.to_string(), str::to_owned)
+    };
     let shown = |key: &str, value: Option<&Value>| match (key, value) {
-        ("route", Some(route)) => format!("{} ({})", route["name"].as_str().unwrap_or_default(), route["model"].as_str().unwrap_or_default()),
-        ("network" | "requests", value) => if value == Some(&json!(true)) { "on" } else { "off" }.to_owned(),
+        ("route", Some(route)) => format!(
+            "{} ({})",
+            route["name"].as_str().unwrap_or_default(),
+            route["model"].as_str().unwrap_or_default()
+        ),
+        ("network" | "requests", value) => if value == Some(&json!(true)) {
+            "on"
+        } else {
+            "off"
+        }
+        .to_owned(),
         (_, Some(Value::Array(items))) => items.iter().map(text).collect::<Vec<_>>().join(" "),
-        (_, Some(Value::Object(map))) => map.iter().map(|(key, value)| format!("{key}={}", text(value))).collect::<Vec<_>>().join(" "),
+        (_, Some(Value::Object(map))) => map
+            .iter()
+            .map(|(key, value)| format!("{key}={}", text(value)))
+            .collect::<Vec<_>>()
+            .join(" "),
         (_, value) => value.map_or_else(|| "none".to_owned(), text),
     };
     let field = |lines: &mut Vec<String>, mut line: String| {
@@ -255,27 +299,48 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         let model = route["model"].as_str().unwrap_or_default();
         let previous = match old.get(name) {
             None => {
-                lines.push(format!("Add model route {name}: {model}, {}", billing(route)));
+                lines.push(format!(
+                    "Add model route {name}: {model}, {}",
+                    billing(route)
+                ));
                 json!({})
             }
             Some(previous) if previous != route => {
-                lines.push(format!("Change model route {name}: {model}, {}", billing(route)));
+                lines.push(format!(
+                    "Change model route {name}: {model}, {}",
+                    billing(route)
+                ));
                 previous.clone()
             }
             Some(_) => continue,
         };
-        let keys = route.as_object().into_iter().chain(previous.as_object()).flat_map(|map| map.keys());
+        let keys = route
+            .as_object()
+            .into_iter()
+            .chain(previous.as_object())
+            .flat_map(|map| map.keys());
         for key in keys.collect::<std::collections::BTreeSet<_>>() {
-            if !matches!(key.as_str(), "name" | "provider" | "roles" | "model") && previous.get(key) != route.get(key) {
+            if !matches!(key.as_str(), "name" | "provider" | "roles" | "model")
+                && previous.get(key) != route.get(key)
+            {
                 let value = match (previous.get(key), route.get(key)) {
                     (Some(Value::Object(was)), Some(Value::Object(now))) => Some(Value::Object(
-                        now.iter().filter(|(inner, value)| was.get(*inner) != Some(*value)).map(|(inner, value)| (inner.clone(), value.clone()))
-                            .chain(was.keys().filter(|inner| !now.contains_key(*inner)).map(|inner| (inner.clone(), Value::Null)))
+                        now.iter()
+                            .filter(|(inner, value)| was.get(*inner) != Some(*value))
+                            .map(|(inner, value)| (inner.clone(), value.clone()))
+                            .chain(
+                                was.keys()
+                                    .filter(|inner| !now.contains_key(*inner))
+                                    .map(|inner| (inner.clone(), Value::Null)),
+                            )
                             .collect(),
                     )),
                     (_, value) => value.cloned(),
                 };
-                field(&mut lines, format!("Route {name} {key}: {}", shown(key, value.as_ref())));
+                field(
+                    &mut lines,
+                    format!("Route {name} {key}: {}", shown(key, value.as_ref())),
+                );
             }
         }
     }
@@ -302,9 +367,23 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         for credential in was.iter().filter(|c| !now.contains(c)) {
             lines.push(format!("Stop service {id} using {}", label(credential)));
         }
-        for key in ["program", "program_sha256", "arguments", "network", "read_paths", "read_hashes", "code_roots", "requests", "secrets", "route"] {
+        for key in [
+            "program",
+            "program_sha256",
+            "arguments",
+            "network",
+            "read_paths",
+            "read_hashes",
+            "code_roots",
+            "requests",
+            "secrets",
+            "route",
+        ] {
             if before.get(key) != grant.get(key) {
-                field(&mut lines, format!("Service {id} {key}: {}", shown(key, grant.get(key))));
+                field(
+                    &mut lines,
+                    format!("Service {id} {key}: {}", shown(key, grant.get(key))),
+                );
             }
         }
     }
