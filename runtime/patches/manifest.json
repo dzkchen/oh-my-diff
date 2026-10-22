@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "80f745df84f18c9c66144be273d414df2f0c344c553db15daa5c86409e0927fe"
+    "sha256": "5c41f723bd821aea9e7684b9eaf2885a58bd5801323ea90d488c2ac856a0aa52"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1047,7 +1047,7 @@
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "ea42c554343ad78d4cab7e74865d245ababeae235ccb4c80429e2256d15c5b4e"
+      "after": "534a0e9b90592de3ba3eedaa67742fe8d79b7723a7fe43d77bfdabf80ac70e77"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
@@ -1427,11 +1427,11 @@
     },
     "codex-rs/omd/src/route_writes.rs": {
       "before": null,
-      "after": "65ad6a50c6baae65b2c1e96edbb3c69bce62e0f5449c40ec1309b7d7035ce06b"
+      "after": "00a8b4671967c8dd44f75fca3d2efb0e6d34f318043805acca860050feb19044"
     },
     "codex-rs/omd/src/route_writes_tests.rs": {
       "before": null,
-      "after": "925d3b8a94b249a806336d63b23e659d90544d7fed2f6a5c114f1877c280aed7"
+      "after": "03213e49ff0e4df8fa039ba8982d97dce6fe3e9f2291e1030e96ab2e8826aeed"
     },
     "codex-rs/omd/src/scoped_data.rs": {
       "before": null,
@@ -1663,7 +1663,7 @@
     },
     "codex-rs/tui/src/app/mod_surface.rs": {
       "before": null,
-      "after": "a78fb915dc00fb459fcf6d083286f17b904c519e70c33f00abfa3e96431913fb"
+      "after": "28c11286e550cd157e7a0256aa5fef70654368fbc272f907eb70c8ed72de54f7"
     },
     "codex-rs/tui/src/app/owned_transcript.rs": {
       "before": "a10ad388f08d5f010002ea02d00399b9b45d7c2ac7257445a4b56a2aa3985590",

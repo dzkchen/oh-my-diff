@@ -1,16 +1,16 @@
 import type { Json, ModAPI, TerminalPanelItem, TerminalSpan } from '../../api.d.ts';
-import { PROVIDER, URLS, modelFor, profileEntry, profilesOf, routeFor, serviceFor, type Profile } from './profiles.ts';
+import { NAME, PROVIDER, URLS, modelFor, origin, profileEntry, profilesOf, routeFor, serviceFor, type Profile } from './profiles.ts';
 
 type Window = { minutes: number | null; used: number; resets: number | null };
 type Quota = { windows: Window[]; at: number };
 type Row = Profile & { billing: string; available: boolean };
-type Saved = { profiles: Row[]; current: string | null; notice: string | null; pending: string | null; ours: boolean; applied: number; quota: Record<string, Quota> };
+type Saved = { profiles: Row[]; current: string | null; notice: string | null; pending: string | null; ours: boolean; seen: { profile: string; windows: string } | null; quota: Record<string, Quota> };
 
 const USAGE = 'usage: /profile [list | next | use NAME | add chatgpt|api_key NAME | add provider NAME HTTPS_URL | remove NAME | refresh NAME]';
 const PANEL = { command: 'omd_profiles:profile', args: 'panel' };
 
 export default function activate(api: ModAPI) {
-  const saved = (): Saved => ({ profiles: [], current: null, notice: null, pending: null, ours: false, applied: 0, quota: {}, ...api.state.get() as unknown as Saved | null });
+  const saved = (): Saved => ({ profiles: [], current: null, notice: null, pending: null, ours: false, seen: null, quota: {}, ...api.state.get() as unknown as Saved | null });
   const fit = (text: string, max: number) => [...text].length > max ? `${[...text].slice(0, max - 1).join('')}…` : text;
   const store = (patch: Partial<Saved>) => {
     const next = { ...saved(), ...patch };
@@ -38,9 +38,12 @@ export default function activate(api: ModAPI) {
       .map(route => ({ ...profilesOf([route])[0], billing: route.billing, available: route.available }));
     store({ profiles: rows, quota: quotas().quota });
   };
-  const ensure = (restart: boolean) => {
+  const ensure = () => {
     const status = api.host.tryCall('sidecars.status', { id: PROVIDER });
-    if (!restart && status.ok && (status.value as { running?: boolean } | null)?.running === true) return;
+    const sidecar = status.ok ? status.value as { running?: boolean; started_at_ms?: number } | null : null;
+    const changed = api.host.tryCall('store.get', { key: 'changed', scope: 'user' });
+    const stale = changed.ok && changed.value !== null && (sidecar?.started_at_ms ?? 0) <= changed.value.provenance.at;
+    if (sidecar?.running === true && !stale) return;
     if (status.ok) api.host.tryCall('providers.unregister', { id: PROVIDER });
     if (api.host.tryCall('providers.register', { id: PROVIDER }).ok) {
       api.host.tryCall('providers.models', { provider: PROVIDER, name: 'OMD profiles', models: saved().profiles.slice(0, 16).map(modelFor) });
@@ -73,27 +76,25 @@ export default function activate(api: ModAPI) {
   api.on('resume', refresh);
   // State is per thread: routing marks threads on this provider, and a requested switch applies to the thread it was asked in.
   api.on('turn_start', () => {
-    const { ours, applied } = saved();
-    if (!ours) return;
+    if (!saved().ours) return;
     refresh();
-    const changed = Number(shared('changed').value ?? 0);
-    ensure(changed > applied);
-    if (changed > applied) store({ applied: changed });
+    ensure();
     const { pending } = saved();
     if (!pending) return;
     const selected = api.host.tryCall('routes.select', { route: pending, scope: 'thread' });
     store(selected.ok ? { current: pending, pending: null, notice: null } : { pending: null, notice: `${pending}: ${selected.error}` });
   });
   api.on('app_notification', ({ method, params }) => {
-    const { ours, current } = saved();
+    const { ours, current, seen: last } = saved();
     if (method !== 'account/rateLimits/updated' || !ours || !current) return;
     const limits = (params as Record<string, any> | null)?.rateLimits ?? {};
     const seen: Window[] = ['primary', 'secondary'].map(name => limits[name]).filter(slot => typeof slot?.usedPercent === 'number')
       .map(slot => ({ minutes: typeof slot.windowDurationMins === 'number' ? slot.windowDurationMins : null, used: Math.round(slot.usedPercent),
         resets: typeof slot.resetsAt === 'number' ? (slot.resetsAt < 1e12 ? slot.resetsAt * 1000 : slot.resetsAt) : null }));
-    if (!seen.length) return;
+    const key = JSON.stringify(seen);
+    if (!seen.length || (last?.windows === key && last.profile !== current)) return;
     const quota = remember(all => { all[current] = { windows: seen, at: Date.now() }; });
-    if (quota) api.state.set({ ...saved(), quota } as unknown as Json);
+    api.state.set({ ...saved(), seen: { profile: current, windows: key }, ...quota ? { quota } : {} } as unknown as Json);
   });
   api.intercept('model_request', (event, next) => {
     const { notice, pending } = saved();
@@ -145,18 +146,18 @@ export default function activate(api: ModAPI) {
     if (!written.ok) return `Profiles unchanged: ${written.error}`;
     if ('status' in written.value) return 'Profiles unchanged.';
     const { current } = saved();
-    update<number>('changed', () => Date.now());
+    const restart = update<number>('changed', () => Date.now()) === null ? ' Other sessions use it after they restart.' : '';
     store({ profiles: profiles.map(profile => ({ ...profile, billing: profile.paid ? 'explicit_paid_api_grant' : 'included_subscription', available: true })),
       current: profiles.some(profile => profile.name === current) ? current : null });
-    return done;
+    return done && `${done}${restart}`;
   };
   const add = (kindName: string, name: string, url: string) => {
     const { profiles, current } = saved();
-    if (!/^[a-z0-9_-]{1,32}$/.test(name)) return 'Profile names use lowercase letters, digits, _ or - (at most 32).';
+    if (!NAME.test(name)) return 'Profile names use lowercase letters, digits, _ or - (at most 32).';
     if (profiles.some(profile => profile.name === name)) return `Profile ${name} already exists.`;
-    if (kindName === 'provider' && !/^https:\/\/[^/?#]+/.test(url)) return 'The endpoint must be an https URL.';
+    if (kindName === 'provider' && !origin(url)) return 'The endpoint must be an https URL.';
     const enroll = () => api.host.tryCall('credentials.request', kindName === 'provider'
-      ? { action: 'enroll', kind: 'provider', label: name, provider: name, origin: url.replace(/^(https:\/\/[^/?#]+).*$/, '$1') }
+      ? { action: 'enroll', kind: 'provider', label: name, provider: name, origin: origin(url)! }
       : { action: 'enroll', kind: kindName as 'chatgpt' | 'api_key', label: name });
     const base = profiles.find(profile => profile.name === current) ?? profiles[0];
     if (!base?.router) {
@@ -200,6 +201,8 @@ export default function activate(api: ModAPI) {
       return (listed.ok ? listed.value : []).find(item => item.label === name || item.id === name)?.id;
     })();
     if (!credential) return `Unknown profile ${name}`;
+    const user = profile ? undefined : profiles.find(item => item.credential === credential);
+    if (user) return `${name} is the sign-in of profile ${user.name}; remove that profile instead.`;
     if (profile && (profile.name === current || profile.name === pending)) return `${name} is this thread's profile; switch to another one first.`;
     if (profile && profiles.length === 1) return `${name} is the last profile; remove it with omd-package profiles --setup --remove ${name}.`;
     if (profile) {

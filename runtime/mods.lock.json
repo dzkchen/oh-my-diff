@@ -357,14 +357,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "c94d98217d2ceb8735c0c673814ce68f4ae2ada747d014e8ce0c1c5190acac42",
+        "index.ts": "ab120cd0fc2191ed424f3aa5cd7413ea623fe8014b8eef6bbfe826e311d080e2",
         "mod.json": "12ce99acc48131373524aa17d462313d4241105b57afb6513bdd8664e803169e",
-        "profiles.ts": "3ffac9b3cdced80e3cc58214dbdf75a359f62e04c5b433810f6d5a55ea264a8a",
+        "profiles.ts": "3384e82c92fe3619b035d0ac05998658108478873091b68801a2ae6e6bf637b4",
         "router.mjs": "8b9949358fa9ce0368a18351338fbeae388f4f965da1ac4a6b84926793262112",
-        "setup.mjs": "d66bdcd02a06ebb715dc96b9f768a4f97d4a680e3ee58af0577590c559c5bacf"
+        "setup.mjs": "2d44ae5d9cee02ea0463b4da906bc70ed2a079ded9747f3eb0b4824f041c618a"
       },
       "id": "omd_profiles",
-      "package_sha256": "ad1487320a7695dcd253c7687dc572d0080483f54723ddc5c9a8173e746f474d",
+      "package_sha256": "c7faa86ea932b984b7510ec77a7978904e04f7e684d629773e712b2209a8ac7b",
       "source": "mods/first-party/omd_profiles",
       "version": "1.0.0"
     },

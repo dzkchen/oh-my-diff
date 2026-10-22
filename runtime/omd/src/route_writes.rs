@@ -1,5 +1,3 @@
-//! Routes and provider services a mod replaces in `host.json` after the user confirms.
-
 use serde_json::Value;
 use serde_json::json;
 use std::path::Path;
@@ -233,6 +231,21 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
             "paid API, per request"
         }
     };
+    let text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), str::to_owned);
+    let shown = |key: &str, value: Option<&Value>| match (key, value) {
+        ("route", Some(route)) => format!("{} ({})", route["name"].as_str().unwrap_or_default(), route["model"].as_str().unwrap_or_default()),
+        ("network" | "requests", value) => if value == Some(&json!(true)) { "on" } else { "off" }.to_owned(),
+        (_, Some(Value::Array(items))) => items.iter().map(text).collect::<Vec<_>>().join(" "),
+        (_, Some(Value::Object(map))) => map.iter().map(|(key, value)| format!("{key}={}", text(value))).collect::<Vec<_>>().join(" "),
+        (_, value) => value.map_or_else(|| "none".to_owned(), text),
+    };
+    let field = |lines: &mut Vec<String>, mut line: String| {
+        if line.len() > 400 {
+            line.truncate(line.floor_char_boundary(399));
+            line.push('…');
+        }
+        lines.push(line);
+    };
     let mut lines = Vec::new();
     let (old, new) = (
         owned(before, "routes", "provider", "name"),
@@ -240,12 +253,30 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
     );
     for (name, route) in &new {
         let model = route["model"].as_str().unwrap_or_default();
-        match old.get(name) {
-            None => lines.push(format!("Add model route {name}: {model}, {}", billing(route))),
-            Some(previous) if previous != route => {
-                lines.push(format!("Change model route {name}: {model}, {}", billing(route)))
+        let previous = match old.get(name) {
+            None => {
+                lines.push(format!("Add model route {name}: {model}, {}", billing(route)));
+                json!({})
             }
-            Some(_) => {}
+            Some(previous) if previous != route => {
+                lines.push(format!("Change model route {name}: {model}, {}", billing(route)));
+                previous.clone()
+            }
+            Some(_) => continue,
+        };
+        let keys = route.as_object().into_iter().chain(previous.as_object()).flat_map(|map| map.keys());
+        for key in keys.collect::<std::collections::BTreeSet<_>>() {
+            if !matches!(key.as_str(), "name" | "provider" | "roles" | "model") && previous.get(key) != route.get(key) {
+                let value = match (previous.get(key), route.get(key)) {
+                    (Some(Value::Object(was)), Some(Value::Object(now))) => Some(Value::Object(
+                        now.iter().filter(|(inner, value)| was.get(*inner) != Some(*value)).map(|(inner, value)| (inner.clone(), value.clone()))
+                            .chain(was.keys().filter(|inner| !now.contains_key(*inner)).map(|inner| (inner.clone(), Value::Null)))
+                            .collect(),
+                    )),
+                    (_, value) => value.cloned(),
+                };
+                field(&mut lines, format!("Route {name} {key}: {}", shown(key, value.as_ref())));
+            }
         }
     }
     for name in old.keys().filter(|name| !new.contains_key(*name)) {
@@ -257,14 +288,6 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
     );
     let list = |grant: &Value, key: &str| -> Vec<Value> {
         grant[key].as_array().cloned().unwrap_or_default()
-    };
-    let shown = |key: &str, value: Option<&Value>| match (key, value) {
-        ("route", Some(route)) => format!("{} ({})", route["name"].as_str().unwrap_or_default(), route["model"].as_str().unwrap_or_default()),
-        ("network" | "requests", value) => if value == Some(&json!(true)) { "on" } else { "off" }.to_owned(),
-        (_, Some(Value::String(text))) => text.clone(),
-        (_, Some(Value::Array(items))) => items.iter().map(|item| item.as_str().map_or_else(|| item.to_string(), str::to_owned)).collect::<Vec<_>>().join(" "),
-        (_, Some(Value::Object(map))) => map.iter().map(|(key, value)| format!("{key}={}", value.as_str().unwrap_or_default())).collect::<Vec<_>>().join(" "),
-        (_, value) => value.map_or_else(|| "none".to_owned(), Value::to_string),
     };
     for (id, grant) in &new {
         let previous = old.get(id);
@@ -281,12 +304,7 @@ fn changes(store: &Path, caller: &str, before: &Value, after: &Value) -> Vec<Str
         }
         for key in ["program", "program_sha256", "arguments", "network", "read_paths", "read_hashes", "code_roots", "requests", "secrets", "route"] {
             if before.get(key) != grant.get(key) {
-                let mut line = format!("Service {id} {key}: {}", shown(key, grant.get(key)));
-                if line.len() > 400 {
-                    line.truncate(line.floor_char_boundary(399));
-                    line.push('…');
-                }
-                lines.push(line);
+                field(&mut lines, format!("Service {id} {key}: {}", shown(key, grant.get(key))));
             }
         }
     }

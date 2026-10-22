@@ -56,6 +56,33 @@ class ProfileModeTests(unittest.TestCase):
                           "activation": {"selection": selection}}
                 self.assertIn("-c features.daemon_auto_start=false", profiles.selected_text(record).splitlines()[-1])
 
+    def test_a_route_launch_refreshes_a_catalog_that_lacks_routes_added_in_a_session(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            (base / "host.json").write_text(json.dumps({"routes": [{"model": "work", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "home", "provider": "omd_profiles", "data": {}},
+                                                                   {"model": "legacy", "provider": "omd_profiles"}]}))
+            route, catalog = base / "route.json", base / "models.json"
+            route.write_text(json.dumps({"default": "work", "models": [{"slug": "work", "family": "work"}]}))
+            catalog.write_text(json.dumps({"models": [{"slug": "work"}]}))
+            record = {"profile": "full", "store": str(base), "activation": {"selection": "omd"}, "manager": {"installed_path": "m"},
+                      "providers": {"omd_profiles": {"route": str(route), "catalog": str(catalog)}}}
+
+            def setup(_prefix, _record, _name, _identifier, options):
+                self.assertEqual(options, {})
+                route.write_text(json.dumps({"default": "work", "models": [{"slug": "work"}, {"slug": "home"}]}))
+                catalog.write_text(json.dumps({"models": [{"slug": "work"}, {"slug": "home"}]}))
+
+            arguments = argparse.Namespace(setup=False, model="home", codex=[])
+            with patch.object(profiles, "load", return_value=record), patch.object(profiles, "check"), \
+                    patch.object(profiles, "invoke", return_value={"selections": [{"id": "omd_profiles", "effective": True}]}), \
+                    patch.object(profiles, "route_setup", side_effect=setup) as refreshed, \
+                    patch.object(profiles.os, "execv") as launched:
+                profiles.route(base, base, "profiles", arguments)
+                profiles.route(base, base, "profiles", arguments)
+            self.assertEqual(refreshed.call_count, 1)
+            self.assertIn('model="home"', launched.call_args.args[1])
+
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
             with self.subTest(unmanaged=unmanaged), tempfile.TemporaryDirectory() as temporary:

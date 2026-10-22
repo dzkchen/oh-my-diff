@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
+import { origin, profileEntry } from './profiles.ts';
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
@@ -277,7 +278,7 @@ test('setup adds profiles as host routes carrying their data and removing the la
     const manager = join(store, 'omd-mod');
     writeFileSync(manager, `#!/bin/sh\necho '${JSON.stringify([{ id: 'p7', label: 'home', kind: 'chatgpt', origin: 'https://chatgpt.com' }])}'\n`, { mode: 0o755 });
     writeFileSync(binary, `#!/bin/sh\necho '${JSON.stringify({ models: [{ slug: 'up', context_window: 5000, default_reasoning_level: 'high', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'high' }] }] })}'\n`, { mode: 0o755 });
-    writeFileSync(record, JSON.stringify({ profile: 'full', packages: { omd_profiles: {} }, store, binary: { installed_path: binary }, manager: { installed_path: manager }, author: { node: process.execPath } }));
+    writeFileSync(record, JSON.stringify({ profile: 'full', packages: { omd_profiles: {} }, store, binary: { installed_path: binary }, manager: { installed_path: manager }, author: { node: null } }));
     const added = run({ remove: 'work', add: { name: 'home', credential: 'home', protocol: 'responses', url: 'https://chatgpt.com/backend-api/codex/responses', model: 'up' } });
     assert.equal(added.status, 0, added.stderr);
     const routes = JSON.parse(readFileSync(join(store, 'host.json'), 'utf8')).routes;
@@ -287,6 +288,10 @@ test('setup adds profiles as host routes carrying their data and removing the la
     const grant = JSON.parse(readFileSync(join(store, 'host.json'), 'utf8')).services.find(item => item.id === 'omd_profiles');
     assert.deepEqual([grant.arguments.slice(1), grant.credentials, grant.route.name], [['serve', join(realpathSync(store), 'host.json'), '49152'], ['p7'], 'home']);
     assert.deepEqual(JSON.parse(readFileSync(join(store, 'routes', 'profiles', 'route.json'), 'utf8')).models, [{ slug: 'home', family: 'home' }]);
+    rmSync(join(store, 'routes', 'profiles', 'route.json'));
+    assert.equal(run({}).status, 0);
+    const { port } = JSON.parse(readFileSync(join(store, 'routes', 'profiles', 'route.json'), 'utf8'));
+    assert.equal(JSON.parse(readFileSync(join(store, 'host.json'), 'utf8')).routes[1].responses_url, `http://127.0.0.1:${port}/v1/responses`);
     const done = run({ remove: 'home' });
     assert.equal(done.status, 0, done.stderr);
     const host = JSON.parse(readFileSync(join(store, 'host.json'), 'utf8'));
@@ -296,6 +301,13 @@ test('setup adds profiles as host routes carrying their data and removing the la
   } finally {
     rmSync(store, { recursive: true, force: true });
   }
+});
+
+test('a profile URL matches the origin its credential was enrolled for however it is written', () => {
+  assert.equal(origin('HTTPS://ChatGPT.com:443/backend-api/codex/responses'), 'https://chatgpt.com');
+  assert.equal(origin('http://chatgpt.com/'), null);
+  const credential = { id: 'p1', label: 'work', kind: 'chatgpt', origin: 'https://chatgpt.com' };
+  assert.equal(profileEntry({ name: 'work', credential: 'work', protocol: 'responses', url: 'https://ChatGPT.com:443/backend-api/codex/responses', model: 'up' }, [credential]).credential, 'p1');
 });
 
 test('profile switches stay on the thread, ask before paid routes and report refusals', () => {
@@ -347,14 +359,16 @@ test('profile switches stay on the thread, ask before paid routes and report ref
 test('the switcher meters the active account, cycles with Alt+s and adds or removes accounts in the session', () => {
   const calls = [];
   const kv = {};
+  const clock = 1_000_000;
   let written = { routes: [], services: [] };
   const replies = { 'events.publish': { delivered: 1, dropped: 0 }, 'session.info': { thread_id: 'thread-1' }, 'app.request': {}, 'terminal.panel': { shown: true },
+    'sidecars.status': { id: 'omd_profiles', running: true, started_at_ms: 500_000 }, 'credentials.list': [{ id: 'cred-home', label: 'personal', kind: 'chatgpt', origin: 'https://chatgpt.com' }],
     'terminal.prompt': { status: 'accepted', value: 'home' }, 'credentials.request': { status: 'completed', profile: { id: 'cred-home', label: 'home', kind: 'chatgpt', origin: 'https://chatgpt.com' } } };
   const invoke = (state, event, payload, name) => callback({ ...request, state, event, name, payload, virtual_time_ms: 1_000_000 }, ({ operation, arguments: args }) => {
     calls.push({ operation, args });
     if (operation === 'store.get') return kv[args.key] ?? null;
     if (operation === 'store.put') {
-      kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1 };
+      kv[args.key] = { value: args.value, revision: (kv[args.key]?.revision ?? 0) + 1, provenance: { at: clock } };
       return { revision: kv[args.key].revision };
     }
     if (operation === 'routes.write') return written;
@@ -370,8 +384,13 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
   const spans = view.sites.above_composer.components[1].spans;
   assert.equal(spans.map(span => span.text).join(''), '● work · 5h ▓▓░░░ 42% · wk ▓▓▓▓▓ 93% · just now · Alt+s next · /profile');
   assert.equal(spans.find(span => span.text.startsWith('wk')).tone, 'attention');
-  state = invoke(state, 'command', 'next', 'profile').state;
-  assert.equal(state.pending, 'spare');
+  const notified = invoke(state, 'command', 'next', 'profile').state;
+  assert.equal(notified.pending, 'spare');
+  const stale = invoke({ ...notified, current: 'spare', pending: null }, 'app_notification', { method: 'account/rateLimits/updated', params: { rateLimits: {
+    primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2_000 }, secondary: { usedPercent: 93, windowDurationMins: 10080, resetsAt: 9_000 } } } }).state;
+  assert.equal(kv.quota.value.spare, undefined);
+  assert.equal(stale.seen.profile, 'work');
+  state = notified;
   assert.deepEqual(calls.filter(call => call.operation === 'app.request').at(-1).args.params.model, 'spare');
   state = { ...state, pending: null };
   invoke(state, 'command', '', 'profile');
@@ -391,12 +410,15 @@ test('the switcher meters the active account, cycles with Alt+s and adds or remo
   state = added.state;
   assert.equal(kv.changed.value, 1_000_000);
   replies['routes.list'] = ['work', 'spare', 'home'].map(name => route(name, 'included_subscription'));
-  const restarted = invoke(state, 'turn_start', { turn_id: 't1' }).state;
-  assert.equal(restarted.applied, 1_000_000);
+  invoke(state, 'turn_start', { turn_id: 't1' });
   assert.deepEqual(calls.filter(call => call.operation.startsWith('providers.')).map(call => call.operation), ['providers.unregister', 'providers.register', 'providers.models']);
+  replies['sidecars.status'] = { id: 'omd_profiles', running: true, started_at_ms: 1_000_001 };
+  invoke({ profiles: state.profiles, current: 'home', ours: true }, 'turn_start', { turn_id: 't1' });
+  assert.equal(calls.filter(call => call.operation.startsWith('providers.')).length, 3);
   assert.deepEqual(calls.findLast(call => call.operation === 'providers.models').args.models.map(model => [model.slug, model.context_window, model.default_effort]),
     [['work', 1000, 'high'], ['spare', 1000, 'high'], ['home', 1000, 'high']]);
   assert.equal(invoke(state, 'command', 'remove work', 'profile').value.display, "work is this thread's profile; switch to another one first.");
+  assert.equal(invoke(state, 'command', 'remove personal', 'profile').value.display, 'personal is the sign-in of profile home; remove that profile instead.');
   written = { status: 'declined' };
   assert.equal(invoke(state, 'command', 'remove spare', 'profile').value.display, 'Profiles unchanged.');
   written = { routes: ['work', 'home'], services: ['omd_profiles'] };

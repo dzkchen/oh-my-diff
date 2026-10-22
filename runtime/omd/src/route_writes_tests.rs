@@ -44,8 +44,9 @@ fn a_write_replaces_only_the_callers_routes_and_merges_its_services() {
     let arguments = json!({"routes": [route("work", "fixture_router", true), route("home", "fixture_router", true)],
         "services": [{"id": "router", "credentials": [work, home]}]});
     let (write, changes) = plan(&store, Path::new("/repo"), "fixture_router", &arguments).unwrap();
+    assert!(changes.contains(&"Route home responses_url: http://127.0.0.1:9/v1/responses".to_owned()));
     assert_eq!(
-        changes,
+        changes.iter().filter(|line| !line.starts_with("Route ")).collect::<Vec<_>>(),
         [
             "Add model route home: home, subscription",
             "Add model route work: work, subscription",
@@ -122,4 +123,17 @@ fn a_new_grant_shows_everything_it_is_given_and_a_changed_host_refuses_the_confi
         apply(&store, Path::new("/repo"), &write).unwrap_err(),
         "routes_write_changed: host.json changed after the confirmation; try again"
     );
+}
+
+#[test]
+fn a_changed_route_shows_each_field_it_changes() {
+    let (_temp, store, _, _) = store();
+    let mut moved = route("old", "fixture_router", true);
+    moved["responses_url"] = json!("https://elsewhere.example/v1/responses");
+    moved["rates"]["input_token_ceiling"] = json!(50);
+    let (_, changes) = plan(&store, Path::new("/repo"), "fixture_router", &json!({"routes": [moved]})).unwrap();
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0], "Change model route old: old, subscription");
+    assert_eq!(changes[1], "Route old rates: input_token_ceiling=50");
+    assert_eq!(changes[2], "Route old responses_url: https://elsewhere.example/v1/responses");
 }

@@ -54,10 +54,11 @@ async function setup(recordPath, optionText) {
   const previous = await json(routePath, {});
   const hostPath = join(record.store, 'host.json');
   const host = await json(hostPath, {});
-  const profiles = profilesOf(host.routes ?? []).filter(profile => profile.name !== options.remove && profile.name !== options.add?.name);
-  if (!profiles.length && !options.add && !(host.routes ?? []).some(route => route.provider === PROVIDER)) throw new Error('no_profiles: add one with --add');
   const port = previous.port ?? await unusedPort();
   const url = `http://127.0.0.1:${port}/v1`;
+  const profiles = profilesOf(host.routes ?? []).filter(profile => profile.name !== options.remove && profile.name !== options.add?.name)
+    .map(profile => ({ ...profile, router: url }));
+  if (!profiles.length && !options.add && !(host.routes ?? []).some(route => route.provider === PROVIDER)) throw new Error('no_profiles: add one with --add');
   const dump = spawnSync(record.binary.installed_path, ['debug', 'models', '--bundled'], { encoding: 'utf8', timeout: 30000 });
   if (dump.status !== 0) throw new Error('codex_bundled_catalog_unavailable');
   const bundled = JSON.parse(dump.stdout).models;
@@ -71,7 +72,7 @@ async function setup(recordPath, optionText) {
   await chmod(tokenPath, 0o600);
   const names = profiles.map(profile => profile.name);
   const fallback = names.includes(previous.default) ? previous.default : names[0] ?? null;
-  const node = await realpath(record.author.node);
+  const node = await realpath(process.execPath);
   const programSha = sha(await readFile(node));
   const readPaths = [join(await realpath(record.store), 'host.json')];
   for (const path of [mod, resolve(dirname(node), '..'), '/System', '/usr/lib', '/private/etc/ssl', '/etc/ssl']) {

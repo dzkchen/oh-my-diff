@@ -55,6 +55,7 @@ account last reported, with how long ago:
 ## Needs and limits
 
 - Launch with `omd-package profiles [--model NAME]`. If the mod is disabled or broken, requests fail until you re-enable it.
+- Setup and the profile router run on Node.js 22.18 or later: the Node.js given to the installer's `--node`, else `node` on PATH.
 - Switching keeps the thread, attachments and tool history. Earlier reasoning is not sent to another account, even if you switch back.
 - Limits are what each ChatGPT account reported on its last request in any thread; nothing probes an idle account. A window whose reset time has passed shows `reset`.
 - Alt+s needs Option-as-Alt in Kitty (`macos_option_as_alt`) and Ghostty (`macos-option-as-alt`) on macOS; `/profile next` works everywhere.

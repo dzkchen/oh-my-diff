@@ -10,13 +10,17 @@ export type Options = { name?: string; credential?: string; protocol?: string; u
 export type Profile = { name: string; protocol: string; url: string; model: string; credential: string; kind: string; window: number | null;
   reasoning: boolean; cache_control: boolean; text_only: boolean; max_output: number; paid: number[] | null; effort?: string; efforts?: string[]; router?: string };
 
-const origin = (url: string) => url.replace(/^(https:\/\/[^/?#]+).*$/, '$1');
+export const NAME = /^[a-z0-9_-]{1,32}$/;
+export const origin = (url: string) => {
+  const authority = /^https:\/\/([^/?#]+)/i.exec(url)?.[1].toLowerCase();
+  return authority ? `https://${authority.replace(/:443$/, '')}` : null;
+};
 
 export function profileEntry(options: Options, credentials: Credential[]): Profile {
   const { name, credential, protocol, url, model } = options;
-  if (!/^[a-z0-9_-]{1,32}$/.test(name ?? '')) throw new Error('profile_name_invalid: lowercase letters, digits, _ or -');
+  if (!NAME.test(name ?? '')) throw new Error('profile_name_invalid: lowercase letters, digits, _ or -');
   if (!PROTOCOLS.includes(protocol ?? '')) throw new Error(`profile_protocol_invalid: ${PROTOCOLS.join('|')}`);
-  if (!/^https:\/\/[^/?#]+/.test(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
+  if (!origin(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
   const found = credentials.find(item => item.label === credential || item.id === credential);
   if (!found || found.kind === 'secret') throw new Error(`credential_not_enrolled: run /profile add in an OMD+ session first (${credential})`);
   if (origin(url!) !== found.origin) throw new Error(`profile_url_origin_mismatch: ${found.label} is enrolled for ${found.origin}`);

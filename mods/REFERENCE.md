@@ -965,7 +965,7 @@ nothing would change.
   caller's grant with the same `id`, an entry without one must be a complete grant with `mod_id` set to the caller,
   and the caller's grants it leaves out are removed. Secrets may name only `secret_refs` the caller's grants already
   use, and credentials must be existing profiles (a `secret` profile only when the caller owns it). The dialog lists
-  every grant field that changes with its new value.
+  every route and grant field that changes with its new value.
 - The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
   nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
   through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
@@ -2538,6 +2538,9 @@ next request or for the thread.
 `sidecars.start {id, credential?, secrets?}` injects a host-approved credential and the caller's own secrets
 (`OMD_SECRETS`, JSON `[{id, label, origin, value}]`) into the sidecar only; values never reach the mod runtime or
 the model.
+
+`sidecars.status {id}` returns `{id, running, started_at_ms}` for a sidecar or provider service the caller started
+in this process. Compare `started_at_ms` with a store entry's `provenance.at` to tell whether it predates a change.
 
 #### Credential origins
 
