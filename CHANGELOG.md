@@ -20,6 +20,7 @@ Add and switch ChatGPT, Claude, Cursor and API accounts inside the session, a mi
 - Usage: ChatGPT-plan requests count as `included` instead of unknown cost, usage shows only in the status line below the prompt, and the usage dialog keeps Claude and Cursor limits apart from the Codex account (#299, #301)
 - Mod API: shipped experimental entries with a first-party or example consumer are now frozen, among them `terminal.panel`, `providers.models`, `http.request`, `sessions.read`, component modules and the below-composer site
 - Account mods (`omd_profiles`, `omd_claude_cli`, `omd_cursor`) need Node on `PATH` and say how to install it if it is missing (#301)
+- `omd`: bare `omd`, `omd help` and `omd --help` list the mod, session and update commands; `omd help --all` shows every flag (#303)
 
 ### Fixed
 
