@@ -17,7 +17,7 @@ omd-package mod enable omd_preview
 | `/preview` | Open the last response in your browser |
 | `/preview N` | Open the Nth most recent response. `/preview list` numbers them. |
 | `/preview PATH` | Open a Markdown, code or diff file. Use `./PATH` if the file is named like a subcommand. |
-| `/preview PATH --watch` | Re-render the browser page when the file changes (up to 8 files; not with `--inline`). A missing file is retried, backing off from 2 s to once a minute, until it exists. `/preview unwatch` stops. |
+| `/preview PATH --watch` | Re-render the browser page when the file changes (up to 8 files; not with `--inline`). A missing file is awaited through a watch on its parent directory; one in the repository root or in a missing directory is retried instead, backing off from 2 s to once a minute, until it exists. `/preview unwatch` stops. |
 | `/preview ... --inline` | Show it in a terminal dialog instead. `/preview close` closes it. |
 | `/preview diagrams [N]` | List Mermaid diagrams from the last 10 responses, or open diagram N with its source and a copy button |
 | `/preview image [N]` | Preview the Nth image in your draft |

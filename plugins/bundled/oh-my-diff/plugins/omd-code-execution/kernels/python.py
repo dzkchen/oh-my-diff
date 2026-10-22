@@ -94,7 +94,8 @@ def drain():
 
 
 threading.Thread(target=drain, daemon=True).start()
-for line in sys.stdin:
+commands = os.fdopen(os.dup(0), encoding="utf-8")  # exit() closes sys.stdin
+for line in commands:
     output = LimitedOutput()
     bridge_failed = False
     with condition:
@@ -108,7 +109,7 @@ for line in sys.stdin:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             exec(compile(request["code"], "<omd-python-cell>", "exec"), state)
         response = {"ok": True}
-    except Exception as error:
+    except BaseException as error:
         response = {"ok": False, "error": f"{type(error).__name__}: {error}"}
     finally:
         if "active" in locals():

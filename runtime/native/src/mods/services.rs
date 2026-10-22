@@ -387,7 +387,9 @@ impl Services {
                 .get(&selection.id)
                 .filter(|r| r.mod_id == mod_id && r.generation == generation)
                 .ok_or("unknown_or_foreign_sidecar")?;
-            return Ok(json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}));
+            return Ok(
+                json!({"id":selection.id,"running":!record.finished(),"started_at_ms":record.started_at_ms}),
+            );
         }
         if records.contains_key(&selection.id) {
             return Err("service_already_registered".into());

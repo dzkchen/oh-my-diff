@@ -197,8 +197,7 @@ pub(super) fn validate(interceptors: &[ModInterceptor], capabilities: &[String])
     Ok(())
 }
 
-/// Outermost first: explicit `before`/`after`, then consumers outside their dependencies, then ID.
-/// A cycle fails only the mods that declared its edges, never one that is merely their target.
+/// Outermost first: `before`/`after`, then consumers outside dependencies, then ID; a cycle fails only the mods declaring its edges.
 pub(super) fn order(
     loaded: &BTreeMap<String, Loaded>,
 ) -> std::result::Result<Vec<String>, Vec<String>> {

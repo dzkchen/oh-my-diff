@@ -341,18 +341,25 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
   const unchanged = (fact: Fact) => fact.version !== null && hashed[fact.source.path]?.kind === 'file'
     && hashed[fact.source.path]!.sha256 === fact.version.file_sha256;
   const files: Record<string, { text: string; sha256: string } | null> = {};
+  const unread = new Set<string>();
   let budget = MAX_FILE_BYTES;
   for (const path of small) {
     const stat = hashed[path];
-    if (stat?.kind !== 'file' || stat.size > budget || state.facts.every(fact => fact.source.path !== path || unchanged(fact))) continue;
+    if (stat?.kind !== 'file' || state.facts.every(fact => fact.source.path !== path || unchanged(fact))) continue;
+    if (stat.size > budget) { unread.add(path); continue; }
     budget -= stat.size;
     const read = api.host.tryCall('workspace.read', { paths: [path] });
-    if (!read.ok) continue;
+    if (!read.ok) {
+      if (!read.error.includes('workspace_text_not_utf8')) unread.add(path);
+      continue;
+    }
     const file = read.value.files[path] ?? null;
     if (file && file.sha256 !== stat.sha256) throw new Error('knowledge_source_stale');
     files[path] = file;
   }
+  const unknown = new Set<string>();
   for (const fact of state.facts) {
+    if (unread.has(fact.source.path) && !unchanged(fact)) { unknown.add(fact.id); facts.push(fact); continue; }
     const stat = (small.includes(fact.source.path) ? hashed : stats)[fact.source.path] ?? null;
     const current = unchanged(fact) ? { version: fact.version, reason: null }
       : stat?.kind === 'file' && stat.size <= MAX_FILE_BYTES && !(fact.source.path in files) ? { version: null, reason: 'source_unavailable' }
@@ -368,7 +375,7 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
   if (access.length) api.host.call('workspace.check_access', { paths: access });
   api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const revision = state.revision + (refreshed.length ? 1 : 0);
-  const visible = facts.filter(fact => inspect || fact.status === 'fresh');
+  const visible = facts.filter(fact => inspect || (fact.status === 'fresh' && !unknown.has(fact.id)));
   const approved_lessons = state.lessons.filter(lesson => (inspect || lesson.state === 'approved')
     && (inspect || lesson.evidence_ids.every(id => state.evidence.some(item => item.id === id))));
   const result = { schema: 2, mode, repository_identity, generation: state.generation, revision, refreshed_fact_ids: refreshed, invalidated_ids: invalidated,

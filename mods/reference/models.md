@@ -54,7 +54,7 @@ and `routes.select` without restarting.
 
 ### Route writes (`route_write_v1`)
 
-`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own entries in
+`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own routes in
 `host.json` after the user confirms a dialog listing every change. It returns `{routes, services}` (the caller's
 route names and service ids afterwards), `{status: 'declined'}`, or `{unchanged: true}` without asking when
 nothing would change.
@@ -64,11 +64,11 @@ nothing would change.
   `provider_billed`) needs `limits.exposure_microusd` above zero (`routes_write_allowance_required`).
 - A route's `data` (any JSON, at most 2 KiB) is ignored by the host; `routes.list` returns it only to the route's
   provider mod, and the mod's provider service can read it from `host.json`.
-- `services`, when given, lists the caller's service grants afterwards: each entry's fields replace those of the
-  caller's grant with the same `id`, an entry without one must be a complete grant with `mod_id` set to the caller,
-  and the caller's grants it leaves out are removed. Secrets may name only `secret_refs` the caller's grants already
-  use, and credentials must be existing profiles (a `secret` profile only when the caller owns it). The dialog lists
-  every route and grant field that changes with its new value.
+- `services`, when given, updates service grants the caller already owns: each entry is `{id, credentials?,
+  route?}` and replaces those fields of the caller's grant with that `id` (`routes_write_service_unknown` for any
+  other id, `routes_write_service_field` for any other field). A grant's program, arguments, network, paths and
+  secrets are never written here. Credentials must be existing profiles (a `secret` profile only when the caller
+  owns it). The dialog lists every route and grant field that changes with its new value.
 - The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
   nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
   through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
@@ -446,8 +446,8 @@ none starts paid work implicitly.
 - `api.package` is `{id, version, sha256}` of the running source.
 - `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
   route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
-  `cwd` is the thread's current working directory, and `turns_started` counts turns this process started in the
-  thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
+  `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
+  `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
   records in shared state, such as watch IDs, by it.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)

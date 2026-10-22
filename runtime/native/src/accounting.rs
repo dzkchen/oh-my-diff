@@ -409,8 +409,7 @@ impl Accounts {
             .and_then(|notifier| notifier.clone())
     }
 
-    /// Whether `surface` has interceptors (`Some(required)`), waiting for a busy runtime unless a mod-owned
-    /// request would deadlock on its own in-flight callback.
+    /// Whether `surface` has interceptors (`Some(required)`); waits for a busy runtime unless a mod-owned request would self-deadlock.
     fn intercepting(
         mods: &Mutex<codex_omd::ModHost>,
         holders: &AtomicUsize,
@@ -1325,8 +1324,7 @@ impl ResponseObserver for Accounts {
         inject_credential(request, account.credential.as_deref(), &url)?;
         let Some(rates) = account.rates.clone() else {
             let model = requested.unwrap_or_else(|| account.model.clone());
-            let mut attempt =
-                self.attempt(account, thread, request_id, attempt, model, None, None);
+            let mut attempt = self.attempt(account, thread, request_id, attempt, model, None, None);
             attempt.subscription = request.url == SUBSCRIPTION_RESPONSES_URL
                 && request.headers.contains_key("chatgpt-account-id");
             return Ok(Some(Box::new(attempt)));

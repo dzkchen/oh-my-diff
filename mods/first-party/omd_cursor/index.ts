@@ -8,7 +8,8 @@ const settleKey = 'settle';
 const LOG_TAIL_BYTES = 32_768;
 const SETTLE_POLLS = 6;
 const OUTPUT_BYTES = 12_288;
-export const ACCOUNT = /^[a-z0-9][a-z0-9_-]{0,23}$/;
+export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
+const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again';
 
 type Row = Record<string, any>;
 type Settle = { thread: string; applied: string[]; polls: number };
@@ -157,7 +158,7 @@ export default function activate(api: ModAPI): void {
     if (!mod) return void say('Cursor setup could not find the installed mod; enable it in /mods and run /cursor setup again', true);
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
-    if (!node) return void say(`Cursor setup did not start: ${found.ok ? 'node is unavailable' : found.error}`, true);
+    if (!node) return void say(`Cursor setup did not start: ${found.ok ? NODE_MISSING : found.error}`, true);
     api.host.tryCall('process.stop', { session });
     const started = api.host.tryCall('process.start', { session, name: 'node', path: node.path, sha256: node.sha256,
       arguments: [`${mod}/setup.mjs`, name], sandbox: 'none', framing: 'raw', notify: ['output', 'exit'] });
@@ -184,7 +185,7 @@ export default function activate(api: ModAPI): void {
     const state = saved();
     if (action === 'setup' || action === 'login') {
       const account = name ?? 'default';
-      if (extra !== undefined || !ACCOUNT.test(account)) return { display: `Account names use lowercase letters, digits, _ or - (at most 24). ${usage}` };
+      if (extra !== undefined || !ACCOUNT.test(account)) return { display: `Account names start with a letter and use lowercase letters, digits, _ or - (at most 24). ${usage}` };
       const hop = api.host.tryCall('events.publish', { channel: 'setup', data: { account } });
       if (!hop.ok || hop.value.delivered === 0) return { display: 'Cursor setup could not be started; run /cursor setup again' };
       return { display: `Starting Cursor setup for account ${account}: it installs the Cursor SDK, then asks you to approve Oh My Diff in the browser; progress shows below` };
@@ -195,10 +196,11 @@ export default function activate(api: ModAPI): void {
       if (!account || typeof mod !== 'string') return { display: account ? 'Run /cursor setup once in this OMD install, then try again' : `Unknown Cursor account ${name}` };
       const run = api.host.tryCall('exec.run', { program: 'node', argv: [`${mod}/setup.mjs`, name, '--remove'], sandbox: 'none', timeout_ms: 120_000 });
       const result = run.ok ? /^OMD_CURSOR_RESULT (.+)$/m.exec(run.value.stdout)?.[1] : undefined;
-      if (!result) return { display: `Cursor account ${name} was not removed: ${run.ok ? /^OMD_CURSOR_ERROR (.+)$/m.exec(run.value.stdout)?.[1] ?? 'no result' : run.error}` };
+      if (!result) return { display: `Cursor account ${name} was not removed: ${run.ok ? /^OMD_CURSOR_ERROR (.+)$/m.exec(run.value.stdout)?.[1] ?? 'no result' : run.error.startsWith('exec_program_unavailable') ? NODE_MISSING : run.error}` };
       api.host.tryCall('events.publish', { channel: 'removed', data: { result: JSON.parse(result) } });
       const forgot = api.host.tryCall('credentials.request', { action: 'remove', profile: String(account.secret) });
-      return { display: `Removed Cursor account ${name}${forgot.ok && forgot.value.status === 'completed' ? ' and its key' : '; its key was kept'}` };
+      const revoke = 'the key stays valid at Cursor until you revoke "Oh My Diff" under API keys in your Cursor dashboard';
+      return { display: `Removed Cursor account ${name}${forgot.ok && forgot.value.status === 'completed' ? ` and OMD's copy of its key; ${revoke}` : `; OMD kept its copy of the key, and ${revoke}`}` };
     }
     if (action !== 'usage' && action !== 'doctor') return { display: usage };
     if (typeof state.data !== 'string') return { display: 'Cursor is not set up; run /cursor setup.' };

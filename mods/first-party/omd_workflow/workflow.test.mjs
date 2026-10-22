@@ -204,6 +204,34 @@ test('contribution is checked and reviewed on frozen input before integration, a
   assert.ok(!unchecked.calls.some(call => call.operation === 'agents.spawn'));
 });
 
+test('a review that cannot start keeps the finished worker pending and the next advance retries it', () => {
+  const run = fixture();
+  let denied = true;
+  const host = Object.assign(call => {
+    if (denied && call.operation === 'agents.spawn' && call.arguments.role === 'contribution_review') throw new Error('allowance_denied');
+    return run.host(call);
+  }, { store: run.host.store });
+  begin(host);
+  invoke('delegate', { brief: 'Implement the requested change' }, host);
+  const refused = invoke('advance', {}, host, { refusals: true }).value;
+  assert.deepEqual([refused.status, refused.reason], ['refused', 'allowance_denied']);
+  assert.deepEqual([...run.agents.keys()], ['worker-1']);
+  assert.deepEqual([run.state.get('task').value.status, run.state.get('task').value.pending.handle], ['active', 'worker-1']);
+  denied = false;
+  assert.equal(invoke('advance', {}, host).value.status, 'running');
+  assert.deepEqual([run.state.get('task').value.pending.kind, run.state.get('task').value.pending.worker], ['contribution_review', 'worker-1']);
+  assert.ok(run.agents.has('worker-1'));
+});
+
+test('the context line stays valid JSON and bounded however much work remains', () => {
+  const run = fixture();
+  begin(run.host);
+  invoke('checkpoint', { remaining_work: Array.from({ length: 32 }, (_, index) => `${index} ${'x'.repeat(500)}`), failed_hypotheses: ['y'.repeat(500)] }, run.host);
+  const { text } = invoke('', {}, run.host, { event: 'context' }).value;
+  const task = JSON.parse(/: (\{.*\})\. Preserve/s.exec(text)[1]);
+  assert.deepEqual([task.status, task.remaining_work.length, task.remaining_count, task.failed_hypotheses[0].length], ['active', 3, 32, 60]);
+});
+
 test('denial, outage, malformed review and integration conflict never complete the task', () => {
   for (const [operation, behavior, expected] of [
     ['agents.spawn', () => { throw new Error('allowance_denied'); }, /allowance_denied/],

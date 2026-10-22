@@ -21,7 +21,8 @@ policy, sandbox, permissions, config, roots, environments, dynamic tools, base i
 fields added by a later upstream stay closed until reviewed.
 
 - `model` and `modelProvider` are allowed only as a configured route: each must match a `host.json` lead route, and
-  when both are given, the same one. `thread/settings/update {modelProvider}` moves the current thread to that provider from its next turn, as
+  when both are given, the same one. `modelProvider` needs `model` with it (`app_route_model_required`).
+  `thread/settings/update {model, modelProvider}` moves the current thread to that provider from its next turn, as
   picking another provider's model in `/model` does.
 - `thread/start` and `fuzzyFileSearch` roots must be the session root or one of its `git worktree list` entries.
 - Thread-scoped methods reach the current thread and threads the mod itself started or forked. Their other thread

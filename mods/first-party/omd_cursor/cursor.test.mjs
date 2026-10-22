@@ -73,7 +73,7 @@ test('/cursor setup runs the installed setup script in the background, says the 
   assert.deepEqual(hop.calls[0].arguments, { channel: 'setup', data: { account: 'default' } });
   const named = modEvent('command', 'setup work', null, () => ({ delivered: 1, dropped: 0 }), 'cursor');
   assert.deepEqual(named.calls[0].arguments, { channel: 'setup', data: { account: 'work' } });
-  assert.match(modEvent('command', 'setup Work', null, () => ({ delivered: 1 }), 'cursor').value.display, /^Account names use/);
+  for (const bad of ['setup Work', 'setup 1']) assert.match(modEvent('command', bad, null, () => ({ delivered: 1 }), 'cursor').value.display, /^Account names start with a letter/, bad);
   assert.ok(manifest.subscriptions.channels.includes('omd_cursor/setup'));
   const started = modEvent('channel', { channel: 'omd_cursor/setup', data: {} }, null, call => ({
     'packages.list': { packages: [{ id: 'omd_cursor', path: '/store/sources/omd_cursor' }] },
@@ -113,7 +113,7 @@ test('/cursor setup runs the installed setup script in the background, says the 
   const removing = modEvent('command', 'remove default', state, remover({ exit_code: 0, stdout: `OMD_CURSOR_RESULT ${JSON.stringify(emptied)}\n`, stderr: '' }), 'cursor');
   assert.deepEqual(removing.calls.map(call => [call.operation, call.arguments.argv ?? call.arguments]), [['exec.run', ['/store/sources/omd_cursor/setup.mjs', 'default', '--remove']],
     ['events.publish', { channel: 'removed', data: { result: emptied } }], ['credentials.request', { action: 'remove', profile: 'p7' }]]);
-  assert.equal(removing.value.display, 'Removed Cursor account default and its key');
+  assert.equal(removing.value.display, 'Removed Cursor account default and OMD\'s copy of its key; the key stays valid at Cursor until you revoke "Oh My Diff" under API keys in your Cursor dashboard');
   const applied = modEvent('channel', { channel: 'omd_cursor/removed', data: { result: emptied } }, state, () => ({}));
   assert.deepEqual([applied.state.accounts, applied.state.published, applied.calls.map(call => call.operation)], [[], false, ['providers.unregister']]);
   assert.equal(modEvent('command', 'remove work', finished.state, () => null, 'cursor').value.display, 'Unknown Cursor account work');

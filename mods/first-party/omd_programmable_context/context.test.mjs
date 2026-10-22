@@ -52,7 +52,7 @@ function session(settings = {}, prompt = 'accepted', beforePut = () => {}) {
     state = output.state;
     return output.value;
   };
-  return { run, tool: (name, args = {}) => run('tool', args, name), command: text => run('command', text, 'refine').display, history: (agent = null) => run('history', { thread_id: 'thread-1', agent_id: agent, model: 'm', items: [] }), stores };
+  return { run, tool: (name, args = {}) => run('tool', args, name), command: text => run('command', text, 'refine').display, history: (agent = null) => run('history', { thread_id: 'thread-1', agent_id: agent, model: 'm', items: [{ index: 3, type: 'message' }, { index: 4, type: 'message' }] }), stores };
 }
 
 test('context variables carry provenance, survive through thread storage and appear in the request view', () => {
@@ -68,11 +68,25 @@ test('context variables carry provenance, survive through thread storage and app
   assert.deepEqual(kept, { sha256: sha('three facts'), chars: 11, sources: ['a@' + sha('a')] });
   assert.deepEqual(s.tool('vars', { name: 'summary' }).value, 'three facts');
   assert.match(s.tool('keep', { name: 'bad name', value: 'x' }).error, /keep_invalid/);
-  assert.match(s.history().insert[0].text, /- summary: 11 characters, sha256 [0-9a-f]{12}, sources a@/);
+  const [head, tail] = s.history().insert;
+  assert.deepEqual([head.before, tail.before], [0, 4]);
+  assert.doesNotMatch(head.text, /summary/);
+  assert.match(tail.text, /- summary: 11 characters, sha256 [0-9a-f]{12}$/);
   s.run('start');
-  assert.doesNotMatch(s.history().insert[0].text, /summary/);
+  assert.equal(s.history().insert.length, 1);
   s.run('resume', { thread_id: 'thread-1', last_turn: null, restarted: true });
-  assert.match(s.history().insert[0].text, /- summary: 11 characters/);
+  assert.match(s.history().insert[1].text, /- summary: 11 characters/);
+});
+
+test('keeping variables leaves the cached index-0 message unchanged and sends no sources', () => {
+  const s = session();
+  s.run('start');
+  const before = s.history().insert[0].text;
+  s.tool('keep', { name: 'one', value: 'x'.repeat(100), sources: ['a'.repeat(500)] });
+  s.tool('keep', { name: 'two', value: 'y', sources: ['b'.repeat(500)] });
+  const [head, tail] = s.history().insert;
+  assert.equal(head.text, before);
+  assert.ok(tail.text.length < 300 && !tail.text.includes('aaaa'));
 });
 
 test('kept variables preserve complete provenance when publication fails and verify restored content', () => {

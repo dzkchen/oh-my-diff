@@ -478,10 +478,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     })
 }
 
-/// Like [`resolve_program`], a bare name never resolves inside the repository, whose files the
-/// sandboxed agent can write; an absolute program there runs only when `os_access` lists that path.
-/// Checks use the canonical target, but a link outside the repository runs as the link (directory
-/// canonical) so a multicall shim, such as a version manager's `node`, dispatches by its name.
+/// The agent can write the repository, so programs there need an `os_access` path; outside links run as the link so multicall shims dispatch.
 pub fn unrestricted_program(
     access: &crate::ModOsAccess,
     name: &str,
