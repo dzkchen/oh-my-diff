@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.164.0.patch",
-    "sha256": "2fc6682d572602f92eac080f4a1c5fe2fedcc9925d09a6e37a9c1a08451c3858"
+    "sha256": "cedb4f79a5d5d18e61a4363457145b54c823a833283fdf0a1058f523a1c17a11"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -281,6 +281,10 @@
       "before": "5b4cb5599deae1af2153976fee7586be3f87df53a2e2816f2011bddf638bda06",
       "after": "62d23518df85660fa47599140ee2d5f96002c1de9887bb13e6ca09982e01c3b8"
     },
+    "codex-rs/app-server/tests/suite/v2/analytics.rs": {
+      "before": "110486c5236be350d1be9440c5bc783d218eb4a491fd3797bba3b0c9a76ec2da",
+      "after": "a319f513bd227be7681f275c52b8aa01fcb87a0e613ca30da08bcc7472e1f9d6"
+    },
     "codex-rs/app-server/tests/suite/v2/connection_handling_websocket.rs": {
       "before": "7c4d15d0685beb704a9f39f49f460ccdd6a47f299ec8dbe4071b3093c616a38f",
       "after": "56d7542760f35fd77a5eed8a75ae15980acb445ef5bcc6781cf1d979d3b28783"
@@ -324,6 +328,10 @@
     "codex-rs/cli/src/snapshots/codex__exec_server_args_tests__exec_server_help_documents_remote_options.snap": {
       "before": "723d3086cd35a096ab98634ccba8c7a3ac1571f807c447858783262432b5c8a9",
       "after": "5cfe8b9a23761a6eca3fe3c5cfddbe0d5fe09fcf8f7135c3575f9fef98eb4a62"
+    },
+    "codex-rs/cli/tests/app_server_daemon/package.rs": {
+      "before": "3109130e70e2b73fe3d82a9fd67503c750fb24b6e6d0b9a64aa9ec04c45edf3b",
+      "after": "5ec575737f12e67d6a2f33fc7a433e29c1ed07502bb83dec43d737329d5e3dba"
     },
     "codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs": {
       "before": "1aa9957addeceab814e2f1a8bbdcc2c22a1074b2e307df4e1b0547739918201b",

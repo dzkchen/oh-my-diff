@@ -18387,6 +18387,20 @@ index 4aef6998354c67a009b113f8103a83fdacea1e8b..439b096cb42deb6a33fdfeab76568f2e
  }
 
  pub(crate) struct OutboundConnectionState {
+diff --git a/codex-rs/app-server/tests/suite/v2/analytics.rs b/codex-rs/app-server/tests/suite/v2/analytics.rs
+index 29b2b4be8b629894e46ccaa6660ee5250fa17e94..0966e08d6d2ac984a0cdb7ed8b8f4c0c67a3d317 100644
+--- a/codex-rs/app-server/tests/suite/v2/analytics.rs
++++ b/codex-rs/app-server/tests/suite/v2/analytics.rs
+@@ -518,7 +518,8 @@ async fn multi_agent_v2_tools_emit_collaborator_analytics() -> Result<()> {
+     Ok(())
+ }
+
+-#[tokio::test]
++// Dropping a gRPC provider flushes synchronously; a second worker keeps its exporter's I/O running.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn metrics_exporters_respect_analytics_preferences() -> Result<()> {
+     let codex_home = TempDir::new()?;
+     let mut config = ConfigBuilder::default()
 diff --git a/codex-rs/app-server/tests/suite/v2/connection_handling_websocket.rs b/codex-rs/app-server/tests/suite/v2/connection_handling_websocket.rs
 index e083aaa7655b8a0d90808ae5cefd28a6206e97eb..bd178093cb74197a2a057efc76b732340d07ed51 100644
 --- a/codex-rs/app-server/tests/suite/v2/connection_handling_websocket.rs
@@ -18774,6 +18788,23 @@ index 706c032121c1ef0c888049c8bf8cc8345cdab08d..9db55d0bb874a87eea1ebe796e98d2ee
        --remote <URL>
            Register this exec-server as a remote environment using the given base
            URL
+diff --git a/codex-rs/cli/tests/app_server_daemon/package.rs b/codex-rs/cli/tests/app_server_daemon/package.rs
+index 6c010c59d41e2820ffc3f4b2313679c52913520d..e3394a3f63f1a268a7adc61be96a5952beafdb1c 100644
+--- a/codex-rs/cli/tests/app_server_daemon/package.rs
++++ b/codex-rs/cli/tests/app_server_daemon/package.rs
+@@ -193,7 +193,11 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
+         assert_eq!(standalone.join("current").canonicalize()?, cli_selection);
+     }
+     if action == "bootstrap" {
+-        assert_eq!(output["autoUpdateEnabled"], false);
++        // A release-numbered workspace (OMD normalizes 0.0.0) seeds a stable package that follows the latest release.
++        assert_eq!(
++            output["autoUpdateEnabled"],
++            env!("CARGO_PKG_VERSION") != "0.0.0"
++        );
+     }
+     Ok(())
+ }
 diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
 index 29f5d59250a5196baa79f104eb5c2801264b2cc6..c3f58d4d37d5e7f1fec647192f9ec46fd61a5bde 100644
 --- a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs

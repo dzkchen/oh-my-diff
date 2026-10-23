@@ -13,7 +13,8 @@ release.
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.164.0 | 1.0.0 to 1.1.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.164.0 | next release | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
@@ -80,7 +81,7 @@ The host never rewrites a mod's code or settings.
   ```
 
   `omd-mod migrate STORE MOD_ID_OR_PACKAGE` runs the handler by hand. A bare name is a mod id among the store's
-  selected mods; anything with a `/` is a package folder. An id present in more than one scope fails with
+  selected mods; `.`, `..` and anything with a `/` are package folders. An id present in more than one scope fails with
   `mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 ## Tested and not tested

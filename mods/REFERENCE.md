@@ -754,7 +754,7 @@ The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
 
 `omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
 package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
-installed); anything with a `/` is a package folder. An id that matches copies in more than one scope fails with
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
 `mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that

@@ -9,8 +9,8 @@
       "sha256": "ef4a922c44d58be4049bac1e27ac0862845a1d7eb8ddd50d18493d4b86e7595b"
     },
     "mod-api.tgz": {
-      "bytes": 272203,
-      "sha256": "a9266175990ef7de0a3fb2aedbc7ab4155aa15d2542db2c27cd8e6077f613037"
+      "bytes": 272217,
+      "sha256": "6df20c3e209e36a00410dc2866aad34f8a80b6493561d6c4f8ddf2cf53fe7fca"
     },
     "omd": {
       "bytes": 7070432,
@@ -70,7 +70,7 @@
         "environment_sha256": "5eeb50896f66ebf57c1a042ca394945f1ad489e3381e5f420c749b2af14923f5"
       },
       "normalized_cargo_lock_sha256": "bc5f7352658f51deace9dddb4bc404742b06c6402cc825b6d37051c008d989bd",
-      "runtime_patch_sha256": "2fc6682d572602f92eac080f4a1c5fe2fedcc9925d09a6e37a9c1a08451c3858",
+      "runtime_patch_sha256": "cedb4f79a5d5d18e61a4363457145b54c823a833283fdf0a1058f523a1c17a11",
       "rust_toolchain": "1.99.1",
       "target": "aarch64-apple-darwin",
       "upstream_commit": "6aaac694803004a63c6f393d153c96d22521a6b9"
@@ -170,7 +170,7 @@
       "plugin_sources": []
     }
   },
-  "runtime_patch_sha256": "2fc6682d572602f92eac080f4a1c5fe2fedcc9925d09a6e37a9c1a08451c3858",
+  "runtime_patch_sha256": "cedb4f79a5d5d18e61a4363457145b54c823a833283fdf0a1058f523a1c17a11",
   "rust_toolchain": "1.99.1",
   "schema": 1,
   "target": "aarch64-apple-darwin",
