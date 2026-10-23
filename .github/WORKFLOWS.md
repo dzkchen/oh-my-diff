@@ -26,8 +26,8 @@ PR, nightly and release jobs use the same Cargo download-cache keys. PR runs onl
 to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
 by a PR is visible to that PR alone.
 
-`main` requires **PR gate** with an up-to-date branch. There are no dependency license or scheduled vulnerability
-checks yet.
+`main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
+month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
 
 ## Validation
 

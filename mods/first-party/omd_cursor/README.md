@@ -4,7 +4,7 @@ Experimental. Lets a session use Cursor models through your Cursor account and t
 
 ## Turn it on
 
-It needs Node (`brew install node`) and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
+It needs Node 22.18 or later (`brew install node`) and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
 Account names start with a letter.
 
 1. Enable `omd_cursor` in `/mods` and approve its trust dialog. It asks to run `node` outside the sandbox (`os`): setup installs the SDK, reaches the network and writes the mod store.

@@ -15,7 +15,7 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-API `1.0.0` is stable. [The conformance registry](../conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
@@ -24,7 +24,7 @@ experimental:
 - A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
   experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](../COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 

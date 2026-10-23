@@ -1,15 +1,66 @@
 # omd_source_knowledge
 
-Keeps source-backed facts, task evidence and approved lessons for later tasks in this repository. It comes with OMD+ but starts off; turn it on in `/mods` or with `omd-package mod enable omd_source_knowledge`.
+Lets the agent keep notes about a repository for later tasks. A fact points at exact lines of a file and is checked
+against the file each time it's reused. The agent can also keep a copy of a small structured result from the current
+thread, such as a test report, as evidence, and propose lessons from that evidence. A lesson is used only after you
+approve it.
 
-The model calls its tools `retain_source`, `retain_evidence`, `propose_lesson`, `session` (`cold` or `reuse`) and `inspect`; you approve and remove lessons with `/omd_source_knowledge:approve_lesson`, `:forget` and `:discard`.
+## Turn it on
 
-It retains up to 16 source-backed facts and 8 bounded task evidence records in a repository-scoped store. Each fact records a file/line excerpt and file/excerpt SHA-256. Evidence capture copies one current-thread resource page of at most 8 KiB into the store with a payload hash and workspace candidate hash. A later thread can reuse the stored copy without reopening the original thread-scoped resource. The caller supplies the repository and task identities; they are not host-attested.
+It comes with OMD+ but starts off. Turn it on in `/mods`, or run:
 
-Up to 8 inferred lessons can cite retained evidence. Proposals stay inert. An explicit `approve_lesson` command selects a candidate at an exact store revision; `forget` returns dependent lessons to unapproved candidates, and `discard` advances the generation. Reusing a forgotten evidence ID requires fresh explicit approval of each dependent lesson. Each command accepts one canonical JSON argument and returns a TUI-compatible display value. All command paths use only `store.get` and `store.put`, the operations available in the current TUI command host. Approval stores a caller-supplied actor and reason; removal and reset validate them but do not retain an event log. The mod cannot authenticate that actor or prove a user action beyond the TUI command origin.
+```sh
+omd-package mod enable omd_source_knowledge
+```
 
-Source facts accept repository-relative paths, including harmless hidden files, but reject traversal and `.git` components. The host's workspace path checks reject symlink components and enforce read permission. Excerpts use native's 200-line and 32 KiB bounds, require nonblank trimmed text, and exclude secret patterns. The mod rechecks file hashes and read access after reading. Reuse refreshes facts with a store revision check and omits missing or excluded facts. It returns only approved lessons whose evidence IDs remain retained. Cold sessions return no reusable facts or lessons. Inspect exposes records and status. Only the current internal store schema 2 is accepted; serialized state is capped at 32 KiB so a callback can read and rewrite it within the host's per-callback result budget. Reuse compares each file's SHA-256 with the stored one and keeps facts in unchanged files without reading them. Source files over 48 KiB are not read, and one reuse rereads at most 48 KiB of changed files. Facts in changed files beyond that budget, or whose read fails for a reason other than non-UTF-8 text, stay unverified: reuse omits them, leaves the stored fact and revision untouched, and the next reuse rereads them. Facts in files that are no longer UTF-8 text are invalidated as `source_unavailable`. Count limits also remain subject to this total byte bound.
+## Use it
 
-A cold session uses one store read. Reuse uses one store read, two snapshot checks, two batched stats, one read per changed file and one access check across the 16 facts; changed facts add one compare-and-swap store write. Evidence capture uses one store read, two snapshots, one evidence read and one CAS write. Lesson proposal and each command use one store read and one CAS write. These are operation bounds, not measured latency or a native-versus-mod cost comparison.
+The agent calls its tools; you don't need to.
 
-Limits: evidence capture copies a single 8 KiB resource page and needs the original thread-scoped resource to be readable at capture time; repository and task identities are caller-supplied, not host-attested; there is no event log of approvals.
+| Tool | What it does |
+| --- | --- |
+| `retain_source` | Keeps a fact: a label plus a file path and line range (up to 200 lines) |
+| `retain_evidence` | Keeps a copy of one piece of this thread's evidence: JSON of at most 8 KB, refused if larger |
+| `propose_lesson` | Proposes a lesson that cites kept evidence; it stays unused until you approve it |
+| `session` | `reuse` rechecks every fact against the files and returns the valid ones with the approved lessons; `cold` returns nothing |
+| `inspect` | Lists everything kept, including facts that are no longer valid and why |
+
+When it reuses a fact, it rereads a changed file and returns the current text of the fact's lines. A fact is marked
+invalid and left out when its file is gone, is no longer a small text file, is now shorter than the fact's lines, or
+when those lines are now blank, start or end with whitespace, or look like a credential. Lessons whose evidence was
+removed are left out too.
+
+Every call names the repository. Each call that adds, approves or removes notes also names the revision it expects; if the
+notes changed first, it is refused with `knowledge_revision_stale` and nothing is written. Reuse and `inspect` can
+move the revision too, when they record a fact that changed.
+
+## Approve and remove
+
+Three commands each take one line of JSON with no spaces outside quoted text. Ask the agent to run `inspect` for
+the repository name and current revision.
+
+```text
+/omd_source_knowledge:approve_lesson {"repository_identity":"my-app","expected_revision":7,"lesson_id":"flaky-retry","action":{"actor":"me","reason":"seen twice"}}
+/omd_source_knowledge:forget {"repository_identity":"my-app","expected_revision":8,"kind":"evidence","id":"ci-run-1","action":{"actor":"me","reason":"outdated"}}
+/omd_source_knowledge:discard {"repository_identity":"my-app","expected_revision":9,"action":{"actor":"me","reason":"start over"}}
+```
+
+- `approve_lesson` approves a proposed lesson whose evidence is still kept.
+- `forget` removes one `fact`, `evidence` record or `lesson`. Lessons that cite forgotten evidence go back to
+  proposed, so approve them again if the evidence comes back.
+- `discard` removes everything kept for the repository.
+
+## Needs and limits
+
+- Up to 16 facts, 8 evidence records and 8 lessons per repository, 32 KB in all.
+- Paths are relative to the repository. Paths with `..`, `.git` or a symlink are refused, and files must be readable
+  under the session's permissions. A fact's text can't start or end with whitespace, so a range can't start on an
+  indented line or end with trailing spaces.
+- Text that looks like a credential is refused and never stored: private keys, `Authorization` headers, `api_key`,
+  `password=` and tokens starting `sk-`, `ghp_` or `xoxb-`, for example.
+- Files over 48 KB aren't read, and one reuse rereads at most 48 KB of changed files. Facts past that are left out
+  this time and rechecked next time.
+- Evidence must still be readable in the current thread when it's kept. Later tasks reuse the stored copy.
+- The repository and task names are whatever the agent passes; OMD doesn't verify them. The actor and reason of an
+  approval are stored as typed, and the mod can't confirm who ran the command. Only the current notes are kept, with
+  no history of approvals or removals.
