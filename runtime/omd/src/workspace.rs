@@ -1045,7 +1045,7 @@ mod transaction_tests {
         let root = directory.path().canonicalize().unwrap();
         let names = [
             "build/x.rs",
-            ".docs/note.md",
+            ".cache/note.md",
             "out/y.txt",
             ".git/HEAD",
             ".omd/state",
@@ -1065,7 +1065,7 @@ mod transaction_tests {
             .into_iter()
             .map(|change| change.path)
             .collect();
-        assert_eq!(changed, [".docs/note.md", "build/x.rs"]);
+        assert_eq!(changed, [".cache/note.md", "build/x.rs"]);
     }
 
     #[test]

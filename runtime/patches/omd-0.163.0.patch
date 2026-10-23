@@ -130933,7 +130933,7 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..978dddd76e3bda82b63e5f3f10e11b5055680f77
+index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8acd2673fc
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,1259 @@
@@ -131984,7 +131984,7 @@ index 0000000000000000000000000000000000000000..978dddd76e3bda82b63e5f3f10e11b50
 +        let root = directory.path().canonicalize().unwrap();
 +        let names = [
 +            "build/x.rs",
-+            ".docs/note.md",
++            ".cache/note.md",
 +            "out/y.txt",
 +            ".git/HEAD",
 +            ".omd/state",
@@ -132004,7 +132004,7 @@ index 0000000000000000000000000000000000000000..978dddd76e3bda82b63e5f3f10e11b50
 +            .into_iter()
 +            .map(|change| change.path)
 +            .collect();
-+        assert_eq!(changed, [".docs/note.md", "build/x.rs"]);
++        assert_eq!(changed, [".cache/note.md", "build/x.rs"]);
 +    }
 +
 +    #[test]
