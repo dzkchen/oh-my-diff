@@ -13,7 +13,7 @@ release.
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.163.0 | 1.0.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.163.0 | 1.0.0 to 1.1.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 

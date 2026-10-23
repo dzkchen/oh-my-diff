@@ -214,11 +214,23 @@ test('watch refuses to move a shared dependency from project to user scope', { s
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('author usage prints without a stack and thread ids map on every step helper', () => {
-  const result = spawnSync(process.execPath, [new URL('../mods/author/cli.mjs', import.meta.url).pathname, '--help'], { encoding: 'utf8' });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /^usage: omd-mod-author /);
-  assert.doesNotMatch(result.stderr, /\n\s+at /);
+test('author help and errors print without a stack', () => {
+  const cli = new URL('../mods/author/cli.mjs', import.meta.url).pathname;
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /^usage: omd-mod-author /);
+  const unknown = spawnSync(process.execPath, [cli, 'nonsense'], { encoding: 'utf8' });
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /^usage: omd-mod-author /);
+  const root = mkdtempSync(join(tmpdir(), 'omd-author-fail-'));
+  try {
+    const failed = spawnSync(process.execPath, [cli, 'create', join(root, 'bad'), 'BAD-ID!'], { encoding: 'utf8' });
+    assert.equal(failed.status, 1);
+    assert.equal(failed.stderr, 'invalid_mod_id: BAD-ID!\n');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('thread ids map on every step helper', () => {
   assert.equal(state('m', { threadId: 't' }).thread_id, 't');
   assert.equal(invoke('m', 'command', 'c', null, { threadId: 't' }).thread_id, 't');
 });

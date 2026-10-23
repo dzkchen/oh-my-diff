@@ -5,7 +5,7 @@ Lets a session use Claude models through the official Claude CLI and your Claude
 ## Turn it on
 
 It comes with OMD+ but starts off. It needs Claude CLI `2.1.307` or newer on your `PATH` (install:
-`curl -fsSL https://claude.ai/install.sh | bash`) and Node on your `PATH` (`brew install node`). `/claude login`
+`curl -fsSL https://claude.ai/install.sh | bash`) and Node 22.18 or later on your `PATH` (`brew install node`). `/claude login`
 checks both before it opens the browser and says what to install.
 
 1. Enable `omd_claude_cli` in `/mods` and approve its trust dialog. It asks to run `claude` and `node` outside the sandbox (`os`): `claude auth login` and the setup script need your real home directory and network.

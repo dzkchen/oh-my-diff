@@ -11,7 +11,7 @@ omd-mod-author create ./my_mod my_mod
 
 Then:
 
-- [Write your first mod](../docs/write-a-mod.md): create, test, run, install and share.
+- [Write your first mod](https://github.com/dzkchen/oh-my-diff/blob/main/docs/write-a-mod.md): create, test, run, install and share.
 - [API reference](reference/README.md): every operation, event and screen surface; [`REFERENCE.md`](REFERENCE.md) has
   it in one file for agents.
-- [Agent mod guide](../docs/AGENT_MOD_GUIDE.md): the same path, for coding agents.
+- [Agent mod guide](https://github.com/dzkchen/oh-my-diff/blob/main/docs/AGENT_MOD_GUIDE.md): the same path, for coding agents.
