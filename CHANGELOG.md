@@ -2,6 +2,32 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.1.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.0) — 2026-10-23
+
+Add and switch ChatGPT, Claude, Cursor and API accounts inside the session, a minimal `omd mini`, ChatGPT-plan usage counted as included, and six more opt-in mods.
+
+### New
+
+- Opt-in tool-call absorption and correction (#295)
+- Restore source knowledge, programmable context, mini and Cursor mods (#291)
+- Account switcher with usage meter and mod-owned route writes (#293)
+- Add and switch ChatGPT, Claude, Cursor and API accounts in /profile (#298)
+- Omd mini shows only transcript, prompt and one status line (#300)
+
+### Changed
+
+- Post-1.0.0 API fields, route writes and typed sidecar status
+- Freeze shipped experimental mod API surfaces
+
+### Fixed
+
+- Privacy, code kernel, preview, workflow, Claude CLI, usage and advisor fixes (#294)
+- Require Claude CLI 2.1.307 (#297)
+- Count ChatGPT-plan requests as included and show usage only in the status line (#299)
+- Fixes
+- Launch review fixes for accounts, mods and docs (#301)
+- Report the OMD release as host release and honour ignore rules in the workspace index (#305)
+
 ## [1.0.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.1) — 2026-10-20
 
 Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.
