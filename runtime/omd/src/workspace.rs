@@ -424,73 +424,52 @@ impl WorkspaceIndex {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |now| now.as_secs() as i64 - 2);
         let mut stamped = BTreeMap::new();
-        let mut stack = vec![repository.to_path_buf()];
         let mut files = BTreeMap::new();
         let mut bytes = 0_usize;
-        while let Some(directory) = stack.pop() {
-            for entry in fs::read_dir(directory)? {
-                let entry = entry?;
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path)?;
-                if metadata.file_type().is_symlink() {
-                    continue;
+        let walker = ignore::WalkBuilder::new(repository)
+            .hidden(false)
+            .git_global(false)
+            .require_git(false)
+            .follow_links(false)
+            .filter_entry(|entry| {
+                !(entry.depth() > 0
+                    && entry.file_type().is_some_and(|kind| kind.is_dir())
+                    && matches!(entry.file_name().to_str(), Some(".git" | ".omd")))
+            })
+            .build();
+        for entry in walker {
+            let entry = entry.map_err(io::Error::other)?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(path)?;
+            if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len() as usize);
+                if files.len() >= max_files || bytes > max_bytes {
+                    return Err(invalid("workspace index exceeds bounds"));
                 }
-                if metadata.is_dir() {
-                    if !matches!(
-                        entry.file_name().to_str(),
-                        Some(
-                            ".git"
-                                | ".omd"
-                                | ".docs"
-                                | ".pnpm-store"
-                                | ".pytest_cache"
-                                | ".ruff_cache"
-                                | ".mypy_cache"
-                                | ".tox"
-                                | ".gradle"
-                                | "__pycache__"
-                                | "target"
-                                | "node_modules"
-                                | ".venv"
-                                | "venv"
-                                | "build"
-                                | "dist"
-                        )
-                    ) {
-                        stack.push(path);
+                let name = path
+                    .strip_prefix(repository)
+                    .map_err(|_| invalid("workspace path escaped repository"))?
+                    .to_str()
+                    .ok_or_else(|| invalid("non-UTF8 workspace path"))?
+                    .to_owned();
+                let stamp = (
+                    metadata.len(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec(),
+                    metadata.ino(),
+                );
+                let hash = match cached.get(&name) {
+                    Some((seen, hash)) if *seen == stamp => hash.clone(),
+                    _ => {
+                        let (content, _) = read_version(repository, &name, max_bytes)?
+                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
+                        content_hash(&content)
                     }
-                } else if metadata.is_file() {
-                    bytes = bytes.saturating_add(metadata.len() as usize);
-                    if files.len() >= max_files || bytes > max_bytes {
-                        return Err(invalid("workspace index exceeds bounds"));
-                    }
-                    let name = path
-                        .strip_prefix(repository)
-                        .map_err(|_| invalid("workspace path escaped repository"))?
-                        .to_str()
-                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
-                        .to_owned();
-                    let stamp = (
-                        metadata.len(),
-                        metadata.ctime(),
-                        metadata.ctime_nsec(),
-                        metadata.ino(),
-                    );
-                    let hash = match cached.get(&name) {
-                        Some((seen, hash)) if *seen == stamp => hash.clone(),
-                        _ => {
-                            let (content, _) = read_version(repository, &name, max_bytes)?
-                                .ok_or_else(|| {
-                                    invalid("workspace file disappeared during index")
-                                })?;
-                            content_hash(&content)
-                        }
-                    };
-                    if stamp.1 < settled {
-                        stamped.insert(name.clone(), (stamp, hash.clone()));
-                    }
-                    files.insert(name, hash);
+                };
+                if stamp.1 < settled {
+                    stamped.insert(name.clone(), (stamp, hash.clone()));
                 }
+                files.insert(name, hash);
             }
         }
         if let Ok(mut hashes) = HASHES.lock() {
@@ -1058,6 +1037,35 @@ mod transaction_tests {
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
         assert_eq!(before.changed(&after).len(), 1);
+    }
+
+    #[test]
+    fn workspace_index_follows_the_repository_ignore_rules() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let names = [
+            "build/x.rs",
+            ".docs/note.md",
+            "out/y.txt",
+            ".git/HEAD",
+            ".omd/state",
+        ];
+        for name in names {
+            fs::create_dir_all(root.join(name).parent().unwrap()).unwrap();
+            fs::write(root.join(name), "one\n").unwrap();
+        }
+        fs::write(root.join(".gitignore"), "out/\n").unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        for name in names {
+            fs::write(root.join(name), "two\n").unwrap();
+        }
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        let changed: Vec<_> = before
+            .changed(&after)
+            .into_iter()
+            .map(|change| change.path)
+            .collect();
+        assert_eq!(changed, [".docs/note.md", "build/x.rs"]);
     }
 
     #[test]

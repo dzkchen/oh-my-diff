@@ -80,10 +80,9 @@ version. Updates are signed and checked before they install, and `omd update rol
 ## Status
 
 Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/COMPATIBILITY.md)).
-As the API is still young, expect there to be capabilities to be added in the future.
-If you are looking for a specific API capability, just open an issue or if you're feeling like it open a PR!
+The API is still young, so expect new capabilities. If you need a specific one, open an issue or a PR.
 
-After release I'll focus mainly on critical fixes and on adding API capabilities for mods. If you'd like to take over
+I focus mainly on critical fixes and on adding API capabilities for mods. If you'd like to take over
 responsibility for the whole project, please get in touch by [opening an issue](https://github.com/dzkchen/oh-my-diff/issues/new/choose).
 
 This project is still in beta and under active development, expect bugs and some small annoyances (just open an issue and I will get on it ASAP :))

@@ -528,7 +528,7 @@
         "label": "Changed",
         "items": [
           "Pinned to Codex 0.161.0",
-          "Warm release targets across batch closeouts"
+          "Warm release build targets reused between builds"
         ]
       },
       {
@@ -951,7 +951,7 @@
       {
         "label": "Decided",
         "items": [
-          "Codex themes added to the roadmap"
+          "Codex themes planned"
         ]
       }
     ],
@@ -1056,8 +1056,7 @@
       {
         "label": "Changed",
         "items": [
-          "LSP sync rebuilt as a pure mod",
-          "Roadmap grouped into batches"
+          "LSP sync rebuilt as a pure mod"
         ]
       }
     ],
@@ -1397,8 +1396,7 @@
         "label": "New",
         "items": [
           "Upstream lock file",
-          "Compatibility checks",
-          "A skill for each roadmap task"
+          "Compatibility checks"
         ]
       }
     ],
@@ -1416,7 +1414,7 @@
       {
         "label": "New",
         "items": [
-          "Repo, PRD and roadmap"
+          "Repository and product plan"
         ]
       }
     ],

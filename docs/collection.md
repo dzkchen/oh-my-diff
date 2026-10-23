@@ -97,7 +97,6 @@ OMD Core stages none.
 
 ## Not included
 
-Further first-party mods and plugins are planned. After release I'll focus mainly on critical fixes and on adding
-API capabilities for mods, so treat plans as intentions, not commitments.
+Further first-party mods and plugins are planned; treat plans as intentions, not commitments.
 
 OMD has no desktop app, VS Code extension, Linux build or hosted service.

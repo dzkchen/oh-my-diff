@@ -835,6 +835,10 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
             "{error}"
         );
     }
+    let mut manifest = base;
+    manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
 }
 
 #[test]

@@ -3,7 +3,7 @@
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
 This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the mod host release as `host.omd` (`1.0.0`); it is not the OMD release version. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+`omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -853,8 +853,8 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 

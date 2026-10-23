@@ -2,12 +2,12 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.163.0.patch",
-    "sha256": "9083cc5e98b4272a144f7a436fa8d3b5d052b307236ec5700f693a228884ecd3"
+    "sha256": "e5190ac7283677279dc0713986e13dbfbf76223a8509339eeaf17ce26c472eed"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "cae541406f7ec43a418e126be2bcd5de00b243e7bbf6382570028727d99c1069",
-      "after": "1ff3424c2af331c322a438ea48635ab8a3301dbc7ce6596dc256f2d7037635f9"
+      "after": "68b657cee2b829a7629b7c8bad743df65ee0d5517f11d807b3eecdcbf81da683"
     },
     "codex-rs/Cargo.toml": {
       "before": "b017f28f91f7506b730c247ffb3dab5250d9848514c194331fd774836d480f0b",
@@ -1143,7 +1143,7 @@
     },
     "codex-rs/omd/Cargo.toml": {
       "before": null,
-      "after": "c6bcbe67bc868530d6d862e41fb7461a73ec49afb613d4308c325d72c4380340"
+      "after": "968f455f6a0c146a8911f60546c48901452af798f1379dfd054d397bb74a344f"
     },
     "codex-rs/omd/README.md": {
       "before": null,
@@ -1155,7 +1155,7 @@
     },
     "codex-rs/omd/runner/Cargo.toml": {
       "before": null,
-      "after": "f36c4db20fea5e07f95c9df02475df6ac0984389d05d300f1237e15176a1fcce"
+      "after": "5bfedece0e0b766bd9a31efafbb139799718d4fbf6ce582d755d4eff5b396219"
     },
     "codex-rs/omd/runner/src/bootstrap.js": {
       "before": null,
@@ -1319,7 +1319,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "c9b123f6a46a633d047ca9ac34aced9e3f34680efdc5aee911b6ed7ecdf5e44a"
+      "after": "e2c219f74aff33fbd530c49844c6b389c2669c4e25548c32e38efa9d9614b65e"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -1471,7 +1471,7 @@
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
-      "after": "723f5bcdc98189022f93fd28c0dc9a63abc8007eaad95a39e9727d2e12b3fac5"
+      "after": "a2eeb92b037a0300985d132c9c29bd36e9d2b535eff17048f0f5bc18977ec96f"
     },
     "codex-rs/omd/src/workspace_lease.rs": {
       "before": null,
@@ -1491,7 +1491,7 @@
     },
     "codex-rs/omd/tests/generic_host.rs": {
       "before": null,
-      "after": "816e44c532ccd8f76e9362a556700567d07ed0dad6aa820696a9e3e93a3805dd"
+      "after": "dab7a2e241a76450bc5645879da827be31bef2989bbae5bb42d6679243e3820e"
     },
     "codex-rs/omd/tests/integration.rs": {
       "before": null,
@@ -1503,7 +1503,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "b51e3511ec60b505f004731a0b46ea004a0862a8ae658aaa6a4f42d163606cba"
+      "after": "0c2d0308ab1d9e1191c1a7b01fa2425b9ada769f5371f267bc49f948b042aed5"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,

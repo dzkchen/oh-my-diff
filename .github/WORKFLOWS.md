@@ -52,7 +52,9 @@ prerelease and never marked latest.
 
 ## Releases
 
-The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`.
+The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`. The
+host reports its crate version as the OMD release, so first set `codex-omd` and `codex-omd-runner` to the release
+version in a scratch tree, `build.py sync` and merge that; `mise run release` and `release.yml` refuse a mismatch.
 
 1. `mise run release -- 1.2.0 --summary "One sentence."` opens a `chore(release): 1.2.0` pull request with the version
    and a changelog entry with one line per pull request or direct commit merged to `main` since the last one. Edit the entry if needed, then run
