@@ -387,8 +387,8 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 

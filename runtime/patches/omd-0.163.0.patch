@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index dfb17c17c723c6f70afbf2a9199a361465c768e2..2e6282df78a81998e071961bed5f7476e676f68c 100644
+index dfb17c17c723c6f70afbf2a9199a361465c768e2..3455dc9d117f2beb6bf71c44bcd851a30400c556 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -254,7 +254,7 @@ version = "1.1.5"
@@ -147,7 +147,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..2e6282df78a81998e071961bed5f7476
 
 +[[package]]
 +name = "codex-omd"
-+version = "1.0.0"
++version = "1.1.0"
 +dependencies = [
 + "base64 0.22.1",
 + "ignore",
@@ -211,7 +211,7 @@ index dfb17c17c723c6f70afbf2a9199a361465c768e2..2e6282df78a81998e071961bed5f7476
 +
 +[[package]]
 +name = "codex-omd-runner"
-+version = "1.0.0"
++version = "1.1.0"
 +dependencies = [
 + "aws-lc-rs",
 + "base64 0.22.1",
@@ -83913,13 +83913,13 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..985b7e7465fe981cc534568673b14fd8e98597f1
+index 0000000000000000000000000000000000000000..c4b41cdf1d8a1afa893a70ac6494d835bf304ef1
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,24 @@
 +[package]
 +name = "codex-omd"
-+version = "1.0.0"
++version = "1.1.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -83983,13 +83983,13 @@ index 0000000000000000000000000000000000000000..e60353e4c93c79280f009f9d5728cd61
 +)
 diff --git a/codex-rs/omd/runner/Cargo.toml b/codex-rs/omd/runner/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..d975ed33c67840f093ca77eac5b7dab0f1280e7b
+index 0000000000000000000000000000000000000000..97b435d69597b6650cc906bea43df01f79ac7aab
 --- /dev/null
 +++ b/codex-rs/omd/runner/Cargo.toml
 @@ -0,0 +1,22 @@
 +[package]
 +name = "codex-omd-runner"
-+version = "1.0.0"
++version = "1.1.0"
 +edition = "2024"
 +rust-version = "1.95"
 +license = "Apache-2.0"
@@ -105135,10 +105135,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b037b7ba0278de36bbd40fc2d3cff95108cbef0f
+index 0000000000000000000000000000000000000000..af8c60de9ad9d3ff400b8ce90de42ecd23036213
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6225 @@
+@@ -0,0 +1,6226 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105273,6 +105273,7 @@ index 0000000000000000000000000000000000000000..b037b7ba0278de36bbd40fc2d3cff951
 +pub(crate) use store::lock as store_lock;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.163.0";
++/// The OMD product release: the `codex-omd` crate version is the release version (`release.py check` enforces it).
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 +pub const MOD_API_VERSION: &str = "1.0.0";
 +pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -130932,10 +130933,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b8df91491f8ffa63e85d96cd102277852fc5057
+index 0000000000000000000000000000000000000000..978dddd76e3bda82b63e5f3f10e11b5055680f77
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1251 @@
+@@ -0,0 +1,1259 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -131362,73 +131363,52 @@ index 0000000000000000000000000000000000000000..7b8df91491f8ffa63e85d96cd1022778
 +            .duration_since(std::time::UNIX_EPOCH)
 +            .map_or(0, |now| now.as_secs() as i64 - 2);
 +        let mut stamped = BTreeMap::new();
-+        let mut stack = vec![repository.to_path_buf()];
 +        let mut files = BTreeMap::new();
 +        let mut bytes = 0_usize;
-+        while let Some(directory) = stack.pop() {
-+            for entry in fs::read_dir(directory)? {
-+                let entry = entry?;
-+                let path = entry.path();
-+                let metadata = fs::symlink_metadata(&path)?;
-+                if metadata.file_type().is_symlink() {
-+                    continue;
++        let walker = ignore::WalkBuilder::new(repository)
++            .hidden(false)
++            .git_global(false)
++            .require_git(false)
++            .follow_links(false)
++            .filter_entry(|entry| {
++                !(entry.depth() > 0
++                    && entry.file_type().is_some_and(|kind| kind.is_dir())
++                    && matches!(entry.file_name().to_str(), Some(".git" | ".omd")))
++            })
++            .build();
++        for entry in walker {
++            let entry = entry.map_err(io::Error::other)?;
++            let path = entry.path();
++            let metadata = fs::symlink_metadata(path)?;
++            if metadata.is_file() {
++                bytes = bytes.saturating_add(metadata.len() as usize);
++                if files.len() >= max_files || bytes > max_bytes {
++                    return Err(invalid("workspace index exceeds bounds"));
 +                }
-+                if metadata.is_dir() {
-+                    if !matches!(
-+                        entry.file_name().to_str(),
-+                        Some(
-+                            ".git"
-+                                | ".omd"
-+                                | ".docs"
-+                                | ".pnpm-store"
-+                                | ".pytest_cache"
-+                                | ".ruff_cache"
-+                                | ".mypy_cache"
-+                                | ".tox"
-+                                | ".gradle"
-+                                | "__pycache__"
-+                                | "target"
-+                                | "node_modules"
-+                                | ".venv"
-+                                | "venv"
-+                                | "build"
-+                                | "dist"
-+                        )
-+                    ) {
-+                        stack.push(path);
++                let name = path
++                    .strip_prefix(repository)
++                    .map_err(|_| invalid("workspace path escaped repository"))?
++                    .to_str()
++                    .ok_or_else(|| invalid("non-UTF8 workspace path"))?
++                    .to_owned();
++                let stamp = (
++                    metadata.len(),
++                    metadata.ctime(),
++                    metadata.ctime_nsec(),
++                    metadata.ino(),
++                );
++                let hash = match cached.get(&name) {
++                    Some((seen, hash)) if *seen == stamp => hash.clone(),
++                    _ => {
++                        let (content, _) = read_version(repository, &name, max_bytes)?
++                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
++                        content_hash(&content)
 +                    }
-+                } else if metadata.is_file() {
-+                    bytes = bytes.saturating_add(metadata.len() as usize);
-+                    if files.len() >= max_files || bytes > max_bytes {
-+                        return Err(invalid("workspace index exceeds bounds"));
-+                    }
-+                    let name = path
-+                        .strip_prefix(repository)
-+                        .map_err(|_| invalid("workspace path escaped repository"))?
-+                        .to_str()
-+                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
-+                        .to_owned();
-+                    let stamp = (
-+                        metadata.len(),
-+                        metadata.ctime(),
-+                        metadata.ctime_nsec(),
-+                        metadata.ino(),
-+                    );
-+                    let hash = match cached.get(&name) {
-+                        Some((seen, hash)) if *seen == stamp => hash.clone(),
-+                        _ => {
-+                            let (content, _) = read_version(repository, &name, max_bytes)?
-+                                .ok_or_else(|| {
-+                                    invalid("workspace file disappeared during index")
-+                                })?;
-+                            content_hash(&content)
-+                        }
-+                    };
-+                    if stamp.1 < settled {
-+                        stamped.insert(name.clone(), (stamp, hash.clone()));
-+                    }
-+                    files.insert(name, hash);
++                };
++                if stamp.1 < settled {
++                    stamped.insert(name.clone(), (stamp, hash.clone()));
 +                }
++                files.insert(name, hash);
 +            }
 +        }
 +        if let Ok(mut hashes) = HASHES.lock() {
@@ -131996,6 +131976,35 @@ index 0000000000000000000000000000000000000000..7b8df91491f8ffa63e85d96cd1022778
 +        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
 +        assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
 +        assert_eq!(before.changed(&after).len(), 1);
++    }
++
++    #[test]
++    fn workspace_index_follows_the_repository_ignore_rules() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        let names = [
++            "build/x.rs",
++            ".docs/note.md",
++            "out/y.txt",
++            ".git/HEAD",
++            ".omd/state",
++        ];
++        for name in names {
++            fs::create_dir_all(root.join(name).parent().unwrap()).unwrap();
++            fs::write(root.join(name), "one\n").unwrap();
++        }
++        fs::write(root.join(".gitignore"), "out/\n").unwrap();
++        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        for name in names {
++            fs::write(root.join(name), "two\n").unwrap();
++        }
++        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        let changed: Vec<_> = before
++            .changed(&after)
++            .into_iter()
++            .map(|change| change.path)
++            .collect();
++        assert_eq!(changed, [".docs/note.md", "build/x.rs"]);
 +    }
 +
 +    #[test]
@@ -132911,7 +132920,7 @@ index 0000000000000000000000000000000000000000..19fc4ef9738bf119ca4f74ded1596d41
 +]
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796cc3e963e2
+index 0000000000000000000000000000000000000000..cb0c3f8840fb03a2f1d18941708bea666894e200
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
 @@ -0,0 +1,2097 @@
@@ -134458,25 +134467,25 @@ index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796c
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
 +    let store = ModStore::create(root.join("store")).unwrap();
-+    let modern = package(
++    let accepted = package(
 +        &root,
-+        "modern",
++        "accepted",
 +        json!({"capabilities":["commands","store","exec","builtins","contracts","terminal"],"exec_environment":["FIXTURE_ENV"]}),
 +        "export default api => { api.builtins({commands:{hide:['plan']},modes:{disable:['plan']}}); \
 +         api.contract({schema:2,id:'fixture',version:1,description:'Fixture gate',assurance:'checked',gates:{complete:[{receipt:'checks',bind:['candidate']}]}}); \
 +         api.command('run', () => { api.state.set({ran:true}); const out = api.host.call('exec.run', {program:'sh', argv:['-c','true']}); return api.host.call('store.put', {key:'k', value:out.exit_code, expected_revision:null}); }); }",
 +        &[],
 +    );
-+    trust(&store, &modern);
-+    let legacy_names = package(
++    trust(&store, &accepted);
++    let rejected_names = package(
 +        &root,
-+        "legacy_names",
++        "rejected_names",
 +        json!({"capabilities":["state","commands"]}),
 +        "export default api => api.command('x', () => api.state.get())",
 +        &[],
 +    );
 +    assert!(
-+        ModStore::inspect_package(&legacy_names)
++        ModStore::inspect_package(&rejected_names)
 +            .unwrap_err()
 +            .to_string()
 +            .contains("capability")
@@ -134530,7 +134539,7 @@ index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796c
 +        "{}",
 +        error_of(&runtime, "old_point")
 +    );
-+    assert_eq!(error_of(&runtime, "modern"), "");
++    assert_eq!(error_of(&runtime, "accepted"), "");
 +    assert_eq!(error_of(&runtime, "adapted"), "");
 +    assert_eq!(
 +        runtime
@@ -134552,7 +134561,7 @@ index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796c
 +    let mut calls = Vec::new();
 +    let result = runtime
 +        .invoke_with(
-+            "modern",
++            "accepted",
 +            runtime.generation(),
 +            "command",
 +            "run",
@@ -134570,7 +134579,7 @@ index 0000000000000000000000000000000000000000..d424a0079ae3be1d4f5431e2215d796c
 +        .unwrap();
 +    assert_eq!(result, json!({"revision":1}));
 +    assert_eq!(calls, vec!["exec.run", "store.put"]);
-+    let grants = runtime.grants("modern").unwrap();
++    let grants = runtime.grants("accepted").unwrap();
 +    assert_eq!(grants.exec_environment, vec!["FIXTURE_ENV"]);
 +    assert!(grants.capabilities.contains(&"exec".to_owned()));
 +    store.enable(&old_event, false).unwrap();
@@ -136495,10 +136504,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d62e3c2f42df6444e6077d633f6d20ab75747b0e
+index 0000000000000000000000000000000000000000..71be4363bd7af881ed2b4b67e9b68e369f20009c
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4759 @@
+@@ -0,0 +1,4763 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -137336,6 +137345,10 @@ index 0000000000000000000000000000000000000000..d62e3c2f42df6444e6077d633f6d20ab
 +            "{error}"
 +        );
 +    }
++    let mut manifest = base;
++    manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
++    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    ModStore::inspect_package(&path).unwrap();
 +}
 +
 +#[test]

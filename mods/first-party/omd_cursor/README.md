@@ -55,7 +55,7 @@ Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, 
 
 ## Cost
 
-Measured on the pre-launch version (Codex 0.160.1) against a fake SDK; not re-measured on 1.0.
+Measured on Codex 0.160.1 against a fake SDK; not re-measured since.
 
 - Installed SDK: 43.8 MB, including the 10.2 MB darwin-arm64 platform package plus zod, protobuf, connect and statsig.
 - SDK import: about 75 ms and 65 MB RSS in the service process.
