@@ -117,7 +117,7 @@ function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(
   const input = { ...call, call_id: 'k', thread_id: 't', agent_id: null, schema: null, raw_arguments: JSON.stringify(call.arguments), batch: null };
   const host = {
     ...store.ops,
-    'session.info': () => ({ thread_id: 't', root: '/repo', cwd, codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
+    'session.info': () => ({ thread_id: 't', root: '/repo', cwd, codex_version: '0.164.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
     'workspace.stat': ({ paths, hash: withHash }) => ({ files: Object.fromEntries(paths.map(path => [path, { kind: 'file', size, mtime_ms: 1, ...(withHash ? { sha256: hashed++ ? shaAfter : sha } : {}) }])) }),
     'time.sleep': ({ ms }) => { if (!sleep) throw new Error('time_sleep_unavailable'); onSleep(); return { slept_ms: ms, cancelled: false }; },
     'continuation.next': () => ({ result: next(), trace: [] }),

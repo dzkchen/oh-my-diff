@@ -187,6 +187,7 @@ async fn attach_thread_with_sandbox_mode(
     let mut snapshot = codex_config::CloudConfigBundleSnapshot {
         bundle: Ok(None),
         binding: None,
+        config_server: None,
     };
     policy.publish_snapshot(&mut snapshot);
     config.config_layer_stack = config
@@ -4156,7 +4157,9 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
     }
     let thread_store = ExtensionData::new("thread");
     thread_store.insert(fixture.lead.clone());
+    let step_store = ExtensionData::new("step");
     let input = TurnInputContext {
+        step_store: &step_store,
         turn_id: "turn".into(),
         user_input: vec![UserInput::Text {
             text: "see @plain.txt, @secret.txt and @old.txt @new.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\" @first.txt @second.txt"
@@ -4180,7 +4183,7 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
         )
         .await
         .iter()
-        .map(|fragment| fragment.render())
+        .map(|fragment| fragment.render().into_text().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         fragments[..3],
@@ -4294,6 +4297,7 @@ async fn mentioned_files_use_selected_turn_environment_authority() {
         let fragments = mods(&fixture.core)
             .contribute(
                 TurnInputContext {
+                    step_store: &ExtensionData::new("step"),
                     turn_id: "turn".into(),
                     user_input: vec![UserInput::Text {
                         text: "@plain.txt".into(),

@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.163.0",
-  "commit": "83086188ae0614bd882818ff1aa23f3194962012"
+  "tag": "rust-v0.164.0",
+  "commit": "6aaac694803004a63c6f393d153c96d22521a6b9"
  },
  "requests": {
   "account/bedrock/checkGovCloudRequirements": {
@@ -831,6 +831,7 @@
     "developerInstructions",
     "ephemeral",
     "excludeTurns",
+    "experimentalDisablePredictionMcp",
     "experimentalPredictionMode",
     "lastTurnId",
     "model",
@@ -1141,6 +1142,22 @@
     "undo"
    ]
   },
+  "thread/sample": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current",
+   "fields": [
+    "disableMcp",
+    "effort",
+    "expectedTurnId",
+    "prompt",
+    "responsesapiClientMetadata",
+    "threadId",
+    "turnTrigger"
+   ]
+  },
   "thread/search": {
    "class": "sessions",
    "contexts": [
@@ -1370,6 +1387,7 @@
     "outputSchema",
     "personality",
     "responsesapiClientMetadata",
+    "responsesapiClientMetadataPatch",
     "summary",
     "threadId",
     "turnTrigger"
@@ -1394,6 +1412,7 @@
     "expectedTurnId",
     "input",
     "responsesapiClientMetadata",
+    "responsesapiClientMetadataPatch",
     "threadId"
    ]
   }
@@ -1564,8 +1583,10 @@
   "hooks.Interrupt",
   "hooks.PermissionRequest",
   "hooks.PostCompact",
+  "hooks.PostModelRequest",
   "hooks.PostToolUse",
   "hooks.PreCompact",
+  "hooks.PreModelRequest",
   "hooks.PreToolUse",
   "hooks.SessionEnd",
   "hooks.SessionStart",
@@ -1653,6 +1674,7 @@
   "features.analytics_plan_history",
   "features.api_key_cyber_access_programs",
   "features.api_key_model_discovery",
+  "features.app_server_websocket_compression",
   "features.apply_patch_freeform",
   "features.apply_patch_preserve_line_endings",
   "features.apply_patch_streaming_events",
@@ -1699,6 +1721,7 @@
   "features.enable_request_compression",
   "features.executed_tool_call_metadata",
   "features.executor_capability_discovery",
+  "features.executor_capability_discovery_v2",
   "features.experimental_use_unified_exec_tool",
   "features.external_agent_memory_import",
   "features.external_migration",
@@ -1723,6 +1746,7 @@
   "features.local_thread_store_compression",
   "features.local_thread_store_shared_compression",
   "features.mcp_2026_07_28",
+  "features.mcp_tool_list_changed",
   "features.memories",
   "features.memory_tool",
   "features.mentions_v2",
@@ -1731,6 +1755,7 @@
   "features.multi_agent_mode",
   "features.multi_agent_v2",
   "features.multi_agent_v2_dynamic_tools",
+  "features.multi_env_copy_file",
   "features.non_prefixed_mcp_tool_names",
   "features.nonfatal_clock_read_errors",
   "features.omit_app_server_notification_media",
@@ -1753,6 +1778,7 @@
   "features.retain_client_developer_messages",
   "features.retain_client_tool_outputs",
   "features.rollout_budget",
+  "features.runtime_agent_instances",
   "features.runtime_metrics",
   "features.search_tool",
   "features.send_async_message",
@@ -1770,6 +1796,7 @@
   "features.steer",
   "features.step_model_switching",
   "features.subagent_default_context_limits",
+  "features.subagent_thread_environments",
   "features.telepathy",
   "features.terminal_resize_reflow",
   "features.terminal_visualization_instructions",
@@ -1789,6 +1816,7 @@
   "features.unified_exec_tty",
   "features.unified_image_budget",
   "features.view_image",
+  "features.wake_on_agent_messages",
   "features.web_search",
   "features.web_search_cached",
   "features.web_search_request",
@@ -1904,6 +1932,7 @@
   "tui.notifications",
   "tui.pet",
   "tui.pet_anchor",
+  "tui.presets",
   "tui.question_esc_back",
   "tui.raw_output_mode",
   "tui.rendering",

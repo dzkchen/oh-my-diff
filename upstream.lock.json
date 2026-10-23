@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/openai/codex.git",
-  "tag": "rust-v0.163.0",
-  "commit": "83086188ae0614bd882818ff1aa23f3194962012",
-  "rust_toolchain": "1.95.0",
+  "tag": "rust-v0.164.0",
+  "commit": "6aaac694803004a63c6f393d153c96d22521a6b9",
+  "rust_toolchain": "1.99.1",
   "verified_target": "aarch64-apple-darwin",
-  "cargo_lock_sha256": "17cdd862471774ba7aef836aaf0a0a3ed76bd23e503b1fc7278c89d1f2719d03",
-  "normalized_cargo_lock_sha256": "cae541406f7ec43a418e126be2bcd5de00b243e7bbf6382570028727d99c1069",
-  "normalized_workspace_packages": 160
+  "cargo_lock_sha256": "7ec2bfabf3b967c00409b85489076f8df3849745d3e469473d88288322adeb4a",
+  "normalized_cargo_lock_sha256": "bc5f7352658f51deace9dddb4bc404742b06c6402cc825b6d37051c008d989bd",
+  "normalized_workspace_packages": 166
 }
