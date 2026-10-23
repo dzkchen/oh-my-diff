@@ -1,5 +1,23 @@
 [
   {
+    "version": "1.1.1",
+    "date": "2026-10-23",
+    "title": "Oh My Diff 1.1.1",
+    "summary": "Fixes updating from 1.0.0 and two copies of one mod both being turned on, which stopped every mod.",
+    "sections": [
+      {
+        "label": "Fixed",
+        "items": [
+          "Updates from 1.0.0 and duplicate copies of a mod (#310)"
+        ]
+      }
+    ],
+    "commits": [
+      "202b38a",
+      "98bd5a2"
+    ]
+  },
+  {
     "version": "1.1.0",
     "date": "2026-10-23",
     "title": "Oh My Diff 1.1.0",
