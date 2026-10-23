@@ -258,6 +258,23 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
+    def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
+        store = Path("/store")
+        selections = [
+            {"id": "omd_advisor", "path": "/store/package-cache/omd_advisor/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_advisor", "path": "/store/sources/omd_advisor", "scope": "user", "selected": True, "packaged": False},
+            {"id": "omd_usage", "path": "/store/package-cache/omd_usage/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_usage", "path": "/store/sources/omd_usage", "scope": "user", "selected": False, "packaged": False}]
+        commands = []
+
+        def invoke(_manager, command, _store, *arguments):
+            commands.append((command, *arguments))
+            return {"selections": selections} if command == "selection-status" else {}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            profiles.keep_bundled_copies("manager", store)
+        self.assertEqual(commands, [("selection-status",), ("package-disable", "omd_advisor")])
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],

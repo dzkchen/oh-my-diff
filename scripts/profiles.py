@@ -87,6 +87,15 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def keep_bundled_copies(manager, store):
+    """Turn off a Directory package that is on beside the bundled copy of the same mod; the host rejects both."""
+    selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
+    for item in selected:
+        if item["packaged"] and any(other["path"] == str(store / "sources" / item["id"]) and other["scope"] == item["scope"]
+                                    for other in selected):
+            invoke(manager, "package-disable", store, item["id"])
+
+
 def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
@@ -654,6 +663,7 @@ def install(args):
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
+        keep_bundled_copies(installed_manager, store)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],

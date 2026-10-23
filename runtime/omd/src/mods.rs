@@ -2382,6 +2382,9 @@ pub struct ModConfiguration {
     pub schema: u32,
     #[serde(default)]
     pub revision: u64,
+    /// Written by 1.0.0, which ran mods on Node; ignored, and dropped at the next write.
+    #[serde(default, skip_serializing)]
+    pub node: Option<PathBuf>,
     pub mods: Vec<ModSelection>,
 }
 
@@ -3566,6 +3569,7 @@ impl ModHost {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
+                    node: None,
                     mods: Vec::new(),
                 }
             }

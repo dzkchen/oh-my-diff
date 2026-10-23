@@ -1,6 +1,6 @@
 [package]
 name = "codex-omd-runner"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
