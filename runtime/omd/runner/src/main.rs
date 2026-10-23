@@ -960,7 +960,7 @@ extern "C" fn no_wasm(_: v8::Local<v8::Context>, _: v8::Local<v8::String>) -> bo
 
 fn main() {
     STARTED.get_or_init(Instant::now);
-    if v8::icu::set_common_data_77(deno_core_icudata::ICU_DATA).is_err() {
+    if v8::icu::set_common_data_78(deno_core_icudata::ICU_DATA).is_err() {
         eprintln!("mod_runner_failed: ICU data");
         std::process::exit(1);
     }

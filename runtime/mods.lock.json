@@ -353,21 +353,20 @@
         "fs.write",
         "events",
         "lifecycle",
-        "composer",
         "inventory"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "2ae8d9b9551151d7b11b3cbe368b8ba6e6a998b28a3e66e5fbcbbf470d77e6c6",
+        "index.ts": "479c508cf8ae6d91f6330789826fd1cad602f57f91fd03e66249c0d1d9bcc992",
         "mermaid.ts": "9bb9c854b9f442bf653aaf4c611921180627b69e14623661bcd2f03d35563436",
-        "mod.json": "998d9c9514dbf19f993770fe6742e6564e8b7c3ccc5392e0d10abf659bd19380",
+        "mod.json": "c569311fc3f148410b504faa3020f7b2c5840ad4f3bbd28a379c2e4b77f62f63",
         "render.mjs": "35016ca57c4723ffca511ee71b92dc5c3b37ea2edceee8760d1d8e38eb182a0e",
         "text.ts": "52427287bf0aae0ff12a25efd10e42887fae8e438f4ba74a8aee340435c474ee"
       },
       "id": "omd_preview",
-      "package_sha256": "f595a7d2cdb92a7e09722c3b359ee9d2a04f940f7cbd0604a1a91ba172ddb466",
+      "package_sha256": "7ec0bc98464db7390b2e53337ffc705cf8e0f4da7eef5a99fb6111b4750fffea",
       "source": "mods/first-party/omd_preview",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     "omd_privacy": {
       "api": "1.0.0",

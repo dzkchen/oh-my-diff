@@ -2,7 +2,7 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
 `omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
@@ -75,7 +75,7 @@ follows.
 
 #### Codex plugins and hooks
 
-Codex 0.163.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
 that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_tool_use`,
 `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
 `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
@@ -751,6 +751,11 @@ it does. A callback result, including its state, stays within 256 KiB.
 #### `state_version` migration of thread and checkout state
 
 The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
+
+`omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
+package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
+`mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that
   thread or checkout: the host runs the mod's `migrate` handler (it needs `store`) on it and keeps the previous

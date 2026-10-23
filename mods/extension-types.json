@@ -438,7 +438,7 @@
       "path": "mods/first-party/omd_preview",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog, inline Mermaid drawings of assistant messages and draft image thumbnails above the composer; installed inactive in OMD+."
+      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog and inline Mermaid drawings of assistant messages; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_mods",

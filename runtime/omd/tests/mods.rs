@@ -8,6 +8,7 @@ use codex_omd::ModStore;
 use codex_omd::OMD_HOST_RELEASE;
 use serde_json::Value;
 use serde_json::json;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -798,7 +799,7 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
             "user",
         )
         .unwrap();
-    let receipt = store.migrate(&path).unwrap();
+    let receipt = store.migrate(Path::new("fixture")).unwrap();
     let backup: Value =
         serde_json::from_slice(&std::fs::read(receipt["backup"].as_str().unwrap()).unwrap())
             .unwrap();

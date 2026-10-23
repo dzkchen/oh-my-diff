@@ -47,7 +47,7 @@ Edit Rust in a scratch copy of upstream Codex at the pinned version, never `runt
 ```sh
 python3 .github/scripts/build.py setup NAME                                  # prints the scratch tree path
 python3 .github/scripts/build.py cargo NAME LOG test --locked -p CRATE FILTER # cargo in the tree; LOG is a log file path
-python3 .github/scripts/build.py sync NAME                                   # writes runtime/ back and checks it replays
+python3 .github/scripts/build.py sync NAME                                   # writes runtime/ and crate notices back, checks it replays
 python3 .github/scripts/build.py locks                                       # regenerates the source locks
 ```
 
@@ -57,7 +57,9 @@ python3 .github/scripts/build.py locks                                       # r
   `omd-runner` and links it beside the test binaries, where hosts look for it.
 - **Layout:** the tree is `/private/tmp/omd-bNAME/codex` and its target `/private/tmp/omd-bNAME/target`; `OMD_WORK_ROOT`
   replaces `/private/tmp`. The pinned upstream source, without the patch, is the tree's `normalized<version>` tag
-  (`git -C TREE diff normalized1630 -- codex-rs/PATH`).
+  (`git -C TREE diff normalized1640 -- codex-rs/PATH`).
+- **Crate notices:** `sync` regenerates `runtime/crate-notices.txt` with `scripts/crate_notices.py TREE`; the patch sync
+  check in CI fails when it is stale.
 - **Mods:** the tree's `mods/` links to your checkout, so mod edits are ordinary edits there. Run `build.py locks` after
   changing `mods/first-party/` or `plugins/` and commit the result.
 - **V8:** `omd-runner` and `codex-cli` link a V8 prebuilt: fetch it once with `python3 .github/scripts/build.py v8 NAME`.

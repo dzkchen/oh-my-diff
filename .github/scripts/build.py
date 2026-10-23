@@ -228,6 +228,7 @@ def sync(args):
                 target.unlink()
                 mirrors += 1
     shutil.copyfile(source / OBSERVER, ROOT / "runtime/native/src/request_observer.rs")
+    run(sys.executable, ROOT / "scripts/crate_notices.py", source, cwd=ROOT)
     checks = {}
     with tempfile.TemporaryDirectory(dir=work, prefix="replay-") as temporary:
         replay = Path(temporary) / "codex"
