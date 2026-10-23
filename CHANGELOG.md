@@ -2,6 +2,21 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.1.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.1) — 2026-10-23
+
+Fixes updating from 1.0.0 and two copies of one mod both being turned on, which stopped every mod.
+
+### Changed
+
+- Host release 1.1.1 (#310)
+
+### Fixed
+
+- Updates: `omd update` from 1.0.0 no longer fails with `unknown field node` (#310)
+- Mods: turning on a second copy of a mod, such as a Directory package beside the bundled copy, is refused with the copy to turn off first; before, both copies were rejected and `/mods` and every mod command failed with `mod_conflict` (#310)
+- Updates: installing or updating turns off a Directory package that is on beside the bundled copy of the same mod, so a store already in that state works again (#310)
+- Mods: `omd mods remove ID` removes only the package, not a bundled copy of the same mod (#310)
+
 ## [1.1.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.0) — 2026-10-23
 
 Add and switch ChatGPT, Claude, Cursor and API accounts inside the session, a minimal `omd mini`, ChatGPT-plan usage counted as included, and six more opt-in mods.
