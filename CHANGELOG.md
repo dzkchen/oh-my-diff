@@ -2,6 +2,37 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.1.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.0) — 2026-10-23
+
+Add and switch ChatGPT, Claude, Cursor and API accounts inside the session, a minimal `omd mini`, ChatGPT-plan usage counted as included, and six more opt-in mods.
+
+### New
+
+- Accounts: `/profile add` signs in to a ChatGPT, Claude or Cursor account, or takes an OpenAI or Anthropic API key or another provider, inside the session, first profile included; switch accounts with `/profile`, Alt+s or the usage meter, which shows each account's last-seen 5h and weekly limits (#293, #298, #301)
+- Claude CLI: several Claude accounts, each with its own login and models (`/claude login [api] [NAME]`, `/claude remove NAME`); any Claude CLI from `2.1.307` on works, so auto-update can stay on (#297, #298, #301)
+- Cursor (`omd_cursor`, opt-in, experimental): Cursor models in `/model` with several accounts via `/cursor setup [NAME]` (#291, #298)
+- `omd mini`: only the transcript, a bare prompt and one status line (model, context, limits or cost), for SSH sessions and small terminals (#291, #300)
+- Opt-in mods: `omd_tool_absorb` runs identical read-only calls once, `omd_tool_fix` repairs clear-cut malformed tool calls, `omd_source_knowledge` keeps hash-checked source facts and lessons, and `omd_programmable_context` gives the Python kernel kept context variables, child agents and `/refine` (#291, #295)
+- Mod API: `routes.write` lets a mod replace its own routes and service credentials after a confirmation, `thread/settings/update` accepts `modelProvider` with `model`, and `session.info` reports `process_id` (#293, #294, #298, #301)
+
+### Changed
+
+- Usage: ChatGPT-plan requests count as `included` instead of unknown cost, usage shows only in the status line below the prompt, and the usage dialog keeps Claude and Cursor limits apart from the Codex account (#299, #301)
+- Mod API: shipped experimental entries with a first-party or example consumer are now frozen, among them `terminal.panel`, `providers.models`, `http.request`, `sessions.read`, component modules and the below-composer site
+- Account mods (`omd_profiles`, `omd_claude_cli`, `omd_cursor`) need Node on `PATH` and say how to install it if it is missing (#301)
+- `omd`: bare `omd`, `omd help` and `omd --help` list the mod, session and update commands; `omd help --all` shows every flag (#303)
+- Workspace changes: `workspace_change` follows the repository's `.gitignore`, `.ignore` and exclude rules instead of a fixed skip list, so tracked `build/` and `dist/` files report changes (#305)
+- Mod authoring: `omd-mod-author` prints one-line errors instead of stack traces, and `--help` prints usage (#306)
+
+### Fixed
+
+- Privacy: sensitive-path checks catch hyphenated key names, case, parent directories, globs, brace lists, `rev:path`, quoting and `.`/`..` path tricks, without slow patterns (#294, #301)
+- Code execution: kernels keep output in write order, survive uncaught errors and `exit()`, and Bun no longer crashes when a background child writes (#294, #301)
+- Accounts: every `host.json` change from a setup step is confirmed first and written under the host's lock; a declined or failed add can be retried (#301)
+- Mods: `/preview --watch` keeps one watch per process and waits for a missing file; workflow keeps finished work; programmable context keeps the cached prompt prefix; source knowledge no longer invalidates facts it skipped (#294, #301)
+- Terminal UI: status segments from app notifications redraw at once, the voice strip shows in the plain composer, and `omd mini` settings no longer leak into tool processes (#300, #301)
+- Mods: OMD reports its own release (`1.1.0`) as the host release in errors, `omd-mod status` and generated types, so a package listing `1.1.0` in `compatibility.releases` loads (#305)
+
 ## [1.0.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.1) — 2026-10-20
 
 Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.
