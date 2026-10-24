@@ -2,6 +2,10 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.2.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.2.0) — 2026-10-24
+
+Oh My Diff now builds on Codex 0.164.0.
+
 ## [1.1.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.1) — 2026-10-23
 
 Fixes updating from 1.0.0 and two copies of one mod both being turned on, which stopped every mod.
