@@ -166,10 +166,6 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mod runtime: workspace folders that don't exist take no lease.
 - Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.
 
-### Decided
-
-- Packages outside the launch collection return in post-launch waves.
-
 ## 2026-10-08 — Launch scope and upstream pin
 
 A smaller launch collection, a planned API freeze and refreshed Codex.
@@ -182,12 +178,6 @@ A smaller launch collection, a planned API freeze and refreshed Codex.
 ### Fixed
 
 - Untracked candidate files and tree parity
-
-### Decided
-
-- Core tooling and a smaller OMD+ launch
-- API freeze before release qualification
-- Remaining collection returns in two waves
 
 ## 2026-10-07 — Privacy and response previews
 
@@ -387,10 +377,6 @@ Features move into mods as the host goes generic.
 - Route and gate checks
 - Capacity versus slow-down API errors
 
-### Decided
-
-- Codex themes planned
-
 ## 2026-09-27 — Shared APIs and host rework
 
 Experimental API 0.2 adds generic host operations alongside review fixes.
@@ -410,10 +396,6 @@ Experimental API 0.2 adds generic host operations alongside review fixes.
 - Git, LSP, Claude and installer review findings
 - Advisor lane, sessions and graph outputs
 
-### Decided
-
-- A feature-agnostic host: mods are the features
-
 ## 2026-09-26 — Git sidebar and terminal mods
 
 OMD now builds on upstream Codex’s fullscreen terminal.
@@ -426,12 +408,6 @@ OMD now builds on upstream Codex’s fullscreen terminal.
 ### Changed
 
 - Dropped OMD’s own fullscreen TUI
-
-### Decided
-
-- A mod that removes /plan
-- A lean pass on tests
-- A guard against oversized shell output
 
 ## 2026-09-25 — Code cells, LSP sync, debugger
 
@@ -455,10 +431,6 @@ Both ship as mods, not runtime changes.
 
 - Claude models via the official Claude CLI
 - Typed subagent tasks
-
-### Decided
-
-- New features ship as mods, not Rust patches
 
 ## 2026-09-23 — Launch identity and installer
 
@@ -494,11 +466,6 @@ Built-in features rebuilt as skills, hooks, plugins and mods.
 - Theme and focus-flow mods
 - Curated extension index
 - First live first-party mods
-
-### Decided
-
-- What goes in the lean first release
-- Launch plan: proof first
 
 ## 2026-09-21 — Reproducible mod packages
 
@@ -554,11 +521,6 @@ OMD becomes a moddable Codex, not a fixed feature set.
 - Bundled browser tooling
 - App bridge adapters
 
-### Decided
-
-- Product centers on TypeScript mods
-- Benchmarks move to the end
-
 ## 2026-09-15 — Guidance, code intel, review
 
 The agent learns your repo and double-checks its work.
@@ -586,10 +548,6 @@ The first patched Codex runtime.
 - Fullscreen TUI
 - Versioned guidelines
 
-### Decided
-
-- First look at modding the harness
-
 ## 2026-09-13 — Hello, Oh My Diff
 
 Measurement before claims. CAI is renamed Oh My Diff.
@@ -598,11 +556,6 @@ Measurement before claims. CAI is renamed Oh My Diff.
 
 - Benchmark infrastructure
 - Frozen evaluation protocol
-
-### Decided
-
-- Rename: CAI → Oh My Diff
-- No numbers until they’re measured
 
 ## 2026-09-12 — Pinned to upstream Codex
 

@@ -285,12 +285,6 @@
           "Mod runtime: workspace folders that don't exist take no lease.",
           "Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup."
         ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "Packages outside the launch collection return in post-launch waves."
-        ]
       }
     ],
     "commits": [
@@ -624,14 +618,6 @@
         "label": "Fixed",
         "items": [
           "Untracked candidate files and tree parity"
-        ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "Core tooling and a smaller OMD+ launch",
-          "API freeze before release qualification",
-          "Remaining collection returns in two waves"
         ]
       }
     ],
@@ -1036,12 +1022,6 @@
           "Route and gate checks",
           "Capacity versus slow-down API errors"
         ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "Codex themes planned"
-        ]
       }
     ],
     "commits": [
@@ -1082,12 +1062,6 @@
           "Git, LSP, Claude and installer review findings",
           "Advisor lane, sessions and graph outputs"
         ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "A feature-agnostic host: mods are the features"
-        ]
       }
     ],
     "commits": [
@@ -1114,14 +1088,6 @@
         "label": "Changed",
         "items": [
           "Dropped OMD’s own fullscreen TUI"
-        ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "A mod that removes /plan",
-          "A lean pass on tests",
-          "A guard against oversized shell output"
         ]
       }
     ],
@@ -1166,12 +1132,6 @@
         "items": [
           "Claude models via the official Claude CLI",
           "Typed subagent tasks"
-        ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "New features ship as mods, not Rust patches"
         ]
       }
     ],
@@ -1238,13 +1198,6 @@
           "Theme and focus-flow mods",
           "Curated extension index",
           "First live first-party mods"
-        ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "What goes in the lean first release",
-          "Launch plan: proof first"
         ]
       }
     ],
@@ -1367,13 +1320,6 @@
           "Bundled browser tooling",
           "App bridge adapters"
         ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "Product centers on TypeScript mods",
-          "Benchmarks move to the end"
-        ]
       }
     ],
     "commits": [
@@ -1431,12 +1377,6 @@
           "Fullscreen TUI",
           "Versioned guidelines"
         ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "First look at modding the harness"
-        ]
       }
     ],
     "commits": [
@@ -1459,13 +1399,6 @@
         "items": [
           "Benchmark infrastructure",
           "Frozen evaluation protocol"
-        ]
-      },
-      {
-        "label": "Decided",
-        "items": [
-          "Rename: CAI → Oh My Diff",
-          "No numbers until they’re measured"
         ]
       }
     ],
