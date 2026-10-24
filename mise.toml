@@ -1,6 +1,6 @@
 [tools]
 git-cliff = "2.14.2"
-node = "24.18.0"
+node = "24.22.1"
 
 [tasks."mods:check"]
 run = ["pnpm --dir mods check", "python3 scripts/mod_host_check.py --static"]

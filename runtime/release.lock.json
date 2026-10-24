@@ -96,7 +96,7 @@
     }
   },
   "mod_api": "1.0.0",
-  "node": "24.18.0",
+  "node": "24.22.1",
   "normalized_cargo_lock_sha256": "bc5f7352658f51deace9dddb4bc404742b06c6402cc825b6d37051c008d989bd",
   "platform_tools": [
     "omd",
