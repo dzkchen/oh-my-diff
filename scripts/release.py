@@ -15,7 +15,7 @@ REFERENCE = ROOT / "mods/REFERENCE.md"
 HOST_CRATES = ("runtime/omd/Cargo.toml", "runtime/omd/runner/Cargo.toml")
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
-LABELS = ("New", "Changed", "Fixed", "Decided")
+LABELS = ("New", "Changed", "Fixed")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
 
 

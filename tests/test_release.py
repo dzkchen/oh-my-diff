@@ -23,7 +23,7 @@ class ReleaseTests(unittest.TestCase):
                         "sections": [{"label": "New", "items": ["Installer"]}, {"label": "Fixed", "items": ["Update path"]}],
                         "commits": ["abcdef1"]},
                        {"date": "2026-10-08", "title": "Launch scope", "summary": "Smaller launch.",
-                        "sections": [{"label": "Decided", "items": ["Waves"]}], "commits": ["1234567"]}]
+                        "sections": [{"label": "Changed", "items": ["Waves"]}], "commits": ["1234567"]}]
             (root / "changelog.json").write_text(json.dumps(entries))
             (root / "CHANGELOG.md").write_text(release.render(entries))
             (root / "lock.json").write_text(json.dumps({"version": "1.0.0"}))
