@@ -4,7 +4,22 @@
     "date": "2026-10-24",
     "title": "Oh My Diff 1.2.0",
     "summary": "Oh My Diff now builds on Codex 0.164.0.",
-    "sections": [],
+    "sections": [
+      {
+        "label": "Changed",
+        "items": [
+          "Upstream: Codex 0.164.0; OMD 1.2.0 is the first release that supports it",
+          "Host release 1.2.0 (#313)",
+          "Mod tooling: Node 24.22.1 (#313)"
+        ]
+      },
+      {
+        "label": "Fixed",
+        "items": [
+          "Mods: `omd-mod migrate` and `omd-mod rollback` treat `.` and `..` as package folders, not mod ids"
+        ]
+      }
+    ],
     "commits": [
       "159756b",
       "318e2d6",

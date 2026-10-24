@@ -6,6 +6,16 @@ Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh 
 
 Oh My Diff now builds on Codex 0.164.0.
 
+### Changed
+
+- Upstream: Codex 0.164.0; OMD 1.2.0 is the first release that supports it
+- Host release 1.2.0 (#313)
+- Mod tooling: Node 24.22.1 (#313)
+
+### Fixed
+
+- Mods: `omd-mod migrate` and `omd-mod rollback` treat `.` and `..` as package folders, not mod ids
+
 ## [1.1.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.1) — 2026-10-23
 
 Fixes updating from 1.0.0 and two copies of one mod both being turned on, which stopped every mod.
