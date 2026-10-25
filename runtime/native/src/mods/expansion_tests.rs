@@ -1018,6 +1018,29 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         !unread.wants_value("call-plain"),
         "only an interceptor whose mod requires code_mode_values_v1 gets the value"
     );
+    unread
+        .on_tool_finish(ToolFinishInput {
+            session_store: &ExtensionData::new("session".to_owned()),
+            thread_store: &plain_thread,
+            turn_store: &ExtensionData::new("turn".to_owned()),
+            turn_id: "turn",
+            call_id: "call-plain",
+            tool_name: &READ,
+            source: codex_extension_api::ToolCallSource::Direct,
+            outcome: codex_extension_api::ToolCallOutcome::Failed {
+                handler_executed: true,
+            },
+            call_sha256: None,
+            result_sha256: None,
+        })
+        .await;
+    assert!(
+        unread
+            .views
+            .published()
+            .is_none_or(|view| view.diagnostics.is_empty()),
+        "a chain that only rethrows the tool's own failure is not a mod diagnostic"
+    );
 
     let source = fixture
         .core

@@ -14,6 +14,7 @@ Oh My Diff now builds on Codex 0.164.0.
 
 ### Fixed
 
+- Mods: a failed tool call no longer also shows a Mod diagnostics box (`tool_result_unavailable: failed`) when a mod's tool middleware only passes the failure on
 - Mods: `omd-mod migrate` and `omd-mod rollback` treat `.` and `..` as package folders, not mod ids
 
 ## [1.1.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.1) — 2026-10-23

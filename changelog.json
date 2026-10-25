@@ -16,6 +16,7 @@
       {
         "label": "Fixed",
         "items": [
+          "Mods: a failed tool call no longer also shows a Mod diagnostics box (`tool_result_unavailable: failed`) when a mod's tool middleware only passes the failure on",
           "Mods: `omd-mod migrate` and `omd-mod rollback` treat `.` and `..` as package folders, not mod ids"
         ]
       }

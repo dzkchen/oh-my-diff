@@ -2448,15 +2448,10 @@ impl ToolLifecycleContributor for Mods {
                 &input.tool_name.to_string(),
                 tool_outcome(input.outcome),
             );
-            if let Some(Err(error)) = self
-                .resume(
-                    input.call_id,
-                    Err(format!(
-                        "tool_result_unavailable: {}",
-                        tool_outcome(input.outcome)
-                    )),
-                )
-                .await
+            let unavailable = format!("tool_result_unavailable: {}", tool_outcome(input.outcome));
+            // A chain that only rethrows the tool's own failure is not a mod fault: the model already has that failure.
+            if let Some(Err(error)) = self.resume(input.call_id, Err(unavailable.clone())).await
+                && error != unavailable
             {
                 self.views.diagnostic(
                     &self.host,
