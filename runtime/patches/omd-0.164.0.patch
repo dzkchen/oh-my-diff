@@ -16844,7 +16844,7 @@ index b61c78e8e1297bc6f8836d187b8bc33ad71af3c5..2c85cc3ba03babf975e008843b9fa8dc
              shutdown_rx,
          ));
 diff --git a/codex-rs/app-server/src/lib.rs b/codex-rs/app-server/src/lib.rs
-index ed787e10f9711d09ec697b2b57baa727c319ae44..48341fb82f1a9889fde1918098787ed5db910d55 100644
+index ed787e10f9711d09ec697b2b57baa727c319ae44..abbadf22154eece80b7586a3888f4a6ffc77c9f2 100644
 --- a/codex-rs/app-server/src/lib.rs
 +++ b/codex-rs/app-server/src/lib.rs
 @@ -20,8 +20,6 @@ use std::io::Result as IoResult;
@@ -16986,7 +16986,15 @@ index ed787e10f9711d09ec697b2b57baa727c319ae44..48341fb82f1a9889fde1918098787ed5
                      }
                      envelope = outgoing_rx.recv() => {
                      let Some(envelope) = envelope else {
-@@ -1037,6 +981,8 @@ pub async fn run_main_with_transport_options(
+@@ -1003,6 +947,7 @@ pub async fn run_main_with_transport_options(
+             .as_path()
+             .join("app-server-daemon/settings.json")
+     });
++    codex_omd::app_routes::bind_thread_projects();
+     let processor_handle = tokio::spawn({
+         let auth_manager = Arc::clone(&auth_manager);
+         let initialize_notification_sender = outgoing_message_sender.clone();
+@@ -1037,6 +982,8 @@ pub async fn run_main_with_transport_options(
          });
          processor.remote_control_processor.daemon_settings_file = daemon_settings_file;
          let processor = Arc::new(processor);
@@ -16995,7 +17003,7 @@ index ed787e10f9711d09ec697b2b57baa727c319ae44..48341fb82f1a9889fde1918098787ed5
          let mut thread_created_rx = processor.thread_created_receiver();
          let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();
          let mut active_admissions_rx = processor.turn_admission.subscribe_active();
-@@ -1047,6 +993,7 @@ pub async fn run_main_with_transport_options(
+@@ -1047,6 +994,7 @@ pub async fn run_main_with_transport_options(
          let mut remote_control_status = remote_control_status_rx.borrow().clone();
          let transport_shutdown_token = transport_shutdown_token.clone();
          async move {
@@ -17003,7 +17011,7 @@ index ed787e10f9711d09ec697b2b57baa727c319ae44..48341fb82f1a9889fde1918098787ed5
              let recovery_task = if managed_daemon {
                  match daemon_thread_recovery::start_recovery(
                      recovery_file.clone(),
-@@ -1159,39 +1106,19 @@ pub async fn run_main_with_transport_options(
+@@ -1159,39 +1107,19 @@ pub async fn run_main_with_transport_options(
                                  writer,
                                  disconnect_sender,
                              } => {
@@ -17047,7 +17055,7 @@ index ed787e10f9711d09ec697b2b57baa727c319ae44..48341fb82f1a9889fde1918098787ed5
                              }
                              TransportEvent::ConnectionClosed { connection_id } => {
                                  let Some(connection_state) = connections.remove(&connection_id) else {
-@@ -1219,84 +1146,36 @@ pub async fn run_main_with_transport_options(
+@@ -1219,84 +1147,36 @@ pub async fn run_main_with_transport_options(
                                  }
                              }
                              TransportEvent::IncomingMessage { connection_id, message } => {
@@ -55519,10 +55527,10 @@ index 0000000000000000000000000000000000000000..c84c44ee680bd1f1b38ecd711fd09f84
 +}
 diff --git a/codex-rs/ext/omd/src/clients.rs b/codex-rs/ext/omd/src/clients.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..429f67d02882bab82b1b6dd913715382d35467cc
+index 0000000000000000000000000000000000000000..a08a99b19e8d269b506a5364db3a3644f1764842
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/clients.rs
-@@ -0,0 +1,903 @@
+@@ -0,0 +1,907 @@
 +use super::*;
 +use codex_omd::ModCommand;
 +use codex_omd::ModComponent;
@@ -56118,10 +56126,14 @@ index 0000000000000000000000000000000000000000..429f67d02882bab82b1b6dd913715382
 +        .into_iter()
 +        .map(|(id, owner)| (id, owner.sha256))
 +        .collect::<BTreeMap<_, _>>();
-+    let thread = core
-+        .expansion
-+        .current()
++    let current = core.expansion.current();
++    let thread = current
++        .as_ref()
 +        .map_or_else(|| "user".to_owned(), |lead| lead.thread.to_string());
++    let repository = current.map_or_else(
++        || core.host.repository.clone(),
++        |lead| lead.host.repository.clone(),
++    );
 +    let mut last = "resource_unavailable".to_owned();
 +    for owner in owners {
 +        let Some(source) = sources.get(&owner) else {
@@ -56130,7 +56142,7 @@ index 0000000000000000000000000000000000000000..429f67d02882bab82b1b6dd913715382
 +        };
 +        let loaded = codex_omd::scoped_data::ScopedDataHost::new(
 +            core.host.root.clone(),
-+            core.host.repository.clone(),
++            repository.clone(),
 +            None,
 +            None,
 +            owner,
@@ -59599,10 +59611,10 @@ index 0000000000000000000000000000000000000000..096710ab25143400080f58310d11d2d4
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9efb1d090
+index 0000000000000000000000000000000000000000..a66216c46ac3bbff547bbe2d76c7484b774f144b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,797 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -59882,7 +59894,20 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +}
 +
 +impl Host {
-+    fn for_worktree(&self, repository: PathBuf) -> Host {
++    fn admits(&self, repository: &std::path::Path, codex_home: &std::path::Path) -> bool {
++        let codex_home = codex_home
++            .canonicalize()
++            .unwrap_or_else(|_| codex_home.to_path_buf());
++        !codex_omd::app_routes::unscoped_directory(repository)
++            && !self
++                .protected_paths()
++                .iter()
++                .chain([&codex_home])
++                .any(|path| path.starts_with(repository) || repository.starts_with(path))
++            && self.config.validate(repository).is_ok()
++    }
++
++    fn for_repository(&self, repository: PathBuf) -> Host {
 +        self.route_config();
 +        let routes = self
 +            .routes
@@ -60347,6 +60372,44 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +        );
 +        std::fs::write(root.join(config::HOST_CONFIG), br#"{"schema":2}"#).unwrap();
 +        assert!(HostConfig::load(&root, &root.join("repo")).is_err());
++    }
++
++    #[test]
++    fn thread_projects_exclude_unscoped_directories_and_protected_files() {
++        let directory = tempfile::tempdir().unwrap();
++        let base = directory.path().canonicalize().unwrap();
++        let root = base.join("store");
++        let project = base.join("project");
++        std::fs::create_dir(&root).unwrap();
++        std::fs::create_dir(&project).unwrap();
++        let host = Host {
++            root: root.clone(),
++            repository: base.join("launch"),
++            repository_identity: String::new(),
++            config: HostConfig::default(),
++            routes: std::sync::Mutex::new(RouteTable {
++                stamp: None,
++                config: Arc::new(HostConfig::default()),
++                error: None,
++            }),
++            accounts: Arc::new(Accounts::default()),
++            manager: Weak::new(),
++            epoch: 0,
++        };
++        let work = base.join("work");
++        std::fs::create_dir_all(work.join(".codex/memories")).unwrap();
++        let codex_home = base.join("codex-home");
++        std::os::unix::fs::symlink(work.join(".codex"), &codex_home).unwrap();
++        assert!(host.admits(&project, &codex_home));
++        assert!(!host.admits(&base, &codex_home));
++        assert!(!host.admits(&root, &codex_home));
++        assert!(!host.admits(&root.join("sessions"), &codex_home));
++        assert!(!host.admits(&work, &codex_home));
++        assert!(!host.admits(&work.join(".codex/memories"), &codex_home));
++        assert!(!host.admits(std::path::Path::new("/"), &codex_home));
++        let bound = host.for_repository(project.clone());
++        assert_eq!(bound.repository, project);
++        assert_ne!(bound.repository_identity, host.repository_identity);
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
@@ -62902,10 +62965,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..349e71b8c7b888e7470c32d4d5650fe24d51c83f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2555 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63186,7 +63249,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        }
 +    }
 +
-+    fn host_for(&self, cwd: &std::path::Path) -> Option<Arc<Host>> {
++    fn host_for(&self, cwd: &std::path::Path, codex_home: &std::path::Path) -> Option<Arc<Host>> {
 +        if cwd == self.host.repository {
 +            return Some(self.host.clone());
 +        }
@@ -63195,13 +63258,16 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        if let Some(host) = worktrees.get(&cwd) {
 +            return Some(host.clone());
 +        }
-+        codex_omd::app_routes::session_roots(&self.host.repository)
-+            .contains(&cwd)
-+            .then(|| {
-+                let host = Arc::new(self.host.for_worktree(cwd.clone()));
-+                worktrees.insert(cwd, host.clone());
-+                host
-+            })
++        let bound = if codex_omd::app_routes::thread_projects() {
++            self.host.admits(&cwd, codex_home)
++        } else {
++            codex_omd::app_routes::session_roots(&self.host.repository).contains(&cwd)
++        };
++        bound.then(|| {
++            let host = Arc::new(self.host.for_repository(cwd.clone()));
++            worktrees.insert(cwd, host.clone());
++            host
++        })
 +    }
 +}
 +
@@ -63575,6 +63641,10 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +    ) -> Vec<PromptFragment> {
 +        let runtime = self.runtime.clone();
 +        let host = self.host.clone();
++        let repository = lead.map_or_else(
++            || self.host.repository.clone(),
++            |lead| lead.host.repository.clone(),
++        );
 +        let views = self.views.clone();
 +        let cancelled = Arc::new(AtomicBool::new(false));
 +        let _cancellation = Cancellation(cancelled.clone());
@@ -63602,10 +63672,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        let job = tokio::task::spawn_blocking(move || {
 +            let _thread = codex_omd::StateThread::enter(thread);
 +            let Some(facts) = runtime.lock().ok().map(|runtime| {
-+                codex_omd::observe_workspace_changes(
-+                    &host.repository,
-+                    observes_workspace(&runtime),
-+                );
++                codex_omd::observe_workspace_changes(&repository, observes_workspace(&runtime));
 +                facts(&runtime)
 +            }) else {
 +                return Vec::new();
@@ -64734,7 +64801,10 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +                return;
 +            };
 +            self.native_agent_started(thread, input.session_source, input.thread_store);
-+            let host = self.host_for(input.config.cwd.as_path());
++            let host = self.host_for(
++                input.config.cwd.as_path(),
++                input.config.codex_home.as_path(),
++            );
 +            if reports_directory(
 +                input.session_source,
 +                input.config.cwd.as_path(),
@@ -64745,8 +64815,13 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +                    "directory",
 +                    host.is_none().then(|| {
 +                        format!(
-+                            "Mods are off in {}: it is neither the launch project nor one of its worktrees",
-+                            input.config.cwd.display()
++                            "Mods are off in {}: {}",
++                            input.config.cwd.display(),
++                            if codex_omd::app_routes::thread_projects() {
++                                "it is not a project OMD can bind (home, filesystem root, Codex home, protected OMD files or an invalid host configuration)"
++                            } else {
++                                "it is neither the launch project nor one of its worktrees"
++                            }
 +                        )
 +                    }),
 +                );
@@ -66269,7 +66344,7 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0c4a1f3eb
+index 0000000000000000000000000000000000000000..07f33767345ff081d17d501503633bd8174aa603
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2580 @@
@@ -67126,7 +67201,7 @@ index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0
 +        .map_err(|e| e.to_string())?
 +        .config()
 +        .await;
-+    if parent.cwd.as_path() != lead.host.repository {
++    if parent.cwd.as_path().canonicalize().ok().as_deref() != Some(lead.host.repository.as_path()) {
 +        return Err("parent_repository_changed".into());
 +    }
 +    Ok(parent)
@@ -79142,7 +79217,7 @@ index 0000000000000000000000000000000000000000..3a6ec486cc40c8ce442312d9bb228230
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300ca372e54
+index 0000000000000000000000000000000000000000..4c486f1251fa17a29aedf0f516e92bda426ef4da
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
 @@ -0,0 +1,421 @@
@@ -79469,7 +79544,7 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +            .flatten();
 +        if let Some(cwd) = &cwd {
 +            let allowed = std::fs::canonicalize(cwd).is_ok_and(|cwd| {
-+                codex_omd::app_routes::session_roots(&self.host.repository).contains(&cwd)
++                codex_omd::app_routes::session_roots(&lead.host.repository).contains(&cwd)
 +            });
 +            if !allowed {
 +                return Err("agent_spawn_cwd_outside_session".into());
@@ -81778,10 +81853,10 @@ index 0000000000000000000000000000000000000000..d8f561fd4086b22febedcc8955c07359
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed6e8cf002
+index 0000000000000000000000000000000000000000..a5a52bdd47c5b4584fad720cdcd2693d392adb20
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,812 @@
+@@ -0,0 +1,813 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -81879,7 +81954,8 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +        if environment.len() != 1
 +            || environment[0].environment_id != "local"
 +            || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
-+            || config.cwd.as_path() != host.repository
++            || config.cwd.as_path().canonicalize().ok().as_deref()
++                != Some(host.repository.as_path())
 +        {
 +            return Err("workspace_operation_requires_local_repository".into());
 +        }
@@ -82223,7 +82299,7 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +            .map_err(|error| error.to_string())?
 +            .config()
 +            .await;
-+        if config.cwd.as_path() != host.repository {
++        if config.cwd.as_path().canonicalize().ok().as_deref() != Some(host.repository.as_path()) {
 +            return Err("workspace_operation_requires_local_repository".into());
 +        }
 +        let current = lead
@@ -90960,10 +91036,10 @@ index 0000000000000000000000000000000000000000..c839a26eb5e8c096a9b51a2e382e1edb
 +}
 diff --git a/codex-rs/omd/src/app_routes.rs b/codex-rs/omd/src/app_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b97d4bbf4235b1efdab887b4f8a28c4483574bde
+index 0000000000000000000000000000000000000000..17446e1ae6356a4592691a2b226e35feda4418f7
 --- /dev/null
 +++ b/codex-rs/omd/src/app_routes.rs
-@@ -0,0 +1,613 @@
+@@ -0,0 +1,623 @@
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -91075,6 +91151,16 @@ index 0000000000000000000000000000000000000000..b97d4bbf4235b1efdab887b4f8a28c44
 +            })
 +            .collect(),
 +    )
++}
++
++static THREAD_PROJECTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++pub fn bind_thread_projects() {
++    THREAD_PROJECTS.store(true, std::sync::atomic::Ordering::Relaxed);
++}
++
++pub fn thread_projects() -> bool {
++    THREAD_PROJECTS.load(std::sync::atomic::Ordering::Relaxed)
 +}
 +
 +pub fn unscoped_directory(directory: &Path) -> bool {

@@ -94,6 +94,7 @@ class ProfileModeTests(unittest.TestCase):
             for current, argv, expected in (
                     (managed, ["uninstall", "--keep-broker"], "installer uninstall --root /omd/root --keep-broker"),
                     (managed, ["update"], "installer update --root /omd/root"),
+                    (managed, ["codex-app", "status"], "installer codex-app --root /omd/root status"),
                     (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
                     (record, ["update"], "tool update /omd/store"),
                     (record, ["help", "--all"], "tool --help")):

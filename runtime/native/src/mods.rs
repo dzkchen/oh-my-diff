@@ -278,7 +278,7 @@ impl Mods {
         }
     }
 
-    fn host_for(&self, cwd: &std::path::Path) -> Option<Arc<Host>> {
+    fn host_for(&self, cwd: &std::path::Path, codex_home: &std::path::Path) -> Option<Arc<Host>> {
         if cwd == self.host.repository {
             return Some(self.host.clone());
         }
@@ -287,13 +287,16 @@ impl Mods {
         if let Some(host) = worktrees.get(&cwd) {
             return Some(host.clone());
         }
-        codex_omd::app_routes::session_roots(&self.host.repository)
-            .contains(&cwd)
-            .then(|| {
-                let host = Arc::new(self.host.for_worktree(cwd.clone()));
-                worktrees.insert(cwd, host.clone());
-                host
-            })
+        let bound = if codex_omd::app_routes::thread_projects() {
+            self.host.admits(&cwd, codex_home)
+        } else {
+            codex_omd::app_routes::session_roots(&self.host.repository).contains(&cwd)
+        };
+        bound.then(|| {
+            let host = Arc::new(self.host.for_repository(cwd.clone()));
+            worktrees.insert(cwd, host.clone());
+            host
+        })
     }
 }
 
@@ -667,6 +670,10 @@ impl Core {
     ) -> Vec<PromptFragment> {
         let runtime = self.runtime.clone();
         let host = self.host.clone();
+        let repository = lead.map_or_else(
+            || self.host.repository.clone(),
+            |lead| lead.host.repository.clone(),
+        );
         let views = self.views.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
@@ -694,10 +701,7 @@ impl Core {
         let job = tokio::task::spawn_blocking(move || {
             let _thread = codex_omd::StateThread::enter(thread);
             let Some(facts) = runtime.lock().ok().map(|runtime| {
-                codex_omd::observe_workspace_changes(
-                    &host.repository,
-                    observes_workspace(&runtime),
-                );
+                codex_omd::observe_workspace_changes(&repository, observes_workspace(&runtime));
                 facts(&runtime)
             }) else {
                 return Vec::new();
@@ -1826,7 +1830,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 return;
             };
             self.native_agent_started(thread, input.session_source, input.thread_store);
-            let host = self.host_for(input.config.cwd.as_path());
+            let host = self.host_for(
+                input.config.cwd.as_path(),
+                input.config.codex_home.as_path(),
+            );
             if reports_directory(
                 input.session_source,
                 input.config.cwd.as_path(),
@@ -1837,8 +1844,13 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     "directory",
                     host.is_none().then(|| {
                         format!(
-                            "Mods are off in {}: it is neither the launch project nor one of its worktrees",
-                            input.config.cwd.display()
+                            "Mods are off in {}: {}",
+                            input.config.cwd.display(),
+                            if codex_omd::app_routes::thread_projects() {
+                                "it is not a project OMD can bind (home, filesystem root, Codex home, protected OMD files or an invalid host configuration)"
+                            } else {
+                                "it is neither the launch project nor one of its worktrees"
+                            }
                         )
                     }),
                 );

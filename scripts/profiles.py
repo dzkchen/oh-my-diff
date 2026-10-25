@@ -161,7 +161,7 @@ def write(prefix, record):
 
 def omd_text(record, tool, control):
     update = record.get("update")
-    routed = (f"case \"$1\" in update|uninstall) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
+    routed = (f"case \"$1\" in update|uninstall|codex-app) command=$1; shift; OMD_PYTHON={shlex.quote(update['python'])} exec sh "
               f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n" if update
               else f"if [ \"$1\" = uninstall ]; then shift; exec {shlex.quote(str(control))} uninstall \"$@\"; fi\n")
     mini = f"if [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control))} mini -- \"$@\"; fi\n"

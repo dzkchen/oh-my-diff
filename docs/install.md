@@ -49,6 +49,34 @@ Removes OMD and its Codex plugins and restores commands it moved aside. Codex da
 authority broker, run `omd-package broker uninstall` first. Mod settings stay in `~/.local/share/oh-my-diff/stores`;
 delete it to remove them.
 
+## Codex app and IDE extension (unsupported)
+
+OMD+ can run under the official Codex desktop app and the Codex IDE extension. **OpenAI does not support this**:
+both clients are closed source, and OMD starts in their place through overrides they don't document for this use.
+
+```sh
+omd codex-app enable    # point the app and the extension at OMD's codex
+omd codex-app disable   # back to their bundled Codex
+omd codex-app           # show which codex they use
+```
+
+Then quit and reopen the Codex app and reload editor windows.
+
+- The app reads `CODEX_CLI_PATH` from your login session. `enable` sets it now and at every login (LaunchAgent
+  `dev.ohmydiff.codex-app`).
+- VS Code, Cursor and Windsurf get `chatgpt.cliExecutable` in their user settings. A settings file with comments, or
+  one OMD can't write, is left alone: add the printed path yourself. `omd codex-app` warns when the active
+  installation is no longer OMD+.
+- Hooks, mod tools, skills, plugins, model-call middleware, providers and approvals work, and workspace operations act
+  on each thread's project. Your global mod choices apply; per-project choices and checkout-scoped mod state don't.
+  Cards, panes, status rows, `/mods` and `/omd` don't show, because these clients don't draw OMD's interface.
+- Verified with Codex app 26.1013.40934 (bundled Codex `0.163.0-alpha.10.2`). Codex extension 26.51007.21434 was
+  checked for its settings and protocol only.
+- When the app or extension moves past Codex `0.163`, a request OMD doesn't know fails in the client with
+  `Invalid request: unknown variant` and the method name. Run `omd codex-app disable` and reopen the app until an OMD
+  release supports that Codex version.
+- `omd uninstall` runs `omd codex-app disable` first.
+
 ## Troubleshooting
 
 | Message | Fix |

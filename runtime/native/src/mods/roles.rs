@@ -321,7 +321,7 @@ impl Core {
             .flatten();
         if let Some(cwd) = &cwd {
             let allowed = std::fs::canonicalize(cwd).is_ok_and(|cwd| {
-                codex_omd::app_routes::session_roots(&self.host.repository).contains(&cwd)
+                codex_omd::app_routes::session_roots(&lead.host.repository).contains(&cwd)
             });
             if !allowed {
                 return Err("agent_spawn_cwd_outside_session".into());

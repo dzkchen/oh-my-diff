@@ -851,7 +851,7 @@ pub(super) async fn parent_config(lead: &Lead) -> Result<Arc<Config>, String> {
         .map_err(|e| e.to_string())?
         .config()
         .await;
-    if parent.cwd.as_path() != lead.host.repository {
+    if parent.cwd.as_path().canonicalize().ok().as_deref() != Some(lead.host.repository.as_path()) {
         return Err("parent_repository_changed".into());
     }
     Ok(parent)
