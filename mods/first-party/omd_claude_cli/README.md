@@ -43,9 +43,8 @@ any account uses Console API credits), since the host keeps one route per accoun
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `extra_usage` | `true` | Keep working on paid extra usage when the plan limit is reached, if your account allows it. `false` stops as soon as a response reports extra usage, which may still be billed. |
-| `ask_claude` | `false` | Give other models an `ask_claude` tool that runs Claude as a child agent. It is read-only unless asked to write, and writes only in an isolated worktree within your own write permissions. |
 
-Write mode needs `web_search = "disabled"` in the session. Claude sessions don't get the tool.
+To run subagents on Claude while another model leads, turn on `omd_subagent_router` and say, for example, "use sonnet 5.5 as subagents to research".
 
 ## Needs and limits
 
@@ -54,6 +53,8 @@ Write mode needs `web_search = "disabled"` in the session. Claude sessions don't
 - A request for a model other than the selected one is refused.
 - Each request starts a fresh CLI process, adding a fraction of a second.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
+- A task an OpenAI lead seals for a subagent (GPT-6.1 calling its spawn tool directly) can't be read by Claude; a Claude
+  subagent then works from the conversation it inherits and its agent name.
 - After a switch to Claude, an OpenAI compaction summary is first rewritten as plain text by OpenAI (one OpenAI request; if it fails, Claude continues without that summary and a warning shows); OpenAI's encrypted reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).
 

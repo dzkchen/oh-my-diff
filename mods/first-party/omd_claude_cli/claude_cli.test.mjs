@@ -64,9 +64,11 @@ test('history from another provider carries over: opaque reasoning dropped, host
     { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
     { type: 'web_search_call', id: 'ws_1', status: 'completed', action: { type: 'search', query: 'codex docs' } },
     { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found them.' }] },
-    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] },
+    { type: 'agent_message', author: '/root', recipient: '/root/docs', content: [{ type: 'input_text', text: 'Read README.md.' }, { type: 'encrypted_content', encrypted_content: 'gAAAA' }] }] }, model);
   assert.deepEqual(carried.frames.map(frame => frame.message.content.map(block => block.text)), [
-    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.']]);
+    ['Find the docs.'], ['[searched the web {"type":"search","query":"codex docs"}]', 'Found them.'], ['Summarize.',
+    'Message from /root to /root/docs:\nRead README.md.\n[This message was sealed by the sender\'s provider and cannot be read here; infer your task from the conversation and your name, /root/docs.]']]);
 });
 
 async function fakeCli(script) {

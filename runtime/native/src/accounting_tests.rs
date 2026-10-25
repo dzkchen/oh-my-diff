@@ -301,6 +301,17 @@ fn fast_route() -> RequestRoute {
 }
 
 #[test]
+fn a_refused_account_sends_nothing() {
+    let (_root, accounts, _task, mut request, body) = setup();
+    accounts.refuse("child", "agent_route_unavailable: m".into());
+    let refused = accounts
+        .before_send(&mut request, Some(&body))
+        .err()
+        .unwrap();
+    assert!(format!("{refused:?}").contains("agent_route_unavailable: m"));
+}
+
+#[test]
 fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
     let (root, accounts, task, mut request, body) = setup();
     let store = root.path().join("store");

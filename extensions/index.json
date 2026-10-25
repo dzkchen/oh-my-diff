@@ -12,7 +12,7 @@
       "id": "omd_claude_cli",
       "version": "1.0.0",
       "extension_type": "mod",
-      "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model, plus ask_claude delegation",
+      "capability": "Opt-in Claude models from your official Claude CLI login, switchable in-session with /model",
       "source": "mods/first-party/omd_claude_cli",
       "license": "MIT",
       "maintainer": "Oh My Diff",
@@ -260,6 +260,22 @@
       "license": "MIT",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.164.0; OMD 1.1.0; mod API 1.0.0; tool_batch_v1, tool_batch_success_v1, code_mode_values_v1, continuation_middleware_v1, tool_continuation_v2, store_v1, store_thread_v1, state_scopes_v1, events_v1",
+      "tested_versions": [
+        "Codex 0.164.0",
+        "OMD 1.1.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
+      "id": "omd_subagent_router",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Opt-in subagent model routing: prompt directives and per-role defaults pick each spawn's model and effort, including another provider's, with a visible fallback to the lead's model",
+      "source": "mods/first-party/omd_subagent_router",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.164.0; OMD 1.1.0; mod API 1.0.0; agent_lifecycle_v1, app_v1, state_scopes_v1, store_v1, ui_controls_v1",
       "tested_versions": [
         "Codex 0.164.0",
         "OMD 1.1.0 pre-release (offline checks)",

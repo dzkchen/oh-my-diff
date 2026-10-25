@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session and an ask_claude delegation tool",
+  "description": "Claude models through your official Claude CLI login as a Codex provider, with /claude login in the session",
   "license": "MIT",
   "subscriptions": { "channels": ["omd_claude_cli/login", "omd_claude_cli/code", "omd_claude_cli/remove"] },
   "provenance": {
@@ -21,10 +21,6 @@
     "events",
     "packages",
     "inventory",
-    "tools",
-    "agents",
-    "sessions",
-    "sessions_tools",
     "store"
   ],
   "os_access": {
@@ -53,8 +49,8 @@
     "type": "object",
     "properties": {
       "ask_claude": {
-        "title": "Ask Claude tool",
-        "description": "Give other models an ask_claude tool that runs Claude as a read-only child agent; it writes only in an isolated worktree when asked",
+        "title": "Ask Claude tool (removed)",
+        "description": "Has no effect; turn on omd_subagent_router to run subagents on Claude",
         "type": "boolean",
         "default": false
       },

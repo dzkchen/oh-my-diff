@@ -2437,7 +2437,8 @@ impl Agents {
             &thread_id.to_string(),
             json!({"agent_id": id, "origin": "mod", "owner": caller.id,
                 "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-                "role": start_role, "route": request.route,
+                "role": start_role, "route": request.route, "provider": route.provider, "model": route.model,
+                "billing": crate::accounting::billing(Some(&route.rates)),
                 "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
                     "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
         );

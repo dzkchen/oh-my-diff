@@ -3632,6 +3632,74 @@ async fn peer_messages_pass_receive_interceptors_as_untrusted_data() {
 }
 
 #[test]
+fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let host = &fixture.lead.host;
+    let route = |name: &str, model: &str| {
+        json!({"name": name, "roles": ["lead"], "provider": "other", "model": model,
+            "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
+            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
+            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
+            "input_token_ceiling": 1000, "included_subscription": true}})
+    };
+    std::fs::write(
+        host.root.join("host.json"),
+        json!({"routes": [route("other", "other-default"), route("other-fast", "other-fast")],
+            "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
+        .to_string(),
+    )
+    .unwrap();
+    assert_eq!(host.route_config().1, None);
+    let name = |model: &str| {
+        host.provider_lead_route("other", model)
+            .map(|route| route.name)
+    };
+    assert_eq!(name("other-fast").as_deref(), Some("other-fast"));
+    assert_eq!(name("other-new").as_deref(), Some("other"));
+    assert!(host.provider_lead_route("missing", "m").is_none());
+
+    let session = &fixture.lead.session;
+    let child = ThreadId::new();
+    let owner = format!("agent:{child}");
+    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
+        .unwrap();
+    let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
+    assert_eq!(
+        (account.provider.as_str(), account.model.as_str()),
+        ("other", "other-new")
+    );
+    assert_eq!(account.route.as_deref(), Some("other"));
+    assert!(account.rates.is_some());
+    assert!(crate::provider_worker(&account.owner));
+    session
+        .task
+        .admit(&account.owner, "other", "other-new", 0)
+        .unwrap();
+    assert!(
+        session
+            .task
+            .admit(&account.owner, "other", "other-fast", 0)
+            .is_err()
+    );
+
+    let missing = ThreadId::new();
+    let error = host
+        .enroll_cross_provider(
+            missing,
+            session,
+            &format!("agent:{missing}"),
+            "lead",
+            1,
+            "missing",
+            "m",
+        )
+        .unwrap_err();
+    assert!(error.starts_with("agent_route_unavailable"), "{error}");
+}
+
+#[test]
 fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
     let Some(fixture) = fixture(&[]) else {
         return;

@@ -19678,10 +19678,37 @@ index cce71e46c17084a76d7d7ad7945145f3d4d1a256..6a964509737b8796050c236bebe14fa0
        "additionalProperties": false,
        "properties": {
 diff --git a/codex-rs/core/src/agent/child_config.rs b/codex-rs/core/src/agent/child_config.rs
-index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a938ce73c 100644
+index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..8c7055298b844175874ef877ad062765e232d588 100644
 --- a/codex-rs/core/src/agent/child_config.rs
 +++ b/codex-rs/core/src/agent/child_config.rs
-@@ -60,6 +60,7 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -20,6 +20,26 @@ use codex_protocol::protocol::MultiAgentVersion;
+
+ pub(crate) const MAX_SPAWN_AGENT_MODEL_OVERRIDES: usize = 5;
+
++pub(crate) fn spawn_agent_model_overrides(
++    models: &[ModelPreset],
++    multi_agent_version: MultiAgentVersion,
++) -> impl Iterator<Item = &ModelPreset> {
++    let visible = move |model: &&ModelPreset| {
++        model.show_in_picker && model_supports_multi_agent_backend(model, multi_agent_version)
++    };
++    models
++        .iter()
++        .filter(|model| model.model_provider.is_none())
++        .filter(visible)
++        .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
++        .chain(
++            models
++                .iter()
++                .filter(|model| model.model_provider.is_some())
++                .filter(visible),
++        )
++}
++
+ pub(crate) fn model_supports_multi_agent_backend(
+     model: &ModelPreset,
+     multi_agent_version: MultiAgentVersion,
+@@ -60,6 +80,7 @@ pub(crate) async fn prepare_agent_spawn_config(
      if options.version == SpawnConfigVersion::V1 && options.full_history_fork {
          reject_full_fork_agent_type_override(options.role_name)?;
      }
@@ -19689,7 +19716,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
      apply_requested_spawn_agent_model_overrides(
          session,
          step_context,
-@@ -83,6 +84,9 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -83,6 +104,9 @@ pub(crate) async fn prepare_agent_spawn_config(
      }
      apply_spawn_agent_service_tier(session, &mut config).await?;
      apply_spawn_agent_runtime_overrides(&mut config, turn)?;
@@ -19699,7 +19726,7 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
 
      // Remember an applied configured default so cold reload reapplies its restrictions.
      let role_name = options
-@@ -100,6 +104,34 @@ pub(crate) async fn prepare_agent_spawn_config(
+@@ -100,6 +124,34 @@ pub(crate) async fn prepare_agent_spawn_config(
      Ok(PreparedSpawnConfig { config, role_name })
  }
 
@@ -19734,8 +19761,80 @@ index 3d56d7e646e275b6d66b0501d5f7021e1d300bdf..1e0edf2a933b85d565b2ab45ba73282a
  /// Builds the base config snapshot for a newly spawned sub-agent.
  ///
  /// The returned config starts from the parent's effective config and then refreshes the
+@@ -222,11 +274,28 @@ async fn apply_requested_spawn_agent_model_overrides(
+             .models_manager
+             .list_models(RefreshStrategy::Offline, config.http_client_factory())
+             .await;
+-        let selected_model_name = find_spawn_agent_model_name(
+-            &available_models,
+-            requested_model,
+-            turn.multi_agent_version,
+-        )?;
++        let selected_model =
++            find_spawn_agent_model(&available_models, requested_model, turn.multi_agent_version)?;
++        let selected_model_name = selected_model.model.clone();
++        if let Some(id) = &selected_model.model_provider
++            && *id != config.model_provider_id
++        {
++            let mut provider = crate::session::switchable_model_provider(config, id)
++                .ok_or_else(|| {
++                    format!(
++                        "spawn_agent model `{selected_model_name}` needs provider `{id}`, which is not available"
++                    )
++                })?;
++            provider.supports_websockets &= config.model_provider.supports_websockets;
++            config.model_provider_id = id.clone();
++            config.model_provider = provider;
++            config
++                .web_search_mode
++                .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                .map_err(|err| {
++                    format!("spawn_agent model `{selected_model_name}` cannot run without the required web search: {err}")
++                })?;
++        }
+         let selected_model_info = session
+             .services
+             .models_manager
+@@ -323,25 +392,27 @@ async fn apply_spawn_agent_role(
+     )
+ }
+
+-fn find_spawn_agent_model_name(
+-    available_models: &[ModelPreset],
++fn find_spawn_agent_model<'a>(
++    available_models: &'a [ModelPreset],
+     requested_model: &str,
+     multi_agent_version: MultiAgentVersion,
+-) -> Result<String, String> {
++) -> Result<&'a ModelPreset, String> {
+     available_models
+         .iter()
+         .find(|model| {
+             model.model == requested_model
+                 && model_supports_multi_agent_backend(model, multi_agent_version)
+         })
+-        .map(|model| model.model.clone())
+         .ok_or_else(|| {
+-            let available = available_models
+-                .iter()
+-                .filter(|model| model.show_in_picker)
+-                .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-                .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-                .map(|model| model.model.as_str())
++            let available = spawn_agent_model_overrides(available_models, multi_agent_version)
++                .map(|model| match &model.model_provider {
++                    Some(provider) => format!(
++                        "{} ({})",
++                        model.model,
++                        model.model_provider_name.as_deref().unwrap_or(provider)
++                    ),
++                    None => model.model.clone(),
++                })
+                 .collect::<Vec<_>>()
+                 .join(", ");
+             format!(
 diff --git a/codex-rs/core/src/agent/control/spawn.rs b/codex-rs/core/src/agent/control/spawn.rs
-index 22cd725605272a5e4e3b475c8ad2fb2835df0203..782c63d36265fe283b9bcd6b3cc92109417020d7 100644
+index 22cd725605272a5e4e3b475c8ad2fb2835df0203..2a3732ae00e57d8d6cbb9972c943284ac822dd98 100644
 --- a/codex-rs/core/src/agent/control/spawn.rs
 +++ b/codex-rs/core/src/agent/control/spawn.rs
 @@ -445,6 +445,13 @@ impl LocalAgentControl {
@@ -19761,6 +19860,62 @@ index 22cd725605272a5e4e3b475c8ad2fb2835df0203..782c63d36265fe283b9bcd6b3cc92109
              config
                  .permissions
                  .set_permission_profile_from_session_snapshot(runtime_permission_profile)
+@@ -469,16 +476,20 @@ impl LocalAgentControl {
+             config.model = Some(model);
+         }
+         if config.model_provider_id != stored_model_provider {
+-            config.model_provider = config
+-                .model_providers
+-                .get(&stored_model_provider)
+-                .cloned()
+-                .ok_or_else(|| {
+-                    CodexErr::InvalidRequest(format!(
+-                        "Model provider `{stored_model_provider}` not found"
+-                    ))
+-                })?;
++            config.model_provider =
++                crate::session::switchable_model_provider(&config, &stored_model_provider)
++                    .ok_or_else(|| {
++                        CodexErr::InvalidRequest(format!(
++                            "Model provider `{stored_model_provider}` not found"
++                        ))
++                    })?;
+             config.model_provider_id = stored_model_provider;
++            config
++                .web_search_mode
++                .set(codex_protocol::config_types::WebSearchMode::Disabled)
++                .map_err(|err| {
++                    CodexErr::InvalidRequest(format!("web_search_mode is invalid: {err}"))
++                })?;
+         }
+         let parent_thread_id = owner_thread_id
+             .or_else(|| initial_history.get_resumed_parent_thread_id())
+@@ -1113,7 +1124,9 @@ impl LocalAgentControl {
+             (MultiAgentVersion::Disabled | MultiAgentVersion::V1, _)
+             | (MultiAgentVersion::V2, _) => (None, None),
+         };
+-        let parent_history_mode = parent_thread.config_snapshot().await.history_mode;
++        let parent_snapshot = parent_thread.config_snapshot().await;
++        let parent_history_mode = parent_snapshot.history_mode;
++        let cross_provider = parent_snapshot.model_provider_id != config.model_provider_id;
+         // `record_conversation_items` only queues persistence writes asynchronously.
+         // Flush before snapshotting store history for a fork.
+         parent_thread.ensure_rollout_materialized().await;
+@@ -1174,6 +1187,14 @@ impl LocalAgentControl {
+             forked_rollout_items = items;
+         }
+         let retain_forked_item = |envelope: &mut ResponseItemEnvelope, replaced: &mut bool| {
++            if cross_provider
++                && matches!(
++                    envelope.item,
++                    ResponseItem::Reasoning { .. } | ResponseItem::Compaction { .. }
++                )
++            {
++                return false;
++            }
+             if multi_agent_version == MultiAgentVersion::V2
+                 && (preserve_fork_prefix
+                     || matches!(&envelope.item, ResponseItem::Message { role, .. } if role == "user" || role == "assistant"))
 diff --git a/codex-rs/core/src/agent/control_tests.rs b/codex-rs/core/src/agent/control_tests.rs
 index 59027230a4639ae0b5725ffdbdc54fd47bc4478d..0594036e3dc8bada1a1479d983a3f854717d765e 100644
 --- a/codex-rs/core/src/agent/control_tests.rs
@@ -21348,6 +21503,47 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
                  .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
          let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
+diff --git a/codex-rs/core/src/context/world_state/model_catalog.rs b/codex-rs/core/src/context/world_state/model_catalog.rs
+index 700a05f9673e2055d3c8abec98678a6f758b46f1..349bfc1300c00f09159a685f0e718afdfbd8fcfd 100644
+--- a/codex-rs/core/src/context/world_state/model_catalog.rs
++++ b/codex-rs/core/src/context/world_state/model_catalog.rs
+@@ -7,8 +7,7 @@ use super::SectionTransition;
+ use super::WorldStateHash;
+ use super::WorldStateSection;
+ use super::WorldStateUpdate;
+-use crate::agent::child_config::MAX_SPAWN_AGENT_MODEL_OVERRIDES;
+-use crate::agent::child_config::model_supports_multi_agent_backend;
++use crate::agent::child_config::spawn_agent_model_overrides;
+ use crate::context::ContextualUserFragment;
+ use crate::context::environment_context::push_xml_escaped_text;
+ use codex_protocol::models::ContentItem;
+@@ -34,12 +33,8 @@ pub(crate) struct ModelCatalogState {
+ impl ModelCatalogState {
+     pub(crate) fn new(models: &[ModelPreset], multi_agent_version: MultiAgentVersion) -> Self {
+         let mut catalog = String::new();
+-        let mut models = models
+-            .iter()
+-            .filter(|model| model.show_in_picker)
+-            .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-            .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-            .collect::<Vec<_>>();
++        let mut models =
++            spawn_agent_model_overrides(models, multi_agent_version).collect::<Vec<_>>();
+         // Stabilize the selected choices independently of their picker ordering.
+         models.sort_by(|left, right| left.model.cmp(&right.model));
+         if models.is_empty() {
+@@ -66,6 +61,11 @@ impl ModelCatalogState {
+                 }
+                 line.push('.');
+             }
++            if let Some(provider) = &model.model_provider {
++                line.push_str(" Provider: ");
++                line.push_str(model.model_provider_name.as_deref().unwrap_or(provider));
++                line.push('.');
++            }
+             if !model.service_tiers.is_empty() {
+                 line.push_str(" Service tiers: ");
+                 for (index, tier) in model.service_tiers.iter().enumerate() {
 diff --git a/codex-rs/core/src/context_manager/history.rs b/codex-rs/core/src/context_manager/history.rs
 index f39be3fb41fee1371036f393d5d1f62057225b60..09207670d42c6c775b213d4a9099c320558187c3 100644
 --- a/codex-rs/core/src/context_manager/history.rs
@@ -22234,10 +22430,35 @@ index 8726cd6990efeae2dfa6064bdf5310e4bdd4b7ee..90987da9b8bafa723bcc86165543682c
  async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
      use wiremock::Mock;
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
-index 8c9e75111dc7f2a1f2c7333400cfbe00ee09e58d..8538e3806145ee78e904c21e88a7f78f9d43240e 100644
+index 8c9e75111dc7f2a1f2c7333400cfbe00ee09e58d..123c82bcdfc754af4075570791a972d67a3ff928 100644
 --- a/codex-rs/core/src/session/environment.rs
 +++ b/codex-rs/core/src/session/environment.rs
-@@ -170,7 +170,47 @@ impl Session {
+@@ -22,6 +22,24 @@ use crate::session::session::Session;
+ use crate::session::session::SessionConfiguration;
+ use crate::session::session::SessionSettingsUpdate;
+
++pub(crate) fn switchable_model_provider(
++    config: &crate::config::Config,
++    id: &str,
++) -> Option<codex_model_provider_info::ModelProviderInfo> {
++    config
++        .config_layer_stack
++        .required_model_provider()
++        .is_none_or(|required| required == id)
++        .then(|| {
++            config
++                .model_providers
++                .get(id)
++                .cloned()
++                .or_else(|| codex_model_provider_info::runtime_provider(id))
++        })
++        .flatten()
++}
++
+ /// Defaults for environments that inherit their configuration from the running turn.
+ #[derive(Clone)]
+ pub(crate) struct ThreadEnvironmentDefaults {
+@@ -170,7 +188,37 @@ impl Session {
              ensure_configs_stay_owner_provided(current_environments, &environments.environments)?;
          }
 
@@ -22247,24 +22468,14 @@ index 8c9e75111dc7f2a1f2c7333400cfbe00ee09e58d..8538e3806145ee78e904c21e88a7f78f
 +            && *id != current.original_config_do_not_use.model_provider_id
 +        {
 +            let config = &current.original_config_do_not_use;
-+            let provider = config
-+                .config_layer_stack
-+                .required_model_provider()
-+                .is_none_or(|required| required == id.as_str())
-+                .then(|| {
-+                    config
-+                        .model_providers
-+                        .get(id)
-+                        .cloned()
-+                        .or_else(|| codex_model_provider_info::runtime_provider(id))
-+                })
-+                .flatten()
-+                .ok_or_else(|| ConstraintError::InvalidValue {
++            let provider = switchable_model_provider(config, id).ok_or_else(|| {
++                ConstraintError::InvalidValue {
 +                    field_name: "model_provider",
 +                    candidate: id.clone(),
 +                    allowed: "the configured and registered providers".to_string(),
 +                    requirement_source: codex_config::RequirementSource::Unknown,
-+                })?;
++                }
++            })?;
 +            let mut provider = provider;
 +            // A session that turned websockets off keeps them off across providers.
 +            provider.supports_websockets &= config.model_provider.supports_websockets;
@@ -22685,7 +22896,7 @@ index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b2
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63cdc750cc5 100644
+index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..9e9328efacdab8e6d5ee557bd0be4ce1e2cfaba4 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -261,6 +261,7 @@ mod mcp_prewarm;
@@ -22696,7 +22907,15 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
  mod plugin_selection;
  mod realtime_history;
  mod retained_context;
-@@ -558,7 +559,55 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
+@@ -283,6 +284,7 @@ mod turn_suspension;
+ mod world_state;
+ use self::code_mode_warning::unsupported_code_mode_warning;
+ pub(crate) use self::environment::ThreadEnvironmentDefaults;
++pub(crate) use self::environment::switchable_model_provider;
+ #[cfg(test)]
+ use self::handlers::submission_dispatch_span;
+ use self::handlers::submission_loop;
+@@ -558,7 +560,55 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
  const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
  const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
@@ -22752,7 +22971,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
      /// Spawn and initialize a new session.
      /// Hide the concrete startup future from callers while keeping initialization lazy.
      #[inline(never)]
-@@ -1177,6 +1226,22 @@ impl SessionIo {
+@@ -1177,6 +1227,22 @@ impl SessionIo {
          Ok(())
      }
 
@@ -22775,7 +22994,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
      pub(crate) async fn next_event(&self) -> CodexResult<Event> {
          let event = self
              .rx_event
-@@ -1558,6 +1623,99 @@ impl Session {
+@@ -1558,6 +1624,99 @@ impl Session {
          format!("auto-compact-{id}")
      }
 
@@ -22875,7 +23094,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
      pub(crate) async fn get_total_token_usage(&self) -> i64 {
          let state = self.state.lock().await;
          state.get_total_token_usage(state.server_reasoning_included())
-@@ -2019,6 +2177,20 @@ impl Session {
+@@ -2019,6 +2178,20 @@ impl Session {
              if !should_commit(&state.session_configuration, &updated) {
                  return Ok(None);
              }
@@ -22896,7 +23115,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
 
              let credential_masking_warning = updated
                  .original_config_do_not_use
-@@ -2041,6 +2213,11 @@ impl Session {
+@@ -2041,6 +2214,11 @@ impl Session {
              let root_service_tier_changed = updated.parent_thread_id.is_none()
                  && state.session_configuration.step_settings.service_tier
                      != updated.step_settings.service_tier;
@@ -22908,7 +23127,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -3687,6 +3864,10 @@ impl Session {
+@@ -3687,6 +3865,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -22919,7 +23138,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -3979,6 +4160,7 @@ impl Session {
+@@ -3979,6 +4161,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -22927,7 +23146,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3986,6 +4168,27 @@ impl Session {
+@@ -3986,6 +4169,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -22955,7 +23174,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4306,10 +4509,19 @@ impl Session {
+@@ -4306,10 +4510,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -22979,7 +23198,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4525,6 +4737,10 @@ impl Session {
+@@ -4525,6 +4738,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -22990,7 +23209,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4534,6 +4750,7 @@ impl Session {
+@@ -4534,6 +4751,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -22998,7 +23217,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
                  })
                  .await
              {
-@@ -4622,6 +4839,10 @@ impl Session {
+@@ -4622,6 +4840,10 @@ impl Session {
                  }
              }
          }
@@ -23009,7 +23228,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4631,6 +4852,7 @@ impl Session {
+@@ -4631,6 +4853,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23017,7 +23236,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
                  })
                  .await
              {
-@@ -4826,7 +5048,7 @@ impl Session {
+@@ -4826,7 +5049,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -23026,7 +23245,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..7cf8ba55e116a0f3c3cb0c12fd21a63c
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4836,7 +5058,12 @@ impl Session {
+@@ -4836,7 +5059,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -26236,6 +26455,54 @@ index cadcbb855a904d4addfd4bf8069ceeddfce68473..b27de4a3007fa22486a6325c4d4741f5
          };
          let mut output = output;
          output.result.meta = Some(json!({ "provider/custom": { "items": [1, null] } }));
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+index edc9467b4d02cc023d8961373637116cf8ba6f6f..9de95ab2b7caed882ce8008e69478a90edad8044 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+@@ -1,5 +1,4 @@
+-use crate::agent::child_config::MAX_SPAWN_AGENT_MODEL_OVERRIDES;
+-use crate::agent::child_config::model_supports_multi_agent_backend;
++use crate::agent::child_config::spawn_agent_model_overrides;
+ use codex_protocol::openai_models::ModelPreset;
+ use codex_protocol::protocol::MultiAgentVersion;
+ use codex_tools::JsonSchema;
+@@ -823,12 +822,8 @@ fn spawn_agent_models_description(
+     models: &[ModelPreset],
+     multi_agent_version: MultiAgentVersion,
+ ) -> String {
+-    let visible_models: Vec<&ModelPreset> = models
+-        .iter()
+-        .filter(|model| model.show_in_picker)
+-        .filter(|model| model_supports_multi_agent_backend(model, multi_agent_version))
+-        .take(MAX_SPAWN_AGENT_MODEL_OVERRIDES)
+-        .collect();
++    let visible_models: Vec<&ModelPreset> =
++        spawn_agent_model_overrides(models, multi_agent_version).collect();
+     if visible_models.is_empty() {
+         return "No picker-visible model overrides are currently loaded.".to_string();
+     }
+@@ -873,10 +868,20 @@ fn spawn_agent_models_description(
+             } else {
+                 format!(" Service tiers: {service_tiers}.")
+             };
++            let provider_suffix = model
++                .model_provider
++                .as_ref()
++                .map(|provider| {
++                    format!(
++                        " Provider: {}.",
++                        model.model_provider_name.as_deref().unwrap_or(provider)
++                    )
++                })
++                .unwrap_or_default();
+             let model_slug = &model.model;
+             let description = &model.description;
+             format!(
+-                "- `{model_slug}`: {description}{reasoning_efforts_suffix}{service_tiers_suffix}"
++                "- `{model_slug}`: {description}{reasoning_efforts_suffix}{provider_suffix}{service_tiers_suffix}"
+             )
+         })
+         .collect::<Vec<_>>()
 diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
 index be73c65ac3d5cdd9f092a68435878553d6b82844..23fa2d72784255e5894c1463cb67711992881f7e 100644
 --- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
@@ -39906,7 +40173,7 @@ index d799c52dd3b20b961160beb3a1f543d83eb52f9f..f56cffc99450a6f51d04c0c9a561a4b5
  {
      boxed_future!(creation_attaches_to_original_task_and_survives_service_restart_scenario()).await
 diff --git a/codex-rs/tui/src/multi_agents.rs b/codex-rs/tui/src/multi_agents.rs
-index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a50b119746 100644
+index 8210270580275555ff25d2ba9d14d37418e66317..dd9072299823a11892d644775d426ae632af07bc 100644
 --- a/codex-rs/tui/src/multi_agents.rs
 +++ b/codex-rs/tui/src/multi_agents.rs
 @@ -5,6 +5,7 @@
@@ -39969,7 +40236,67 @@ index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a5
  }
 
  pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentActivityDisplay> {
-@@ -742,6 +765,17 @@ mod tests {
+@@ -308,15 +331,27 @@ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentAc
+
+ pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
+     let ThreadItem::SubAgentActivity {
+-        kind, agent_path, ..
++        kind,
++        agent_path,
++        model,
++        reasoning_effort,
++        ..
+     } = item
+     else {
+         return None;
+     };
+-    Some(collab_event(
+-        sub_agent_activity_title(*kind, agent_path),
+-        Vec::new(),
+-    ))
++    let mut title = sub_agent_activity_title(*kind, agent_path);
++    if *kind == SubAgentActivityKind::Started
++        && let Some(model) = model
++    {
++        title
++            .spans
++            .extend(spawn_request_spans(Some(&SpawnRequestSummary {
++                model: model.clone(),
++                reasoning_effort: reasoning_effort.clone().unwrap_or_default(),
++            })));
++    }
++    Some(collab_event(title, Vec::new()))
+ }
+
+ fn sub_agent_activity_title(kind: SubAgentActivityKind, agent_path: &str) -> Line<'static> {
+@@ -678,6 +713,26 @@ mod tests {
+     use ratatui::style::Modifier;
+     use std::collections::HashMap;
+
++    #[test]
++    fn started_sub_agent_activity_names_its_model_and_effort() {
++        let item = ThreadItem::SubAgentActivity {
++            model: Some("claude-sonnet-5-5".to_string()),
++            reasoning_effort: Some(ReasoningEffortConfig::High),
++            id: "activity-1".to_string(),
++            kind: SubAgentActivityKind::Started,
++            agent_thread_id: ThreadId::new().to_string(),
++            agent_path: "/root/research".to_string(),
++        };
++
++        let lines = sub_agent_activity_history_cell(&item)
++            .expect("a started activity renders")
++            .display_lines(80);
++        assert_eq!(
++            lines[0].to_string(),
++            "• Started `/root/research` (claude-sonnet-5-5 high)"
++        );
++    }
++
+     #[test]
+     fn interacted_sub_agent_activity_does_not_change_liveness() {
+         let item = ThreadItem::SubAgentActivity {
+@@ -742,6 +797,17 @@ mod tests {
              |thread_id| metadata_for(thread_id, robie_id, bob_id),
          )
          .expect("spawn item renders");
@@ -39987,7 +40314,7 @@ index 8210270580275555ff25d2ba9d14d37418e66317..854627d07995ed20e35721662d5da3a5
 
          let send = tool_call_history_cell(
              &ThreadItem::CollabAgentToolCall {
-@@ -975,7 +1009,7 @@ mod tests {
+@@ -975,7 +1041,7 @@ mod tests {
          }
      }
 
@@ -40817,10 +41144,10 @@ index b12b8312f242592c4411202fbf100a43f1264a1a..904641a449566c8036583edd7cfcf021
      };
      let _ = DRAFT.try_with(|draft| {
 diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
-index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e069d08b7f1 100644
+index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..aeb058c0f11ac292886c6d809014aea40e10e9b1 100644
 --- a/codex-rs/tui/src/status/card.rs
 +++ b/codex-rs/tui/src/status/card.rs
-@@ -52,6 +52,33 @@ use std::sync::RwLock;
+@@ -52,6 +52,62 @@ use std::sync::RwLock;
 
  const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/settings/usage";
 
@@ -40851,10 +41178,69 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
 +    }
 +}
 +
++pub(super) fn subagent_summary(agent: &serde_json::Value) -> String {
++    let usage = &agent["usage"];
++    let tokens =
++        |key: &str| super::helpers::format_tokens_compact(usage[key].as_i64().unwrap_or_default());
++    let cost = match (usage["basis"].as_str(), usage["microusd"].as_u64()) {
++        _ if agent["billing"] == "included_subscription" => "included".to_string(),
++        (Some("settled"), Some(microusd)) => format!("${:.2}", microusd as f64 / 1_000_000.0),
++        (Some("partial"), Some(microusd)) => {
++            format!("${:.2} + unpriced", microusd as f64 / 1_000_000.0)
++        }
++        _ => "unpriced".to_string(),
++    };
++    let role = agent["role"].as_str().unwrap_or("agent");
++    let model = match (agent["model"].as_str(), agent["provider"].as_str()) {
++        (Some(model), Some(provider)) => format!("{model} ({provider})"),
++        (Some(model), None) => model.to_string(),
++        _ => "inherited model".to_string(),
++    };
++    let status = match agent["status"].as_str().unwrap_or("running") {
++        "running" if agent["last_turn"]["outcome"] == "completed" => "idle",
++        status => status,
++    };
++    format!(
++        "{role} · {model} · {} in / {} out · {cost} · {status}",
++        tokens("input_tokens"),
++        tokens("output_tokens")
++    )
++}
++
  #[derive(Debug, Clone)]
  struct StatusContextWindowData {
      percent_remaining: i64,
-@@ -754,6 +781,11 @@ impl StatusHistoryCell {
+@@ -137,6 +193,7 @@ struct StatusHistoryCell {
+     thread_name: Option<String>,
+     session_id: Option<String>,
+     forked_from: Option<String>,
++    subagents: Vec<String>,
+     token_usage: StatusTokenUsageData,
+     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
+     thread_usage: StatusThreadUsage,
+@@ -352,6 +409,13 @@ impl StatusHistoryCell {
+         let show_chatgpt_usage_link = requires_openai_auth;
+         let account = compose_account_display(account_display);
+         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
++        let subagents = session_id
++            .as_deref()
++            .map(crate::omd::session_agents)
++            .unwrap_or_default()
++            .iter()
++            .map(subagent_summary)
++            .collect();
+         let forked_from = forked_from.map(|id| id.to_string());
+         let default_usage = TokenUsage::default();
+         let (context_usage, context_window) = match token_info {
+@@ -395,6 +459,7 @@ impl StatusHistoryCell {
+             thread_name,
+             session_id,
+             forked_from,
++            subagents,
+             token_usage,
+             agents_summary,
+             rate_limit_state,
+@@ -754,6 +819,11 @@ impl StatusHistoryCell {
              .map(str::to_string)
              .collect();
          let mut seen: BTreeSet<String> = labels.iter().cloned().collect();
@@ -40866,7 +41252,17 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
          let thread_name = self.thread_name.as_deref().filter(|name| !name.is_empty());
          #[expect(clippy::expect_used)]
          let rate_limit_state = self
-@@ -831,6 +863,18 @@ impl StatusHistoryCell {
+@@ -785,6 +855,9 @@ impl StatusHistoryCell {
+         if self.collaboration_mode.is_some() {
+             push_label(&mut labels, &mut seen, "Collaboration mode");
+         }
++        if !self.subagents.is_empty() {
++            push_label(&mut labels, &mut seen, "Agents");
++        }
+         push_label(&mut labels, &mut seen, "Token usage");
+         if self.token_usage.context_window.is_some() {
+             push_label(&mut labels, &mut seen, "Context window");
+@@ -831,6 +904,18 @@ impl StatusHistoryCell {
          lines.push(formatter.line("Directory", vec![Span::from(directory_value)]));
          lines.push(formatter.line("Permissions", vec![Span::from(self.permissions.clone())]));
          lines.push(formatter.line("Agents.md", vec![Span::from(agents_summary)]));
@@ -40885,6 +41281,21 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..0faa9b0b23b16476991d80d21e844e06
 
          if let Some(account_value) = account_value {
              lines.push(formatter.line("Account", vec![Span::from(account_value)]));
+@@ -850,6 +935,14 @@ impl StatusHistoryCell {
+         {
+             lines.push(formatter.line("Forked from", vec![Span::from(forked_from.clone())]));
+         }
++        for (index, agent) in self.subagents.iter().enumerate() {
++            let spans = vec![Span::from(agent.clone())];
++            lines.push(if index == 0 {
++                formatter.line("Agents", spans)
++            } else {
++                formatter.continuation(spans)
++            });
++        }
+
+         lines.push(Line::from(Vec::<Span<'static>>::new()));
+         // Hide token usage only for ChatGPT subscribers
 diff --git a/codex-rs/tui/src/status/rate_limits.rs b/codex-rs/tui/src/status/rate_limits.rs
 index c22868b62115a73827250f8b30b1f193474a4098..2a0befaeabc9bdeb604aeb1578a28c70f2ccf686 100644
 --- a/codex-rs/tui/src/status/rate_limits.rs
@@ -41255,7 +41666,7 @@ index 51fbff67df9be7df543655806c3cca767288756c..077e45a3231a1d85f46fe614872002e0
    Visit https://chatgpt.com/settings/usage for up-to-date
    information on rate limits and credits
 diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
-index bb76a2964ead5cea2cf98b0504880848048653d5..1884809ca57b724ff673bc0c6ea575fe60b267fe 100644
+index bb76a2964ead5cea2cf98b0504880848048653d5..a1d8583e78f8d87b0aaf4f5eae780f7158822748 100644
 --- a/codex-rs/tui/src/status/tests.rs
 +++ b/codex-rs/tui/src/status/tests.rs
 @@ -81,6 +81,7 @@ fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
@@ -41394,6 +41805,36 @@ index bb76a2964ead5cea2cf98b0504880848048653d5..1884809ca57b724ff673bc0c6ea575fe
      };
      let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
      let now = captured_at + ChronoDuration::minutes(20);
+@@ -2389,3 +2406,29 @@ fn reset_timestamps_follow_clock_preference() {
+     00:00 on 22 Sep
+     ");
+ }
++
++#[test]
++fn subagent_rows_name_model_tokens_and_cost_basis() {
++    let agent = |billing: &str, basis: &str| {
++        serde_json::json!({"role": "researcher", "model": "claude-sonnet-5-5", "provider": "omd_claude_cli",
++            "billing": billing, "status": "completed",
++            "usage": {"input_tokens": 12_400, "output_tokens": 900, "microusd": 41_000, "basis": basis}})
++    };
++    assert_eq!(
++        super::card::subagent_summary(&agent("included_subscription", "settled")),
++        "researcher · claude-sonnet-5-5 (omd_claude_cli) · 12.4K in / 900 out · included · completed"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&agent("provider_billed", "partial")),
++        "researcher · claude-sonnet-5-5 (omd_claude_cli) · 12.4K in / 900 out · $0.04 + unpriced · completed"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&serde_json::json!({"role": "worker", "usage": {}})),
++        "worker · inherited model · 0 in / 0 out · unpriced · running"
++    );
++    assert_eq!(
++        super::card::subagent_summary(&serde_json::json!({"role": "worker", "status": "running",
++            "last_turn": {"outcome": "completed"}, "usage": {}})),
++        "worker · inherited model · 0 in / 0 out · unpriced · idle"
++    );
++}
 diff --git a/codex-rs/tui/src/status_indicator_widget.rs b/codex-rs/tui/src/status_indicator_widget.rs
 index 3cb54b2cf73b665e2606e99b827e06973e695ac1..e328e146d698deed8e50555c6c599fb23a3af74a 100644
 --- a/codex-rs/tui/src/status_indicator_widget.rs
@@ -50663,12 +51104,13 @@ index 0000000000000000000000000000000000000000..f6f77a995f3a06e516b465f0efc01d11
 +}
 diff --git a/codex-rs/core/tests/suite/provider_switch.rs b/codex-rs/core/tests/suite/provider_switch.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c24da6d0d
+index 0000000000000000000000000000000000000000..adc72fb63ee11bf42d8fc49528d9f50a569fef8b
 --- /dev/null
 +++ b/codex-rs/core/tests/suite/provider_switch.rs
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,390 @@
 +use anyhow::Result;
 +use codex_core::TurnInputRequest;
++use codex_features::Feature;
 +use codex_history::RolloutItem;
 +use codex_login::CodexAuth;
 +use codex_model_provider_info::ModelProviderInfo;
@@ -50679,6 +51121,7 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +use core_test_support::responses::ev_assistant_message;
 +use core_test_support::responses::ev_completed;
 +use core_test_support::responses::ev_function_call;
++use core_test_support::responses::ev_function_call_with_namespace;
 +use core_test_support::responses::ev_reasoning_item;
 +use core_test_support::responses::mount_response_sequence;
 +use core_test_support::responses::mount_sse_sequence;
@@ -50986,6 +51429,73 @@ index 0000000000000000000000000000000000000000..1b829c6efc79ef8bc63886bce216931c
 +    assert_eq!(other_requests.len(), 2);
 +    assert!(mentions(&other_requests[0].input(), "turn two"));
 +    assert!(!mentions(&other_requests[0].input(), "OPENAI_ONLY_SUMMARY"));
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn spawned_agent_runs_on_the_provider_that_registered_its_model() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let startup = start_mock_server().await;
++    let other = start_mock_server().await;
++    let spawn = sse(vec![
++        ev_reasoning_item("a2-reasoning", &["SPAWNING"], &[]),
++        ev_function_call_with_namespace(
++            "spawn-1",
++            "collaboration",
++            "spawn_agent",
++            &json!({"task_name": "researcher", "message": "CHILD_TASK", "fork_turns": "all",
++                "model": "spawn-other-model"})
++            .to_string(),
++        ),
++        ev_completed("a2"),
++    ]);
++    let startup_log = mount_sse_sequence(
++        &startup,
++        vec![reply("a1", "FIRST"), spawn, reply("a3", "SPAWNED")],
++    )
++    .await;
++    let other_log = mount_sse_sequence(&other, vec![reply("b1", "CHILD_DONE")]).await;
++    runtime_provider("spawn_other", "spawn-other-model", &other);
++    let test = test_codex()
++        .with_config(|config| {
++            for feature in [Feature::Collab, Feature::MultiAgentV2] {
++                config
++                    .features
++                    .enable(feature)
++                    .expect("test config should allow feature update");
++            }
++        })
++        .build(&startup)
++        .await?;
++
++    turn(&test, "turn one").await?;
++    turn(&test, "spawn a researcher").await?;
++    for _ in 0..200 {
++        if !other_log.requests().is_empty() {
++            break;
++        }
++        tokio::time::sleep(Duration::from_millis(25)).await;
++    }
++
++    let child = other_log.requests();
++    assert_eq!(child.len(), 1);
++    assert_eq!(child[0].body_json()["model"], "spawn-other-model");
++    let hosted_search = |body: Value| {
++        body["tools"]
++            .to_string()
++            .contains("\"type\":\"web_search\"")
++    };
++    assert!(hosted_search(startup_log.requests()[0].body_json()));
++    assert!(!hosted_search(child[0].body_json()));
++    let input = child[0].input();
++    assert!(mentions(&input, "CHILD_TASK") && mentions(&input, "turn one"));
++    assert_eq!(reasoning_summaries(&input), Vec::<String>::new());
++    assert!(
++        startup_log
++            .requests()
++            .iter()
++            .all(|request| request.body_json()["model"] != "spawn-other-model")
++    );
 +    Ok(())
 +}
 diff --git a/codex-rs/exec/src/omd_surface.rs b/codex-rs/exec/src/omd_surface.rs
@@ -51296,10 +51806,10 @@ index 0000000000000000000000000000000000000000..de07b069546c30022dcdd1dc71f5babe
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b69398b81aae
+index 0000000000000000000000000000000000000000..e41bf1ee0f7e4fbb6fec5c07200233605bf50f05
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2323 @@
+@@ -0,0 +1,2341 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -51567,9 +52077,16 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +    dispatcher: Mutex<Option<ModDispatcher>>,
 +    notifier: Mutex<Option<ModNotifier>>,
 +    requests: Arc<Mutex<RequestState>>,
++    refused: Mutex<BTreeMap<String, String>>,
 +}
 +
 +impl Accounts {
++    pub(crate) fn refuse(&self, thread: &str, reason: String) {
++        if let Ok(mut refused) = self.refused.lock() {
++            refused.insert(thread.to_owned(), reason);
++        }
++    }
++
 +    #[cfg(test)]
 +    pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
 +        let runtime = self.runtime.lock().unwrap();
@@ -51683,6 +52200,9 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +    }
 +
 +    pub fn forget_thread(&self, thread: &str) {
++        if let Ok(mut refused) = self.refused.lock() {
++            refused.remove(thread);
++        }
 +        if let Ok(mut state) = self.requests.lock() {
 +            state.retries.remove(thread);
 +            state.fingerprints.remove(thread);
@@ -52545,6 +53065,14 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +        else {
 +            return Ok(None);
 +        };
++        if let Some(reason) = self
++            .refused
++            .lock()
++            .map_err(|_| denied("refusal lock poisoned"))?
++            .get(&thread)
++        {
++            return Err(denied(reason));
++        }
 +        let Some(account) = self
 +            .by_thread
 +            .lock()
@@ -53625,10 +54153,10 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8b489a358
+index 0000000000000000000000000000000000000000..dc6f2edaaa554470b2c6566b58db963b8e2df26e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1311 @@
+@@ -0,0 +1,1322 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -53929,6 +54457,17 @@ index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8
 +        credential: None,
 +        url: String::new(),
 +    }
++}
++
++#[test]
++fn a_refused_account_sends_nothing() {
++    let (_root, accounts, _task, mut request, body) = setup();
++    accounts.refuse("child", "agent_route_unavailable: m".into());
++    let refused = accounts
++        .before_send(&mut request, Some(&body))
++        .err()
++        .unwrap();
++    assert!(format!("{refused:?}").contains("agent_route_unavailable: m"));
 +}
 +
 +#[test]
@@ -59599,10 +60138,10 @@ index 0000000000000000000000000000000000000000..096710ab25143400080f58310d11d2d4
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9efb1d090
+index 0000000000000000000000000000000000000000..5153c66ec51238e4ee759b58554322e5cbe6f436
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,797 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -59876,6 +60415,10 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +    }
 +}
 +
++fn provider_worker(owner: &str) -> bool {
++    owner.starts_with("agent:") && owner.contains('@')
++}
++
 +fn lead_candidate(route: &Route, provider: &str) -> bool {
 +    route.roles.contains(&config::RouteRole::Lead)
 +        && (route.provider == provider || route.credential.is_some())
@@ -60026,6 +60569,53 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +                    && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
 +            })
 +            .cloned()
++    }
++
++    fn provider_lead_route(&self, provider: &str, model: &str) -> Option<Route> {
++        let (routing, _) = self.route_config();
++        let mut routes = routing.routes.iter().filter(|route| {
++            route.roles.contains(&config::RouteRole::Lead) && route.provider == provider
++        });
++        routes
++            .clone()
++            .find(|route| route.model == model)
++            .or_else(|| routes.next())
++            .cloned()
++    }
++
++    fn enroll_cross_provider(
++        &self,
++        thread: ThreadId,
++        session: &Arc<Session>,
++        owner: &str,
++        parent: &str,
++        depth: u32,
++        provider: &str,
++        model: &str,
++    ) -> Result<(), String> {
++        let mut route = self.provider_lead_route(provider, model).ok_or_else(|| {
++            format!("agent_route_unavailable: {model} has no lead route on provider {provider}")
++        })?;
++        route.model = model.to_owned();
++        let worker = format!("{owner}@{}", ThreadId::new());
++        session
++            .task
++            .start_worker(
++                worker.clone(),
++                parent.to_owned(),
++                depth,
++                self.worker_limits(session)?,
++            )
++            .map_err(|error| format!("agent_admission_refused: {error}"))?;
++        let enrolled = session
++            .task
++            .authorize_worker_route(&worker, &route.provider, &route.model)
++            .map_err(|error| error.to_string())
++            .and_then(|()| self.enroll(thread, session, &worker, Some(&route), None));
++        if enrolled.is_err() {
++            let _ = session.task.finish_worker(&worker);
++        }
++        enrolled
 +    }
 +
 +    fn protected_paths(&self) -> Vec<PathBuf> {
@@ -62902,10 +63492,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..ab9b0fca4feadc1bdbf2f52a90b389dba23c11d9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2604 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63394,6 +63984,10 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        .accounts
 +        .install_mod_dispatcher(dispatcher);
 +    intercept::install_notifier(&extension.core);
++    extension
++        .core
++        .inventory
++        .persist_to(extension.core.host.root.join("agents"));
 +    registry.config_contributor(extension.clone());
 +    registry.prompt_contributor(extension.clone());
 +    registry.thread_lifecycle_contributor(extension.clone());
@@ -64778,6 +65372,15 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            });
 +            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some())
 +            else {
++                if parent.is_some()
++                    && codex_model_provider_info::runtime_provider(&input.config.model_provider_id)
++                        .is_some()
++                {
++                    host.accounts.refuse(
++                        &thread.to_string(),
++                        "agent_parent_unavailable: a subagent on a registered provider runs only beside its parent session".into(),
++                    );
++                }
 +                return;
 +            };
 +            let session = match parent_session {
@@ -64803,15 +65406,56 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            let route = (owner == "lead")
 +                .then(|| host.lead_route(input.config))
 +                .flatten();
-+            if let Err(error) =
-+                host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
-+            {
++            let parent_account = parent.and_then(|parent| {
++                host.accounts
++                    .by_thread
++                    .lock()
++                    .ok()?
++                    .get(&parent.to_string())
++                    .map(|account| (account.owner.clone(), account.provider.clone()))
++            });
++            let cross_provider = parent_account.as_ref().filter(|(owner, provider)| {
++                *provider != input.config.model_provider_id || crate::provider_worker(owner)
++            });
++            let enrolled = match cross_provider {
++                Some((parent_owner, _)) => host.enroll_cross_provider(
++                    thread,
++                    &session,
++                    &owner,
++                    parent_owner,
++                    depth,
++                    &input.config.model_provider_id,
++                    input.config.model.as_deref().unwrap_or_default(),
++                ),
++                None => host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config)),
++            };
++            if let Err(error) = enrolled {
 +                self.views.diagnostic(
 +                    &self.host,
 +                    "session",
 +                    Some(format!("OMD ledger enrollment failed: {error}")),
 +                );
++                if cross_provider.is_some() {
++                    host.accounts.refuse(&thread.to_string(), error);
++                }
 +                return;
++            }
++            if owner != "lead"
++                && let Some((provider, model, billing)) =
++                    host.accounts.by_thread.lock().ok().and_then(|accounts| {
++                        let account = accounts.get(&thread.to_string())?;
++                        Some((
++                            account.provider.clone(),
++                            account.model.clone(),
++                            account
++                                .rates
++                                .is_some()
++                                .then(|| crate::accounting::billing(account.rates.as_ref())),
++                        ))
++                    })
++            {
++                self.inventory
++                    .describe(&thread.to_string(), &provider, &model, billing);
 +            }
 +            if owner == "lead" {
 +                let runtime = self.runtime.clone();
@@ -64958,8 +65602,11 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return;
 +            };
-+            if let Ok(mut accounts) = self.host.accounts.by_thread.lock() {
-+                accounts.remove(&lead.thread.to_string());
++            if let Ok(mut accounts) = self.host.accounts.by_thread.lock()
++                && let Some(account) = accounts.remove(&lead.thread.to_string())
++                && crate::provider_worker(&account.owner)
++            {
++                let _ = account.task.finish_worker(&account.owner);
 +            }
 +            self.host.accounts.forget_thread(&lead.thread.to_string());
 +            expansion::release_thread(self, lead.thread);
@@ -64971,6 +65618,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +                return;
 +            }
 +            self.expansion.forget_inventory(lead.thread);
++            self.inventory.forget_session(&lead.thread.to_string());
 +            self.agents.cleanup_session(&lead.session).await;
 +            self.agents.cleanup_snapshots(lead.thread);
 +            self.services.cleanup_session(&lead.session).await;
@@ -65082,6 +65730,9 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +                    .agent_spawn
 +                    .lock()
 +                    .is_ok_and(|intercepts| intercepts.is_some());
++            if !spawn && roles::is_spawn(input.tool_name) {
++                roles::spawn_route_admitted(&lead, arguments["model"].as_str())?;
++            }
 +            let surface = if spawn { "agent_spawn" } else { "tool" };
 +            let payload = if spawn {
 +                self.spawn_payload(&lead, &arguments, &lead.host.repository)
@@ -66269,10 +66920,10 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0c4a1f3eb
+index 0000000000000000000000000000000000000000..498baddd43add1b8feeba5f757e43fc585cdc768
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2580 @@
+@@ -0,0 +1,2581 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -68712,7 +69363,8 @@ index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0
 +            &thread_id.to_string(),
 +            json!({"agent_id": id, "origin": "mod", "owner": caller.id,
 +                "parent": {"thread_id": lead.thread.to_string(), "agent_id": parent_agent},
-+                "role": start_role, "route": request.route,
++                "role": start_role, "route": request.route, "provider": route.provider, "model": route.model,
++                "billing": crate::accounting::billing(Some(&route.rates)),
 +                "definition": definition.map(|definition| json!({"name": format!("{}/{}", definition.owner, definition.agent.name),
 +                    "owner": definition.owner, "source_sha256": definition.source_sha256}))}),
 +        );
@@ -72756,10 +73408,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
+index 0000000000000000000000000000000000000000..ddafa7c5fe5a9f7ff13173d0c5f2038ecc824a13
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4358 @@
+@@ -0,0 +1,4426 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -76394,6 +77046,74 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +}
 +
 +#[test]
++fn cross_provider_children_run_as_workers_on_their_providers_lead_route() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let host = &fixture.lead.host;
++    let route = |name: &str, model: &str| {
++        json!({"name": name, "roles": ["lead"], "provider": "other", "model": model,
++            "reasoning_effort": "medium", "responses_url": "http://127.0.0.1:1/v1/responses",
++            "rates": {"input_microusd_per_million": 0, "cached_microusd_per_million": 0,
++            "output_microusd_per_million": 0, "reservation_microusd": 0, "max_output_tokens": 1000,
++            "input_token_ceiling": 1000, "included_subscription": true}})
++    };
++    std::fs::write(
++        host.root.join("host.json"),
++        json!({"routes": [route("other", "other-default"), route("other-fast", "other-fast")],
++            "worker_limits": {"requests": 5, "seconds": 60, "exposure_microusd": 0}})
++        .to_string(),
++    )
++    .unwrap();
++    assert_eq!(host.route_config().1, None);
++    let name = |model: &str| {
++        host.provider_lead_route("other", model)
++            .map(|route| route.name)
++    };
++    assert_eq!(name("other-fast").as_deref(), Some("other-fast"));
++    assert_eq!(name("other-new").as_deref(), Some("other"));
++    assert!(host.provider_lead_route("missing", "m").is_none());
++
++    let session = &fixture.lead.session;
++    let child = ThreadId::new();
++    let owner = format!("agent:{child}");
++    host.enroll_cross_provider(child, session, &owner, "lead", 1, "other", "other-new")
++        .unwrap();
++    let account = host.accounts.by_thread.lock().unwrap()[&child.to_string()].clone();
++    assert_eq!(
++        (account.provider.as_str(), account.model.as_str()),
++        ("other", "other-new")
++    );
++    assert_eq!(account.route.as_deref(), Some("other"));
++    assert!(account.rates.is_some());
++    assert!(crate::provider_worker(&account.owner));
++    session
++        .task
++        .admit(&account.owner, "other", "other-new", 0)
++        .unwrap();
++    assert!(
++        session
++            .task
++            .admit(&account.owner, "other", "other-fast", 0)
++            .is_err()
++    );
++
++    let missing = ThreadId::new();
++    let error = host
++        .enroll_cross_provider(
++            missing,
++            session,
++            &format!("agent:{missing}"),
++            "lead",
++            1,
++            "missing",
++            "m",
++        )
++        .unwrap_err();
++    assert!(error.starts_with("agent_route_unavailable"), "{error}");
++}
++
++#[test]
 +fn provider_billed_service_routes_are_found_only_for_their_provider_and_mod() {
 +    let Some(fixture) = fixture(&[]) else {
 +        return;
@@ -77386,10 +78106,10 @@ index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f
 +}
 diff --git a/codex-rs/ext/omd/src/mods/inventory.rs b/codex-rs/ext/omd/src/mods/inventory.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c700415283
+index 0000000000000000000000000000000000000000..a53677aa9ffcbeefe77593bd593ebb004c1ca4f7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/inventory.rs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,290 @@
 +use super::*;
 +use codex_omd::peers::now_ms;
 +use std::collections::BTreeSet;
@@ -77401,9 +78121,94 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +#[derive(Default)]
 +pub(super) struct Inventory {
 +    records: Mutex<BTreeMap<String, Value>>,
++    directory: std::sync::OnceLock<std::path::PathBuf>,
++}
++
++fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
++    let mut root = thread;
++    for _ in 0..16 {
++        match records
++            .get(root)
++            .and_then(|record| record["parent"]["thread_id"].as_str())
++        {
++            Some(parent) => root = parent,
++            None => break,
++        }
++    }
++    root
 +}
 +
 +impl Inventory {
++    pub(super) fn persist_to(&self, directory: std::path::PathBuf) {
++        let day = std::time::Duration::from_secs(86_400);
++        for entry in std::fs::read_dir(&directory)
++            .into_iter()
++            .flatten()
++            .flatten()
++        {
++            if entry
++                .metadata()
++                .and_then(|metadata| metadata.modified())
++                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
++            {
++                let _ = std::fs::remove_file(entry.path());
++            }
++        }
++        let _ = self.directory.set(directory);
++    }
++
++    pub(super) fn forget_session(&self, thread: &str) {
++        if let Ok(mut records) = self.records.lock() {
++            let session = records
++                .keys()
++                .filter(|id| root_of(&records, id) == thread)
++                .cloned()
++                .collect::<Vec<_>>();
++            for id in session {
++                records.remove(&id);
++            }
++        }
++        if let Some(directory) = self.directory.get() {
++            let _ = std::fs::remove_file(directory.join(format!("{thread}.json")));
++        }
++    }
++
++    fn snapshot(
++        &self,
++        records: &BTreeMap<String, Value>,
++        thread: &str,
++    ) -> Option<(String, Vec<Value>)> {
++        self.directory.get()?;
++        let root = root_of(records, thread);
++        if root == thread {
++            return None;
++        }
++        let agents = records
++            .iter()
++            .filter(|(id, _)| id.as_str() != root && root_of(records, id) == root)
++            .map(|(_, record)| {
++                let mut record = record.clone();
++                record["answer"] = Value::Null;
++                if record["last_turn"].is_object() {
++                    record["last_turn"]["answer"] = Value::Null;
++                }
++                record
++            })
++            .collect();
++        Some((root.to_owned(), agents))
++    }
++
++    fn save(&self, snapshot: Option<(String, Vec<Value>)>) {
++        let (Some(directory), Some((root, agents))) = (self.directory.get(), snapshot) else {
++            return;
++        };
++        if let Ok(bytes) = serde_json::to_vec(&agents)
++            && std::fs::create_dir_all(directory).is_ok()
++        {
++            let _ = crate::persist_view(directory, &format!("{root}.json"), &bytes);
++        }
++    }
++
 +    pub(super) fn start(&self, thread: &str, fields: Value) -> Value {
 +        let mut record = json!({"agent_id": null, "thread_id": thread,
 +            "parent": {"thread_id": null, "agent_id": null}, "origin": "native", "owner": null,
@@ -77427,6 +78232,9 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +                records.remove(thread);
 +            }
 +            records.insert(thread.to_owned(), record.clone());
++            let snapshot = self.snapshot(&records, thread);
++            drop(records);
++            self.save(snapshot);
 +        }
 +        record
 +    }
@@ -77435,7 +78243,25 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        let mut records = self.records.lock().ok()?;
 +        let record = records.get_mut(thread)?;
 +        change(record);
-+        Some(record.clone())
++        let record = record.clone();
++        let snapshot = self.snapshot(&records, thread);
++        drop(records);
++        self.save(snapshot);
++        Some(record)
++    }
++
++    pub(super) fn describe(
++        &self,
++        thread: &str,
++        provider: &str,
++        model: &str,
++        billing: Option<&str>,
++    ) {
++        self.update(thread, |record| {
++            record["provider"] = json!(provider);
++            record["model"] = json!(model);
++            record["billing"] = json!(billing);
++        });
 +    }
 +
 +    pub(super) fn contains(&self, thread: &str) -> bool {
@@ -77532,17 +78358,7 @@ index 0000000000000000000000000000000000000000..962833362be4ebb068c8c0cb89f999c7
 +        let Ok(records) = self.records.lock() else {
 +            return thread.to_owned();
 +        };
-+        let mut root = thread;
-+        for _ in 0..16 {
-+            match records
-+                .get(root)
-+                .and_then(|record| record["parent"]["thread_id"].as_str())
-+            {
-+                Some(parent) => root = parent,
-+                None => break,
-+            }
-+        }
-+        root.to_owned()
++        root_of(&records, thread).to_owned()
 +    }
 +
 +    pub(super) fn list(&self) -> Vec<Value> {
@@ -79142,10 +79958,10 @@ index 0000000000000000000000000000000000000000..3a6ec486cc40c8ce442312d9bb228230
 +}
 diff --git a/codex-rs/ext/omd/src/mods/roles.rs b/codex-rs/ext/omd/src/mods/roles.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300ca372e54
+index 0000000000000000000000000000000000000000..5a234291bb2e58b68ca9682a3023e53c84af6de0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/roles.rs
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,448 @@
 +use super::*;
 +use codex_extension_api::AgentRoleContributor;
 +use codex_extension_api::ContributedAgentRole;
@@ -79458,6 +80274,7 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +                value => arguments[key] = value.clone(),
 +            }
 +        }
++        spawn_route_admitted(lead, arguments["model"].as_str())?;
 +        let definition = effective["definition"].as_str();
 +        if let Some(name) = definition.filter(|name| name.contains('/'))
 +            && self.definition(name).is_none()
@@ -79566,6 +80383,32 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +            }
 +        }
 +    }
++}
++
++pub(super) fn spawn_route_admitted(lead: &Lead, model: Option<&str>) -> Result<(), String> {
++    let Some((provider, _)) = model.and_then(codex_models_manager::runtime_models::find) else {
++        return Ok(());
++    };
++    let parent = lead
++        .host
++        .accounts
++        .by_thread
++        .lock()
++        .map_err(|_| "account lock poisoned")?
++        .get(&lead.thread.to_string())
++        .map(|account| account.provider.clone());
++    if parent.as_deref() == Some(provider.as_str())
++        || lead
++            .host
++            .provider_lead_route(&provider, model.unwrap_or_default())
++            .is_some()
++    {
++        return Ok(());
++    }
++    Err(format!(
++        "agent_route_unavailable: {} has no lead route on provider {provider}",
++        model.unwrap_or_default()
++    ))
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
@@ -114265,7 +115108,7 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d21b3cb35
+index 0000000000000000000000000000000000000000..3c854cf4d725242db080b60f737cb1614c0e88e3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114318,7 +115161,7 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "agents.result": {"arguments":{"$ref":"#/$defs/48"},"result":{"$ref":"#/$defs/55"}},
 +    "agents.wait": {"arguments":{"$ref":"#/$defs/48"},"result":{"$ref":"#/$defs/55"}},
 +    "agents.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"handle":{"type":"string"},"finished":{"type":"boolean"},"consumed":{"type":"boolean"}},"required":["handle","finished","consumed"]}}},
-+    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
++    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"billing":{"anyOf":[{"type":"null"},{"const":"included_subscription"},{"const":"explicit_paid_api_grant"},{"const":"provider_billed"}]},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
 +    "turns.queue": {"arguments":{"type":"object","properties":{"prompt":{"type":"string"},"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"deadline_ms":{"type":"number"}},"required":["prompt","key"]},"result":{"type":"object","properties":{"key":{"type":"string"},"status":{"anyOf":[{"const":"queued"},{"const":"duplicate"}]},"paused":{"anyOf":[{"const":false},{"const":true}]}},"required":["key","status"]}},
@@ -169447,10 +170290,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7a253b774
+index 0000000000000000000000000000000000000000..7bcd24ca55e1a2f94db10a017d334d89e3461974
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,770 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -169967,6 +170810,21 @@ index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7
 +    };
 +    snapshot.evidence = Some(session);
 +    Ok(snapshot)
++}
++
++pub(crate) fn session_agents(thread: &str) -> Vec<Value> {
++    let Some(root) = store_root() else {
++        return Vec::new();
++    };
++    let mut agents: Vec<Value> = bounded_read(
++        &root.join("agents").join(format!("{thread}.json")),
++        1_048_576,
++    )
++    .ok()
++    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
++    .unwrap_or_default();
++    agents.sort_by_key(|agent| agent["started_at_ms"].as_u64());
++    agents
 +}
 +
 +fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, String> {

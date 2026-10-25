@@ -62,21 +62,17 @@
         "events",
         "packages",
         "inventory",
-        "tools",
-        "agents",
-        "sessions",
-        "sessions_tools",
         "store"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "f5872dcbe14863af5d34287b536e2eaf2ae845ee8b7da24cffcf1cc19a9b1985",
-        "mod.json": "15c57544e67d5ee8a9b33e111350948392d4613caefbf1b340c818202daf5e1c",
+        "index.ts": "70c71f131ef5e91fac792bda800a351c30e5420037025d811b2c8d3c8e4936a3",
+        "mod.json": "53de3f61978a6c7db4c7bf9c11c23c3a338da194c96087ef1e9e428692e46019",
         "setup.mjs": "cbb6408b52aa233cb14c003baa81cb406327bcf452c60ce6a4b5b97ead63b091",
         "transport.mjs": "5eff14cc508a8b9f2ca1868ab837d22707acfb0b7d01a0e1d7b2f25890fbaabe"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "4195b3c5a83d7211002c1645a9c4f239da639f77ed001dc6ab8c1d6af49e01a0",
+      "package_sha256": "68c03889359e913c10feb3ea7f3e9d6f08e1363029ede995fbd135648d5042f0",
       "source": "mods/first-party/omd_claude_cli",
       "version": "1.0.0"
     },
@@ -489,6 +485,25 @@
       "id": "omd_statusline",
       "package_sha256": "a1d0ff604948d2c30f80a11d9ec4cb9323622eaf0ec6ca76829af0bae3f9d516",
       "source": "mods/first-party/omd_statusline",
+      "version": "1.0.0"
+    },
+    "omd_subagent_router": {
+      "api": "1.0.0",
+      "capabilities": [
+        "input",
+        "agents",
+        "model",
+        "store",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "32a022a4de6a914030de902dcddfb6de1c91df0a561aa5b71f5ca4002db938af",
+        "mod.json": "0413f59e80d6ab9a05e70ae6e373da2418be917d54adda6c24677c1dc01c9550"
+      },
+      "id": "omd_subagent_router",
+      "package_sha256": "a0ef28b584cc04b6b23e69333cd845744dbff6aaf09e6ae452f8b2faa498fd58",
+      "source": "mods/first-party/omd_subagent_router",
       "version": "1.0.0"
     },
     "omd_tool_absorb": {

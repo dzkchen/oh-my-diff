@@ -265,9 +265,16 @@ pub struct Accounts {
     dispatcher: Mutex<Option<ModDispatcher>>,
     notifier: Mutex<Option<ModNotifier>>,
     requests: Arc<Mutex<RequestState>>,
+    refused: Mutex<BTreeMap<String, String>>,
 }
 
 impl Accounts {
+    pub(crate) fn refuse(&self, thread: &str, reason: String) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.insert(thread.to_owned(), reason);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn mod_installation(&self) -> (usize, usize, usize) {
         let runtime = self.runtime.lock().unwrap();
@@ -381,6 +388,9 @@ impl Accounts {
     }
 
     pub fn forget_thread(&self, thread: &str) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.remove(thread);
+        }
         if let Ok(mut state) = self.requests.lock() {
             state.retries.remove(thread);
             state.fingerprints.remove(thread);
@@ -1243,6 +1253,14 @@ impl ResponseObserver for Accounts {
         else {
             return Ok(None);
         };
+        if let Some(reason) = self
+            .refused
+            .lock()
+            .map_err(|_| denied("refusal lock poisoned"))?
+            .get(&thread)
+        {
+            return Err(denied(reason));
+        }
         let Some(account) = self
             .by_thread
             .lock()

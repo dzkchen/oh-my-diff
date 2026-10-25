@@ -9,9 +9,94 @@ const FINISHED_LIMIT: usize = 64;
 #[derive(Default)]
 pub(super) struct Inventory {
     records: Mutex<BTreeMap<String, Value>>,
+    directory: std::sync::OnceLock<std::path::PathBuf>,
+}
+
+fn root_of<'a>(records: &'a BTreeMap<String, Value>, thread: &'a str) -> &'a str {
+    let mut root = thread;
+    for _ in 0..16 {
+        match records
+            .get(root)
+            .and_then(|record| record["parent"]["thread_id"].as_str())
+        {
+            Some(parent) => root = parent,
+            None => break,
+        }
+    }
+    root
 }
 
 impl Inventory {
+    pub(super) fn persist_to(&self, directory: std::path::PathBuf) {
+        let day = std::time::Duration::from_secs(86_400);
+        for entry in std::fs::read_dir(&directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > day))
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        let _ = self.directory.set(directory);
+    }
+
+    pub(super) fn forget_session(&self, thread: &str) {
+        if let Ok(mut records) = self.records.lock() {
+            let session = records
+                .keys()
+                .filter(|id| root_of(&records, id) == thread)
+                .cloned()
+                .collect::<Vec<_>>();
+            for id in session {
+                records.remove(&id);
+            }
+        }
+        if let Some(directory) = self.directory.get() {
+            let _ = std::fs::remove_file(directory.join(format!("{thread}.json")));
+        }
+    }
+
+    fn snapshot(
+        &self,
+        records: &BTreeMap<String, Value>,
+        thread: &str,
+    ) -> Option<(String, Vec<Value>)> {
+        self.directory.get()?;
+        let root = root_of(records, thread);
+        if root == thread {
+            return None;
+        }
+        let agents = records
+            .iter()
+            .filter(|(id, _)| id.as_str() != root && root_of(records, id) == root)
+            .map(|(_, record)| {
+                let mut record = record.clone();
+                record["answer"] = Value::Null;
+                if record["last_turn"].is_object() {
+                    record["last_turn"]["answer"] = Value::Null;
+                }
+                record
+            })
+            .collect();
+        Some((root.to_owned(), agents))
+    }
+
+    fn save(&self, snapshot: Option<(String, Vec<Value>)>) {
+        let (Some(directory), Some((root, agents))) = (self.directory.get(), snapshot) else {
+            return;
+        };
+        if let Ok(bytes) = serde_json::to_vec(&agents)
+            && std::fs::create_dir_all(directory).is_ok()
+        {
+            let _ = crate::persist_view(directory, &format!("{root}.json"), &bytes);
+        }
+    }
+
     pub(super) fn start(&self, thread: &str, fields: Value) -> Value {
         let mut record = json!({"agent_id": null, "thread_id": thread,
             "parent": {"thread_id": null, "agent_id": null}, "origin": "native", "owner": null,
@@ -35,6 +120,9 @@ impl Inventory {
                 records.remove(thread);
             }
             records.insert(thread.to_owned(), record.clone());
+            let snapshot = self.snapshot(&records, thread);
+            drop(records);
+            self.save(snapshot);
         }
         record
     }
@@ -43,7 +131,25 @@ impl Inventory {
         let mut records = self.records.lock().ok()?;
         let record = records.get_mut(thread)?;
         change(record);
-        Some(record.clone())
+        let record = record.clone();
+        let snapshot = self.snapshot(&records, thread);
+        drop(records);
+        self.save(snapshot);
+        Some(record)
+    }
+
+    pub(super) fn describe(
+        &self,
+        thread: &str,
+        provider: &str,
+        model: &str,
+        billing: Option<&str>,
+    ) {
+        self.update(thread, |record| {
+            record["provider"] = json!(provider);
+            record["model"] = json!(model);
+            record["billing"] = json!(billing);
+        });
     }
 
     pub(super) fn contains(&self, thread: &str) -> bool {
@@ -140,17 +246,7 @@ impl Inventory {
         let Ok(records) = self.records.lock() else {
             return thread.to_owned();
         };
-        let mut root = thread;
-        for _ in 0..16 {
-            match records
-                .get(root)
-                .and_then(|record| record["parent"]["thread_id"].as_str())
-            {
-                Some(parent) => root = parent,
-                None => break,
-            }
-        }
-        root.to_owned()
+        root_of(&records, thread).to_owned()
     }
 
     pub(super) fn list(&self) -> Vec<Value> {

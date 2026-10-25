@@ -1,7 +1,6 @@
 import type { Json, ModAPI, ProviderModel } from '../../api.d.ts';
 
 const service = 'claude_cli';
-const delegate = 'mod_omd_claude_cli_ask_claude';
 const provider = 'omd_claude_cli';
 const loginWindow = 30 * 60_000;
 // Oldest tested CLI; newer 2.x keep the transport, and each request rechecks auth, billing, model and window.
@@ -96,7 +95,7 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       for (const child of spec.tools ?? []) addTool(child, scope(spec));
       return;
     }
-    if (spec.type === 'web_search' || spec.name === delegate) return;
+    if (spec.type === 'web_search') return;
     if (!['function', 'custom', 'tool_search'].includes(spec.type)) throw new Error('unsupported_host_tool');
     const kind = spec.type === 'tool_search' ? 'search' : spec.type;
     const name = kind === 'search' ? 'tool_search' : toolName(namespace, spec.name);
@@ -158,6 +157,10 @@ export function translateRequest(request: Row, model: string | undefined): Row {
       messages.push({ role: 'user', content: textual.has(item.call_id)
         ? [{ type: 'text', text: `[result of ${item.call_id}]` }, ...(typeof output === 'string' ? blocks(output) : output)]
         : [{ type: 'tool_result', tool_use_id: item.call_id, content: output, is_error: item.is_error === true }] });
+    } else if (item.type === 'agent_message') {
+      const parts = (item.content ?? []).map((part: Row) => part.type === 'input_text' ? part.text
+        : `[This message was sealed by the sender's provider and cannot be read here; infer your task from the conversation and your name, ${item.recipient}.]`);
+      messages.push({ role: 'user', content: [{ type: 'text', text: `Message from ${item.author} to ${item.recipient}:\n${parts.join('\n')}` }] });
     } else if (item.type === 'web_search_call') {
       assistant().push({ type: 'text', text: `[searched the web ${JSON.stringify(item.action ?? {})}]` });
     } else if (item.type === 'image_generation_call') {
@@ -418,34 +421,4 @@ export default function activate(api: ModAPI): void {
         : ['Accounts: none; run /claude login [api] [NAME]'],
       `Models: ${published === true ? `${(models as Row[]).length} published to /model${wrong ? ', unusable until the CLI is updated' : ''}` : 'none published'}`].join('\n') };
   }, { description: 'Sign in to Claude accounts (login [api] [NAME] | remove NAME | code CODE) or show their status', args_hint: '[login [api] [NAME] | remove NAME | code CODE]' });
-  if (api.settings.ask_claude !== true) return;
-  api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
-    parameters: { type: 'object', properties: {
-      prompt: { type: 'string', maxLength: 8192 },
-      mode: { type: 'string', enum: ['read', 'write'] },
-      isolated: { type: 'boolean', description: 'Start Claude without this conversation history.' } },
-    required: ['prompt'], additionalProperties: false } }, (input): Json => {
-    const value = input as Row;
-    if (!plain(value) || typeof value.prompt !== 'string' || !value.prompt.trim()) return { status: 'invalid', reason: 'prompt_required' };
-    if (new TextEncoder().encode(value.prompt).length > 8192) return { status: 'invalid', reason: 'prompt_over_8192_bytes' };
-    if (!ensure()) return { status: 'unavailable', reason: 'claude_not_set_up; run /claude login' };
-    const write = value.mode === 'write';
-    const spawned = api.host.tryCall('agents.spawn', { role: 'claude delegate', route: service, prompt: value.prompt,
-      parent_history: value.isolated !== true,
-      ...(write ? { workspace: 'isolated_worktree' } : { workspace: 'read_only', tools: ['exec_command', 'write_stdin'] }) });
-    if (!spawned.ok) return { status: 'denied', reason: spawned.error };
-    const handle = spawned.value.handle;
-    const wait = () => api.host.tryCall('agents.wait', { handle, consume: true });
-    let result = wait();
-    for (let waits = 1; waits < 27 && result.ok && result.value.status === 'running'; waits++) result = wait();
-    if (!result.ok || result.value.status !== 'completed') {
-      api.host.tryCall('agents.cancel', { handle });
-      return { status: 'incomplete', reason: result.ok ? (result.value.status === 'failed' ? result.value.error : 'timeout') : result.error };
-    }
-    const answer = { status: 'completed', text: result.value.text, evidence: result.value.evidence };
-    if (!write || !result.value.changed_paths?.length) return answer;
-    const integrated = api.host.tryCall('workspace.integrate', { handle });
-    return { ...answer, changed_paths: result.value.changed_paths,
-      integration: integrated.ok ? integrated.value : { status: 'refused', reason: integrated.error } } as Json;
-  });
 }
