@@ -438,7 +438,7 @@
       "path": "mods/first-party/omd_preview",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog, inline Mermaid drawings of assistant messages and draft image thumbnails above the composer; installed inactive in OMD+."
+      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches, the inline preview dialog and inline Mermaid drawings of assistant messages; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_mods",
@@ -462,7 +462,7 @@
       "path": "mods/first-party/omd_usage",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage and workers row above the composer, the usage dialog and the summary the theme draws; installed inactive in OMD+."
+      "why_mod": "Owns the provider usage HUD: a per-thread request ledger from model_response, cache, cost and quota classification, the usage dialog, budget notices and the summary the theme draws; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",
@@ -498,13 +498,13 @@
       "path": "mods/first-party/omd_mini",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
+      "why_mod": "Owns the mini presentation of omd mini sessions: one status line and the switch request read by the launcher; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_tool_absorb",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Owns which parallel read calls merge through the exclusive tool_batch replacement, the merged tool that runs each distinct original once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
+      "why_mod": "Owns which identical read calls of a response merge through the exclusive tool_batch replacement, the merged tool that runs them once through tools.invoke, and code-mode read reuse as a tool interceptor over structured values shared through its repository store; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_tool_fix",

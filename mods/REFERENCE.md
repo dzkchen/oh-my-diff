@@ -2,8 +2,8 @@
 
 This is every [mod API reference page](reference/README.md) in one file, for agents and search.
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
+`omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](api.d.ts) is the complete typed surface.
 
 ## Generated declarations
 
@@ -15,22 +15,24 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-API `1.0.0` is stable. [The conformance registry](conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -73,7 +75,7 @@ follows.
 
 #### Codex plugins and hooks
 
-Codex 0.163.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
+Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
 that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_tool_use`,
 `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
 `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
@@ -195,7 +197,7 @@ Capabilities name authority classes. A call or registration outside the package'
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
-| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
+| `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
 | `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
@@ -750,6 +752,11 @@ it does. A callback result, including its state, stays within 256 KiB.
 
 The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
 
+`omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
+package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
+`mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
+
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that
   thread or checkout: the host runs the mod's `migrate` handler (it needs `store`) on it and keeps the previous
   file beside it as `<file>-backup-<sha256>`; until then registration and render reads see `null`.
@@ -851,8 +858,8 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 
@@ -909,14 +916,15 @@ Routes are configuration, not names in the API.
 #### Route fields
 
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
-roles (lead|worker), tools, mods, grant`.
+roles (lead|worker), tools, mods, grant, credential, data`.
 
 A route entry, with every field the host accepts:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
  "responses_url": "https://api.openai.com/v1/responses", "roles": ["worker"], "tools": ["exec_command"],
- "mods": ["omd_workflow"], "credential": null, "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
+ "mods": ["omd_workflow"], "credential": null, "data": null,
+ "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
  "rates": {"input_microusd_per_million": 1250000, "cached_microusd_per_million": 125000,
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
@@ -951,7 +959,7 @@ and `routes.select` without restarting.
 
 #### Route writes (`route_write_v1`)
 
-`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own entries in
+`routes.write {routes, services?}` (capability `packages`, user only) replaces the caller's own routes in
 `host.json` after the user confirms a dialog listing every change. It returns `{routes, services}` (the caller's
 route names and service ids afterwards), `{status: 'declined'}`, or `{unchanged: true}` without asking when
 nothing would change.
@@ -961,11 +969,11 @@ nothing would change.
   `provider_billed`) needs `limits.exposure_microusd` above zero (`routes_write_allowance_required`).
 - A route's `data` (any JSON, at most 2 KiB) is ignored by the host; `routes.list` returns it only to the route's
   provider mod, and the mod's provider service can read it from `host.json`.
-- `services`, when given, lists the caller's service grants afterwards: each entry's fields replace those of the
-  caller's grant with the same `id`, an entry without one must be a complete grant with `mod_id` set to the caller,
-  and the caller's grants it leaves out are removed. Secrets may name only `secret_refs` the caller's grants already
-  use, and credentials must be existing profiles (a `secret` profile only when the caller owns it). The dialog lists
-  every route and grant field that changes with its new value.
+- `services`, when given, updates service grants the caller already owns: each entry is `{id, credentials?,
+  route?}` and replaces those fields of the caller's grant with that `id` (`routes_write_service_unknown` for any
+  other id, `routes_write_service_field` for any other field). A grant's program, arguments, network, paths and
+  secrets are never written here. Credentials must be existing profiles (a `secret` profile only when the caller
+  owns it). The dialog lists every route and grant field that changes with its new value.
 - The resulting `host.json` is validated as it is at load; a failure is `routes_write_invalid: REASON` and changes
   nothing, and a `host.json` that changed between the dialog and the write is `routes_write_changed`. Routes apply
   through `route_reload_v1`; a service picks up a changed grant at its next `providers.register` or `sidecars.start`.
@@ -1135,7 +1143,9 @@ The payload carries:
 - `output {text (first 4 KiB), tool_calls}`.
 - Raw `usage`, and `cache {read_tokens, write_tokens}`.
 - `cost {microusd, basis}`, where `basis` is `settled`, `unsettled`, `provider_reported`, `included_subscription`,
-  `unpriced` or `synthetic`.
+  `unpriced` or `synthetic`. A request without configured rates is `included_subscription` when it goes to the
+  ChatGPT Codex backend with the signed-in account (the native session on a ChatGPT plan; credits spent past the
+  plan's limit are not reported), otherwise `unpriced`.
 - `context_window` when the session knows it.
 - `timing {started_at_ms, first_event_ms, duration_ms}`.
 - `synthetic` and `error`.
@@ -1341,8 +1351,8 @@ none starts paid work implicitly.
 - `api.package` is `{id, version, sha256}` of the running source.
 - `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
   route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
-  `cwd` is the thread's current working directory, and `turns_started` counts turns this process started in the
-  thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
+  `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
+  `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
   records in shared state, such as watch IDs, by it.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
@@ -1921,7 +1931,10 @@ Each route lists the parameter fields it accepts; any other non-null field is re
 policy, sandbox, permissions, config, roots, environments, dynamic tools, base instructions, service tier) and
 fields added by a later upstream stay closed until reviewed.
 
-- `model` is allowed only as a configured route.
+- `model` and `modelProvider` are allowed only as a configured route: each must match a `host.json` lead route, and
+  when both are given, the same one. `modelProvider` needs `model` with it (`app_route_model_required`).
+  `thread/settings/update {model, modelProvider}` moves the current thread to that provider from its next turn, as
+  picking another provider's model in `/model` does.
 - `thread/start` and `fuzzyFileSearch` roots must be the session root or one of its `git worktree list` entries.
 - Thread-scoped methods reach the current thread and threads the mod itself started or forked. Their other thread
   ids (`beforeThreadId`) must name one of those.
@@ -2601,7 +2614,7 @@ with a loopback `responses_url` defines its `route.provider` for the process (at
 at each registration) unless the configuration already defines it; a grant with exactly one secret uses it as the bearer token. A
 thread resumed after its provider is gone continues on the configured provider.
 
-The experimental `providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
+`providers.models {provider, name?, models}` lists up to 16 models `{slug, display, context_window,
 efforts, default_effort?}` in `/model`, grouped under `name` (1–64 bytes, default `provider`). It needs a running `providers.register` registration whose
 grant `route.provider` equals `provider`. Each call replaces that provider's list; unregistering, a stopped service
 or disabling the mod drops it. It returns `{provider, models}` (the count). The models get Codex's standard tools
@@ -2656,7 +2669,7 @@ thread from event, tool and terminal slash-command callbacks, recorded only whil
 
 #### `sessions.read`
 
-The experimental `sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
+`sessions.read {session_id, revision, handle, cursor?, max_bytes?}` pages one session's
 `local_visible_records`:
 
 | Record | Fields |
@@ -2719,7 +2732,7 @@ their original `index`.
 The transcript and resume data are unchanged, each applied edit is recorded, and an invalid edit or failing mod
 keeps the original request.
 
-### Store-time history rewriting (`history_persist_v1`, experimental)
+### Store-time history rewriting (`history_persist_v1`)
 
 `api.intercept('history_persist', …)` (authority capability `history_persist`) rewrites history text before it is
 stored, for redaction: every text written to the thread's rollout and the prompt-recall file
@@ -3527,7 +3540,7 @@ delivered event reports the count as `dropped`.
 
 #### Component modules (`component_modules_v1`)
 
-Component modules are experimental and need the feature `component_modules_v1`, which `mod_host_check.py --static`
+Component modules need the feature `component_modules_v1`, which `mod_host_check.py --static`
 requires of any package that calls `api.component`.
 
 `api.component(module, {init?, view, key?, pointer?, every?})` is registered during activation under the `terminal`
@@ -3787,7 +3800,7 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
 tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
@@ -3885,7 +3898,15 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-The `above_composer` and `below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
+A launcher can narrow one session's TUI with three environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
+panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
+`render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
+`/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
+first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
+blank rows, placeholder or idle hint row. `omd mini` sets all three. They are read once at start, and agent tool
+processes don't inherit them or the launcher's `OH_MY_DIFF_*` variables (a mod's `exec_environment` still can).
+
+The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
 focused control. Both are hidden while an approval or popup replaces the composer.
@@ -4185,6 +4206,8 @@ User-only operations are never delegated:
 - `commands.invoke`
 - `config.set`
 - `packages.apply`
+- `routes.add`
+- `routes.write`
 - `contract.select`
 
 `prompts.consent` is never delegated either. Whenever a client's action or event caused the call, these operations
@@ -5574,15 +5597,15 @@ The contained directory is an ordinary public-API package with `mod.json` and `i
 
 ### `omd COMMAND` shell dispatch
 
-`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers
+`omd COMMAND --repo PATH [--store STORE] [--home CODEX_HOME] [--sqlite-home DIR]` dispatches an exported CLI alias. It offers
 `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected
 from agent process writes. Ambiguous command ownership fails closed.
 
 ### Independent examples
 
 Independent examples live in [`examples/virtual_reader`](examples/virtual_reader),
-[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the
-existing [`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
+[`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and
+[`examples/workspace`](examples/workspace). They demonstrate shared interfaces, not production
 implementations.
 
 ### Evidence across compaction

@@ -36,7 +36,8 @@ omd-package mod enable omd_privacy
 - Placeholders are never turned back. A tool the model passes one to gets the placeholder text.
 - It finds only what its rules match. It can miss secrets with no known prefix, split or encoded values and unquoted word-only passwords. It can also redact harmless text, such as `1.2.3.4` with `ipv4` on.
 - Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls and processes you already allowed are out of reach.
-- The path check reads command text only. It misses paths built at run time.
+- The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
+  sensitive path ask, except the catch-all `*` and `.*` (so `ls -la .*` stays quiet; `cat .*` isn't caught).
 - If the mod fails or times out, requests are refused (also realtime calls, image generation, web search and memory summarization). Turn the mod off in `/mods` to send again.
 - Saved state holds a salt and short fingerprints, never values. A fingerprint doesn't hide a guessable value, such as an IP address.
 

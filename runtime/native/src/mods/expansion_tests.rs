@@ -187,6 +187,7 @@ async fn attach_thread_with_sandbox_mode(
     let mut snapshot = codex_config::CloudConfigBundleSnapshot {
         bundle: Ok(None),
         binding: None,
+        config_server: None,
     };
     policy.publish_snapshot(&mut snapshot);
     config.config_layer_stack = config
@@ -341,7 +342,7 @@ async fn turn_abort_requires_event_or_user_and_stays_in_current_thread() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_info_reports_the_threads_current_cwd() {
+async fn session_info_reports_the_threads_current_cwd_and_model() {
     let Some(mut fixture) = fixture(&[Package {
         id: "control",
         capabilities: &["inventory"],
@@ -372,12 +373,16 @@ async fn session_info_reports_the_threads_current_cwd() {
                     config: codex_protocol::protocol::EnvironmentConfigState::FromThread,
                 }],
             )),
+            model: Some("session-info-switched".into()),
             ..Default::default()
         })
         .await
         .unwrap();
-    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-    assert_eq!(cwd(info.unwrap()), Some(sub.to_path_buf()));
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(info["model"], "session-info-switched");
+    assert_eq!(cwd(info), Some(sub.to_path_buf()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -966,12 +971,15 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
         }
     );
     assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
-    static HUGE: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("huge"));
+    static HUGE: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("huge"));
     static NULLISH: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("nullish"));
     assert!(
         matches!(
-            mods.intercept_tool(start("call-huge", &HUGE)).await.unwrap(),
+            mods.intercept_tool(start("call-huge", &HUGE))
+                .await
+                .unwrap(),
             ToolInterception::Continue(Some(_))
         ),
         "an answer whose value exceeds 64 KiB is invalid, so the call runs"
@@ -981,7 +989,9 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
     mods.replace_tool_output(output("call-huge", "ok")).await;
     assert!(!mods.wants_value("call-huge"));
     assert!(matches!(
-        mods.intercept_tool(start("call-nullish", &NULLISH)).await.unwrap(),
+        mods.intercept_tool(start("call-nullish", &NULLISH))
+            .await
+            .unwrap(),
         ToolInterception::Respond { value: None, .. }
     ));
     let Some(plain) = self::fixture(&[Package {
@@ -1007,6 +1017,29 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
     assert!(
         !unread.wants_value("call-plain"),
         "only an interceptor whose mod requires code_mode_values_v1 gets the value"
+    );
+    unread
+        .on_tool_finish(ToolFinishInput {
+            session_store: &ExtensionData::new("session".to_owned()),
+            thread_store: &plain_thread,
+            turn_store: &ExtensionData::new("turn".to_owned()),
+            turn_id: "turn",
+            call_id: "call-plain",
+            tool_name: &READ,
+            source: codex_extension_api::ToolCallSource::Direct,
+            outcome: codex_extension_api::ToolCallOutcome::Failed {
+                handler_executed: true,
+            },
+            call_sha256: None,
+            result_sha256: None,
+        })
+        .await;
+    assert!(
+        unread
+            .views
+            .published()
+            .is_none_or(|view| view.diagnostics.is_empty()),
+        "a chain that only rethrows the tool's own failure is not a mod diagnostic"
     );
 
     let source = fixture
@@ -1154,7 +1187,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     static CODED: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("coded"));
     assert_eq!(
-        mods.intercept_tool(start("call-coded", &CODED)).await.unwrap(),
+        mods.intercept_tool(start("call-coded", &CODED))
+            .await
+            .unwrap(),
         ToolInterception::Continue(None)
     );
     let structured = json!({"exit_code": 0, "output": "x"});
@@ -1175,7 +1210,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
     let long = "y".repeat(48 * 1024 - 8);
     assert_eq!(
-        mods.intercept_tool(start("call-coded-long", &CODED)).await.unwrap(),
+        mods.intercept_tool(start("call-coded-long", &CODED))
+            .await
+            .unwrap(),
         ToolInterception::Continue(None)
     );
     let omitted = mods
@@ -4143,7 +4180,9 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
     }
     let thread_store = ExtensionData::new("thread");
     thread_store.insert(fixture.lead.clone());
+    let step_store = ExtensionData::new("step");
     let input = TurnInputContext {
+        step_store: &step_store,
         turn_id: "turn".into(),
         user_input: vec![UserInput::Text {
             text: "see @plain.txt, @secret.txt and @old.txt @new.txt @big.txt @missing.txt me@plain.txt @\"spaced name.txt\" @first.txt @second.txt"
@@ -4167,7 +4206,7 @@ async fn mentioned_files_are_read_after_mention_interceptors_redirect_or_deny_th
         )
         .await
         .iter()
-        .map(|fragment| fragment.render())
+        .map(|fragment| fragment.render().into_text().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         fragments[..3],
@@ -4281,6 +4320,7 @@ async fn mentioned_files_use_selected_turn_environment_authority() {
         let fragments = mods(&fixture.core)
             .contribute(
                 TurnInputContext {
+                    step_store: &ExtensionData::new("step"),
                     turn_id: "turn".into(),
                     user_input: vec![UserInput::Text {
                         text: "@plain.txt".into(),

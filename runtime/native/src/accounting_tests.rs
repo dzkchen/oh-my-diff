@@ -1257,3 +1257,55 @@ fn an_added_plan_route_authorizes_only_the_repositories_it_was_approved_in() {
     assert!(allowed(&repository) && allowed(&other));
     assert!(!allowed(&store.join("unlisted")));
 }
+
+#[test]
+fn unrated_native_requests_report_subscription_only_on_the_chatgpt_backend() {
+    let (root, accounts, task, mut request, body) = setup();
+    let notified = Arc::new(Mutex::new(Vec::new()));
+    let sink = notified.clone();
+    accounts.install_mod_notifier(Arc::new(move |event, payload| {
+        sink.lock().unwrap().push((event, payload));
+    }));
+    let mut lead = account(&task, root.path(), "lead");
+    lead.provider = "openai".into();
+    lead.rates = None;
+    lead.route = None;
+    lead.url = String::new();
+    accounts
+        .by_thread
+        .lock()
+        .unwrap()
+        .insert("child".into(), lead);
+    let mut basis = |url: &str, account: bool| {
+        request.url = url.into();
+        if account {
+            request
+                .headers
+                .insert("chatgpt-account-id", "fixture".parse().unwrap());
+        } else {
+            request.headers.remove("chatgpt-account-id");
+        }
+        let mut attempt = accounts
+            .before_send(&mut request, Some(&body))
+            .unwrap()
+            .unwrap();
+        let mut completed = json!({"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}});
+        attempt.observe(&mut completed, true).unwrap();
+        drop(attempt);
+        let (_, payload) = notified.lock().unwrap().pop().unwrap();
+        payload["cost"].clone()
+    };
+    assert_eq!(
+        basis(SUBSCRIPTION_RESPONSES_URL, true),
+        json!({"microusd": 0, "basis": "included_subscription"})
+    );
+    assert_eq!(
+        basis(SUBSCRIPTION_RESPONSES_URL, false)["basis"],
+        "unpriced"
+    );
+    assert_eq!(
+        basis("https://api.openai.com/v1/responses", true)["basis"],
+        "unpriced"
+    );
+    assert!(task.attempts().unwrap().is_empty());
+}

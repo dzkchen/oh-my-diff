@@ -1,4 +1,4 @@
-import type { CostBasis, Json, Ledger, ModAPI, ModelResponse, TerminalComponent, TerminalListRow, TerminalPatch, TerminalTone } from '../../api.d.ts';
+import type { CostBasis, Json, Ledger, ModAPI, TerminalComponent, TerminalListRow, TerminalPatch } from '../../api.d.ts';
 
 type Tokens = { input: number | null; cached: number | null; write: number | null; output: number | null; reasoning: number | null };
 type Reported = { usd: number; basis: 'provider_billed' | 'client_list_estimate' };
@@ -54,6 +54,7 @@ export default function activate(api: ModAPI) {
     const minutes = Math.max(0, Math.round(ms / 60000));
     return minutes < 60 ? `${minutes}m` : minutes < 2880 ? `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m` : `${Math.round(minutes / 1440)}d`;
   };
+  const account = (scope: string) => `${visible(scope.charAt(0).toUpperCase() + scope.slice(1), 24)} account`;
   const windowName = (minutes: number | null) => minutes === null ? 'window' : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
   const text = (id: string, label: string, body: string): TerminalComponent => ({ type: 'text', id, label, text: visible(body, 4000) });
   const multiline = (id: string, label: string, lines: string[]): TerminalComponent => ({ type: 'text', id, label, text: lines.map(line => line.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')).join('\n').slice(0, 4000) });
@@ -129,8 +130,8 @@ export default function activate(api: ModAPI) {
     return ttl !== null && used ? used.at + ttl * 1000 : null;
   };
   const quota = (hud: Hud, now: number) => {
-    const groups = new Map<number | null, Sample[]>();
-    for (const sample of hud.samples.filter(item => item.scope === 'codex-account')) groups.set(sample.minutes, [...groups.get(sample.minutes) ?? [], sample]);
+    const groups = new Map<string, Sample[]>();
+    for (const sample of hud.samples) groups.set(`${sample.scope}/${sample.minutes}`, [...groups.get(`${sample.scope}/${sample.minutes}`) ?? [], sample]);
     return [...groups.values()].map(samples => {
       const current = samples.at(-1)!;
       const passed = current.resets !== null && now > current.resets;
@@ -139,24 +140,8 @@ export default function activate(api: ModAPI) {
       const horizon = Math.max(300000, (current.minutes ?? 0) * 6000);
       const rate = period.length > 1 && current.at - first.at >= horizon ? (current.used - first.used) / (current.at - first.at) : null;
       const projected = rate !== null && current.resets !== null && !passed ? Math.round(current.used + rate * (current.resets - now)) : null;
-      return { name: `Codex account ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
-    }).sort((a, b) => (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
-  };
-
-  // Published data must not depend on the clock: a replayed callback has to repeat the same host-call arguments.
-  const publish = () => {
-    const state = saved(); const current = context(state.hud);
-    const sum = totals(state.hud.entries);
-    const tight = quota(state.hud, 0).sort((a, b) => b.current.used - a.current.used)[0];
-    const spent = sum.billed + sum.estimate;
-    const last = current?.last;
-    api.host.tryCall('events.publish', { channel: 'hud', data: {
-      thread: state.hud.thread ?? last?.thread ?? null,
-      cache: last && last.tokens?.input ? { ratio: (last.tokens.cached ?? 0) / last.tokens.input, expires: cacheTtl(state.hud, last) } : null,
-      spend: { usd: spent || null, kind: sum.billed && sum.estimate ? 'mixed' : sum.billed ? 'billed' : sum.estimate ? 'estimate' : sum.included ? 'included' : 'none', uncertain: sum.unknown + sum.pending > 0, list: sum.list || null },
-      quota: tight ? { name: tight.name, used: tight.current.used, resets: tight.current.resets, observed: tight.current.seen } : null,
-      budget: ({ 0: null, 80: 'warn', 100: 'over' } as const)[level(outlay(state.hud))],
-    } });
+      return { name: `${account(current.scope)} ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
+    }).sort((a, b) => a.current.scope.localeCompare(b.current.scope) || (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
   };
 
   const record = (hud: Hud, entry: Entry) => {
@@ -189,7 +174,7 @@ export default function activate(api: ModAPI) {
 
   const limits = (hud: Hud, params: Record<string, any>, now: number) => {
     const snapshot = object(params.rateLimits);
-    const scope = 'codex-account';
+    const scope = typeof snapshot.limitId === 'string' && snapshot.limitId ? snapshot.limitId : 'codex';
     for (const name of ['primary', 'secondary']) {
       const slot = object(snapshot[name]);
       const used = number(slot.usedPercent);
@@ -203,7 +188,7 @@ export default function activate(api: ModAPI) {
       else hud.samples.push({ scope, minutes, used, resets, at: now, seen: now });
     }
     const credits = object(snapshot.credits);
-    if (Object.keys(credits).length) hud.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? `balance ${visible(String(credits.balance ?? '?'), 24)}` : 'none';
+    if (scope === 'codex' && Object.keys(credits).length) hud.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? `balance ${visible(String(credits.balance ?? '?'), 24)}` : 'none';
     const kept: Sample[] = [];
     for (const sample of [...hud.samples].reverse()) {
       const peers = kept.filter(item => item.scope === sample.scope && item.minutes === sample.minutes).length;
@@ -219,35 +204,6 @@ export default function activate(api: ModAPI) {
     if (reached === seen) return;
     const shown = reached < seen || api.host.tryCall('terminal.notice', { id: 'omd_usage_budget', text: `Usage: ${reached}% of the ${usd(budget)} soft budget reached (${usd(spent)} spent)`, kind: reached === 100 ? 'error' : 'warning', placement: 'toast', ttl_ms: 10_000 }).ok;
     if (shown) hud(h => { h.alerted = { budget, level: reached }; });
-  };
-
-  const prompt = (state: Snapshot, now: number): TerminalComponent[] => {
-    const h = state.hud; const current = context(h); const sum = totals(h.entries);
-    const usage: string[] = [];
-    if (current?.last.tokens?.input) {
-      const expires = cacheTtl(h, current.last);
-      usage.push(`Cache ${Math.round((current.last.tokens.cached ?? 0) / current.last.tokens.input * 100)}% hit${expires === null ? '' : expires > now ? ` · ~${span(expires - now)} TTL` : ' · TTL passed'}`);
-    }
-    for (const slot of quota(h, now)) usage.push(slot.passed ? `${slot.name} reset passed · stale` : `${slot.name} ${slot.current.used}%${slot.current.resets ? ` · resets ${span(slot.current.resets - now)}` : ''}`);
-    usage.push(fit(spendText(sum), 34));
-    if (state.allowance) {
-      const filled = Math.min(10, Math.round(state.allowance.used / state.allowance.limit * 10));
-      usage.push(`[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}] ${usd(state.allowance.used / 1e6)}/${usd(state.allowance.limit / 1e6)}`);
-    }
-    if (budget !== null) usage.push(`Budget ${usd(outlay(h))} of ${usd(budget)} (soft)`);
-    const agents = Object.entries(h.agents).filter(([, agent]) => agent.status === 'running');
-    const workers = [
-      ...(h.plan ? [`Tasks ${h.plan.done}/${h.plan.total}${h.plan.step ? ` · ${h.plan.step}` : ''}`] : []),
-      ...agents.slice(0, 4).map(([id, agent]) => `${agent.role} · ${id.slice(0, 8)}`),
-      ...Object.values(h.tools).slice(0, 3).map(tool => `running ${tool.tool}`),
-    ];
-    const reached = level(outlay(h));
-    const tone = (body: string): TerminalTone => body.startsWith('Budget ') && reached ? (reached === 100 ? 'failure' : 'attention') : /stale|passed|unknown|unsettled/.test(body) ? 'attention' : 'muted';
-    const spans = (parts: string[]) => parts.slice(0, 6).flatMap((body, index) => [...(index ? [{ text: ' · ', tone: 'muted' as const }] : []), { text: fit(body, 40), tone: tone(body) }]);
-    return [{ type: 'box', id: 'omd_usage_prompt', label: 'Usage', style: { direction: 'row', gap: 2, padding: [0, 1] }, children: [
-      { type: 'line', id: 'omd_usage_prompt_usage', label: 'Usage', spans: spans(usage) },
-      ...(workers.length ? [{ type: 'line' as const, id: 'omd_usage_prompt_workers', label: `Tasks and workers${agents.length ? ` (${agents.length})` : ''}`, spans: spans(workers) }] : []),
-    ] }];
   };
 
   const expanded = (state: Snapshot, now: number): TerminalComponent[] => {
@@ -288,6 +244,7 @@ export default function activate(api: ModAPI) {
       ...(inherited.length ? [`Inherited from the parent session: ${inherited.length} requests (${spendText(totals(inherited))})`] : []),
       ...(h.entries.some(entry => entry.overage) ? ['Subscription overage: not reported by the provider (unknown)'] : []),
       `Host ledger: ${paid(state.ledger?.cost && typeof state.ledger.cost === 'object' && !Array.isArray(state.ledger.cost) ? state.ledger.cost : null)}`,
+      ...(state.allowance ? [`Task allowance: up to ${usd(state.allowance.used / 1e6)} of ${usd(state.allowance.limit / 1e6)} (${Math.round(state.allowance.used / state.allowance.limit * 100)}%)`] : []),
       `Retained: ${h.entries.length} requests${h.since ? ` since ${span(now - h.since)} ago` : ''}${h.dropped ? ` · ${h.dropped} older dropped (not in these totals)` : ''}; totals are not lifetime spend`,
       ...(budget !== null ? [`Soft budget ${usd(budget)}: ${usd(outlay(h))} spent (warning only, not a spending limit)`] : [])];
     const quotaLines = quota(h, now).map(slot => `${slot.name}: ${slot.current.used}% used${slot.current.resets ? slot.passed ? ` · reset passed ${span(now - slot.current.resets)} ago, awaiting a new reading` : ` · resets in ${span(slot.current.resets - now)}` : ' · reset time not reported'} · observed ${span(now - slot.current.seen)} ago${slot.projected !== null ? ` · projection ~${Math.min(slot.projected, 999)}% at reset (${slot.samples} samples over ${span(slot.spanned)})` : ' · insufficient data for a projection'}`);
@@ -322,9 +279,8 @@ export default function activate(api: ModAPI) {
 
   const view = (ledger: Ledger | null): TerminalPatch => {
     const state = saved(); const now = Date.now();
-    const sites = { above_composer: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, ...prompt(state, now)] } };
     const keybindings = { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } };
-    if (!state.open) return { sites, keybindings };
+    if (!state.open) return { keybindings };
     const effective = ledger ?? state.ledger;
     const children: TerminalComponent[] = [
       ...(state.error ? [text('omd_usage_error', 'Status', state.error)] : []),
@@ -333,7 +289,7 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: 'omd_usage_detail', label: state.hud.detail ? 'Show compact usage' : 'Show expanded usage', text: state.hud.detail ? 'Compact' : 'Expanded', action: { command: 'omd_usage:hud', args: state.hud.detail ? 'compact' : 'expanded' } },
       { type: 'button', id: 'omd_usage_close', label: 'Close usage', text: 'Close', action: { command: 'omd_usage:hud', args: 'close' } },
     ];
-    return { sites: { ...sites, dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
+    return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_usage_dialog', label: 'Usage', title: 'Usage', children }] } }, keybindings };
   };
 
   // Slash commands can't read task status, so they hop to this mod's own native channel handler.
@@ -370,7 +326,7 @@ export default function activate(api: ModAPI) {
   api.on('channel', ({ channel }) => {
     if (channel !== 'omd_usage/refresh') return;
     save(capture(saved()));
-    publish();
+    if (expiry() !== null) ticker.start();
   });
   api.on('terminal', input => view(input.ledger));
   api.on('component_event', event => {
@@ -391,19 +347,16 @@ export default function activate(api: ModAPI) {
     });
     const read = api.usage.rateLimits();
     if (read.available) hud(state => limits(state, object(read.value), Date.now()));
-    publish();
   };
   api.on('start', configure);
   api.on('resume', configure);
   const expiry = () => { const state = saved(); const last = context(state.hud)?.last; return last ? cacheTtl(state.hud, last) : null; };
-  // Redraws a cache countdown once a minute until it passes; the tick adds no observation.
+  // Redraws the open dialog's cache countdown once a minute until it passes; the tick adds no observation.
   const ticker = api.time.every('countdown', 60_000, () => {
+    if (!saved().open) return false;
     hud(state => { state.tick += 1; });
     return (expiry() ?? 0) > Date.now();
   });
-  // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
-  const plan = (state: Hud, response: ModelResponse) =>
-    response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && (response.credential === 'chatgpt' || state.samples.length > 0);
   api.on('model_response', response => {
     const usage = object(response.usage);
     const summary = api.usage.summarize(response);
@@ -413,13 +366,12 @@ export default function activate(api: ModAPI) {
       thread: response.scope.thread_id, agent: response.scope.agent_id, kind: response.scope.kind, turn: response.scope.kind === 'main' ? state.turn : null,
       provider: response.provider, credential: response.credential, route: response.route, requested: response.requested_model, served: response.served_model, status: response.status,
       tokens: summary.measured ? { input: summary.tokens.input, cached: summary.tokens.cached, write: summary.tokens.cache_write, output: summary.tokens.output, reasoning: summary.tokens.reasoning } : null,
-      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: plan(state, response) ? 'included_subscription' : response.cost.basis },
+      estimated: usage.omd_usage_estimated === true, window: response.context_window, cost: { microusd: response.cost.microusd, basis: response.cost.basis },
       reported: number(reported.usd) !== null && (reported.basis === 'provider_billed' || reported.basis === 'client_list_estimate') ? { usd: reported.usd, basis: reported.basis } : null,
       overage: usage.omd_subscription_charge === 'unknown', ttl: number(usage.omd_cache_ttl_seconds),
       at: response.timing.started_at_ms + response.timing.duration_ms, synthetic: response.synthetic, revision: 0,
     }));
     warn();
-    publish();
     if (expiry() !== null) ticker.start();
   });
   api.on('turn_start', ({ turn_id }) => hud(state => { state.turn = turn_id; }));
@@ -428,7 +380,6 @@ export default function activate(api: ModAPI) {
     state.hud.tools = {};
     save(state);
     warn();
-    publish();
   });
   api.on('compaction_start', ({ trigger }) => hud(state => { state.compaction = { ...state.compaction, started: state.compaction.started + 1, start: Date.now(), trigger }; }));
   api.on('compaction_end', () => hud(state => { state.compaction = { ...state.compaction, installed: state.compaction.installed + 1, end: Date.now() }; }));
@@ -447,12 +398,10 @@ export default function activate(api: ModAPI) {
     const thread = thread_id ?? update.threadId ?? null;
     if (method === 'account/updated') {
       hud(state => { state.samples = []; state.credits = null; });
-      publish();
       return;
     }
     if (method === 'account/rateLimits/updated') {
       hud(state => limits(state, update, Date.now()));
-      publish();
       return;
     }
     const state = saved();

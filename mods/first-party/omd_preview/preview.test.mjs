@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,6 @@ const read = name => readFileSync(new URL(name, mod), 'utf8');
 const source = read('index.ts');
 const assets = Object.fromEntries(manifest.assets.map(name => [name, { text: read(name), sha256: '0'.repeat(64) }]));
 let responses = ['Latest **answer** with <script>alert(1)</script> and [x](javascript:alert(1))', 'Earlier answer'];
-let draft = { text: '', cursor: 0, selection: null, revision: 1, attachments: [], suggestion: null };
 
 const stores = new Map();
 const watching = repository => stores.get(`${repository}\0watch`)?.value;
@@ -55,6 +54,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
     }
     const keyed = () => [...live].find(([, watch]) => args.key && watch.key === args.key)?.[0];
     if (operation === 'workspace.watch') {
+      for (const path of args.paths) assert.ok(existsSync(join(repository, path)), `watch_path_missing: ${path}`);
       const previous = keyed();
       if (previous) live.delete(previous);
       else if (live.size >= 16) throw new Error('watch_limit');
@@ -81,6 +81,7 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       assert.ok(args.paths.every(path => !path.split('/').includes('.')), 'the host rejects . path parts');
       return { files: Object.fromEntries(args.paths.map(name => {
         const path = join(repository, name);
+        if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) return [name, { kind: 'dir', size: 0, mtime_ms: 0 }];
         return [name, statSync(path, { throwIfNoEntry: false })?.isFile() ? { kind: 'file', size: statSync(path).size, mtime_ms: 0, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') } : null];
       })) };
     }
@@ -90,7 +91,6 @@ function invoke(repository, state, event, payload, name, settings = {}, modSourc
       return { exit_code: run.status, stdout: run.stdout, stderr: run.stderr };
     }
     if (operation === 'terminal.open') return { opened: true };
-    if (operation === 'composer.read') return draft;
     if (operation === 'sessions.ports') return { ports: [{ port: 3000, pid: 7, address: '127.0.0.1:3000' }, { port: 5173, pid: 8, address: '*:5173' }] };
     if (operation === 'events.publish') return { delivered: 1, dropped: 0 };
     if (operation === 'events.schedule') return { key: args.key, delay_ms: args.delay_ms };
@@ -136,7 +136,7 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.equal(watching(repository).hashes['docs/a.md'], createHash('sha256').update(readFileSync(join(repository, 'docs/a.md'))).digest('hex'));
     const early = invoke(repository, null, 'channel', { channel: 'omd_preview/watch', data: null });
     assert.deepEqual(early.calls.filter(call => call.operation.startsWith('workspace.') && call.operation !== 'workspace.stat').map(call => [call.operation, call.arguments]),
-      [['workspace.watch', { paths: ['docs/a.md'], include_ignored: true, key: 'files' }]]);
+      [['workspace.watch', { paths: ['docs/a.md'], recursive: false, include_ignored: true, key: 'files' }]]);
     assert.equal(early.calls.some(call => call.operation === 'events.schedule'), false);
     const page = readFileSync(join(repository, '.omd/preview/files/docs/a.md.html'), 'utf8');
     assert.match(page, /data-watch="1"/);
@@ -165,8 +165,8 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     const dialog = view.sites.dialog.components[0];
     assert.equal(dialog.title, 'docs/a.md');
     assert.deepEqual(dialog.children[0].children[0], { type: 'markdown', id: 'omd_preview_body_1', label: 'docs/a.md', text: '# Changed [[Other note|see]]\n' });
-    writeFileSync(join(repository, 'image'), 'not a draft image');
-    assert.equal(command('./image --inline').state.inline.text, 'not a draft image', './ names a file that shadows a subcommand');
+    writeFileSync(join(repository, 'server'), 'not a server');
+    assert.equal(command('./server --inline').state.inline.text, 'not a server', './ names a file that shadows a subcommand');
     assert.equal(command('close', inline.state).state.inline, null);
     assert.equal(invoke(repository, { ...inline.state, inline: null }, 'terminal', { event: 'redraw', ledger: null }).value, null);
     assert.match(command('--bogus').value.display, /^usage:/);
@@ -218,10 +218,10 @@ test('one keyed watch serves each process: threads replace it, processes keep th
     enter('A');
 
     restart();
-    writeFileSync(join(repository, 'docs/b.md'), '# B\n');
-    invoke(repository, null, 'command', 'docs/b.md --watch', 'preview');
+    writeFileSync(join(repository, 'b.md'), '# B\n');
+    invoke(repository, null, 'command', 'b.md --watch', 'preview');
     lifecycle(repository, 'start', 'thread-1');
-    rmSync(join(repository, 'docs/b.md'));
+    rmSync(join(repository, 'b.md'));
     let state = null;
     const delays = [];
     const poll = () => {
@@ -233,7 +233,7 @@ test('one keyed watch serves each process: threads replace it, processes keep th
     assert.ok(poll().includes('workspace.watch'));
     for (let pass = 0; pass < 3; pass += 1) assert.deepEqual(poll(), ['store.get', 'workspace.stat', 'workspace.watch', 'events.schedule']);
     assert.deepEqual([...live].map(([, watch]) => watch.key), ['files']);
-    writeFileSync(join(repository, 'docs/b.md'), '# B\n');
+    writeFileSync(join(repository, 'b.md'), '# B\n');
     assert.ok(poll().includes('workspace.watch'));
     assert.equal(poll().includes('events.schedule'), false);
     assert.deepEqual(delays, [4000, 8000, 16000, 32000]);
@@ -245,10 +245,11 @@ test('one keyed watch serves each process: threads replace it, processes keep th
   }
 });
 
-test('a failed stat or a missing file keeps the watch and retries until it is placed', () => {
+test('a failed stat keeps the watch and retries; a missing file waits on its parent directory instead of polling', () => {
   const repository = watchedRepository();
   const poll = () => invoke(repository, null, 'timer', { key: 'poll' });
   const retried = run => run.calls.some(call => call.operation === 'events.schedule' && call.arguments.key === 'poll');
+  const change = path => ({ repository, source: 'external', call_id: null, watch_id: 'w1', changes: [{ path, before: null, after: null }], status: 'observed' });
   try {
     lifecycle(repository, 'start', 'thread-1');
     assert.deepEqual([...live.keys()], ['w1']);
@@ -259,11 +260,14 @@ test('a failed stat or a missing file keeps the watch and retries until it is pl
     assert.equal(retried(failed), true);
     assert.equal(failed.calls.some(call => call.operation === 'workspace.unwatch'), false);
     rmSync(join(repository, 'docs/a.md'));
-    assert.equal(retried(poll()), true);
-    assert.equal(live.size, 0);
-    writeFileSync(join(repository, 'docs/a.md'), '# Back\n');
-    assert.equal(retried(poll()), false);
+    const missing = poll();
+    assert.equal(retried(missing), false);
+    assert.deepEqual(missing.calls.filter(call => call.operation === 'workspace.watch').map(call => call.arguments.paths), [['docs']]);
     assert.equal(live.size, 1);
+    writeFileSync(join(repository, 'docs/a.md'), '# Back\n');
+    const back = invoke(repository, null, 'workspace_change', change('docs/a.md'));
+    assert.equal(back.calls.some(call => call.operation === 'exec.run'), true);
+    assert.equal(retried(back), false);
   } finally {
     statFails = false;
     restart();

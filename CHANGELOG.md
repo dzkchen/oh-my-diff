@@ -2,6 +2,67 @@
 
 Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and GitHub Releases use the same entries. Entries before the first release are daily development notes.
 
+## [1.2.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.2.0) — 2026-10-24
+
+Oh My Diff now builds on Codex 0.164.0.
+
+### Changed
+
+- Upstream: Codex 0.164.0; OMD 1.2.0 is the first release that supports it
+- Host release 1.2.0 (#313)
+- Mod tooling: Node 24.22.1 (#313)
+
+### Fixed
+
+- Mods: a failed tool call no longer also shows a Mod diagnostics box (`tool_result_unavailable: failed`) when a mod's tool middleware only passes the failure on
+- Mods: `omd-mod migrate` and `omd-mod rollback` treat `.` and `..` as package folders, not mod ids
+
+## [1.1.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.1) — 2026-10-23
+
+Fixes updating from 1.0.0 and two copies of one mod both being turned on, which stopped every mod.
+
+### Changed
+
+- Host release 1.1.1 (#310)
+
+### Fixed
+
+- Updates: `omd update` from 1.0.0 no longer fails with `unknown field node` (#310)
+- Mods: turning on a second copy of a mod, such as a Directory package beside the bundled copy, is refused with the copy to turn off first; before, both copies were rejected and `/mods` and every mod command failed with `mod_conflict` (#310)
+- Updates: installing or updating turns off a Directory package that is on beside the bundled copy of the same mod, so a store already in that state works again (#310)
+- Mods: `omd mods remove ID` removes only the package, not a bundled copy of the same mod (#310)
+
+## [1.1.0](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.1.0) — 2026-10-23
+
+Add and switch ChatGPT, Claude, Cursor and API accounts inside the session, a minimal `omd mini`, ChatGPT-plan usage counted as included, and six more opt-in mods.
+
+### New
+
+- Accounts: `/profile add` signs in to a ChatGPT, Claude or Cursor account, or takes an OpenAI or Anthropic API key or another provider, inside the session, first profile included; switch accounts with `/profile`, Alt+s or the usage meter, which shows each account's last-seen 5h and weekly limits (#293, #298, #301)
+- Claude CLI: several Claude accounts, each with its own login and models (`/claude login [api] [NAME]`, `/claude remove NAME`); any Claude CLI from `2.1.307` on works, so auto-update can stay on (#297, #298, #301)
+- Cursor (`omd_cursor`, opt-in, experimental): Cursor models in `/model` with several accounts via `/cursor setup [NAME]` (#291, #298)
+- `omd mini`: only the transcript, a bare prompt and one status line (model, context, limits or cost), for SSH sessions and small terminals (#291, #300)
+- Opt-in mods: `omd_tool_absorb` runs identical read-only calls once, `omd_tool_fix` repairs clear-cut malformed tool calls, `omd_source_knowledge` keeps hash-checked source facts and lessons, and `omd_programmable_context` gives the Python kernel kept context variables, child agents and `/refine` (#291, #295)
+- Mod API: `routes.write` lets a mod replace its own routes and service credentials after a confirmation, `thread/settings/update` accepts `modelProvider` with `model`, and `session.info` reports `process_id` (#293, #294, #298, #301)
+
+### Changed
+
+- Usage: ChatGPT-plan requests count as `included` instead of unknown cost, usage shows only in the status line below the prompt, and the usage dialog keeps Claude and Cursor limits apart from the Codex account (#299, #301)
+- Mod API: shipped experimental entries with a first-party or example consumer are now frozen, among them `terminal.panel`, `providers.models`, `http.request`, `sessions.read`, component modules and the below-composer site
+- Account mods (`omd_profiles`, `omd_claude_cli`, `omd_cursor`) need Node on `PATH` and say how to install it if it is missing (#301)
+- `omd`: bare `omd`, `omd help` and `omd --help` list the mod, session and update commands; `omd help --all` shows every flag (#303)
+- Workspace changes: `workspace_change` follows the repository's `.gitignore`, `.ignore` and exclude rules instead of a fixed skip list, so tracked `build/` and `dist/` files report changes (#305)
+- Mod authoring: `omd-mod-author` prints one-line errors instead of stack traces, and `--help` prints usage (#306)
+
+### Fixed
+
+- Privacy: sensitive-path checks catch hyphenated key names, case, parent directories, globs, brace lists, `rev:path`, quoting and `.`/`..` path tricks, without slow patterns (#294, #301)
+- Code execution: kernels keep output in write order, survive uncaught errors and `exit()`, and Bun no longer crashes when a background child writes (#294, #301)
+- Accounts: every `host.json` change from a setup step is confirmed first and written under the host's lock; a declined or failed add can be retried (#301)
+- Mods: `/preview --watch` keeps one watch per process and waits for a missing file; workflow keeps finished work; programmable context keeps the cached prompt prefix; source knowledge no longer invalidates facts it skipped (#294, #301)
+- Terminal UI: status segments from app notifications redraw at once, the voice strip shows in the plain composer, and `omd mini` settings no longer leak into tool processes (#300, #301)
+- Mods: OMD reports its own release (`1.1.0`) as the host release in errors, `omd-mod status` and generated types, so a package listing `1.1.0` in `compatibility.releases` loads (#305)
+
 ## [1.0.1](https://github.com/dzkchen/oh-my-diff/releases/tag/v1.0.1) — 2026-10-20
 
 Mods run on an embedded V8 runner instead of Node, with faster startup and a fraction of the memory, plus install and package-control fixes.
@@ -120,11 +181,6 @@ Release candidate for Oh My Diff 1.0.0, the first public beta: Codex 0.163.0 wit
 - Mod runtime: workspace folders that don't exist take no lease.
 - Terminal UI: `/config` in the surface list, rendered selections cleared each frame, Alt-key fallbacks; advisor route setup.
 
-### Decided
-
-- 1.0.0 ships labeled beta: not every planned capability is in yet.
-- Packages outside the launch collection return in post-launch waves.
-
 ## 2026-10-08 — Launch scope and upstream pin
 
 A smaller launch collection, a planned API freeze and refreshed Codex.
@@ -132,17 +188,11 @@ A smaller launch collection, a planned API freeze and refreshed Codex.
 ### Changed
 
 - Pinned to Codex 0.161.0
-- Warm release targets across batch closeouts
+- Warm release build targets reused between builds
 
 ### Fixed
 
 - Untracked candidate files and tree parity
-
-### Decided
-
-- Core tooling and a smaller OMD+ launch
-- API freeze before release qualification
-- Remaining collection returns in two waves
 
 ## 2026-10-07 — Privacy and response previews
 
@@ -342,10 +392,6 @@ Features move into mods as the host goes generic.
 - Route and gate checks
 - Capacity versus slow-down API errors
 
-### Decided
-
-- Codex themes added to the roadmap
-
 ## 2026-09-27 — Shared APIs and host rework
 
 Experimental API 0.2 adds generic host operations alongside review fixes.
@@ -365,10 +411,6 @@ Experimental API 0.2 adds generic host operations alongside review fixes.
 - Git, LSP, Claude and installer review findings
 - Advisor lane, sessions and graph outputs
 
-### Decided
-
-- A feature-agnostic host: mods are the features
-
 ## 2026-09-26 — Git sidebar and terminal mods
 
 OMD now builds on upstream Codex’s fullscreen terminal.
@@ -381,12 +423,6 @@ OMD now builds on upstream Codex’s fullscreen terminal.
 ### Changed
 
 - Dropped OMD’s own fullscreen TUI
-
-### Decided
-
-- A mod that removes /plan
-- A lean pass on tests
-- A guard against oversized shell output
 
 ## 2026-09-25 — Code cells, LSP sync, debugger
 
@@ -401,7 +437,6 @@ Three developer tools, all opt-in.
 ### Changed
 
 - LSP sync rebuilt as a pure mod
-- Roadmap grouped into batches
 
 ## 2026-09-24 — Claude models and subagents
 
@@ -411,10 +446,6 @@ Both ship as mods, not runtime changes.
 
 - Claude models via the official Claude CLI
 - Typed subagent tasks
-
-### Decided
-
-- New features ship as mods, not Rust patches
 
 ## 2026-09-23 — Launch identity and installer
 
@@ -450,11 +481,6 @@ Built-in features rebuilt as skills, hooks, plugins and mods.
 - Theme and focus-flow mods
 - Curated extension index
 - First live first-party mods
-
-### Decided
-
-- What goes in the lean first release
-- Launch plan: proof first
 
 ## 2026-09-21 — Reproducible mod packages
 
@@ -510,11 +536,6 @@ OMD becomes a moddable Codex, not a fixed feature set.
 - Bundled browser tooling
 - App bridge adapters
 
-### Decided
-
-- Product centers on TypeScript mods
-- Benchmarks move to the end
-
 ## 2026-09-15 — Guidance, code intel, review
 
 The agent learns your repo and double-checks its work.
@@ -542,10 +563,6 @@ The first patched Codex runtime.
 - Fullscreen TUI
 - Versioned guidelines
 
-### Decided
-
-- First look at modding the harness
-
 ## 2026-09-13 — Hello, Oh My Diff
 
 Measurement before claims. CAI is renamed Oh My Diff.
@@ -555,11 +572,6 @@ Measurement before claims. CAI is renamed Oh My Diff.
 - Benchmark infrastructure
 - Frozen evaluation protocol
 
-### Decided
-
-- Rename: CAI → Oh My Diff
-- No numbers until they’re measured
-
 ## 2026-09-12 — Pinned to upstream Codex
 
 A custom build that still shares your Codex setup.
@@ -568,7 +580,6 @@ A custom build that still shares your Codex setup.
 
 - Upstream lock file
 - Compatibility checks
-- A skill for each roadmap task
 
 ## 2026-09-11 — Day zero
 
@@ -576,4 +587,4 @@ Started as CAI (“Cheaper AI”), a patch set for Codex.
 
 ### New
 
-- Repo, PRD and roadmap
+- Repository and product plan

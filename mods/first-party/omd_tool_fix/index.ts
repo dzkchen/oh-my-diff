@@ -167,6 +167,7 @@ function record(api: ModAPI, content: Record<string, Json>, tool: string) {
   return written.ok ? written.value.reference : null;
 }
 
+const bump = (loops: Record<string, number>, key: string) => { const { [key]: seen = 0, ...rest } = loops; return { ...rest, [key]: seen + 1 }; };
 const loopKey = (tool: string, raw: string) => `${tool}:${raw.length}:${raw.slice(0, 160)}`;
 
 export default function activate(api: ModAPI) {
@@ -187,12 +188,12 @@ export default function activate(api: ModAPI) {
     const key = loopKey(e.tool, e.raw_arguments);
     const seen = state.loops[key] ?? 0;
     if (seen >= ASKS) {
-      save(api, { ...state, released: state.released + 1 });
+      save(api, { ...state, released: state.released + 1, loops: bump(state.loops, key) });
       return next(e);
     }
     if (fix.ambiguous.length) {
       const detail = fix.ambiguous.join('; ');
-      save(api, { ...state, ambiguous: state.ambiguous + 1, loops: { ...state.loops, [key]: seen + 1 } },
+      save(api, { ...state, ambiguous: state.ambiguous + 1, loops: bump(state.loops, key) },
         { tool: e.tool, call_id: e.call_id, kind: 'ambiguous', detail, evidence: null, outcome: 'not run' });
       return { output: `${e.tool} was not run: its arguments don't match the tool's schema and the fix is ambiguous. ${detail}. Send the call again with exact values.`, success: false };
     }
@@ -206,7 +207,7 @@ export default function activate(api: ModAPI) {
     const after = load(api);
     save(api, {
       ...after, corrected: after.corrected + 1, [outcome]: after[outcome] + 1,
-      loops: outcome === 'rejected' ? { ...after.loops, [key]: (after.loops[key] ?? 0) + 1 } : after.loops,
+      loops: outcome === 'rejected' ? bump(after.loops, key) : after.loops,
     }, { tool: e.tool, call_id: e.call_id, kind: 'corrected', detail: fix.changes.map(change => `${change.path} ${change.rule}`).join(', '), evidence, outcome });
     return result;
   });

@@ -4,7 +4,7 @@ Shows the OMD mark, your install profile (OMD+ or OMD Core), the Codex version a
 
 ## Turn it off
 
-It is on by default in OMD+ and OMD Core. Turn it off in `/mods`, or run:
+It is on by default in OMD+ and OMD Core, and `/mods` keeps it on. To turn it off, run:
 
 ```sh
 omd-package mod disable omd_logo

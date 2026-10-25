@@ -8,6 +8,7 @@ use codex_omd::ModStore;
 use codex_omd::OMD_HOST_RELEASE;
 use serde_json::Value;
 use serde_json::json;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -81,6 +82,22 @@ fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str],
     let sha256 = inspected["sha256"].as_str().unwrap();
     contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), scope));
     contended(|| store.enable(path, true));
+}
+
+// A second enabled copy of one mod, as stores from before the enable check could hold.
+fn trust_duplicate(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
+    let inspected = ModStore::inspect_package(path).unwrap();
+    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
+    let sha256 = inspected["sha256"].as_str().unwrap();
+    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), "user"));
+    let file = store.root().join("mods.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    for selection in config["mods"].as_array_mut().unwrap() {
+        if selection["path"] == json!(path) {
+            selection["enabled"] = json!(true);
+        }
+    }
+    std::fs::write(&file, serde_json::to_vec(&config).unwrap()).unwrap();
 }
 
 fn activation_error(temp: &TempDir, id: &str) -> String {
@@ -637,7 +654,22 @@ fn mod_duplicate_id_cannot_replace_an_active_package() {
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["id"] = json!("fixture");
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &other, &[]);
+    assert!(
+        ModStore::inspect_package(&other)
+            .and_then(|inspected| {
+                store.trust(
+                    other.clone(),
+                    inspected["sha256"].as_str().unwrap(),
+                    Vec::new(),
+                    "user",
+                )?;
+                store.enable(&other, true)
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("mod_conflict: fixture is already on")
+    );
+    trust_duplicate(&store, &other, &[]);
     assert!(
         runtime
             .reload()
@@ -767,7 +799,7 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
             "user",
         )
         .unwrap();
-    let receipt = store.migrate(&path).unwrap();
+    let receipt = store.migrate(Path::new("fixture")).unwrap();
     let backup: Value =
         serde_json::from_slice(&std::fs::read(receipt["backup"].as_str().unwrap()).unwrap())
             .unwrap();
@@ -835,6 +867,10 @@ fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
             "{error}"
         );
     }
+    let mut manifest = base;
+    manifest["compatibility"] = json!({"releases": [OMD_HOST_RELEASE]});
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    ModStore::inspect_package(&path).unwrap();
 }
 
 #[test]
@@ -2744,7 +2780,7 @@ fn two_selections_of_one_id_in_the_same_scope_both_fail_closed() {
             &["context"],
             &[],
         );
-        trust(&store, &path, &["context"]);
+        trust_duplicate(&store, &path, &["context"]);
     }
     let healthy = packaged(
         &root,

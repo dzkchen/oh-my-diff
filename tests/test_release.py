@@ -9,6 +9,12 @@ from unittest import mock
 from scripts import release
 
 
+def host_crates(root, version):
+    for name in release.HOST_CRATES:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(f'[package]\nname = "crate"\nversion = "{version}"\n')
+
+
 class ReleaseTests(unittest.TestCase):
     def test_check_ties_lock_changelog_and_links_to_the_release_version(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -17,10 +23,11 @@ class ReleaseTests(unittest.TestCase):
                         "sections": [{"label": "New", "items": ["Installer"]}, {"label": "Fixed", "items": ["Update path"]}],
                         "commits": ["abcdef1"]},
                        {"date": "2026-10-08", "title": "Launch scope", "summary": "Smaller launch.",
-                        "sections": [{"label": "Decided", "items": ["Waves"]}], "commits": ["1234567"]}]
+                        "sections": [{"label": "Changed", "items": ["Waves"]}], "commits": ["1234567"]}]
             (root / "changelog.json").write_text(json.dumps(entries))
             (root / "CHANGELOG.md").write_text(release.render(entries))
             (root / "lock.json").write_text(json.dumps({"version": "1.0.0"}))
+            host_crates(root, "1.0.0")
             (root / "README.md").write_text("[changelog](CHANGELOG.md) [site](https://example.test)\n")
             with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "changelog.json", MARKDOWN=root / "CHANGELOG.md",
                                      LOCK=root / "lock.json"), \
@@ -28,10 +35,13 @@ class ReleaseTests(unittest.TestCase):
                 release.check("1.0.0")
                 notes = release.notes(entries, "1.0.0")
                 self.assertIn("### Fixed\n\n- Update path", notes)
-                self.assertIn("labeled beta", notes)
                 self.assertIn("v1.0.0/install.sh | sh -s -- --profile full", notes)
                 with self.assertRaisesRegex(SystemExit, "release.lock.json is 1.0.0, not 1.0.1"):
                     release.check("1.0.1")
+                (root / release.HOST_CRATES[1]).write_text('[package]\nversion = "0.9.0"\n')
+                with self.assertRaisesRegex(SystemExit, "OMD host crates are 0.9.0, 1.0.0, not 1.0.0"):
+                    release.check("1.0.0")
+                host_crates(root, "1.0.0")
                 (root / "README.md").write_text("[guide](docs/missing.md) [first](CHANGELOG.md#100--2026-10-17) [gone](CHANGELOG.md#nope) <a href=\"docs/html.md\">x</a>\n")
                 entries[1]["commits"] = ["abcdef1"]
                 (root / "changelog.json").write_text(json.dumps(entries))
@@ -63,6 +73,7 @@ class ReleaseTests(unittest.TestCase):
             (root / "changelog.json").write_text(json.dumps(entries))
             (root / "CHANGELOG.md").write_text(release.render(entries))
             (root / "lock.json").write_text(json.dumps({"version": "1.0.0"}))
+            host_crates(root, "1.0.0")
             git("add", ".")
             git("commit", "-m", "chore(release): 1.0.0")
             git("push", "origin", "release/v1.0.0")

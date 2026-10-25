@@ -482,6 +482,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const entry = need(op);
     const pending = entry.value.pending;
     if (!pending) return { status: 'idle' };
+    let reviewing = false;
     try {
       const integrated = pending.worker && contract.receipts.find(value => value.kind === 'workspace_integration' && value.evidence.reference === `native-integration:${pending.worker}`);
       if (integrated) return finish(op, { ...entry.value, pending: null, status: 'active' }, { status: 'integrated', receipt: integrated as unknown as Json }, [pending.handle, pending.worker]);
@@ -495,12 +496,14 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       if (pending.kind === 'implementation') {
         if (!result.candidate_sha256) throw new Error('worker_candidate_missing');
         const snapshot = api.host.call('workspace.snapshot', { agent: pending.handle, expected: result.candidate_sha256 }).snapshot;
-        api.host.call('agents.result', { handle: pending.handle, consume: true });
+        reviewing = true;
         const checked = checkSnapshot('contribution_checks', snapshot, entry.value);
-        if (checked.outcome !== 'pass') return finish(op, { ...entry.value, pending: null, status: 'needs_repair' }, { status: 'needs_repair', receipt: checked as unknown as Json }, [pending.handle]);
+        if (checked.outcome !== 'pass') return finish(op, { ...entry.value, pending: null, status: 'needs_repair' }, { status: 'needs_repair', receipt: checked as unknown as Json }, [pending.handle], pending.handle);
         const plan = reviewPlan('contribution_review', snapshot, entry.value, pending.delegation?.reviewer);
-        return spawnClaimed(op, entry.value, { kind: 'contribution_review', snapshot, worker: pending.handle, delegation: pending.delegation, eligible_resolutions: plan.eligible_resolutions }, plan.request,
+        const started = spawnClaimed(op, entry.value, { kind: 'contribution_review', snapshot, worker: pending.handle, delegation: pending.delegation, eligible_resolutions: plan.eligible_resolutions }, plan.request,
           handle => ({ status: 'running', handle, next: 'advance' }));
+        api.host.tryCall('agents.result', { handle: pending.handle, consume: true });
+        return started;
       }
       if (!pending.snapshot || result.candidate_sha256 !== pending.snapshot.sha256) throw new Error('review_candidate_changed');
       const verdicts = new Map<string, Review | AdversarialReview>();
@@ -546,6 +549,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       return finish(op, { ...value, pending: null }, { status: 'recorded', receipt: submitted as unknown as Json }, [pending.handle], pending.handle);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
+      if (reviewing) throw error;
       const output = interrupt(op, pending.kind, error.message);
       for (const handle of [pending.handle, pending.worker]) if (handle) api.host.tryCall('agents.cancel', { handle });
       return output;
@@ -644,6 +648,8 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
   api.on('context', () => {
     const entry = api.host.call('store.get', TASK);
     if (!entry) return { text: 'The workflow mod is enabled. The user selects a contract with /omd_workflow:contract; then use mod_omd_workflow_begin to record the user task and its acceptance criteria. No work is delegated automatically.' };
-    return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(object(entry.value) ? { status: entry.value.status, revision: entry.value.revision, remaining_work: entry.value.remaining_work, failed_hypotheses: entry.value.failed_hypotheses } : {}).slice(0, 200)}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };
+    const task = parseCheckpoint(entry.value);
+    const head = (items: string[]) => items.slice(0, 3).map(item => item.slice(0, 60));
+    return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(task ? { status: task.status, revision: task.revision, remaining_work: head(task.remaining_work), remaining_count: task.remaining_work.length, failed_hypotheses: head(task.failed_hypotheses) } : {})}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };
   });
 }

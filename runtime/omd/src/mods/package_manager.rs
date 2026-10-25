@@ -498,6 +498,7 @@ impl ModStore {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
+                    node: None,
                     mods: Vec::new(),
                 },
             )
@@ -1002,6 +1003,7 @@ impl ModStore {
         }
         super::validate_settings(&manifest, &selection.settings)?;
         selection.enabled = true;
+        store::refuse_second_copy(&config, &path, &scope, &manifest.id)?;
         config.revision = config
             .revision
             .checked_add(1)
@@ -1035,12 +1037,15 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         let mut config = self.configuration()?;
+        // Earlier cached versions of this package go too; another copy of the same mod, such as a bundled source, stays.
+        let cached = package.cache_path.parent().unwrap_or(&package.cache_path);
         config.mods.retain(|selection| {
             !(selection.scope == package.scope
                 && (selection.path == package.path
                     || selection.path == package.cache_path
-                    || store::package(&selection.path)
-                        .is_ok_and(|(manifest, _, _)| manifest.id == id)))
+                    || selection.path.starts_with(cached)
+                        && store::package(&selection.path)
+                            .is_ok_and(|(manifest, _, _)| manifest.id == id)))
         });
         config.revision = config
             .revision

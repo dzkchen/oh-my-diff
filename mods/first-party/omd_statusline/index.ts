@@ -145,7 +145,6 @@ export default function activate(api: ModAPI) {
     if (windows.length) data.limits = windows;
     const credits = object(snapshot.credits);
     if (Object.keys(credits).length) data.credits = credits.unlimited ? 'unlimited' : credits.hasCredits ? 'credits' : 'none';
-    if (typeof snapshot.planType === 'string') data.subscription = snapshot.planType;
   };
   const configure = () => {
     const session = api.host.tryCall('session.info', null);
@@ -182,9 +181,7 @@ export default function activate(api: ModAPI) {
     const tokens = summary.measured ? summary.tokens : null;
     const now = Date.now();
     update(data => {
-      // The native route on a ChatGPT plan is plan usage even though the ledger has no rates for it.
-      const plan = response.cost.basis === 'unpriced' && response.route === 'session' && response.provider === 'openai' && data.subscription !== null;
-      const [kind, amount] = charge(plan ? 'included_subscription' : response.cost.basis, response.cost.microusd,
+      const [kind, amount] = charge(response.cost.basis, response.cost.microusd,
         number(reported.usd) !== null && typeof reported.basis === 'string' ? { usd: reported.usd, basis: reported.basis } : null);
       const key = `${response.request_id}#${response.attempt}`;
       const entry: Seen = [tokens?.input ?? 0, tokens?.output ?? 0, tokens?.reasoning ?? 0, tokens?.cached ?? 0, tokens?.cache_write ?? 0, kind as Charge, amount];
@@ -228,7 +225,7 @@ export default function activate(api: ModAPI) {
   });
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update_ = object(params);
-    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; data.subscription = null; });
+    if (method === 'account/updated') return update(data => { data.limits = []; data.credits = null; });
     if (method === 'account/rateLimits/updated') return update(data => limits(data, update_));
     const thread = thread_id ?? update_.threadId ?? null;
     const current = saved().thread;

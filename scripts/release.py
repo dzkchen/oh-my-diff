@@ -12,9 +12,10 @@ CHANGELOG = ROOT / "changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
 REFERENCE = ROOT / "mods/REFERENCE.md"
+HOST_CRATES = ("runtime/omd/Cargo.toml", "runtime/omd/runner/Cargo.toml")
 REPOSITORY = "dzkchen/oh-my-diff"
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-rc\.\d+)?")
-LABELS = ("New", "Changed", "Fixed", "Decided")
+LABELS = ("New", "Changed", "Fixed")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)|(?:href|src)=\"([^\"]+)\"")
 
 
@@ -54,8 +55,7 @@ def notes(entries, version):
         raise SystemExit(f"changelog.json has no {version} entry")
     channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
-                      "OMD 1.0 is labeled beta: not every planned capability is included yet. The label does not mean "
-                      "unstable.", "", "```sh",
+                      "```sh",
                       f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{REPOSITORY}/releases/download/v{version}"
                       f"/install.sh | sh -s --{channel} --profile full", "```", "",
                       f"Full history: [CHANGELOG.md](https://github.com/{REPOSITORY}/blob/v{version}/CHANGELOG.md)"]) + "\n"
@@ -63,6 +63,12 @@ def notes(entries, version):
 
 def lock_version():
     return json.loads(LOCK.read_text())["version"]
+
+
+# The host reports its crate version as the OMD release (`host.omd`), so both OMD crates carry the release version.
+def host_versions(revision=None):
+    manifests = [run("git", "show", f"{revision}:{name}") if revision else (ROOT / name).read_text() for name in HOST_CRATES]
+    return {re.search(r'^version = "([^"]+)"$', manifest, re.M).group(1) for manifest in manifests}
 
 
 def broken_links():
@@ -126,6 +132,8 @@ def check(version=None):
             problems.append(f"{version} is not vMAJOR.MINOR.PATCH or -rc.N")
         if lock_version() != version:
             problems.append(f"runtime/release.lock.json is {lock_version()}, not {version}")
+        if host_versions() != {version}:
+            problems.append(f"the OMD host crates are {', '.join(sorted(host_versions()))}, not {version}")
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
@@ -170,6 +178,9 @@ def prepare(version, summary):
     run("git", "fetch", "--tags", "origin", "main")
     if run("git", "tag", "--list", tag):
         raise SystemExit(f"{tag} already exists")
+    if host_versions("origin/main") != {version}:
+        raise SystemExit(f"main's OMD host crates are {', '.join(sorted(host_versions('origin/main')))}, not {version}: "
+                         "bump codex-omd and codex-omd-runner in the patch and merge that first")
     merged = json.loads(run("git", "show", "origin/main:runtime/release.lock.json"))["version"] == version
     if merged:
         run("git", "tag", "--annotate", tag, "--message", f"Oh My Diff {version}", "origin/main")

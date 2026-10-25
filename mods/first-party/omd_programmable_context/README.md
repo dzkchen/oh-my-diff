@@ -1,6 +1,6 @@
 # omd_programmable_context
 
-Opt-in OMD+ mod for programmable context and a continual session harness. Its behavior is inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (`e75f59efc6f7`, read 2026-09-29: `prime-agent-runtime/src/rlm/repl.md` and `skills/refine/SKILL.md`; the roadmap's earlier `docs/rlm.md` links no longer resolve). No code is copied. It comes with OMD+ but starts off; turn it on in `/mods` or with `omd-package mod enable omd_programmable_context`.
+Opt-in OMD+ mod for programmable context and a continual session harness. Its behavior is inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (`e75f59efc6f7`, read 2026-09-29: `prime-agent-runtime/src/rlm/repl.md` and `skills/refine/SKILL.md`). No code is copied. It comes with OMD+ but starts off; turn it on in `/mods` or with `omd-package mod enable omd_programmable_context`.
 
 ## Python REPL
 
@@ -16,7 +16,7 @@ Without a configured `route`, child agents and completions use the first availab
 
 ## Session harness
 
-Each session keeps versioned notes, memories, skill descriptions and reusable agent specs (`rlm.spawn(..., spec="name")`) as changes over the promoted project and personal harnesses; removing a promoted entry hides it for the session. The mod adds them, with the kept-variable list and usage hint, as a developer message at the start of each lead request. That message is part of the request only: the transcript and the base system prompt are unchanged, and compaction cannot drop it.
+Each session keeps versioned notes, memories, skill descriptions and reusable agent specs (`rlm.spawn(..., spec="name")`) as changes over the promoted project and personal harnesses; removing a promoted entry hides it for the session. The mod adds them, with a usage hint, as a developer message at the start of each lead request, and the kept-variable list (name, size and digest; `rlm.vars()` returns sources) as a short developer message just before the newest item, so keeping a variable does not change the cached prefix. These messages are part of the request only: the transcript and the base system prompt are unchanged, and compaction cannot drop them.
 
 The model proposes up to four changes with a reason and evidence references through `rlm.refine`. The `refine` setting selects the policy:
 
@@ -27,7 +27,3 @@ The model proposes up to four changes with a reason and evidence references thro
 Every applied change creates a new version with before and after snapshots. `/refine rollback [vN]` restores one of the last 16 versions as a new version. `/refine promote project|personal` shows the session's additions, edits and removals against that scope's stored harness, asks for confirmation, then merges them for future sessions in this repository or for this user, keeping other stored entries; `omd store reset --mod omd_programmable_context --scope repository|user` removes it.
 
 Detached or background sessions, heartbeats, schedules and autonomous continuation are out of scope. Kept variables are text only, and importable Python helpers are not stored: the persistent kernel already keeps functions the model defines, and replaying stored model-written code into later kernels would bypass review.
-
-Kept text is immutable and addressed by its digest. One registry compare-and-swap
-publishes its digest and provenance together; failed publication leaves the old
-variable intact. Restoring a variable verifies its digest before returning content.

@@ -6,19 +6,21 @@ checks it against the host.
 API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
 [the conformance registry](conformance/contract.json) keep their shape until then; a breaking change needs a
 major version and a migration note in [the reference](REFERENCE.md). Experimental entries (including the raster
-surfaces `terminal.blit` and `process_raster_v1`) may change in any release.
+surfaces `terminal.blit` and `process_raster_v1`), and the `experimental_fields` of frozen entries, may change in any
+release.
 
 ## Supported versions
 
 | Codex | OMD host | Package schema | Mod API | Label | Service imports | Installed-contract types | Supported through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.163.0 | 1.0.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.164.0 | 1.2.0 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
+| 0.163.0 | 1.0.0 to 1.1.1 | 1 | 1.0.0 | stable | exact `x.y.z` or `^x.y.z` | 1 | 2027-10-19 |
 
 Only the current API loads.
 
-Upstream lag on 2026-10-19: none. Codex 0.163.0 (released 2026-10-15) is the latest stable Codex release. A newer
-Codex is supported once an OMD release lists it here. Update and roll back OMD with `omd update` and
-`omd update rollback` ([install](../docs/install.md#update)).
+Upstream lag on 2026-10-23: none. Codex 0.164.0 is the latest stable Codex release. A newer Codex is supported once an
+OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
+([install](../docs/install.md#update)).
 
 ## What the host checks
 
@@ -43,6 +45,7 @@ These reject older hosts before activation, even when the API version matches.
 | `environment.set` | `environment_overrides_v1` |
 | Timers of 16-999 ms | `timers_16ms_v1` |
 | `packages.index` `cursor`/`limit` | `package_index_paging_v1` |
+| `routes.write` | `route_write_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |
@@ -74,18 +77,22 @@ The host never rewrites a mod's code or settings.
 - Migration backs up the old state first. To restore it while the mod is off:
 
   ```sh
-  omd-mod rollback STORE PACKAGE BACKUP
+  omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP
   ```
+
+  `omd-mod migrate STORE MOD_ID_OR_PACKAGE` runs the handler by hand. A bare name is a mod id among the store's
+  selected mods; `.`, `..` and anything with a `/` are package folders. An id present in more than one scope fails with
+  `mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
 
 ## Tested and not tested
 
-Tested: Apple Silicon macOS with Codex 0.163.0, the OMD+ and OMD Core collections, and the bundled plugins.
+Tested: Apple Silicon macOS with Codex 0.164.0, the OMD+ and OMD Core collections, and the bundled plugins.
 
 Not tested:
 
 - Linux or Intel macOS.
 - Terminals other than those above.
 - Third-party mods combined with the OMD+ collection.
-- Upgrading from an earlier OMD release (there is none yet).
+- Upgrading from an earlier OMD release.
 - Artifact reading and code execution together in one live task.
 - Every combination of mods, plugins and options.

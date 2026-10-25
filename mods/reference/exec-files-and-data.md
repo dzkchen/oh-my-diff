@@ -286,6 +286,11 @@ it does. A callback result, including its state, stays within 256 KiB.
 
 The `omd-mod migrate` and `rollback` commands act on `"store"` state only.
 
+`omd-mod migrate STORE MOD_ID_OR_PACKAGE` and `omd-mod rollback STORE MOD_ID_OR_PACKAGE BACKUP` take a mod id or a
+package folder. A bare name (no `/`) is a mod id resolved among the store's selected mods (watched folder or
+installed); `.`, `..` and anything with a `/` are package folders. An id that matches copies in more than one scope fails with
+`mod_ambiguous` (pass the folder), and a mod without saved store state fails with `migration_requires_saved_state`.
+
 - Thread and checkout state stored at another `state_version` migrates before the mod's next callback in that
   thread or checkout: the host runs the mod's `migrate` handler (it needs `store`) on it and keeps the previous
   file beside it as `<file>-backup-<sha256>`; until then registration and render reads see `null`.
@@ -387,8 +392,8 @@ Write observation is the `workspace_change` event described under [Workspace: li
 and changes](#workspace-list-stat-preconditions-backups-and-changes), with each changed path's before and after
 hashes. Only a selected mod that subscribes to it triggers the index scan.
 
-- The scan excludes `.git`, `.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`, `venv`,
-  `build`, and `dist`.
+- The scan follows the repository's `.gitignore`, `.ignore` and `.git/info/exclude` rules and always skips `.git`
+  and `.omd`.
 - More than 128 changed paths or 16 KB of path names reports `unavailable`, and so does a change outside the
   thread's effective read scope, without exposing its path or hash.
 

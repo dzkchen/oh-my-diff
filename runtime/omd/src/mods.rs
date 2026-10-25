@@ -131,7 +131,8 @@ pub use store::ModStore;
 pub use store::Trust;
 pub(crate) use store::lock as store_lock;
 
-pub const CODEX_HOST_RELEASE: &str = "0.163.0";
+pub const CODEX_HOST_RELEASE: &str = "0.164.0";
+/// The OMD product release: the `codex-omd` crate version is the release version (`release.py check` enforces it).
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "1.0.0";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -682,6 +683,22 @@ pub fn install_profile(value: &str) -> &'static str {
         "private" => "private",
         _ => "unknown",
     }
+}
+
+/// `OMD_TUI_MOD_UI`, read once: the TUI consults it on every frame.
+pub fn mod_ui_allowlist() -> Option<&'static [String]> {
+    static ALLOWLIST: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    ALLOWLIST
+        .get_or_init(|| {
+            std::env::var("OMD_TUI_MOD_UI").ok().map(|ids| {
+                ids.split(',')
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+        })
+        .as_deref()
 }
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -2365,6 +2382,9 @@ pub struct ModConfiguration {
     pub schema: u32,
     #[serde(default)]
     pub revision: u64,
+    /// Written by 1.0.0, which ran mods on Node; ignored, and dropped at the next write.
+    #[serde(default, skip_serializing)]
+    pub node: Option<PathBuf>,
     pub mods: Vec<ModSelection>,
 }
 
@@ -2699,6 +2719,32 @@ mod reload_tests {
     }
 
     #[test]
+    fn a_mod_ui_allowlist_keeps_only_dialogs_from_unlisted_mods() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("store");
+        ModStore::create(root.clone()).unwrap();
+        let mut host = ModHost::open(root).unwrap();
+        host.ui_mods = Some(vec!["b".into()]);
+        let text =
+            |id: &str| json!({"components": [{"type": "text", "id": id, "label": id, "text": id}]});
+        let view = |id: &str| json!({"status": [id], "placeholder": id, "sites": {"above_composer": text(&format!("{id}_above")), "below_composer": text(&format!("{id}_below")), "dialog": text(&format!("{id}_dialog")), "header": text(&format!("{id}_header"))}});
+        let composed = host.compose_terminal(
+            vec![("a".into(), Ok(view("a"))), ("b".into(), Ok(view("b")))],
+            "terminal",
+            None,
+        );
+        assert_eq!(composed.view.status, ["b"]);
+        assert_eq!(composed.view.placeholder.as_deref(), Some("a"));
+        assert_eq!(
+            view::site_component_ids(&composed.view.sites),
+            ["a_dialog", "b_above", "b_below", "b_header"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
+    }
+
+    #[test]
     fn every_capability_has_a_consent_phrase() {
         for capability in MOD_CAPABILITIES {
             assert_ne!(capability_phrase(capability), *capability);
@@ -2821,6 +2867,7 @@ pub struct ModHost {
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Option<Instant>)>,
     clock_reads: BTreeSet<String>,
+    ui_mods: Option<Vec<String>>,
     rendered: HashMap<String, render::Rendered>,
     chains: Vec<Value>,
     access: Vec<Value>,
@@ -3326,6 +3373,7 @@ impl ModHost {
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
             clock_reads: BTreeSet::new(),
+            ui_mods: mod_ui_allowlist().map(<[String]>::to_vec),
             rendered: HashMap::new(),
             chains: Vec::new(),
             access: Vec::new(),
@@ -3521,6 +3569,7 @@ impl ModHost {
                 ModConfiguration {
                     schema: 1,
                     revision: 0,
+                    node: None,
                     mods: Vec::new(),
                 }
             }
@@ -5545,8 +5594,7 @@ impl ModHost {
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
-                // An interrupted turn cancels in-flight renders, and a selection change rejects them until this host
-                // reloads; the last view stands without a fault.
+                // Interrupted turns cancel in-flight renders and selection changes reject them until reload; the last view stands.
                 let error_text = error.to_string();
                 if ![
                     "callback_cancelled",
@@ -5563,6 +5611,9 @@ impl ModHost {
             let Ok(mut patch) = parsed else {
                 continue;
             };
+            if self.ui_mods.as_ref().is_some_and(|ids| !ids.contains(&id)) {
+                patch.drop_persistent_ui();
+            }
             if view.sites.get("dialog").is_some_and(|dialog| {
                 dialog.mode == ModSiteMode::Replace && !dialog.components.is_empty()
             }) {

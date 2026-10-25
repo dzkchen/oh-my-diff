@@ -96,12 +96,18 @@ class ProfileModeTests(unittest.TestCase):
                     (managed, ["update"], "installer update --root /omd/root"),
                     (managed, ["codex-app", "status"], "installer codex-app --root /omd/root status"),
                     (record, ["uninstall", "--keep-broker"], "control uninstall --keep-broker"),
-                    (record, ["update"], "tool update /omd/store")):
+                    (record, ["update"], "tool update /omd/store"),
+                    (record, ["help", "--all"], "tool --help")):
                 with self.subTest(managed="update" in current, argv=argv):
                     launcher = base / "omd"
                     launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
                     run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
                     self.assertEqual(run.stdout.strip(), expected)
+            for current in (managed, record):
+                launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
+                shown = subprocess.run(["sh", launcher], capture_output=True, text=True, check=True).stdout
+                self.assertIn("omd mods list", shown)
+                self.assertEqual("omd update rollback" in shown, current is managed)
 
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):
@@ -253,6 +259,23 @@ enabled = true
                 self.assertEqual(commands, ["selection-status"])
             self.assertEqual(sorted(path.name for path in (store / "sources").iterdir()), ["example"])
 
+    def test_a_directory_package_on_beside_its_bundled_copy_is_turned_off(self):
+        store = Path("/store")
+        selections = [
+            {"id": "omd_advisor", "path": "/store/package-cache/omd_advisor/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_advisor", "path": "/store/sources/omd_advisor", "scope": "user", "selected": True, "packaged": False},
+            {"id": "omd_usage", "path": "/store/package-cache/omd_usage/old", "scope": "user", "selected": True, "packaged": True},
+            {"id": "omd_usage", "path": "/store/sources/omd_usage", "scope": "user", "selected": False, "packaged": False}]
+        commands = []
+
+        def invoke(_manager, command, _store, *arguments):
+            commands.append((command, *arguments))
+            return {"selections": selections} if command == "selection-status" else {}
+
+        with patch.object(profiles, "invoke", side_effect=invoke):
+            profiles.keep_bundled_copies("manager", store)
+        self.assertEqual(commands, [("selection-status",), ("package-disable", "omd_advisor")])
+
     def test_broker_install_imports_exact_grants_without_retrusting(self):
         snapshot = {"mods": [{"path": "/mod", "scope": "project", "enabled": True,
                               "sha256": "a" * 64, "capabilities": ["exec"],
@@ -331,7 +354,7 @@ enabled = true
             log, exported = base / "runs.log", base / "export.json"
             (base / "codex").write_text(
                 "#!/bin/sh\n"
-                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH\" >> {log}\n"
+                f"echo \"$*|$OH_MY_DIFF_PRESENTATION|$OH_MY_DIFF_LAUNCH|$OMD_TUI_MOD_UI|$OMD_TUI_HEADER|$OMD_TUI_COMPOSER\" >> {log}\n"
                 "launch=${OH_MY_DIFF_LAUNCH%.*} run=${OH_MY_DIFF_LAUNCH##*.}\n"
                 "if [ \"$OH_MY_DIFF_PRESENTATION\" = mini ]; then\n"
                 f"  echo \"{{\\\"entries\\\":{{\\\"switch_$launch\\\":{{\\\"value\\\":{{\\\"run\\\":$run,\\\"target\\\":\\\"full\\\",\\\"thread\\\":\\\"019a0000-0000-7000-8000-000000000001\\\"}}}}}}}}\" > {exported}\n"
@@ -354,14 +377,14 @@ enabled = true
                     profiles.mini(Path("/prefix"), base, [])
             runs = [line.split("|") for line in log.read_text().splitlines()]
             self.assertEqual(code, 3)
-            self.assertEqual([(argv, mode) for argv, mode, _ in runs], [
-                ("--no-alt-screen --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini"),
-                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full")])
-            self.assertEqual([launch.split(".")[1] for _, _, launch in runs], ["0", "1"])
+            self.assertEqual([(argv, mode, *tui) for argv, mode, _, *tui in runs], [
+                ("--no-alt-screen -c tui.show_tooltips=false --model m -s=danger-full-access -C /repo -c a=1 -i x.png --yolo --no-alt-screen fix it", "mini", "omd_mini", "off", "plain"),
+                ("--model m -s=danger-full-access -C /repo -c a=1 --yolo resume 019a0000-0000-7000-8000-000000000001", "full", "", "", "")])
+            self.assertEqual([launch.split(".")[1] for _, _, launch, *_ in runs], ["0", "1"])
             self.assertEqual(profiles.session_options(["resume", "--last", "-mx", "--model=y", "-c", "a=1", "-c", "b=2", "--", "-s", "p", "-m"]),
                              ["-mx", "--model=y", "-c", "a=1", "-c", "b=2"])
             self.assertEqual(profiles.session_options(["prompt", "-m"]), [])
-            self.assertEqual(len({launch.split(".")[0] for _, _, launch in runs}), 1)
+            self.assertEqual(len({launch.split(".")[0] for _, _, launch, *_ in runs}), 1)
 
 
 if __name__ == "__main__":

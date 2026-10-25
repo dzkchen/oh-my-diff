@@ -8,9 +8,9 @@ import { callback } from '../../../tests/mod_runner.mjs';
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 
-function run(event, name, payload, { state = null, settings = {}, host = {} } = {}) {
+function run(event, name, payload, { state = null, host = {} } = {}) {
   const calls = [];
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { max_calls: 4, ...settings }, event, name, payload }, call => {
+  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event, name, payload }, call => {
     calls.push(call);
     const reply = host[call.operation];
     if (!reply) assert.fail(`unexpected ${call.operation}`);
@@ -23,12 +23,11 @@ function run(event, name, payload, { state = null, settings = {}, host = {} } = 
 const exec = (cmd, extra = {}) => ({ tool: 'exec_command', arguments: { cmd, ...extra } });
 const batch = (...calls) => run('tool_batch', '', { batch_id: 'b1', thread_id: 't', calls: calls.map((call, index) => ({ call_id: `c${index}`, parallel_safe: true, ...call })) }).value;
 
-test('an all-read batch merges into one step and keeps identical calls together', () => {
-  const merged = batch(exec('sed -n 1,40p src/a.ts'), exec('cat b.ts'), exec("rg -n 'fn main' src"), exec('sed -n 1,40p src/a.ts'));
-  assert.deepEqual(merged.merge.map(merge => [merge.tool, merge.call_ids, merge.success_per_call]), [['batch', ['c0', 'c1', 'c2', 'c3'], true]]);
-  assert.deepEqual(merged.merge[0].arguments.calls.map(call => call.call_id), ['c0', 'c1', 'c2', 'c3']);
-  const large = batch(...Array.from({ length: 10 }, (_, index) => exec(`cat f${index}`)), exec('cat f9'));
-  assert.deepEqual(large.merge.map(merge => merge.call_ids), [['c0', 'c1', 'c2', 'c3'], ['c4', 'c5', 'c6', 'c7'], ['c8', 'c9', 'c10']]);
+test('only identical reads of a response merge; distinct reads stay native and parallel', () => {
+  assert.equal(batch(exec('sed -n 1,40p src/a.ts'), exec('cat b.ts'), exec("rg -n 'fn main' src")), null);
+  const merged = batch(exec('sed -n 1,40p src/a.ts'), exec('cat b.ts'), exec("rg -n 'fn main' src"), exec('sed -n 1,40p src/a.ts'), exec('cat b.ts'), exec('cat c.ts'));
+  assert.deepEqual(merged.merge.map(merge => [merge.tool, merge.call_ids, merge.success_per_call]), [['batch', ['c0', 'c3'], true], ['batch', ['c1', 'c4'], true]]);
+  assert.deepEqual(merged.merge[0].arguments.calls.map(call => call.call_id), ['c0', 'c3']);
 });
 
 test('a batch with any write, shell feature or unknown argument stays native', () => {
@@ -38,17 +37,15 @@ test('a batch with any write, shell feature or unknown argument stays native', (
     exec('tail -f log'), exec('tail -F log'), exec('sed -i s/a/b/ f'), exec("sed -n '1p;w out' f"), exec('rg --pre=sh x'), exec('rg -uz x'),
     exec('git push'), exec('git diff --output=x'), exec('git -C .. status'), exec('find . -delete'), exec('cat a', { tty: true }),
     exec('cat a', { sandbox_permissions: 'require_escalated' }), { tool: 'apply_patch', arguments: '*** Begin Patch' }, { tool: 'mcp__fs__read', arguments: {} }, { tool: 'read_file', arguments: { file_path: 'b.ts' } },
-  ]) assert.equal(batch(read, other), null, JSON.stringify(other));
+  ]) assert.equal(batch(read, read, other), null, JSON.stringify(other));
   for (const other of [
     exec('tail -1f log'), exec('tail --fol log'), exec('cat'), exec('cat -'), exec('cat /dev/zero'), exec('grep x'), exec('rg x'), exec('git blame --contents - f'),
     exec('git diff --ext x'), exec('git -c core.pager=x log'), exec('git log --output=x'), exec('ls --color=always'), exec('cat a', { shell: '/bin/zsh' }), exec('cat a', { login: true }),
     exec('nl a'), exec('sed -n 1p'), exec('rg --pre-glob x y .'), exec('rg --file=/dev/stdin x src'), exec('grep --file=- x src'),
-  ]) assert.equal(batch(read, other), null, JSON.stringify(other));
-  assert.equal(batch(read), null);
-  for (const cmd of ['head -n 20 a', 'head -5 a', 'tail -n +5 a', 'wc -l a', 'git log --oneline -n 5', 'git diff --stat -- src', 'git status --short',
-    "rg -n -g '*.ts' foo src", 'grep -rn foo src', 'ls -la src', 'ls', 'git show HEAD', 'git blame -L 1,5 a']) assert.ok(batch(read, exec(cmd)), cmd);
-  assert.equal(run('tool_batch', '', { batch_id: 'b', thread_id: 't', calls: Array.from({ length: 70 }, (_, index) => ({ call_id: `c${index}`, parallel_safe: true, ...exec(`cat f${index}`) })) },
-    { settings: { max_calls: 2 } }).value.merge.length, 32);
+  ]) assert.equal(batch(read, read, other), null, JSON.stringify(other));
+    for (const cmd of ['head -n 20 a', 'head -5 a', 'tail -n +5 a', 'wc -l a', 'git log --oneline -n 5', 'git diff --stat -- src', 'git status --short',
+    "rg -n -g '*.ts' foo src", 'grep -rn foo src', 'ls -la src', 'ls', 'git show HEAD', 'git blame -L 1,5 a']) assert.ok(batch(exec(cmd), exec(cmd)), cmd);
+  assert.equal(batch(...Array.from({ length: 70 }, (_, index) => exec(`cat f${index >> 1}`))).merge.length, 32);
 });
 
 test('the merged step runs each read once through the host, in order, keeping each result', () => {
@@ -78,10 +75,6 @@ test('the merged step runs each read once through the host, in order, keeping ea
   assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
   assert.deepEqual(state.recent[0].invoked, { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2', c7: 'mod-omd_tool_absorb-5' });
   assert.deepEqual([state.batches, state.absorbed, state.deduplicated, state.overflowed], [1, 8, 1, 1]);
-  const many = Array.from({ length: 10 }, (_, index) => ({ call_id: `d${index}`, ...exec(`cat f${index}`) }));
-  const capped = run('tool', 'batch', { batch: 'b2', calls: many }, { host: { 'tools.invoke': () => ({ call_id: 'x', output: 'ok', success: true, truncated: false }) } });
-  assert.equal(capped.calls.length, 8);
-  assert.match(capped.value.d8.output, /runs at most 8 distinct reads/);
 });
 
 const fnv = (text, seed) => {
@@ -124,7 +117,7 @@ function cell(call, { cellId = 'cell-1', caller = 'code_mode', sha = 'a'.repeat(
   const input = { ...call, call_id: 'k', thread_id: 't', agent_id: null, schema: null, raw_arguments: JSON.stringify(call.arguments), batch: null };
   const host = {
     ...store.ops,
-    'session.info': () => ({ thread_id: 't', root: '/repo', cwd, codex_version: '0.163.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
+    'session.info': () => ({ thread_id: 't', root: '/repo', cwd, codex_version: '0.164.0', model: null, provider: 'openai', route: null, turns_started: 1 }),
     'workspace.stat': ({ paths, hash: withHash }) => ({ files: Object.fromEntries(paths.map(path => [path, { kind: 'file', size, mtime_ms: 1, ...(withHash ? { sha256: hashed++ ? shaAfter : sha } : {}) }])) }),
     'time.sleep': ({ ms }) => { if (!sleep) throw new Error('time_sleep_unavailable'); onSleep(); return { slept_ms: ms, cancelled: false }; },
     'continuation.next': () => ({ result: next(), trace: [] }),

@@ -193,3 +193,47 @@ test('javascript kernel waits out a full stdout pipe instead of dropping output 
   const { value } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
   assert.deepEqual(JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length)), { ok: true, output: 'x'.repeat(65499) + '\n', bridge_failed: false });
 });
+
+for (const language of ['python', 'javascript']) {
+  test(`${language} kernel survives stray errors and exit requests`, { timeout: 30_000 }, async t => {
+    const python = language === 'python';
+    const script = new URL(`../plugins/bundled/oh-my-diff/plugins/omd-code-execution/kernels/${python ? 'python.py' : 'bun.mjs'}`, import.meta.url).pathname;
+    const child = spawn(python ? 'python3' : process.env.OMD_TEST_BUN ?? process.execPath, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = once(child, 'exit');
+    const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    t.after(async () => {
+      child.kill();
+      await exited;
+    });
+    const cell = async code => {
+      child.stdin.write(JSON.stringify({ port: 1, token: 'fixture', code }) + '\n');
+      const { value, done } = await Promise.race([lines.next(), exited.then(() => assert.fail('kernel exited'))]);
+      assert.equal(done, false, 'kernel exited');
+      assert.ok(value.startsWith('CODE_KERNEL_RESULT:'), value.slice(0, 200));
+      return JSON.parse(value.slice('CODE_KERNEL_RESULT:'.length));
+    };
+    const alive = async () => assert.deepEqual(await cell(python ? 'print("alive")' : 'console.log("alive")'), { ok: true, output: 'alive\n', bridge_failed: false });
+    if (python) {
+      for (const [code, name] of [['exit()', 'SystemExit'], ['import sys\nsys.exit(3)', 'SystemExit: 3'], ['raise KeyboardInterrupt', 'KeyboardInterrupt']]) {
+        const result = await cell(code);
+        assert.equal(result.ok, false);
+        assert.match(result.error, new RegExp(name));
+        await alive();
+      }
+      return;
+    }
+    await cell('globalThis.timer = setInterval(() => console.log("x".repeat(40000)), 10);');
+    const flooded = await cell('await new Promise(resolve => setTimeout(resolve, 300));');
+    assert.equal(flooded.ok, false);
+    assert.match(flooded.error, /output limit exceeded/);
+    await cell('clearInterval(timer);');
+    await alive();
+    await cell('setTimeout(() => Promise.reject(new Error("stray")), 20);\nsetTimeout(() => { throw new Error("thrown"); }, 20);');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await alive();
+    const reported = await cell('setTimeout(() => Promise.reject(new Error("stray")), 20);\nawait new Promise(resolve => setTimeout(resolve, 200));');
+    assert.equal(reported.ok, false);
+    assert.match(reported.error, /stray/);
+    await alive();
+  });
+}

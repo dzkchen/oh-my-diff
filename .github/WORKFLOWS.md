@@ -26,10 +26,8 @@ PR, nightly and release jobs use the same Cargo download-cache keys. PR runs onl
 to the newest cache for the same platform and upstream pin. Only nightly and release runs save, since a cache saved
 by a PR is visible to that PR alone.
 
-After this workflow lands and a hosted PR run succeeds, apply `.github/settings.json` to require **PR gate** on
-`main` with an up-to-date branch. The checked-in setting alone does not change GitHub protection. Verify the live
-required status after applying it. Dependency license/source policy and scheduled vulnerability checks remain
-deferred until exceptions for the pinned upstream workspace are established.
+`main` requires **PR gate** with an up-to-date branch. Dependabot (`dependabot.yml`) opens one grouped pull request a
+month for GitHub Actions updates. There are no dependency license or scheduled vulnerability checks yet.
 
 ## Validation
 
@@ -38,7 +36,9 @@ deferred until exceptions for the pinned upstream workspace are established.
 - `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
   checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
   checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
-  `codex-core` integration suite is advisory for a release and required for a nightly.
+  `codex-core` integration suite is advisory for a release and required for a nightly; two upstream tests that fail
+  after the rest of the suite in one process run in their own. Jobs work under `/Users/runner/omd`, not `/tmp`,
+  which a sandboxed command may write.
 - `build` builds and signs the release host binaries in parallel with `test`.
 - `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
   one archive for both profiles and tests install, reinstall, uninstall and recovery.
@@ -54,7 +54,9 @@ prerelease and never marked latest.
 
 ## Releases
 
-The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`.
+The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`. The
+host reports its crate version as the OMD release, so first set `codex-omd` and `codex-omd-runner` to the release
+version in a scratch tree, `build.py sync` and merge that; `mise run release` and `release.yml` refuse a mismatch.
 
 1. `mise run release -- 1.2.0 --summary "One sentence."` opens a `chore(release): 1.2.0` pull request with the version
    and a changelog entry with one line per pull request or direct commit merged to `main` since the last one. Edit the entry if needed, then run

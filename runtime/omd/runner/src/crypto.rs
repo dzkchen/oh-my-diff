@@ -558,7 +558,7 @@ fn generate(algorithm: &Value, extractable: bool, usages: &[String]) -> Outcome<
             let hash = hash(&dictionary)?;
             let length = dictionary["length"]
                 .as_u64()
-                .map_or(block_bits(hash) as u64, |bits| bits);
+                .unwrap_or(block_bits(hash) as u64);
             if length == 0 || length % 8 != 0 || length > MAX_KEY_BITS {
                 return fail(
                     "OperationError",

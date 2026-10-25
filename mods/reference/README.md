@@ -1,7 +1,7 @@
 # Mod API reference
 
-This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.163.0`.
-`omd-mod status` reports the host version as `omd` (`1.0.0` in OMD `1.0.0`). Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
+This reference matches `@oh-my-diff/mod-api` and host API `1.0.0` and Codex `0.164.0`.
+`omd-mod status` reports the OMD release as `host.omd`, the version `compatibility.releases` matches. Only this API version loads. [`api.d.ts`](../api.d.ts) is the complete typed surface.
 
 [`REFERENCE.md`](../REFERENCE.md) has every page below in one file, for agents and search.
 
@@ -15,22 +15,24 @@ A store also generates declarations for the running host:
 
 ## Stability
 
-API `1.0.0` is stable. [The conformance registry](../conformance/contract.json) marks each public operation, event,
+API `1.0.0` is stable. [The conformance registry](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/contract.json) marks each public operation, event,
 capability, interceptor, component, render site, view field, classic hook and author command as frozen or
 experimental:
 
 - Frozen entries keep their shape through `2027-10-19`; a breaking change needs a major version and a migration note.
 - Experimental ones may change in any release.
+- A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
+  experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](../COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
 - Raster frame streaming: `terminal.blit`, the `raster` component, `process_raster_v1` and `raster_pixels_v1`.
-- Component modules (`api.component`, `component_modules_v1`) and `component_post`.
-- The `composer_key` and `mention` interceptors, `completion_tokens_v1` and `history_persist`.
-- `sessions.read` with the `sessions_tools` capability, and the `below_composer` site.
+- The `composer_key`, `mention` and `component_change` interceptors and `completion_tokens_v1`.
+- HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
+- `routes.write` (`route_write_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.

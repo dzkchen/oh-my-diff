@@ -229,10 +229,19 @@ fn policy(action: &str, rest: &[String]) -> io::Result<Value> {
     }
 }
 
+/// A mod id stays a bare name; anything with a `/` is a package folder.
+fn package_target(target: &str) -> io::Result<PathBuf> {
+    if target.contains('/') || matches!(target, "." | "..") {
+        PathBuf::from(target).canonicalize()
+    } else {
+        Ok(PathBuf::from(target))
+    }
+}
+
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(concat!(
-            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE MOD_ID_OR_PACKAGE | rollback STORE MOD_ID_OR_PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
             " | broker-grants-import STORE [SNAPSHOT_JSON]"
         ))
     };
@@ -293,11 +302,11 @@ fn run(args: &[String]) -> io::Result<Value> {
                 "settings saved for next turn boundary".into(),
             ))
         }
-        [command, root, path] if command == "migrate" => {
-            open(root)?.migrate(&PathBuf::from(path).canonicalize()?)
+        [command, root, target] if command == "migrate" => {
+            open(root)?.migrate(&package_target(target)?)
         }
-        [command, root, path, backup] if command == "rollback" => {
-            open(root)?.rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
+        [command, root, target, backup] if command == "rollback" => {
+            open(root)?.rollback(&package_target(target)?, &PathBuf::from(backup))
         }
         [command, root] if command == "init" => {
             ModStore::create(PathBuf::from(root))?;

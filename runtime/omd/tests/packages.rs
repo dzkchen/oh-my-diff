@@ -1576,3 +1576,74 @@ fn package_requests_refuse_a_wrong_action_another_scope_and_nested_index_sources
         .to_string();
     assert!(error.contains("index_release_source_invalid"), "{error}");
 }
+
+#[test]
+fn one_copy_of_a_mod_is_on_and_removing_the_package_keeps_the_bundled_copy() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let bundled = mod_package(
+        &root.join("sources"),
+        "fixture",
+        "1.0.0",
+        &["exec"],
+        json!([]),
+    );
+    let store = store(&temp);
+    install(&store, request(&package, &["exec"]));
+    store.package_enable("fixture").unwrap();
+    let sha256 = ModStore::inspect_package(&bundled).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(bundled.clone(), &sha256, vec!["exec".into()], "user")
+        .unwrap();
+    let refused = store.enable(&bundled, true).unwrap_err().to_string();
+    assert!(
+        refused.contains("mod_conflict: fixture is already on"),
+        "{refused}"
+    );
+
+    store.package_disable("fixture").unwrap();
+    store.enable(&bundled, true).unwrap();
+    let refused = store.package_enable("fixture").unwrap_err().to_string();
+    assert!(
+        refused.contains("mod_conflict: fixture is already on"),
+        "{refused}"
+    );
+
+    let uninstall = store.package_uninstall_plan("fixture").unwrap();
+    store
+        .package_uninstall("fixture", &uninstall.confirmation)
+        .unwrap();
+    let mods = store.configuration().unwrap().mods;
+    assert_eq!(mods.len(), 1);
+    assert_eq!(mods[0].path, bundled);
+    assert!(mods[0].enabled);
+}
+
+#[test]
+fn a_store_written_by_1_0_0_is_read_and_its_node_entry_dropped() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = store(&temp);
+    let file = store.root().join("mods.json");
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    config["node"] = json!("/opt/node/bin/node");
+    std::fs::write(&file, serde_json::to_vec(&config).unwrap()).unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &[], json!([]));
+    let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(package.clone(), &sha256, Vec::new(), "user")
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert!(written.get("node").is_none(), "{written}");
+    assert_eq!(written["mods"][0]["enabled"], true);
+}

@@ -368,6 +368,12 @@ fn check_route_fields(
             .flatten()
     };
     let (model, provider) = (text("model"), text("modelProvider"));
+    if provider.is_some() && model.is_none() {
+        return Err(denied(
+            "app_route_model_required",
+            provider.unwrap_or_default(),
+        ));
+    }
     let configured = routes.iter().any(|(m, p)| {
         model.is_none_or(|model| model == m) && provider.is_none_or(|provider| provider == p)
     });

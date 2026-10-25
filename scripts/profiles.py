@@ -87,6 +87,15 @@ def sync_sources(manager, store, origin, packages):
     return changed
 
 
+def keep_bundled_copies(manager, store):
+    """Turn off a Directory package that is on beside the bundled copy of the same mod; the host rejects both."""
+    selected = [item for item in invoke(manager, "selection-status", store)["selections"] if item["selected"]]
+    for item in selected:
+        if item["packaged"] and any(other["path"] == str(store / "sources" / item["id"]) and other["scope"] == item["scope"]
+                                    for other in selected):
+            invoke(manager, "package-disable", store, item["id"])
+
+
 def reconcile(prefix, bin_dir):
     record = load(prefix)
     _, manager = check(record, bin_dir)
@@ -156,7 +165,33 @@ def omd_text(record, tool, control):
               f"{shlex.quote(update['installer'])} \"$command\" --root {shlex.quote(update['root'])} \"$@\";; esac\n" if update
               else f"if [ \"$1\" = uninstall ]; then shift; exec {shlex.quote(str(control))} uninstall \"$@\"; fi\n")
     mini = f"if [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control))} mini -- \"$@\"; fi\n"
-    return f"#!/bin/sh\n{mini}{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\nexec {shlex.quote(tool)} \"$@\"\n"
+    return (f"#!/bin/sh\n{omd_help(record, tool)}{mini}{routed}export OMD_MOD_STORE={shlex.quote(record['store'])}\n"
+            f"exec {shlex.quote(tool)} \"$@\"\n")
+
+
+def omd_help(record, tool):
+    # `omd help --all` keeps the host binary's complete flag reference.
+    rows = [("Mods", [("omd mods list", "Installed mods and whether each is on"),
+                      ("omd mods catalog [QUERY]", "Search the mod directory"),
+                      ("omd install MOD", "Install a mod: a name, npm:PACKAGE, git+URL or ./folder"),
+                      ("omd mods enable MOD", "Turn on a mod you installed (disable turns it off)"),
+                      ("omd mods remove MOD", "Uninstall a mod")])]
+    if record.get("profile") == "full":
+        rows.append(("Sessions", [("omd mini", "Start Codex in the minimal scrollback interface (omd_mini mod)")]))
+    rows.append(("Oh My Diff", [*([("omd update", "Install the newest release"),
+                                   ("omd update status", "Check the install and update settings"),
+                                   ("omd update rollback", "Undo the last update")] if record.get("update") else []),
+                                ("omd uninstall", "Remove OMD; your Codex settings and sessions stay"),
+                                ("omd help --all", "Every command and flag")]))
+    lines = ["", "${b}Oh My Diff${r}  Codex CLI, extended with mods", "",
+             "Run ${b}codex${r} as usual, and type ${b}/mods${r} inside it to turn mods on or off."]
+    for title, commands in rows:
+        lines += ["", f"${{b}}{title}${{r}}", *(f"  {name:<26}${{d}}{text}${{r}}" for name, text in commands)]
+    lines += ["", "${d}Docs: https://github.com/dzkchen/oh-my-diff${r}", ""]
+    return (f"if [ \"$1\" = help ] && [ \"$2\" = --all ]; then exec {shlex.quote(tool)} --help; fi\n"
+            "case \"$1\" in ''|help|-h|--help)\n"
+            "  b= d= r=; if [ -t 1 ]; then b=$(printf '\\033[1m') d=$(printf '\\033[2m') r=$(printf '\\033[0m'); fi\n"
+            "  cat <<EOF\n" + "\n".join(lines) + "\nEOF\n  exit 0;;\nesac\n")
 
 
 def selected_text(record):
@@ -442,8 +477,9 @@ def mini(prefix, bin_dir, codex):
     for name in (signal.SIGINT, signal.SIGQUIT):
         signal.signal(name, signal.SIG_IGN)
     while True:
-        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}"}
-        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen"] if mode == "mini" else []), *codex], env=env,
+        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}",
+               **({"OMD_TUI_MOD_UI": "omd_mini", "OMD_TUI_HEADER": "off", "OMD_TUI_COMPOSER": "plain"} if mode == "mini" else {})}
+        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen", "-c", "tui.show_tooltips=false"] if mode == "mini" else []), *codex], env=env,
                               preexec_fn=lambda: [signal.signal(name, signal.SIG_DFL) for name in (signal.SIGINT, signal.SIGQUIT)]).returncode
         exported = subprocess.run([record["tools"]["omd"]["installed_path"], "store", "export", "--mod", "omd_mini",
                                    "--store", record["store"], "--scope", "user"], capture_output=True, text=True)
@@ -627,6 +663,7 @@ def install(args):
         for target in enabled:
             invoke(installed_manager, "enable", store, target)
         sync_sources(installed_manager, store, prefix / "sources", installed)
+        keep_bundled_copies(installed_manager, store)
         if revoked:
             invoke(installed_manager, "trust-all", store, json.dumps([
                 {"path": str(sources / identifier), "sha256": installed[identifier]["sha256"],

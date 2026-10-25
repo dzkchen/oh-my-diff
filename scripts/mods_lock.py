@@ -8,7 +8,7 @@ from scripts import install_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/mods.lock.json"
-NODE = "24.18.0"
+NODE = "24.22.1"
 
 
 def identifiers():

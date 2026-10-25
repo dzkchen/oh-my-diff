@@ -311,6 +311,27 @@ fn package_read_identified(
     read_identified(&path, limit)
 }
 
+/// One copy of a mod per scope may be on; the resolver rejects both copies of a mod enabled twice.
+pub(super) fn refuse_second_copy(
+    config: &ModConfiguration,
+    path: &Path,
+    scope: &str,
+    id: &str,
+) -> Result<()> {
+    match config.mods.iter().find(|other| {
+        other.enabled
+            && other.path != path
+            && other.scope == scope
+            && package(&other.path).is_ok_and(|(manifest, _, _)| manifest.id == id)
+    }) {
+        Some(other) => Err(failure(format!(
+            "mod_conflict: {id} is already on from {}; turn that copy off first",
+            other.path.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
     let (package, source, hash, _, _) = inspect_package(path, false)?;
     Ok((package, source, hash))
@@ -574,6 +595,7 @@ impl ModStore {
         let config = ModConfiguration {
             schema: 1,
             revision: 0,
+            node: None,
             mods: Vec::new(),
         };
         store.write_granting(
@@ -630,6 +652,7 @@ impl ModStore {
             "mods.json" => Some(serde_json::to_value(ModConfiguration {
                 schema: 1,
                 revision: 0,
+                node: None,
                 mods: Vec::new(),
             })?),
             _ => None,
@@ -1352,7 +1375,7 @@ impl ModStore {
             }));
         }
         let mut config = self.configuration()?;
-        let Some(selection) = config.mods.iter_mut().find(|m| m.path == path) else {
+        let Some(index) = config.mods.iter().position(|m| m.path == path) else {
             return Err(failure(
                 if self
                     .managed_deployment()
@@ -1365,6 +1388,7 @@ impl ModStore {
             ));
         };
         if enabled {
+            let selection = &config.mods[index];
             let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {
                 return Err(failure("source_changed: inspect and trust the new digest"));
@@ -1377,8 +1401,9 @@ impl ModStore {
                 return Err(failure("capability_denied: trust the package again"));
             }
             self.check_service_providers(&manifest, path)?;
+            refuse_second_copy(&config, path, &selection.scope, &manifest.id)?;
         }
-        selection.enabled = enabled;
+        config.mods[index].enabled = enabled;
         config.revision = config
             .revision
             .checked_add(1)

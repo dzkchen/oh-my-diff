@@ -28,6 +28,8 @@ const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = sdkPackage.files.filter(file => file.startsWith('examples/')).map(file => file.slice('examples/'.length));
 
+const USAGE = 'usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n';
+
 /** @returns {never} */
 function fail(message) {
   throw new Error(message);
@@ -361,6 +363,7 @@ function watchProject(directory, store, once) {
 
 async function main() {
   const [action, rawDirectory = '.', nameOrStore, extra] = process.argv.slice(2).filter(argument => argument !== '--');
+  if (['--help', '-h', 'help'].includes(action)) return void process.stdout.write(USAGE);
   const directory = resolve(rawDirectory);
   switch (action) {
     case 'create': return createProject(directory, nameOrStore || basename(directory));
@@ -380,8 +383,17 @@ async function main() {
     case 'explain': return print(engineJson(['explain', rawDirectory]));
     default:
       process.exitCode = 1;
-      return void process.stderr.write('usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n');
+      return void process.stderr.write(USAGE);
   }
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch (error) {
+    process.exitCode = 1;
+    const message = error instanceof Error ? error.message : String(error);
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' && !message.startsWith(error.code) ? `${error.code}: ` : '';
+    process.stderr.write(`${code}${message}\n`);
+  }
+}

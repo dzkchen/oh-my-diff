@@ -4,7 +4,8 @@ Experimental. Lets a session use Cursor models through your Cursor account and t
 
 ## Turn it on
 
-It needs Node and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
+It needs Node 22.18 or later (`brew install node`) and pnpm on your `PATH`, and `omd-mod` (the installer links it into `~/.local/bin`).
+Account names start with a letter.
 
 1. Enable `omd_cursor` in `/mods` and approve its trust dialog. It asks to run `node` outside the sandbox (`os`): setup installs the SDK, reaches the network and writes the mod store.
 2. Run `/cursor setup`. A background `setup.mjs` installs `@cursor/sdk@1.0.35` with pnpm into `<store>/routes/cursor/sdk` (the SDK is not bundled; Cursor's license applies), then starts Cursor's browser login. The sign-in link appears in the transcript. Approve "Oh My Diff" there.
@@ -17,10 +18,20 @@ A denied or abandoned login leaves any existing enrollment and grant untouched. 
 
 | Command | What it does |
 | --- | --- |
-| `/cursor setup` | Install the SDK, enroll in the browser, list models and publish them to `/model` (`/cursor login` is the same) |
-| `/cursor` | Show the SDK version, account, key expiry, published models and posture |
+| `/cursor setup [NAME]` | Install the SDK, enroll in the browser, list models and publish them to `/model` (`/cursor login` is the same); `NAME` adds another account |
+| `/cursor remove NAME` | Drop an account's models and route, and asks to remove OMD's copy of its key. The key itself stays valid at Cursor until you revoke "Oh My Diff" under API keys in your Cursor dashboard |
+| `/cursor` | Show the SDK version, each account and its key expiry, published models and posture |
 | `/cursor usage` | Show each recent run's raw list cost and charged cost, runs still unsettled, and the plan snapshot |
 | `/model` | Pick a Cursor model; the thread switches provider from its next turn and keeps its history |
+
+## Several accounts
+
+Each account is one broker-held secret owned by `omd_cursor` (labels `cursor`, `cursor-work`) and one route
+(`cursor`, `cursor-work`); the single `cursor` service holds every account's key and runs a request with the key of
+the account that owns its model (`cursor-auto.work`). Responses carry the account's last plan usage as a `cursor`
+rate-limit family, which `omd_profiles` shows beside the account. The plan is read at most once a minute after a run,
+so it can be a run behind, and the first request after a restart carries none. At most 16 models are listed across
+accounts, each account's default first.
 
 ## How a turn runs
 
@@ -40,11 +51,11 @@ A denied or abandoned login leaves any existing enrollment and grant untouched. 
 
 ## Status
 
-Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login, delayed charges and setup through a stand-in `omd-mod`. Not verified: a real Cursor account; fixture-only support. Subscription support stays unclaimed until an authorized account-backed run.
+Verified offline against a fake SDK: lead turns with OMD tools, parallel calls, tool search, images, effort, follow-up resume, fork, restart recovery, cancellation, plan-limit failure, missing or expired enrollment, denied login, delayed charges and setup through a stand-in `omd-mod`. Not yet verified with a real Cursor account.
 
 ## Cost
 
-Measured on the pre-launch version (Codex 0.160.1) against a fake SDK; not re-measured on 1.0.
+Measured on Codex 0.160.1 against a fake SDK; not re-measured since.
 
 - Installed SDK: 43.8 MB, including the 10.2 MB darwin-arm64 platform package plus zod, protobuf, connect and statsig.
 - SDK import: about 75 ms and 65 MB RSS in the service process.

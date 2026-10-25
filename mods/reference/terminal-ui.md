@@ -332,7 +332,7 @@ delivered event reports the count as `dropped`.
 
 ### Component modules (`component_modules_v1`)
 
-Component modules are experimental and need the feature `component_modules_v1`, which `mod_host_check.py --static`
+Component modules need the feature `component_modules_v1`, which `mod_host_check.py --static`
 requires of any package that calls `api.component`.
 
 `api.component(module, {init?, view, key?, pointer?, every?})` is registered during activation under the `terminal`
@@ -592,7 +592,7 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 #### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`, experimental) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
 tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
@@ -690,7 +690,15 @@ When any mod's view sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), 
 sidebar, header and named sites; dialogs, status segments, mod progress and diagnostics, the composer, approvals
 and scrollback remain, and the owned fullscreen viewport is unchanged.
 
-The `above_composer` and `below_composer` (experimental) sites draw in both modes, host-sized to their wrapped
+A launcher can narrow one session's TUI with three environment variables. `OMD_TUI_MOD_UI=ID[,ID…]` keeps sites,
+panels, header, footer, layout and status segments only from the listed mods; other mods keep their `dialog` site,
+`render` hooks, commands, keys and theme, and the status row holds only the listed mods' segments, without upstream
+`/statusline` items or the host summary unless a mod failed. `OMD_TUI_HEADER=off` drops the Codex session header and
+first-run help, and `OMD_TUI_COMPOSER=plain` draws the composer as a bare prompt line without its background,
+blank rows, placeholder or idle hint row. `omd mini` sets all three. They are read once at start, and agent tool
+processes don't inherit them or the launcher's `OH_MY_DIFF_*` variables (a mod's `exec_environment` still can).
+
+The `above_composer` and `below_composer` sites draw in both modes, host-sized to their wrapped
 components, directly above and below the bottom pane (composer, native hints and status row), with styles, links
 and focusable controls. `above_composer` is clipped to 8 rows and `below_composer` to 6, each scrolling to the
 focused control. Both are hidden while an approval or popup replaces the composer.
