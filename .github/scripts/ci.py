@@ -21,8 +21,7 @@ WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
 CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
-# Upstream tests that pass alone but fail after the rest of `--test all` in one process (upstream runs each test in
-# its own process with nextest), so they run in a separate process.
+# Upstream tests that pass alone but fail after the rest of `--test all` in one process.
 ISOLATED = ("suite::mcp_tool_cache::cached_mcp_startup_is_eager_for_root_and_lazy_for_subagents",
             "suite::remote_models::empty_model_catalog_requires_explicit_model::without_explicit_model")
 

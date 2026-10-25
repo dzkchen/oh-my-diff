@@ -16,8 +16,7 @@ env:
   CARGO_BUILD_JOBS: '2'
   CARGO_PROFILE_TEST_DEBUG: '0'
   OMD_RELEASE_VERSION: ${{ inputs.version }}
-  # Outside /tmp: a workspace-write sandbox may write to /tmp, and upstream sandbox tests write beside the checkout
-  # expecting a denial.
+  # Outside /tmp, which a sandboxed command may write: upstream tests expect a write beside the checkout to be denied.
   OMD_WORK_ROOT: /Users/runner/omd
   OMD_NIGHTLY_ROOT: /Users/runner/omd/omd-nightly
 
