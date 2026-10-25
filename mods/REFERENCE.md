@@ -5356,7 +5356,9 @@ the `terminal` event input are unchanged.
 
 Without the broker, credential profiles, the trusted grant set, the task ledger and contract state are files in the
 mod store, so any process running as the user can read or change them, including an explicitly unsandboxed child,
-and `status.authority` reports `unprotected (same-user)`.
+and `status.authority` reports `unprotected (same-user)`. Agent commands that Codex runs in its sandbox can't reach
+the mod store, workspace leases, `host.json` protected paths or secret files; commands it runs without one (approved
+escalations, allow rules, full access, an external sandbox) can.
 
 #### The broker
 

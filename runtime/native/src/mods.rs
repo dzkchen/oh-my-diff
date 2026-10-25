@@ -1035,6 +1035,26 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         thread: Option<&str>,
         forked_from: Option<&str>,
     ) -> Result<(), String> {
+        let mut denied = Vec::new();
+        for path in self.host.protected_paths() {
+            if path
+                .canonicalize()
+                .map_err(|_| "protected_path_unavailable")?
+                != path
+                || path.starts_with(&self.host.repository)
+            {
+                return Err("protected_mod_path_must_be_canonical_and_external".into());
+            }
+            let path = path
+                .to_str()
+                .filter(|path| !path.contains('\n'))
+                .ok_or("protected_path_unavailable")?;
+            denied.push(path.to_owned());
+        }
+        config.permissions.shell_environment_policy.r#set.insert(
+            codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
+            denied.join("\n"),
+        );
         config.model_provider.supports_websockets = false;
         if self
             .codex_config
