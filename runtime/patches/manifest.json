@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.164.0.patch",
-    "sha256": "6bc735375c45eef3765a3865d091f025a2c260461aba7de926e8c7a92cd9a776"
+    "sha256": "e3a73d8bccdd9901e6a603dae39fbbd25b811a0e3f1729fbc583e109a89624e5"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1343,7 +1343,7 @@
     },
     "codex-rs/omd/src/mods/operation_schema.json": {
       "before": null,
-      "after": "009bc6d40e5cb4bdc29d0190fc5471b99b0cece2a6fa72b8b897d87d0157e080"
+      "after": "dbcacec4a8666194be4e378975108477c0255a24470d92ea14e32d1dfaac5019"
     },
     "codex-rs/omd/src/mods/operation_validation.rs": {
       "before": null,
@@ -1855,7 +1855,7 @@
     },
     "codex-rs/tui/src/bottom_pane/chat_composer.rs": {
       "before": "699eb3c623a926879dff2ab0c39654671e980aafd05aa850d52f5dd5e59bc7f4",
-      "after": "2a1177920d84568bbda5cfe76a2840041674ea7f203fc9088b65d0ac29887ab0"
+      "after": "5e67cb706e4b39e96a0ba6093e0d7abcdfc7fc46d390cd6bab61cb5269c54fa8"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer/composer_layout.rs": {
       "before": "0d481f30e9aaeec083e0b9dbce4b8e0883a012c1fa918e2a49dbeb1cc03e2f07",
@@ -1903,7 +1903,7 @@
     },
     "codex-rs/tui/src/bottom_pane/command_popup.rs": {
       "before": "807d0301c7ffa244612db6500352e2bab162bcfd9851b6484ac0f2ab5cc9d49a",
-      "after": "e8f214ee09566304cb1d3086b07d441d22078acbe4ff5e72094dd6d6bfb359cc"
+      "after": "869e1b0db2eb41b4ad9f9501dc795eb3c40be36a293abc28948810e20db8b28d"
     },
     "codex-rs/tui/src/bottom_pane/empty_state_policy.rs": {
       "before": "86645341873e753c238e44718fcb5619e27875c51bca0cd3ad399da1f2cd5275",
@@ -2059,7 +2059,7 @@
     },
     "codex-rs/tui/src/chatwidget/tests/app_server.rs": {
       "before": "56e97fbac8ce8705e1d8ea958a998d8c6d680f52a4b4551cdd97bdaf5ec2eb6f",
-      "after": "4981cbec35c6487fa75d5a8f4ab4fabde45b9d46576f19249d32fad760e4d672"
+      "after": "f8c198dfd3ff041b843c207ed47a5380edc518caf44020472c3771e57bf35436"
     },
     "codex-rs/tui/src/chatwidget/tests/composer_submission.rs": {
       "before": "b8f37eb4f2ed48168340880e33706f520c8029dfe3cdf1e647e591d07c41cb66",
@@ -2327,7 +2327,7 @@
     },
     "codex-rs/tui/src/mod_runtime.rs": {
       "before": null,
-      "after": "4ba0318997bbc442512d6643413b80572bfb30d9ed69e4e3a8ca2f9680cc0d27"
+      "after": "58e248992b3c20a9d20781f922338b2828f5affcd20258abcfa1255fac3e9c44"
     },
     "codex-rs/tui/src/mod_runtime_tests.rs": {
       "before": null,
@@ -2367,7 +2367,7 @@
     },
     "codex-rs/tui/src/omd.rs": {
       "before": null,
-      "after": "95fd5fe37c414d627e62e18e106a33876715b1449e8d76cae3bd8248ba0adb2d"
+      "after": "8f8440c5ea045373b0bf15dc760637c6662508811d6a64c2ef9855607e4b20ac"
     },
     "codex-rs/tui/src/pager_overlay/transcript.rs": {
       "before": "b3173ab288fa492c777c211707d7446a2a9d31fca88b03878aee455d43e45c62",

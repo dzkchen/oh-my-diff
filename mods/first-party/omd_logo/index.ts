@@ -12,7 +12,8 @@ export default function activate(api: ModAPI) {
     const identity = input.identity;
     const dot = ascii ? '-' : '·';
     const span = (text: string, tone: TerminalSpan['tone'] = 'normal', bold = false): TerminalSpan => ({ text, tone, bold });
-    const release = [identity?.omd_version, profile && `${dot} ${profile}`].filter(Boolean).join(' ');
+    const version = identity?.omd_version && `v${identity.omd_version}`;
+    const release = [version, profile && `${dot} ${profile}`].filter(Boolean).join(' ');
     const title = [span('oh my diff', 'normal', true), ...(release ? [span(` ${release}`, 'muted')] : [])];
     const side = [
       title,
@@ -25,8 +26,8 @@ export default function activate(api: ModAPI) {
       spans: [span('+ ', 'accent'), span(text, 'normal', true), ...(wide ? [span('   '), ...side[index]] : [])],
     }));
     const line = (id: string, spans: TerminalSpan[]): TerminalComponent => ({ type: 'line', id, label: spans.map(item => item.text).join('').trim(), spans: [span('  '), ...spans] });
-    const fit = 2 + [...`oh my diff ${release}`.trim()].length;
-    const stacked = [title[0], ...[identity?.omd_version, profile].filter((text): text is string => !!text).map(text => span(text, 'muted'))];
+    const fit = Math.min(59, 2 + [...`oh my diff ${release}`.trim()].length);
+    const stacked = [title[0], ...[version, profile].filter((text): text is string => !!text).map(text => span(text, 'muted'))];
     return {
       greeting: '',
       ...(profile ? { session_title_suffix: ` | ${profile}` } : {}),
