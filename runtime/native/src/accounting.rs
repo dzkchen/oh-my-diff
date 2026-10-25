@@ -626,7 +626,7 @@ impl Accounts {
                 }
                 for (segment, start, end, text) in
                     codex_omd::model_request::page_edits(&chain.result, &page, value)
-                        .map_err(&refuse)?
+                        .map_err(refuse)?
                 {
                     found.entry(segment).or_default().push((start, end, text));
                 }
@@ -656,7 +656,7 @@ impl Accounts {
                         "sha256":crate::execution::hash(original.as_bytes())}));
                 }
             }
-            codex_omd::model_request::apply_send_edits(value, &edits).map_err(&refuse)?;
+            codex_omd::model_request::apply_send_edits(value, &edits).map_err(refuse)?;
         }
         if let Some(account) = account {
             Self::record_middleware(

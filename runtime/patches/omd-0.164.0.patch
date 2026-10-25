@@ -47180,10 +47180,10 @@ index 0000000000000000000000000000000000000000..6f5862b167dc93a5474bdfff4787e7d8
 +}
 diff --git a/codex-rs/core/src/session/persisted_text.rs b/codex-rs/core/src/session/persisted_text.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..69bea83cd4c3866a1a6cde43606087855465b792
+index 0000000000000000000000000000000000000000..46b8aeebd24ee65fe7107ee43c96b1451f8923ea
 --- /dev/null
 +++ b/codex-rs/core/src/session/persisted_text.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,626 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -47358,10 +47358,6 @@ index 0000000000000000000000000000000000000000..69bea83cd4c3866a1a6cde4360608785
 +    }
 +}
 +
-+#[expect(
-+    clippy::collapsible_match,
-+    reason = "The visitor needs a mutable borrow, which a guard cannot take"
-+)]
 +fn event_msg(event: &mut EventMsg, visit: &mut Visit<'_>) {
 +    match event {
 +        EventMsg::UserMessage(event) => {
@@ -51300,7 +51296,7 @@ index 0000000000000000000000000000000000000000..de07b069546c30022dcdd1dc71f5babe
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ee0943c8f580ed7565842c8d79145e5529890aa
+index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b69398b81aae
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,2323 @@
@@ -51932,7 +51928,7 @@ index 0000000000000000000000000000000000000000..0ee0943c8f580ed7565842c8d79145e5
 +                }
 +                for (segment, start, end, text) in
 +                    codex_omd::model_request::page_edits(&chain.result, &page, value)
-+                        .map_err(&refuse)?
++                        .map_err(refuse)?
 +                {
 +                    found.entry(segment).or_default().push((start, end, text));
 +                }
@@ -51962,7 +51958,7 @@ index 0000000000000000000000000000000000000000..0ee0943c8f580ed7565842c8d79145e5
 +                        "sha256":crate::execution::hash(original.as_bytes())}));
 +                }
 +            }
-+            codex_omd::model_request::apply_send_edits(value, &edits).map_err(&refuse)?;
++            codex_omd::model_request::apply_send_edits(value, &edits).map_err(refuse)?;
 +        }
 +        if let Some(account) = account {
 +            Self::record_middleware(
@@ -62906,10 +62902,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d45fb6508e626dc73d489a003ac89968284f3aa7
+index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2548 @@
+@@ -0,0 +1,2543 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65360,15 +65356,10 @@ index 0000000000000000000000000000000000000000..d45fb6508e626dc73d489a003ac89968
 +                &input.tool_name.to_string(),
 +                tool_outcome(input.outcome),
 +            );
-+            if let Some(Err(error)) = self
-+                .resume(
-+                    input.call_id,
-+                    Err(format!(
-+                        "tool_result_unavailable: {}",
-+                        tool_outcome(input.outcome)
-+                    )),
-+                )
-+                .await
++            let unavailable = format!("tool_result_unavailable: {}", tool_outcome(input.outcome));
++            // A chain that only rethrows the tool's own failure is not a mod fault: the model already has that failure.
++            if let Some(Err(error)) = self.resume(input.call_id, Err(unavailable.clone())).await
++                && error != unavailable
 +            {
 +                self.views.diagnostic(
 +                    &self.host,
@@ -72765,10 +72756,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c35693e895584fa609b0f8bd18829846cd32211d
+index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4335 @@
+@@ -0,0 +1,4358 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73788,6 +73779,29 @@ index 0000000000000000000000000000000000000000..c35693e895584fa609b0f8bd18829846
 +    assert!(
 +        !unread.wants_value("call-plain"),
 +        "only an interceptor whose mod requires code_mode_values_v1 gets the value"
++    );
++    unread
++        .on_tool_finish(ToolFinishInput {
++            session_store: &ExtensionData::new("session".to_owned()),
++            thread_store: &plain_thread,
++            turn_store: &ExtensionData::new("turn".to_owned()),
++            turn_id: "turn",
++            call_id: "call-plain",
++            tool_name: &READ,
++            source: codex_extension_api::ToolCallSource::Direct,
++            outcome: codex_extension_api::ToolCallOutcome::Failed {
++                handler_executed: true,
++            },
++            call_sha256: None,
++            result_sha256: None,
++        })
++        .await;
++    assert!(
++        unread
++            .views
++            .published()
++            .is_none_or(|view| view.diagnostics.is_empty()),
++        "a chain that only rethrows the tool's own failure is not a mod diagnostic"
 +    );
 +
 +    let source = fixture
@@ -84234,7 +84248,7 @@ index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a
 +  }, suspension, serve, base, component: step };
 diff --git a/codex-rs/omd/runner/src/crypto.rs b/codex-rs/omd/runner/src/crypto.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f971d5e25a97cbc15393678cecfd41dfbf93fe46
+index 0000000000000000000000000000000000000000..291dbb327b79590c6bcbb76b2e5f1a2fe754e7e8
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/crypto.rs
 @@ -0,0 +1,2093 @@
@@ -84798,7 +84812,7 @@ index 0000000000000000000000000000000000000000..f971d5e25a97cbc15393678cecfd41df
 +            let hash = hash(&dictionary)?;
 +            let length = dictionary["length"]
 +                .as_u64()
-+                .map_or(block_bits(hash) as u64, |bits| bits);
++                .unwrap_or(block_bits(hash) as u64);
 +            if length == 0 || length % 8 != 0 || length > MAX_KEY_BITS {
 +                return fail(
 +                    "OperationError",
