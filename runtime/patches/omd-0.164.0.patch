@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f7ba352c0 100644
+index 7aff2ec26295627898a6417c83822aa6b3f8365a..a9367f9417314d02685dacdb84d9fe9594c63c69 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -141,7 +141,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4293,6 +4344,86 @@ dependencies = [
+@@ -4293,6 +4344,87 @@ dependencies = [
   "wiremock",
  ]
 
@@ -159,6 +159,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 + "security-framework-sys",
 + "serde",
 + "serde_json",
++ "serde_yaml",
 + "sha2 0.10.9",
 + "socket2 0.6.3",
 + "tempfile",
@@ -228,7 +229,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "codex-otel"
  version = "0.164.0"
-@@ -4874,6 +5005,7 @@ dependencies = [
+@@ -4874,6 +5006,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -236,7 +237,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4948,6 +5080,8 @@ dependencies = [
+@@ -4948,6 +5081,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -245,7 +246,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4970,6 +5104,7 @@ dependencies = [
+@@ -4970,6 +5105,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -253,7 +254,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5582,6 +5717,19 @@ dependencies = [
+@@ -5582,6 +5718,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -273,7 +274,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -6700,7 +6848,7 @@ dependencies = [
+@@ -6700,7 +6849,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users 0.5.2",
@@ -282,7 +283,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -6803,6 +6951,12 @@ version = "1.2.1"
+@@ -6803,6 +6952,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -295,7 +296,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -7057,7 +7211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -7057,7 +7212,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -304,7 +305,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7209,7 +7363,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+@@ -7209,7 +7364,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
  dependencies = [
   "cfg-if",
   "rustix 1.1.4",
@@ -313,7 +314,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7450,6 +7604,16 @@ dependencies = [
+@@ -7450,6 +7605,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -330,7 +331,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7475,6 +7639,12 @@ dependencies = [
+@@ -7475,6 +7640,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -343,7 +344,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -7709,7 +7879,7 @@ dependencies = [
+@@ -7709,7 +7880,7 @@ dependencies = [
   "gobject-sys",
   "libc",
   "system-deps",
@@ -352,7 +353,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -8650,6 +8820,10 @@ name = "hashbrown"
+@@ -8650,6 +8821,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -363,7 +364,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 
  [[package]]
  name = "hashbrown"
-@@ -8870,6 +9044,20 @@ dependencies = [
+@@ -8870,6 +9045,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -384,7 +385,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9133,7 +9321,7 @@ dependencies = [
+@@ -9133,7 +9322,7 @@ dependencies = [
   "js-sys",
   "log",
   "wasm-bindgen",
@@ -393,7 +394,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -9348,6 +9536,12 @@ dependencies = [
+@@ -9348,6 +9537,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -406,7 +407,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "ignore"
  version = "0.4.25"
-@@ -9578,6 +9772,18 @@ dependencies = [
+@@ -9578,6 +9773,18 @@ dependencies = [
   "serde",
  ]
 
@@ -425,7 +426,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -9586,7 +9792,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -9586,7 +9793,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -434,7 +435,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -10444,6 +10650,12 @@ dependencies = [
+@@ -10444,6 +10651,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -447,7 +448,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -10567,7 +10779,7 @@ version = "0.50.3"
+@@ -10567,7 +10780,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -456,7 +457,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11297,7 +11509,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -11297,7 +11510,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
  dependencies = [
   "libc",
@@ -465,7 +466,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11411,6 +11623,15 @@ dependencies = [
+@@ -11411,6 +11624,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -481,7 +482,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -11605,7 +11826,7 @@ version = "0.11.3"
+@@ -11605,7 +11827,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -490,7 +491,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12233,7 +12454,7 @@ dependencies = [
+@@ -12233,7 +12455,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -499,7 +500,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12257,6 +12478,12 @@ version = "6.0.0"
+@@ -12257,6 +12479,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -512,7 +513,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -12723,7 +12950,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -12723,7 +12951,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -521,7 +522,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -13533,7 +13760,7 @@ dependencies = [
+@@ -13533,7 +13761,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.4.15",
@@ -530,7 +531,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13546,7 +13773,7 @@ dependencies = [
+@@ -13546,7 +13774,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.12.1",
@@ -539,7 +540,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13605,7 +13832,7 @@ dependencies = [
+@@ -13605,7 +13833,7 @@ dependencies = [
   "security-framework 3.5.1",
   "security-framework-sys",
   "webpki-root-certs",
@@ -548,7 +549,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13977,6 +14204,12 @@ dependencies = [
+@@ -13977,6 +14205,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -561,7 +562,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14363,6 +14596,12 @@ dependencies = [
+@@ -14363,6 +14597,12 @@ dependencies = [
   "time",
  ]
 
@@ -574,7 +575,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -14417,7 +14656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -14417,7 +14657,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -583,7 +584,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -14861,6 +15100,17 @@ version = "0.1.9"
+@@ -14861,6 +15101,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -601,7 +602,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -14980,6 +15230,335 @@ dependencies = [
+@@ -14980,6 +15231,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -937,7 +938,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15221,11 +15800,17 @@ version = "0.2.2"
+@@ -15221,11 +15801,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -957,7 +958,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  dependencies = [
   "filetime",
   "libc",
-@@ -15247,7 +15832,7 @@ dependencies = [
+@@ -15247,7 +15833,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix 1.1.4",
@@ -966,7 +967,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15303,7 +15888,7 @@ dependencies = [
+@@ -15303,7 +15889,7 @@ dependencies = [
   "parking_lot",
   "rustix 1.1.4",
   "signal-hook",
@@ -975,7 +976,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15380,7 +15965,7 @@ dependencies = [
+@@ -15380,7 +15966,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -984,7 +985,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16352,6 +16937,12 @@ version = "1.1.0"
+@@ -16352,6 +16938,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -997,7 +998,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -17061,7 +17652,7 @@ version = "0.1.11"
+@@ -17061,7 +17653,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -1006,7 +1007,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -17695,6 +18286,15 @@ version = "0.6.2"
+@@ -17695,6 +18287,15 @@ version = "0.6.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
@@ -31109,7 +31110,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..3aff13a0411b699f5212a3fe957ee025c8822390 100644
+index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..6d733b5788316a360cdef35a87290c5a9dd4e1d5 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -31284,7 +31285,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..3aff13a0411b699f5212a3fe957ee025
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1360,47 @@ impl App {
+@@ -1247,33 +1360,48 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -31328,6 +31329,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..3aff13a0411b699f5212a3fe957ee025
 +                let chat_area = crate::mod_ui::chat_area(area, &mod_snapshot, header_rows);
 +                chat_widget.render(chat_area, frame.buffer);
 +                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
++                crate::mod_ui::render_help(area, &mod_snapshot, frame.buffer);
 +                self.chat_widget.note_rendered_width(chat_area.width);
 +                if let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
 +                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
@@ -31339,7 +31341,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..3aff13a0411b699f5212a3fe957ee025
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1410,7 @@ impl App {
+@@ -1283,6 +1411,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -32018,7 +32020,7 @@ index ca29929c1350cdad2a9ba465ffafc27dd59a96cb..f48c197742dec22029d78cb0840daa1f
              if !self.transcript_cells.iter().any(|cell| {
                  cell.as_any().is::<history_cell::SessionInfoCell>()
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
-index 2ceb510c23df7b5d9bac83243bd8cf7e6bd3de66..c0dd79939c398b269d61f0cbca34bac12f4d4a03 100644
+index 2ceb510c23df7b5d9bac83243bd8cf7e6bd3de66..adca7ab5a95e61d7545dd7223bba25e460c821f2 100644
 --- a/codex-rs/tui/src/app/input.rs
 +++ b/codex-rs/tui/src/app/input.rs
 @@ -70,6 +70,9 @@ impl App {
@@ -32031,7 +32033,7 @@ index 2ceb510c23df7b5d9bac83243bd8cf7e6bd3de66..c0dd79939c398b269d61f0cbca34bac1
          if self.chat_widget.take_key_chord_reset() {
              self.cancel_pending_key_chord();
          }
-@@ -221,6 +224,68 @@ impl App {
+@@ -221,6 +224,74 @@ impl App {
          self.chat_widget.set_footer_hint_override(items);
      }
 
@@ -32094,18 +32096,25 @@ index 2ceb510c23df7b5d9bac83243bd8cf7e6bd3de66..c0dd79939c398b269d61f0cbca34bac1
 +                    format: crate::clipboard_copy::CopyFormat::PlainText,
 +                });
 +            }
++            codex_omd::ModKeyAction::Region { region } => {
++                crate::mod_ui::region(&region);
++            }
++            codex_omd::ModKeyAction::Help { .. } => {
++                crate::mod_ui::open_help(self.chat_widget.composer_is_empty());
++            }
 +        }
 +    }
 +
      pub(super) fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
          use crate::keymap::KeymapContext;
          use crate::keymap::KeymapContextSet;
-@@ -394,6 +459,40 @@ impl App {
+@@ -394,6 +465,41 @@ impl App {
          if self.chat_widget.fork_in_progress {
              return;
          }
 +        if self.mod_overlays_allowed()
-+            && let Some(input) = crate::mod_ui::input(key_event)
++            && let Some(input) =
++                crate::mod_ui::input(key_event, self.chat_widget.composer_is_empty())
 +        {
 +            match input {
 +                crate::mod_ui::ModInput::Consumed => {
@@ -32158,7 +32167,7 @@ index 7b53366557dcf7084b4b23501ad7e0611f512009..b935f13d41cf38f163ffdc1fbb97b49b
                          })
                          .await
 diff --git a/codex-rs/tui/src/app/owned_transcript.rs b/codex-rs/tui/src/app/owned_transcript.rs
-index 7c43e1799b268545467d9eb19586e2f9fd55cb19..cc60ec4d259041216a9759b2750e4e6d6a73938f 100644
+index 7c43e1799b268545467d9eb19586e2f9fd55cb19..b51ef98a87bfb46aa15e4b9f2f382b39a3d70f20 100644
 --- a/codex-rs/tui/src/app/owned_transcript.rs
 +++ b/codex-rs/tui/src/app/owned_transcript.rs
 @@ -106,8 +106,9 @@ impl App {
@@ -32366,7 +32375,7 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..cc60ec4d259041216a9759b2750e4e6d
                          transcript_width,
                          /*height*/ 1,
                      )
-@@ -342,16 +342,22 @@ impl App {
+@@ -342,21 +342,28 @@ impl App {
                  .rendered_selection
                  .borrow_mut()
                  .render(frame.buffer);
@@ -32396,7 +32405,13 @@ index 7c43e1799b268545467d9eb19586e2f9fd55cb19..cc60ec4d259041216a9759b2750e4e6d
                      dialog.render(area, frame.buffer);
                      (dialog, area)
                  } else {
-@@ -365,12 +371,14 @@ impl App {
+                     (&bottom, bottom_area)
+                 };
++            crate::mod_ui::render_help(screen, &mod_snapshot, frame.buffer);
+             rendered_cursor = foreground.cursor_pos(foreground_area);
+             if let Some(position) = rendered_cursor {
+                 frame.set_cursor_style(foreground.cursor_style(foreground_area));
+@@ -365,12 +372,14 @@ impl App {
              if chat_widget.no_modal_or_popup_active() {
                  frame.transcript_images = view.image_placements();
              }
@@ -83257,10 +83272,10 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3a5e508c6
+index 0000000000000000000000000000000000000000..3e9dae332f733aad9d8bc008a7736e9a4328adb4
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,25 @@
 +[package]
 +name = "codex-omd"
 +version = "1.2.0"
@@ -83272,6 +83287,7 @@ index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3
 +socket2 = { workspace = true, features = ["all"] }
 +serde = { version = "=1.0.228", features = ["derive"] }
 +serde_json = "=1.0.149"
++serde_yaml = { workspace = true }
 +base64 = "=0.22.1"
 +image = { workspace = true, features = ["jpeg", "png"] }
 +sha2 = "=0.10.9"
@@ -83355,10 +83371,10 @@ index 0000000000000000000000000000000000000000..9e13ca29890c55e27e0575423e702837
 +v8 = { workspace = true, features = ["v8_enable_sandbox"] }
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a25476557
+index 0000000000000000000000000000000000000000..fe132e066265b1bb080ca20a4b82ec0d3a6edbc1
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
-@@ -0,0 +1,887 @@
+@@ -0,0 +1,888 @@
 +const request = JSON.parse(globalThis.__request);
 +delete globalThis.__request;
 +request.hook_budget_ms ??= 1000;
@@ -83990,6 +84006,7 @@ index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a
 +  } }),
 +  services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
 +  settings: Object.freeze(structuredCloneFallback(request.settings)),
++  settingsFile: Object.freeze(structuredCloneFallback(request.settings_file ?? { path: '', status: 'missing', error: null })),
 +  on(event, handler) {
 +    if (!activating) throw new Error('event_registration_outside_activation');
 +    const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;
@@ -102615,10 +102632,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..06e97e5beb210094fe8e2d7220ed6d1400ffd17c
+index 0000000000000000000000000000000000000000..a940b9486e4098e8c1adbd1e0ee3a0d1c47f5be6
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,260 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -102773,7 +102790,15 @@ index 0000000000000000000000000000000000000000..06e97e5beb210094fe8e2d7220ed6d14
 +pub use mods::ModIcons;
 +pub use mods::ModInstallRequest;
 +pub use mods::ModInterceptor;
++pub use mods::ModComposerWhen;
++pub use mods::ModContextKey;
 +pub use mods::ModKeyAction;
++pub use mods::ModKeyContext;
++pub use mods::ModKeyWhen;
++pub use mods::ModKeys;
++pub use mods::ModRegion;
++pub use mods::MOD_REGION_MOVES;
++pub use mods::context_key_name;
 +pub use mods::ModLayout;
 +pub use mods::ModLayoutLeaf;
 +pub use mods::ModLayoutSplit;
@@ -104508,10 +104533,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c9819532c07
+index 0000000000000000000000000000000000000000..4a8665282e0771eaec56215dcf5c1f275b623e56
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6230 @@
+@@ -0,0 +1,6291 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104557,7 +104582,12 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +pub use view::ModDirection;
 +pub use view::ModFind;
 +pub use view::ModIcons;
++pub use view::ModComposerWhen;
++pub use view::ModContextKey;
 +pub use view::ModKeyAction;
++pub use view::ModKeyContext;
++pub use view::ModKeyWhen;
++pub use view::ModKeys;
 +pub use view::ModLayout;
 +pub use view::ModLayoutLeaf;
 +pub use view::ModLayoutSplit;
@@ -104591,6 +104621,9 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +pub use view::invalid_render_tree;
 +pub use view::mod_command_reference;
 +pub use view::mod_component_id;
++pub use view::MOD_REGION_MOVES;
++pub use view::ModRegion;
++pub use view::context_key_name;
 +pub use view::mod_key_name;
 +pub use view::owned_command;
 +pub use view::valid_glyphs;
@@ -104634,6 +104667,9 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +use std::time::Instant;
 +
 +use crate::credentials::url_origin;
++
++use packages::SETTINGS_FILE_EXTENSIONS;
++use packages::SettingsFile;
 +
 +pub use package_manager::ModInstallRequest;
 +pub use package_manager::ModPackageGrant;
@@ -104898,6 +104934,8 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "composer_key_v1",
 +    "completion_tokens_v1",
 +    "mention_read_v1",
++    "settings_file_v1",
++    "terminal_focus_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -106762,13 +106800,20 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    let values = values
 +        .as_object()
 +        .ok_or_else(|| failure("settings_values_must_be_object"))?;
-+    let path = store.selection_status()?["selections"]
++    let status = store.selection_status()?;
++    let selection = status["selections"]
 +        .as_array()
 +        .into_iter()
 +        .flatten()
 +        .find(|selection| selection["id"] == id && selection["effective"] == true)
-+        .and_then(|selection| selection["path"].as_str().map(PathBuf::from))
 +        .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
++    let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
++    if let Some(name) = values
++        .keys()
++        .find(|name| selection["settings_origin"][name.as_str()] == "file")
++    {
++        return Err(failure(format!("setting_set_by_file: {name}")));
++    }
 +    let settings = store.merge_settings(&path, values)?;
 +    let (package, _, _) = store::package(&path)?;
 +    Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
@@ -107084,6 +107129,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    unused_grants: Vec<String>,
 +    unused_environment: Vec<String>,
 +    withheld: Vec<String>,
++    settings_file: SettingsFile,
 +    error: Option<String>,
 +    telemetry: ModTelemetry,
 +}
@@ -107164,16 +107210,41 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        .map(|metadata| file_stamp(&metadata))
 +}
 +
-+/// The returned stamp is `None` if the file changed during the read.
++type ConfigurationStamp = (FileStamp, Vec<(std::ffi::OsString, FileStamp)>);
++
++fn configuration_stamps(root: &Path) -> Option<ConfigurationStamp> {
++    let mut settings: Vec<_> = std::fs::read_dir(root.join("settings"))
++        .into_iter()
++        .flatten()
++        .flatten()
++        .filter(|entry| {
++            Path::new(&entry.file_name())
++                .extension()
++                .and_then(|extension| extension.to_str())
++                .is_some_and(|extension| SETTINGS_FILE_EXTENSIONS.contains(&extension))
++        })
++        .filter_map(|entry| Some((entry.file_name(), file_stamp(&entry.metadata().ok()?))))
++        .collect();
++    settings.sort();
++    Some((configuration_stamp(&root.join("mods.json"))?, settings))
++}
++
++/// The returned stamp is `None` if a file changed during the read.
 +fn read_configuration(
-+    path: &Path,
-+    stamp: Option<FileStamp>,
-+) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
-+    let bytes = store::read(path, 65_536);
-+    let sha256 = digest(bytes.as_deref().unwrap_or_default());
++    root: &Path,
++    stamp: Option<ConfigurationStamp>,
++) -> (Option<ConfigurationStamp>, String, Result<Vec<u8>>) {
++    let bytes = store::read(&root.join("mods.json"), 65_536);
++    let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
++    for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
++        hashed.extend(name.as_encoded_bytes());
++        hashed.extend(store::read(&root.join("settings").join(name), 65_536).unwrap_or_default());
++    }
 +    (
-+        stamp.filter(|_| configuration_stamp(path) == stamp),
-+        sha256,
++        stamp
++            .clone()
++            .filter(|_| configuration_stamps(root) == stamp),
++        digest(&hashed),
 +        bytes,
 +    )
 +}
@@ -107365,7 +107436,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    store: ModStore,
 +    generation: u64,
 +    configuration_sha256: String,
-+    configuration_stamp: Option<FileStamp>,
++    configuration_stamp: Option<ConfigurationStamp>,
 +    ui_configuration: Option<(u64, String)>,
 +    selections: (usize, usize),
 +    loaded: BTreeMap<String, Loaded>,
@@ -107387,7 +107458,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    access: Vec<Value>,
 +    admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
 +    brokered: Option<(Instant, String, Authority)>,
-+    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
++    callback_configuration: Mutex<Option<(ConfigurationStamp, String, Arc<ModConfiguration>)>>,
 +    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +    codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -108015,9 +108086,9 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        self.configuration_sha256.clear();
 +    }
 +
-+    fn current(&self, stamp: Option<FileStamp>) -> bool {
++    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
 +        stamp.is_some()
-+            && stamp == self.configuration_stamp
++            && *stamp == self.configuration_stamp
 +            && self
 +                .brokered
 +                .as_ref()
@@ -108025,7 +108096,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    }
 +
 +    pub fn refresh_due(&self) -> bool {
-+        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
++        !self.current(&configuration_stamps(&self.store.root))
 +    }
 +
 +    fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
@@ -108033,12 +108104,12 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +            return Err(failure("callback_cancelled"));
 +        }
 +        let path = self.store.root.join("mods.json");
-+        let stamp = configuration_stamp(&path);
-+        if self.current(stamp) {
++        let stamp = configuration_stamps(&self.store.root);
++        if self.current(&stamp) {
 +            return Ok(false);
 +        }
 +        self.configuration_stamp = None;
-+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
++        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
 +        let (brokered, managed, deployment) = match self.authority(&sha256) {
 +            Ok(authority) => authority,
 +            Err(error) => {
@@ -108060,7 +108131,8 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +            self.project.as_deref().unwrap_or(Path::new("")).display()
 +        );
 +        if hash == self.configuration_sha256 {
-+            self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
++            self.configuration_stamp = stamp
++                .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
 +            return Ok(false);
 +        }
 +        let configured = bytes
@@ -108171,13 +108243,16 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        )?;
 +        let adapters = Self::adapters(&selected);
 +        let mut next = BTreeMap::new();
-+        for (id, (selection, package, source)) in selected {
++        for (id, (mut selection, package, source)) in selected {
 +            if !active() {
 +                return Err(failure("callback_cancelled"));
 +            }
++            let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
++            selection.settings.extend(file_settings);
 +            // An unchanged trusted selection and adapter keep their inspection; only changed mods run again.
 +            if let Some(previous) = self.loaded.get(&id).filter(|previous| {
 +                previous.error.is_none()
++                    && previous.settings_file == settings_file
 +                    && previous.adapter.as_ref()
 +                        == package
 +                            .adapter
@@ -108241,6 +108316,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +                unused_grants: Vec::new(),
 +                unused_environment: Vec::new(),
 +                withheld: Vec::new(),
++                settings_file,
 +                error: None,
 +                telemetry: ModTelemetry::default(),
 +            };
@@ -108379,7 +108455,8 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        self.retain_environment();
 +        self.unserved = self.unserved_targets(&user);
 +        self.configuration_sha256 = hash;
-+        self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
++        self.configuration_stamp =
++            stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
 +        self.generation += 1;
 +        self.dynamic_tools.clear();
 +        self.reload_error = None;
@@ -109320,17 +109397,18 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +
 +    fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
 +        let path = self.store.root.join("mods.json");
-+        let stamp = configuration_stamp(&path);
++        let stamp = configuration_stamps(&self.store.root);
 +        let mut cached = self
 +            .callback_configuration
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
-+            && stamp == *cached_stamp
++        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) =
++            (&stamp, cached.as_ref())
++            && stamp == cached_stamp
 +        {
 +            return (sha256.clone(), Ok(configuration.clone()));
 +        }
-+        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
++        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
 +        let configuration = bytes
 +            .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
 +            .map(Arc::new);
@@ -110088,6 +110166,13 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        let mut conflicts = Vec::new();
 +        let mut diagnostics = Vec::new();
 +        for (id, result) in results {
++            if let Some(error) = self
++                .loaded
++                .get(&id)
++                .and_then(|loaded| loaded.settings_file.error.as_ref())
++            {
++                diagnostics.push(format!("{id}: settings_file_invalid: {error}"));
++            }
 +            let parsed = match result {
 +                Ok(value) if value.is_null() => {
 +                    self.valid_views.remove(&id);
@@ -110705,6 +110790,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +                "source_use":m.source_use,"unused_grants":m.unused_grants,
 +                "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
 +                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
++                status["settings_file"] = json!(m.settings_file);
 +                status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
 +                    "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
 +                    "policy": m.package.policy, "peer_access": m.package.peer_access,
@@ -110744,10 +110830,10 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e707ddcff6e
+index 0000000000000000000000000000000000000000..cd48d8738381eca84e129a1bf0a57a7bc74a81a9
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,1101 @@
+@@ -0,0 +1,1106 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -111597,6 +111683,11 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +                        parsed
 +                            .keybindings
 +                            .get(key)
++                            .or_else(|| {
++                                parsed.key_contexts.iter().find_map(|context| {
++                                    context.keys.get(key).map(|binding| &binding.action)
++                                })
++                            })
 +                            .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?,
 +                    )?
 +                };
@@ -111851,10 +111942,10 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7699f0130036e5fad4f3d37f21d3c99bc251cfba
+index 0000000000000000000000000000000000000000..119ed0e830f13185918e9f6cbaf62007b27177b3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,436 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -112049,6 +112140,7 @@ index 0000000000000000000000000000000000000000..7699f0130036e5fad4f3d37f21d3c99b
 +        "entrypoint_sha256": digest(loaded.source.as_bytes()),
 +        "package": {"id": loaded.package.id, "version": loaded.package.version},
 +        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
++        "settings_file": loaded.settings_file,
 +        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
 +    request["field_policies"] = ModHost::field_policies();
 +    request["surface"] = json!({
@@ -117705,13 +117797,77 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..26caadf187b89788e3c7eb64bcb7f9018615f6d4
+index 0000000000000000000000000000000000000000..bf16e381ee3662a572f235d1ec026fe773d427e1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,392 @@
 +use super::*;
 +
++pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
++
++#[derive(Clone, Debug, PartialEq, Serialize)]
++pub struct SettingsFile {
++    pub path: String,
++    pub status: &'static str,
++    pub error: Option<String>,
++}
++
 +impl ModStore {
++    pub fn settings_file(
++        &self,
++        package: &ModPackage,
++        selection: &ModSelection,
++    ) -> (SettingsFile, BTreeMap<String, Value>) {
++        let path = |extension: &str| {
++            self.root
++                .join("settings")
++                .join(format!("{}.{extension}", package.id))
++        };
++        let present: Vec<PathBuf> = SETTINGS_FILE_EXTENSIONS
++            .iter()
++            .map(|extension| path(extension))
++            .filter(|path| std::fs::symlink_metadata(path).is_ok())
++            .collect();
++        let chosen = present.first().cloned().unwrap_or_else(|| path("json"));
++        let mut file = SettingsFile {
++            path: chosen.to_string_lossy().into_owned(),
++            status: "missing",
++            error: None,
++        };
++        if present.is_empty() || selection.scope == MANAGED_SCOPE {
++            return (file, BTreeMap::new());
++        }
++        let values = (|| {
++            if present.len() > 1 {
++                return Err(failure("more_than_one_settings_file"));
++            }
++            let bytes = store::read(&chosen, 65_536)?;
++            let parsed: Value = match chosen.extension().and_then(|name| name.to_str()) {
++                Some("json") => serde_json::from_slice(&bytes).map_err(failure)?,
++                _ => serde_yaml::from_slice(&bytes).map_err(failure)?,
++            };
++            let Value::Object(object) = parsed else {
++                return Err(failure("settings_file_must_be_object"));
++            };
++            let values: BTreeMap<String, Value> = object.into_iter().collect();
++            let mut merged = selection.settings.clone();
++            merged.extend(values.clone());
++            validate_settings(package, &merged)?;
++            Ok(values)
++        })();
++        match values {
++            Ok(values) => {
++                file.status = "loaded";
++                (file, values)
++            }
++            Err(error) => {
++                file.status = "invalid";
++                file.error = Some(error.to_string());
++                (file, BTreeMap::new())
++            }
++        }
++    }
++
 +    pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
 +        self.update_settings(path, |current| *current = settings)
 +            .map(drop)
@@ -118004,6 +118160,11 @@ index 0000000000000000000000000000000000000000..26caadf187b89788e3c7eb64bcb7f901
 +        unused_grants: Vec::new(),
 +        unused_environment: Vec::new(),
 +        withheld: Vec::new(),
++        settings_file: SettingsFile {
++            path: String::new(),
++            status: "missing",
++            error: None,
++        },
 +        error: None,
 +        telemetry: ModTelemetry::default(),
 +    }
@@ -120469,10 +120630,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18023b5864
+index 0000000000000000000000000000000000000000..aaa1a6ed36124208427f7dcd85d0fdb53a30ee82
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1575 @@
+@@ -0,0 +1,1588 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -121455,6 +121616,8 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +        {
 +            let administered = index < administered;
 +            let mut settings_origin = BTreeMap::new();
++            let mut settings_file = Value::Null;
++            let mut file_settings = BTreeMap::new();
 +            let (mut id, error, environment) = match inspected {
 +                Ok((manifest, integrity)) => {
 +                    if let Some(manifests) = manifests.as_mut() {
@@ -121473,8 +121636,17 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +                        .flatten()
 +                        .filter(|(_, property)| property.get("default").is_some())
 +                        .map(|(key, _)| key);
-+                    for key in selection.settings.keys().chain(defaults) {
++                    let file;
++                    (file, file_settings) = self.settings_file(&manifest, selection);
++                    settings_file = json!(file);
++                    for key in selection
++                        .settings
++                        .keys()
++                        .chain(file_settings.keys())
++                        .chain(defaults)
++                    {
 +                        let origin = match selection.settings.contains_key(key) {
++                            _ if file_settings.contains_key(key) => "file",
 +                            false => "default",
 +                            true if administered => "managed",
 +                            true => "user",
@@ -121559,6 +121731,8 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +                "required": selection.required,
 +                "packaged": packaged,
 +                "settings_origin": settings_origin,
++                "settings_file": settings_file,
++                "file_settings": file_settings,
 +                "sha256": selection.sha256,
 +                "capabilities": selection.capabilities,
 +                "exec_environment": environment,
@@ -122050,10 +122224,10 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd65dd23bf
+index 0000000000000000000000000000000000000000..ee10dc3d21bc66c8570f3ef22b4f487aaf240668
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2201 @@
+@@ -0,0 +1,2469 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -122101,6 +122275,8 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +    pub status: Vec<String>,
 +    #[serde(default)]
 +    pub keybindings: BTreeMap<String, ModKeyAction>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub key_contexts: Vec<ModKeyContext>,
 +    #[serde(default)]
 +    pub theme: ModTheme,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122146,6 +122322,8 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +    pub status: Vec<String>,
 +    #[serde(default)]
 +    pub keybindings: BTreeMap<String, ModKeyAction>,
++    #[serde(default)]
++    pub key_contexts: Vec<ModKeyContext>,
 +    #[serde(default)]
 +    pub theme: ModThemePatch,
 +    #[serde(default)]
@@ -122223,7 +122401,11 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +                leaves.push(leaf.content.clone());
 +                match leaf.content.strip_prefix("site:") {
 +                    Some(site) => {
-+                        valid_site(site) && leaf.style.as_ref().is_none_or(ModBoxStyle::still)
++                        valid_site(site)
++                            && leaf
++                                .style
++                                .as_ref()
++                                .is_none_or(|style| style.valid() && style.hover.is_none())
 +                    }
 +                    None => {
 +                        matches!(leaf.content.as_str(), "transcript" | "composer")
@@ -122618,7 +122800,7 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        #[serde(default)]
 +        scroll: u16,
 +        #[serde(default)]
-+        keys: bool,
++        keys: ModKeys,
 +        #[serde(default)]
 +        children: Vec<ModComponent>,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122673,7 +122855,7 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        action: Option<ModCommandAction>,
 +        #[serde(default)]
-+        keys: bool,
++        keys: ModKeys,
 +    },
 +    Terminal {
 +        id: String,
@@ -122722,8 +122904,8 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        props: Value,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        height: Option<u16>,
-+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-+        keys: bool,
++        #[serde(default, skip_serializing_if = "ModKeys::is_off")]
++        keys: ModKeys,
 +        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
 +        pointer: bool,
 +    },
@@ -122912,6 +123094,57 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +    Muted,
 +}
 +
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum ModKeys {
++    #[default]
++    Off,
++    On,
++    All,
++}
++
++impl ModKeys {
++    pub fn is_off(&self) -> bool {
++        *self == Self::Off
++    }
++}
++
++impl Serialize for ModKeys {
++    fn serialize<S: serde::Serializer>(
++        &self,
++        serializer: S,
++    ) -> std::result::Result<S::Ok, S::Error> {
++        match self {
++            Self::Off => serializer.serialize_bool(false),
++            Self::On => serializer.serialize_bool(true),
++            Self::All => serializer.serialize_str("all"),
++        }
++    }
++}
++
++impl<'de> Deserialize<'de> for ModKeys {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
++        match Value::deserialize(deserializer)? {
++            Value::Bool(false) => Ok(Self::Off),
++            Value::Bool(true) => Ok(Self::On),
++            Value::String(text) if text == "all" => Ok(Self::All),
++            _ => Err(serde::de::Error::custom(
++                "keys must be true, false or \"all\"",
++            )),
++        }
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(untagged)]
++pub enum ModRegion {
++    Index(u8),
++    Name(String),
++}
++
++pub const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
++
 +#[derive(Clone, Debug, Serialize, PartialEq)]
 +#[serde(untagged)]
 +pub enum ModKeyAction {
@@ -122921,6 +123154,116 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +    Command { command: String, args: String },
 +    Focus { focus: String },
 +    Copy { copy: String, label: String },
++    Region { region: ModRegion },
++    Help { help: bool },
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModComposerWhen {
++    Empty,
++    Draft,
++}
++
++#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
++pub struct ModKeyWhen {
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub focus: Vec<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub composer: Option<ModComposerWhen>,
++}
++
++impl<'de> Deserialize<'de> for ModKeyWhen {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
++        #[derive(Deserialize)]
++        #[serde(untagged)]
++        enum Focus {
++            One(String),
++            Many(Vec<String>),
++        }
++        #[derive(Deserialize)]
++        #[serde(deny_unknown_fields)]
++        struct Raw {
++            #[serde(default)]
++            focus: Option<Focus>,
++            #[serde(default)]
++            composer: Option<ModComposerWhen>,
++        }
++        let raw = Raw::deserialize(deserializer)?;
++        Ok(Self {
++            focus: match raw.focus {
++                None => Vec::new(),
++                Some(Focus::One(focus)) => vec![focus],
++                Some(Focus::Many(focus)) => focus,
++            },
++            composer: raw.composer,
++        })
++    }
++}
++
++impl ModKeyWhen {
++    pub fn in_chat(&self) -> bool {
++        self.focus.is_empty() || self.focus.iter().any(|focus| focus == "chat")
++    }
++}
++
++#[derive(Clone, Debug, PartialEq)]
++pub struct ModContextKey {
++    pub action: ModKeyAction,
++    pub label: Option<String>,
++}
++
++impl Serialize for ModContextKey {
++    fn serialize<S: serde::Serializer>(
++        &self,
++        serializer: S,
++    ) -> std::result::Result<S::Ok, S::Error> {
++        match &self.label {
++            Some(label) => {
++                serde_json::json!({"action": self.action, "label": label}).serialize(serializer)
++            }
++            None => self.action.serialize(serializer),
++        }
++    }
++}
++
++impl<'de> Deserialize<'de> for ModContextKey {
++    fn deserialize<D: serde::Deserializer<'de>>(
++        deserializer: D,
++    ) -> std::result::Result<Self, D::Error> {
++        let value = Value::deserialize(deserializer)?;
++        if let Some(object) = value.as_object()
++            && object.keys().map(String::as_str).collect::<BTreeSet<_>>()
++                == BTreeSet::from(["action", "label"])
++        {
++            return Ok(Self {
++                action: ModKeyAction::deserialize(object["action"].clone())
++                    .map_err(serde::de::Error::custom)?,
++                label: Some(
++                    object["label"]
++                        .as_str()
++                        .ok_or_else(|| serde::de::Error::custom("label must be a string"))?
++                        .to_owned(),
++                ),
++            });
++        }
++        Ok(Self {
++            action: ModKeyAction::deserialize(value).map_err(serde::de::Error::custom)?,
++            label: None,
++        })
++    }
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModKeyContext {
++    #[serde(default)]
++    pub when: ModKeyWhen,
++    pub keys: BTreeMap<String, ModContextKey>,
++    #[serde(default, skip_serializing_if = "String::is_empty")]
++    pub owner: String,
 +}
 +
 +impl<'de> Deserialize<'de> for ModKeyAction {
@@ -122970,6 +123313,19 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +            return Ok(Self::Copy {
 +                copy: text(&object["copy"])?,
 +                label: text(&object["label"])?,
++            });
++        }
++        if keys == BTreeSet::from(["region"]) {
++            return Ok(Self::Region {
++                region: ModRegion::deserialize(object["region"].clone())
++                    .map_err(serde::de::Error::custom)?,
++            });
++        }
++        if keys == BTreeSet::from(["help"]) {
++            return Ok(Self::Help {
++                help: object["help"]
++                    .as_bool()
++                    .ok_or_else(|| serde::de::Error::custom("help must be true"))?,
 +            });
 +        }
 +        Err(serde::de::Error::custom("invalid keybinding action"))
@@ -123756,6 +124112,13 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        ModKeyAction::Copy { copy, label } => {
 +            !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
 +        }
++        ModKeyAction::Region {
++            region: ModRegion::Index(index),
++        } => *index <= 12,
++        ModKeyAction::Region {
++            region: ModRegion::Name(name),
++        } => MOD_REGION_MOVES.contains(&name.as_str()) || valid_site(name),
++        ModKeyAction::Help { help } => *help,
 +    }
 +}
 +
@@ -123764,6 +124127,44 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        && bindings
 +            .iter()
 +            .all(|(key, action)| mod_key_name(key) && valid_action(action))
++}
++
++pub fn context_key_name(key: &str) -> bool {
++    mod_key_name(key)
++        || key == "Shift+Tab"
++        || MOD_NAMED_KEYS.contains(&key)
++        || key.len() == 1 && key.bytes().all(|byte| byte.is_ascii_graphic())
++}
++
++fn valid_contexts(contexts: &[ModKeyContext], limit: usize, key_limit: usize) -> bool {
++    contexts.len() <= limit
++        && contexts
++            .iter()
++            .map(|context| context.keys.len())
++            .sum::<usize>()
++            <= key_limit
++        && contexts.iter().all(|context| {
++            context.when.focus.len() <= 8
++                && context
++                    .when
++                    .focus
++                    .iter()
++                    .all(|focus| matches!(focus.as_str(), "chat" | "site") || valid_site(focus))
++                && context.when.focus.iter().collect::<BTreeSet<_>>().len()
++                    == context.when.focus.len()
++                && !context.keys.is_empty()
++                && context.keys.iter().all(|(key, binding)| {
++                    (if context.when.in_chat() {
++                        mod_key_name(key)
++                    } else {
++                        context_key_name(key)
++                    }) && valid_action(&binding.action)
++                        && binding
++                            .label
++                            .as_ref()
++                            .is_none_or(|label| !label.is_empty() && visible(label, 64))
++                })
++        })
 +}
 +
 +fn valid_status(status: &[String]) -> bool {
@@ -123817,20 +124218,19 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +    );
 +}
 +
-+fn valid_focus_targets(
-+    bindings: &BTreeMap<String, ModKeyAction>,
-+    sites: &BTreeMap<String, ModRenderSite>,
-+) -> bool {
-+    let mut ids = BTreeSet::new();
-+    for site in sites.values() {
-+        for component in &site.components {
-+            component_ids(component, &mut ids);
-+        }
-+    }
-+    bindings.values().all(|action| match action {
-+        ModKeyAction::Focus { focus } => ids.contains(focus),
-+        _ => true,
-+    })
++fn valid_focus_targets(view: &ModView) -> bool {
++    let ids = site_component_ids(&view.sites);
++    view.keybindings
++        .values()
++        .chain(
++            view.key_contexts
++                .iter()
++                .flat_map(|context| context.keys.values().map(|binding| &binding.action)),
++        )
++        .all(|action| match action {
++            ModKeyAction::Focus { focus } => ids.contains(focus),
++            _ => true,
++        })
 +}
 +
 +fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<ModComponent> {
@@ -123925,6 +124325,14 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +            (
 +                "keybindings",
 +                !valid_bindings(&patch.keybindings, MOD_KEY_LIMIT),
++            ),
++            (
++                "key_contexts",
++                !valid_contexts(&patch.key_contexts, 8, 32)
++                    || patch
++                        .key_contexts
++                        .iter()
++                        .any(|context| !context.owner.is_empty()),
 +            ),
 +            (
 +                "panels",
@@ -124093,6 +124501,30 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +                candidate.keybindings.insert(key, action);
 +            }
 +        }
++        let mut dropped_contexts = false;
++        for mut context in self.key_contexts {
++            context.keys.retain(|_, binding| match &mut binding.action {
++                ModKeyAction::Focus { focus } => composed.contains(focus),
++                ModKeyAction::Command { command, .. } => owned_command(id, command)
++                    .map(|owned| *command = owned)
++                    .is_some(),
++                _ => true,
++            });
++            let keys = candidate
++                .key_contexts
++                .iter()
++                .map(|context| context.keys.len())
++                .sum::<usize>();
++            if context.keys.is_empty() {
++                continue;
++            }
++            if candidate.key_contexts.len() >= 16 || keys + context.keys.len() > 128 {
++                dropped_contexts = true;
++                continue;
++            }
++            context.owner = id.to_owned();
++            candidate.key_contexts.push(context);
++        }
 +        let room = 4usize.saturating_sub(candidate.status.len());
 +        if !self.status.is_empty() && candidate.status.is_empty() || self.status.len() > room {
 +            claim("status".into());
@@ -124105,6 +124537,18 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +        ModView::parse_with(serde_json::to_value(&candidate)?, MOD_COMPOSED_KEY_LIMIT)?;
 +        *target = candidate;
 +        *claims = candidate_claims;
++        if dropped_contexts {
++            conflicts.push(ModViewConflict {
++                field: "key_contexts".into(),
++                owner: target
++                    .key_contexts
++                    .first()
++                    .map(|context| context.owner.clone())
++                    .unwrap_or_default(),
++                rejected: id.to_owned(),
++                origin: origin.to_owned(),
++            });
++        }
 +        Ok(conflicts)
 +    }
 +}
@@ -124174,10 +124618,8 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +            ),
 +            ("status", !valid_status(&view.status)),
 +            ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
-+            (
-+                "keybindings.focus",
-+                !valid_focus_targets(&view.keybindings, &view.sites),
-+            ),
++            ("key_contexts", !valid_contexts(&view.key_contexts, 16, 128)),
++            ("keybindings.focus", !valid_focus_targets(&view)),
 +            (
 +                "theme.syntax",
 +                view.theme
@@ -124257,10 +124699,10 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e975fc388e8064290a3a8c2ceff0ebba960df197
+index 0000000000000000000000000000000000000000..8e556f5112b66081a6b01569c642b1ce112092b6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,258 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -124463,6 +124905,62 @@ index 0000000000000000000000000000000000000000..e975fc388e8064290a3a8c2ceff0ebba
 +    assert_eq!(sidebar["mode"], "replace");
 +    assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
 +}
++
++#[test]
++fn key_contexts_are_bounded_and_compose_with_their_owner() {
++    let site = json!({"when": {"focus": ["site", "a/b"], "composer": "empty"}, "keys": {
++        "h": {"region": "left"}, "1": {"region": 1}, "?": {"action": {"help": true}, "label": "Keys"},
++        "Shift+Tab": {"region": "previous"}, "Enter": {"command": "open", "args": "x"}, "x": {"command": "other:run"}}});
++    let chat = json!({"when": {"focus": "chat"}, "keys": {"Alt+1": {"region": "a/b"}}});
++    let parsed = view(json!({"key_contexts": [site.clone(), chat.clone()],
++        "sites": {"a/b": {"components": [{"type": "document", "id": "d", "label": "D", "keys": "all"}]}}}))
++    .unwrap();
++    assert_eq!(
++        parsed.key_contexts[0].keys["?"].label.as_deref(),
++        Some("Keys")
++    );
++    let ModComponent::Document { keys, .. } = &parsed.sites["a/b"].components[0] else {
++        panic!("document");
++    };
++    assert_eq!(*keys, ModKeys::All);
++    let context =
++        |keys: Value| json!({"key_contexts": [{"when": {"focus": "site"}, "keys": keys}]});
++    for invalid in [
++        json!({"key_contexts": [{"when": {"focus": "chat"}, "keys": {"h": {"region": 1}}}]}),
++        json!({"key_contexts": [{"keys": {"Tab": {"region": "next"}}}]}),
++        json!({"key_contexts": [{"when": {"focus": "nowhere"}, "keys": {"F5": {"region": 1}}}]}),
++        json!({"key_contexts": [{"when": {"composer": "full"}, "keys": {"F5": {"region": 1}}}]}),
++        json!({"key_contexts": [{"when": {"focus": "site"}, "keys": {}}]}),
++        context(json!({"h": {"region": "sideways"}})),
++        context(json!({"h": {"region": 13}})),
++        context(json!({"h": {"help": false}})),
++        context(json!({"h": {"action": {"help": true}, "label": ""}})),
++        context(json!({"Ctrl+c": {"help": true}})),
++        context(json!({"hh": {"help": true}})),
++        json!({"key_contexts": [{"when": {"focus": "site"}, "owner": "a", "keys": {"h": {"help": true}}}]}),
++        json!({"key_contexts": vec![chat.clone(); 9]}),
++        context(Value::Object(
++            (b'a'..=b'z')
++                .chain(b'0'..=b'6')
++                .map(|key| (char::from(key).to_string(), json!({"help": true})))
++                .collect(),
++        )),
++    ] {
++        assert!(ModViewPatch::parse(invalid.clone()).is_err(), "{invalid}");
++    }
++    let mut target = ModView::default();
++    let mut claims = BTreeMap::new();
++    ModViewPatch::parse(json!({"key_contexts": [site]}))
++        .unwrap()
++        .apply(&mut target, &mut claims, "first", "idle")
++        .unwrap();
++    let composed = &target.key_contexts[0];
++    assert_eq!(composed.owner, "first");
++    assert!(
++        matches!(&composed.keys["Enter"].action, ModKeyAction::Command { command, .. } if command == "first:open")
++    );
++    assert!(!composed.keys.contains_key("x"));
++}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f4aaf54cc
@@ -124482,10 +124980,10 @@ index 0000000000000000000000000000000000000000..257d49d3374f8df490e9c62ba85e425f
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6dd8520673f0514d79b9821146eac5fbb94d7adc
+index 0000000000000000000000000000000000000000..45a9f709a4ab4d1b6ac04e503fa0452b8d1538d6
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,752 @@
+@@ -0,0 +1,762 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
@@ -124880,11 +125378,21 @@ index 0000000000000000000000000000000000000000..6dd8520673f0514d79b9821146eac5fb
 +                "settings_schema": manifest["settings_schema"],
 +                "settings": crate::effective_settings(
 +                    manifest.get("settings_schema"),
-+                    configured
++                    &configured
 +                        .iter()
 +                        .find(|item| selection["path"].as_str() == item.path.to_str())
 +                        .map(|item| &item.settings)
-+                        .unwrap_or(&empty_settings),
++                        .unwrap_or(&empty_settings)
++                        .iter()
++                        .map(|(key, value)| (key.clone(), value.clone()))
++                        .chain(
++                            selection["file_settings"]
++                                .as_object()
++                                .into_iter()
++                                .flatten()
++                                .map(|(key, value)| (key.clone(), value.clone())),
++                        )
++                        .collect(),
 +                ),
 +                "conflicts": selection["reason"]
 +                    .as_str()
@@ -135926,10 +136434,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf1c9083e0
+index 0000000000000000000000000000000000000000..0c8b4a46e081db1c8bf4fa1d7008f3b117bf0ffd
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4867 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -139268,6 +139776,78 @@ index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf
 +    let revision = store.configuration().unwrap().revision;
 +    codex_omd::write_settings(&store, "fixture", &json!({"count":2})).unwrap();
 +    assert_eq!(store.configuration().unwrap().revision, revision);
++}
++
++#[test]
++fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store")).unwrap();
++    let path = package(
++        &root,
++        "fixture",
++        "export default api => api.command('read', () => JSON.stringify([api.settings, api.settingsFile]))",
++        &["commands"],
++    );
++    let manifest = path.join("mod.json");
++    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    value["settings_schema"] = json!({"type":"object","properties":{
++        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"}},
++        "additionalProperties":false});
++    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
++    trust(&store, &path, &["commands"]);
++    let directory = root.join("store/settings");
++    std::fs::create_dir_all(&directory).unwrap();
++    let file = |extension: &str| directory.join(format!("fixture.{extension}"));
++    let mut runtime = host(&temp);
++    let read = |runtime: &mut ModHost| {
++        runtime.reload().unwrap();
++        let generation = runtime.generation();
++        let reply = runtime
++            .invoke("fixture", generation, "command", "read", Value::Null)
++            .unwrap();
++        serde_json::from_str::<Value>(reply.as_str().unwrap()).unwrap()
++    };
++    assert_eq!(
++        read(&mut runtime),
++        json!([{"mode":"a"},{"path":file("json"),"status":"missing","error":null}])
++    );
++    codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap();
++    std::fs::write(file("yaml"), "mode: a\ncount: 3\n").unwrap();
++    assert!(runtime.refresh_due());
++    assert_eq!(
++        read(&mut runtime),
++        json!([{"mode":"a","count":3},{"path":file("yaml"),"status":"loaded","error":null}])
++    );
++    assert_eq!(
++        store.selection_status().unwrap()["selections"][0]["settings_origin"],
++        json!({"count":"file","mode":"file"})
++    );
++    let refused = codex_omd::write_settings(&store, "fixture", &json!({"count":4}));
++    assert!(
++        refused
++            .unwrap_err()
++            .to_string()
++            .starts_with("setting_set_by_file")
++    );
++    std::fs::write(file("json"), "{}").unwrap();
++    let invalid = read(&mut runtime);
++    assert_eq!(invalid[0], json!({"mode":"b"}));
++    assert_eq!(invalid[1]["status"], "invalid");
++    assert!(
++        invalid[1]["error"]
++            .as_str()
++            .unwrap()
++            .contains("more_than_one")
++    );
++    std::fs::remove_file(file("yaml")).unwrap();
++    std::fs::write(file("json"), r#"{"mode":"c"}"#).unwrap();
++    let invalid = read(&mut runtime);
++    assert_eq!(invalid[0], json!({"mode":"b"}));
++    assert_eq!(invalid[1]["error"], "invalid_setting: mode");
++    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
++    std::fs::remove_file(file("json")).unwrap();
++    assert_eq!(read(&mut runtime)[1]["status"], "missing");
 +}
 +
 +#[test]
@@ -162157,10 +162737,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead92a5e34f3
+index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78bf343ad8e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,4856 @@
+@@ -0,0 +1,5543 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -162176,8 +162756,11 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +use codex_omd::ModDirection;
 +use codex_omd::ModIcons;
 +use codex_omd::ModKeyAction;
++use codex_omd::ModKeyContext;
++use codex_omd::ModKeys;
 +use codex_omd::ModPaint;
 +use codex_omd::ModPanel;
++use codex_omd::ModRegion;
 +use codex_omd::ModRenderSite;
 +use codex_omd::ModSidebarSide;
 +use codex_omd::ModSpacing;
@@ -162306,6 +162889,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    component_owners: BTreeMap<String, String>,
 +    pty_bindings: BTreeMap<String, crate::mod_pty::Binding>,
 +    key_panes: BTreeSet<String>,
++    all_keys: BTreeSet<String>,
 +    dialog: Option<String>,
 +    dismissed: Option<String>,
 +    dialog_area: Option<Rect>,
@@ -162322,6 +162906,20 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    anchors: BTreeMap<String, Rect>,
 +    hovered: BTreeMap<String, Region>,
 +    captured: Option<String>,
++    focus_areas: Vec<(String, Rect)>,
++    focus_region: Option<String>,
++    last_region: Option<String>,
++    region_focus: BTreeMap<String, String>,
++    component_region: BTreeMap<String, String>,
++    region_keys: bool,
++    help: Option<Help>,
++}
++
++struct Help {
++    region: Option<String>,
++    composer_empty: bool,
++    query: Option<String>,
++    selected: usize,
 +}
 +
 +#[derive(Clone, Default)]
@@ -163003,6 +163601,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    component_owners: BTreeMap::new(),
 +    pty_bindings: BTreeMap::new(),
 +    key_panes: BTreeSet::new(),
++    all_keys: BTreeSet::new(),
 +    dialog: None,
 +    dismissed: None,
 +    dialog_area: None,
@@ -163018,6 +163617,13 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    anchors: BTreeMap::new(),
 +    hovered: BTreeMap::new(),
 +    captured: None,
++    focus_areas: Vec::new(),
++    focus_region: None,
++    last_region: None,
++    region_focus: BTreeMap::new(),
++    component_region: BTreeMap::new(),
++    region_keys: false,
++    help: None,
 +});
 +static APPLIED_SYNTAX: Mutex<Option<String>> = Mutex::new(None);
 +static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -164390,9 +164996,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                style,
 +                ..
 +            } => {
-+                if *keys {
-+                    interaction.key_panes.insert(id.clone());
-+                }
++                register_keys(interaction, id, *keys);
 +                let collapsed = *interaction
 +                    .collapsed
 +                    .entry(id.clone())
@@ -164538,9 +165142,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                    Some(source) => crate::mod_components::Content::Source(source),
 +                    None => crate::mod_components::Content::Spans(lines),
 +                };
-+                if *keys {
-+                    interaction.key_panes.insert(id.clone());
-+                }
++                register_keys(interaction, id, *keys);
 +                let focused = interaction.focused.as_deref() == Some(id.as_str());
 +                let owners = interaction
 +                    .component_owners
@@ -164557,7 +165159,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                    *height,
 +                    &owners,
 +                    focused,
-+                    *keys,
++                    !keys.is_off(),
 +                    "",
 +                ) {
 +                    rows.push(ComponentRow {
@@ -164706,9 +165308,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                keys,
 +                pointer,
 +            } => {
-+                if *keys {
-+                    interaction.key_panes.insert(id.clone());
-+                }
++                register_keys(interaction, id, *keys);
 +                let lines = crate::mod_module::rows(
 +                    id,
 +                    interaction.component_owners.get(id).map(String::as_str),
@@ -164717,7 +165317,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                    width.max(1),
 +                    *height,
 +                );
-+                push_region_rows(&mut rows, id, label, lines, *pointer || *keys);
++                push_region_rows(&mut rows, id, label, lines, *pointer || !keys.is_off());
 +            }
 +            ModComponent::Slot | ModComponent::Native { .. } => {}
 +        }
@@ -164962,6 +165562,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
++    begin_regions(&mut interaction, snapshot, Vec::new());
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -164989,7 +165590,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                title: Some(panel.title),
 +                collapsed: false,
 +                scroll: 0,
-+                keys: false,
++                keys: ModKeys::Off,
 +                children: panel_text(&format!("@native_panel_{index}"), panel.lines),
 +                min_width: None,
 +                max_width: None,
@@ -165530,6 +166131,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    };
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
++    begin_regions(&mut interaction, snapshot, focus_areas(&placement));
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -165551,13 +166153,16 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +            .map(|site| site.components.clone())
 +            .unwrap_or_default();
 +        let theme = &snapshot.view.theme;
-+        let frame = Frame::card(region.style, (theme.border, theme.icons), false, false);
++        let focused = interaction.focus_region.as_deref() == Some(name);
++        let frame = Frame::card(region.style, (theme.border, theme.icons), false, focused);
 +        fill_heights(
 +            &mut components,
 +            frame.inner(region.area.width),
 +            region.area.height.saturating_sub(frame.rows(true)),
 +            &frame,
 +        );
++        let margin = frame.margin;
++        let bordered = frame.border.is_some();
 +        render_site(
 +            region.area,
 +            &components,
@@ -165567,6 +166172,15 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +            frame,
 +            Some(Line::from(name.to_owned())),
 +        );
++        if focused && region.style.and_then(|style| style.focus).is_none() {
++            accent_edges(
++                region
++                    .area
++                    .inner(ratatui::layout::Margin::new(margin.1, margin.0)),
++                bordered,
++                buffer,
++            );
++        }
 +    }
 +    for bar in &placement.tabs {
 +        let spans = crate::mod_layout::tab_line(bar)
@@ -165584,6 +166198,70 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
 +    highlight_focus(buffer, &interaction);
++}
++
++fn focus_areas(placement: &crate::mod_layout::Placement) -> Vec<(String, Rect)> {
++    placement
++        .regions
++        .iter()
++        .filter_map(|region| match region.content.as_str() {
++            "transcript" => placement.chat().map(|chat| ("chat".to_owned(), chat)),
++            content => content
++                .strip_prefix("site:")
++                .map(|site| (site.to_owned(), region.area)),
++        })
++        .collect()
++}
++
++fn begin_regions(
++    interaction: &mut Interaction,
++    snapshot: &ModViewSnapshot,
++    areas: Vec<(String, Rect)>,
++) {
++    interaction.all_keys.clear();
++    interaction.component_region = snapshot
++        .view
++        .sites
++        .iter()
++        .flat_map(|(name, site)| {
++            codex_omd::component_ids_of(&site.components)
++                .into_iter()
++                .map(move |id| (id, name.clone()))
++        })
++        .collect();
++    interaction.region_keys = !snapshot.view.key_contexts.is_empty();
++    interaction.focus_areas = areas;
++    if interaction.focus_region.as_ref().is_some_and(|region| {
++        !interaction
++            .focus_areas
++            .iter()
++            .any(|(name, _)| name == region)
++    }) {
++        interaction.focus_region = None;
++    }
++    follow_region(interaction);
++}
++
++fn accent_edges(area: Rect, bordered: bool, buffer: &mut Buffer) {
++    let accent = crate::style::accent_style().bold();
++    if !bordered || area.width < 2 || area.height < 2 {
++        buffer.set_style(
++            Rect {
++                height: 1.min(area.height),
++                ..area
++            },
++            accent,
++        );
++        return;
++    }
++    for x in area.left()..area.right() {
++        buffer[(x, area.top())].set_style(accent);
++        buffer[(x, area.bottom() - 1)].set_style(accent);
++    }
++    for y in area.top()..area.bottom() {
++        buffer[(area.left(), y)].set_style(accent);
++        buffer[(area.right() - 1, y)].set_style(accent);
++    }
 +}
 +
 +pub(crate) use codex_omd::client_surface::NoticePlacement;
@@ -165865,6 +166543,464 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    }
 +}
 +
++fn register_keys(interaction: &mut Interaction, id: &str, keys: ModKeys) {
++    if !keys.is_off() {
++        interaction.key_panes.insert(id.to_owned());
++    }
++    if keys == ModKeys::All {
++        interaction.all_keys.insert(id.to_owned());
++    }
++}
++
++fn effective_region(interaction: &Interaction) -> Option<String> {
++    interaction
++        .focused
++        .as_ref()
++        .and_then(|id| interaction.component_region.get(id))
++        .cloned()
++        .or_else(|| interaction.focus_region.clone())
++}
++
++fn follow_region(interaction: &mut Interaction) {
++    if interaction.focus_region.is_some()
++        && let Some(region) = interaction
++            .focused
++            .as_ref()
++            .and_then(|id| interaction.component_region.get(id))
++            .filter(|region| {
++                interaction
++                    .focus_areas
++                    .iter()
++                    .any(|(name, _)| name == *region)
++            })
++    {
++        interaction.focus_region = Some(region.clone());
++    }
++}
++
++fn region_entry(interaction: &Interaction, region: &str, id: &str) -> bool {
++    interaction.component_region.get(id).map(String::as_str) == Some(region)
++        && interaction.order.iter().any(|ordered| ordered == id)
++        && !interaction.key_panes.contains(id)
++        && !matches!(
++            interaction.targets.get(id),
++            Some(ComponentTarget::Terminal(_, _)) | None
++        )
++}
++
++fn enter_region(interaction: &mut Interaction, name: &str) {
++    if let Some(focused) = interaction.focused.take()
++        && let Some(region) = interaction.component_region.get(&focused).cloned()
++        && region_entry(interaction, &region, &focused)
++    {
++        interaction.region_focus.insert(region, focused);
++    }
++    if let Some(region) = interaction.focus_region.take() {
++        interaction.last_region = Some(region);
++    }
++    if name == "chat" {
++        return;
++    }
++    interaction.focus_region = Some(name.to_owned());
++    interaction.focused = interaction
++        .region_focus
++        .get(name)
++        .filter(|id| region_entry(interaction, name, id))
++        .cloned()
++        .or_else(|| {
++            interaction
++                .order
++                .iter()
++                .find(|id| region_entry(interaction, name, id))
++                .cloned()
++        });
++}
++
++/// Orders candidates on that side of `from`: overlapping across the move first, then nearest, then best aligned.
++fn toward(from: Rect, to: Rect, direction: &str) -> Option<(bool, i32, i32)> {
++    let (from_x, from_y) = (i32::from(from.x), i32::from(from.y));
++    let (from_right, from_bottom) = (i32::from(from.right()), i32::from(from.bottom()));
++    let (to_x, to_y) = (i32::from(to.x), i32::from(to.y));
++    let (to_right, to_bottom) = (i32::from(to.right()), i32::from(to.bottom()));
++    let rows = to_y < from_bottom && from_y < to_bottom;
++    let columns = to_x < from_right && from_x < to_right;
++    let across_rows = ((to_y + to_bottom) - (from_y + from_bottom)).abs();
++    let across_columns = ((to_x + to_right) - (from_x + from_right)).abs();
++    let (gap, overlap, offset) = match direction {
++        "left" => (from_x - to_right, rows, across_rows),
++        "right" => (to_x - from_right, rows, across_rows),
++        "up" => (from_y - to_bottom, columns, across_columns),
++        _ => (to_y - from_bottom, columns, across_columns),
++    };
++    (gap >= 0).then_some((!overlap, gap, offset))
++}
++
++fn region_target(interaction: &Interaction, target: &ModRegion) -> Option<String> {
++    let areas = &interaction.focus_areas;
++    let current = effective_region(interaction).unwrap_or_else(|| "chat".to_owned());
++    let position = areas.iter().position(|(name, _)| *name == current);
++    match target {
++        ModRegion::Index(0) => Some("chat".to_owned()),
++        ModRegion::Index(index) => areas
++            .iter()
++            .filter(|(name, _)| name != "chat")
++            .nth(usize::from(*index) - 1)
++            .map(|(name, _)| name.clone()),
++        ModRegion::Name(name) => match name.as_str() {
++            "next" | "previous" if !areas.is_empty() => {
++                let count = areas.len();
++                let index = match (position, name.as_str()) {
++                    (Some(at), "next") => (at + 1) % count,
++                    (Some(at), _) => (at + count - 1) % count,
++                    (None, _) => 0,
++                };
++                Some(areas[index].0.clone())
++            }
++            "chat" => Some("chat".to_owned()),
++            "left" | "right" | "up" | "down" => {
++                let from = areas.get(position?)?.1;
++                areas
++                    .iter()
++                    .filter(|(candidate, _)| *candidate != current)
++                    .filter_map(|(candidate, area)| {
++                        toward(from, *area, name).map(|score| (score, candidate))
++                    })
++                    .min_by_key(|(score, _)| *score)
++                    .map(|(_, candidate)| candidate.clone())
++            }
++            name => areas
++                .iter()
++                .any(|(candidate, _)| candidate == name)
++                .then(|| name.to_owned()),
++        },
++    }
++}
++
++pub(crate) fn region(target: &ModRegion) -> bool {
++    observed(|| {
++        let mut interaction = INTERACTION.locked();
++        let Some(found) = region_target(&interaction, target) else {
++            return false;
++        };
++        enter_region(&mut interaction, &found);
++        true
++    })
++}
++
++fn site_owner(site: &str) -> Option<&str> {
++    site.split_once('/').map(|(owner, _)| owner)
++}
++
++fn context_holds(context: &ModKeyContext, region: Option<&str>, composer_empty: bool) -> bool {
++    context
++        .when
++        .composer
++        .is_none_or(|state| (state == codex_omd::ModComposerWhen::Empty) == composer_empty)
++        && (context.when.focus.is_empty()
++            || context
++                .when
++                .focus
++                .iter()
++                .any(|focus| match (focus.as_str(), region) {
++                    ("chat", None) | ("site", Some(_)) => true,
++                    (name, Some(region)) => name == region,
++                    _ => false,
++                }))
++}
++
++fn context_key_matches(binding: &str, key: KeyEvent) -> bool {
++    key_name(key).as_deref() == Some(binding)
++        || matches!(key.code, KeyCode::Char(character)
++            if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++                && binding.chars().eq([character]))
++}
++
++fn ordered_contexts<'a>(view: &'a ModView, region: Option<&str>) -> Vec<&'a ModKeyContext> {
++    let owner = region.and_then(site_owner);
++    let (mut first, rest): (Vec<_>, Vec<_>) = view
++        .key_contexts
++        .iter()
++        .partition(|context| owner.is_some_and(|owner| context.owner == owner));
++    first.extend(rest);
++    first
++}
++
++fn context_binding(
++    key: KeyEvent,
++    region: Option<&str>,
++    composer_empty: bool,
++    owner_only: bool,
++) -> Option<(String, ModKeyAction)> {
++    with_cache(|cache| {
++        let view = &cache.snapshot.view;
++        ordered_contexts(view, region)
++            .into_iter()
++            .filter(|context| {
++                !owner_only
++                    || region.is_some_and(|region| {
++                        site_owner(region) == Some(context.owner.as_str())
++                            && context.when.focus.iter().any(|focus| focus == region)
++                    })
++            })
++            .filter(|context| context_holds(context, region, composer_empty))
++            .find_map(|context| {
++                context
++                    .keys
++                    .iter()
++                    .find(|(binding, _)| context_key_matches(binding, key))
++                    .map(|(binding, bound)| (binding.clone(), bound.action.clone()))
++            })
++    })
++    .flatten()
++}
++
++fn run_context(
++    interaction: &mut Interaction,
++    name: String,
++    action: ModKeyAction,
++    composer_empty: bool,
++) -> ModInput {
++    match action {
++        ModKeyAction::Region { region } => {
++            if let Some(found) = region_target(interaction, &region) {
++                enter_region(interaction, &found);
++            }
++            ModInput::Consumed
++        }
++        ModKeyAction::Help { .. } => {
++            open_help_locked(interaction, composer_empty);
++            ModInput::Consumed
++        }
++        action => ModInput::Interaction(name, action),
++    }
++}
++
++pub(crate) fn open_help(composer_empty: bool) {
++    observed(|| open_help_locked(&mut INTERACTION.locked(), composer_empty));
++}
++
++fn open_help_locked(interaction: &mut Interaction, composer_empty: bool) {
++    interaction.help = Some(Help {
++        region: effective_region(interaction),
++        composer_empty,
++        query: None,
++        selected: 0,
++    });
++}
++
++struct HelpRow {
++    key: String,
++    label: String,
++    owner: String,
++    action: Option<ModKeyAction>,
++}
++
++fn describe(action: &ModKeyAction) -> String {
++    match action {
++        ModKeyAction::Draft(_) | ModKeyAction::Insert { .. } => "Insert text".into(),
++        ModKeyAction::Submit { .. } => "Send text".into(),
++        ModKeyAction::Command { command, args } => {
++            format!("/{} {args}", command.rsplit(':').next().unwrap_or(command))
++                .trim_end()
++                .to_owned()
++        }
++        ModKeyAction::Focus { focus } => format!("Focus {focus}"),
++        ModKeyAction::Copy { label, .. } => format!("Copy {label}"),
++        ModKeyAction::Region {
++            region: ModRegion::Index(index),
++        } => format!("Focus panel {index}"),
++        ModKeyAction::Region {
++            region: ModRegion::Name(name),
++        } => format!("Focus {name}"),
++        ModKeyAction::Help { .. } => "Keys for this panel".into(),
++    }
++}
++
++fn help_rows(view: &ModView, help: &Help) -> Vec<HelpRow> {
++    let region = help.region.as_deref();
++    let mut seen = BTreeSet::new();
++    let mut rows = Vec::new();
++    for context in ordered_contexts(view, region) {
++        if !context_holds(context, region, help.composer_empty) {
++            continue;
++        }
++        for (key, binding) in &context.keys {
++            if seen.insert(key.clone()) {
++                rows.push(HelpRow {
++                    key: key.clone(),
++                    label: binding
++                        .label
++                        .clone()
++                        .unwrap_or_else(|| describe(&binding.action)),
++                    owner: context.owner.clone(),
++                    action: Some(binding.action.clone()),
++                });
++            }
++        }
++    }
++    for (key, action) in &view.keybindings {
++        if seen.insert(key.clone()) {
++            rows.push(HelpRow {
++                key: key.clone(),
++                label: describe(action),
++                owner: String::new(),
++                action: Some(action.clone()),
++            });
++        }
++    }
++    rows.push(HelpRow {
++        key: "Ctrl+]".into(),
++        label: "Switch between the chat and the last panel".into(),
++        owner: String::new(),
++        action: None,
++    });
++    if region.is_some() {
++        rows.push(HelpRow {
++            key: "Esc".into(),
++            label: "Back to the chat".into(),
++            owner: String::new(),
++            action: None,
++        });
++    }
++    let query = help.query.as_deref().unwrap_or_default().to_lowercase();
++    rows.retain(|row| {
++        query.is_empty()
++            || [&row.key, &row.label, &row.owner]
++                .iter()
++                .any(|text| text.to_lowercase().contains(&query))
++    });
++    rows
++}
++
++fn help_input(interaction: &mut Interaction, key: KeyEvent) -> ModInput {
++    let Some(mut help) = interaction.help.take() else {
++        return ModInput::Consumed;
++    };
++    let rows = with_cache(|cache| help_rows(&cache.snapshot.view, &help).len()).unwrap_or(0);
++    let plain = !key
++        .modifiers
++        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
++    let searching = help.query.is_some();
++    match key.code {
++        KeyCode::Esc if searching => help.query = None,
++        KeyCode::Esc => return ModInput::Consumed,
++        KeyCode::Char('?' | 'q') if plain && !searching => return ModInput::Consumed,
++        KeyCode::Char('/') if plain && !searching => help.query = Some(String::new()),
++        KeyCode::Up => help.selected = help.selected.saturating_sub(1),
++        KeyCode::Char('k') if plain && !searching => {
++            help.selected = help.selected.saturating_sub(1)
++        }
++        KeyCode::Down => help.selected = (help.selected + 1).min(rows.saturating_sub(1)),
++        KeyCode::Char('j') if plain && !searching => {
++            help.selected = (help.selected + 1).min(rows.saturating_sub(1));
++        }
++        KeyCode::Backspace if searching => {
++            help.query.as_mut().map(String::pop);
++            help.selected = 0;
++        }
++        KeyCode::Char(character) if plain && searching => {
++            help.query.get_or_insert_default().push(character);
++            help.selected = 0;
++        }
++        KeyCode::Enter => {
++            let chosen = with_cache(|cache| {
++                help_rows(&cache.snapshot.view, &help)
++                    .into_iter()
++                    .nth(help.selected)
++                    .and_then(|row| Some((row.key, row.action?)))
++            })
++            .flatten();
++            return match chosen {
++                Some((name, action)) => run_context(interaction, name, action, help.composer_empty),
++                None => ModInput::Consumed,
++            };
++        }
++        _ => {}
++    }
++    interaction.help = Some(help);
++    ModInput::Consumed
++}
++
++pub(crate) fn render_help(screen: Rect, snapshot: &ModViewSnapshot, buffer: &mut Buffer) {
++    let mut interaction = INTERACTION.locked();
++    let Some(help) = interaction.help.as_mut() else {
++        return;
++    };
++    let rows = help_rows(&snapshot.view, help);
++    let own = help
++        .region
++        .as_deref()
++        .and_then(site_owner)
++        .unwrap_or_default()
++        .to_owned();
++    help.selected = help.selected.min(rows.len().saturating_sub(1));
++    let width = screen.width.saturating_sub(4).min(72);
++    let body = u16::try_from(rows.len()).unwrap_or(u16::MAX).max(1);
++    let height = (body + 3 + u16::from(help.query.is_some())).min(screen.height.saturating_sub(2));
++    if width < 24 || height < 4 {
++        return;
++    }
++    let area = Rect::new(
++        screen.x + (screen.width - width) / 2,
++        screen.y + (screen.height - height) / 2,
++        width,
++        height,
++    );
++    Clear.render(area, buffer);
++    let title = format!(" Keys: {} ", help.region.as_deref().unwrap_or("chat"));
++    let block = Block::default()
++        .borders(Borders::ALL)
++        .border_style(crate::style::accent_style())
++        .title(Line::from(title).bold());
++    let inner = block.inner(area);
++    block.render(area, buffer);
++    let mut lines = Vec::new();
++    if let Some(query) = &help.query {
++        lines.push(Line::from(vec![
++            "/".bold(),
++            query.clone().into(),
++            "▏".dim(),
++        ]));
++    }
++    let visible = usize::from(
++        inner
++            .height
++            .saturating_sub(u16::from(help.query.is_some()) + 1),
++    );
++    let start = (help.selected + 1).saturating_sub(visible.max(1));
++    let key_width = rows
++        .iter()
++        .map(|row| row.key.len())
++        .max()
++        .unwrap_or(0)
++        .min(16);
++    for (index, row) in rows.iter().enumerate().skip(start).take(visible) {
++        let mut spans = vec![
++            format!(" {:<key_width$}  ", row.key).bold(),
++            row.label.clone().into(),
++        ];
++        if !row.owner.is_empty() && row.owner != own {
++            spans.push(format!("  {}", row.owner).dim());
++        }
++        let line = Line::from(spans);
++        lines.push(if index == help.selected {
++            line.reversed()
++        } else {
++            line
++        });
++    }
++    if rows.is_empty() {
++        lines.push(Line::from(" No matching keys".dim()));
++    }
++    while lines.len() + 1 < usize::from(inner.height) {
++        lines.push(Line::default());
++    }
++    lines.push(Line::from(
++        " / search · ↑↓ select · Enter run · Esc close".dim(),
++    ));
++    Paragraph::new(lines).render(inner, buffer);
++}
++
 +pub(crate) fn focus(id: &str) -> bool {
 +    observed(|| focus_unobserved(id))
 +}
@@ -165875,6 +167011,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        return false;
 +    }
 +    interaction.focused = Some(id.to_owned());
++    follow_region(&mut interaction);
 +    true
 +}
 +
@@ -165883,17 +167020,23 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    interaction.focused.is_some()
++        || interaction.focus_region.is_some()
++        || interaction.help.is_some()
 +        || interaction
 +            .dialog
 +            .as_ref()
 +            .is_some_and(|dialog| interaction.dismissed.as_ref() != Some(dialog))
 +}
 +
-+pub(crate) fn input(key: KeyEvent) -> Option<ModInput> {
-+    observed(|| handle_input(key))
++pub(crate) fn input(key: KeyEvent, composer_empty: bool) -> Option<ModInput> {
++    observed(|| {
++        let input = handle_input(key, composer_empty);
++        follow_region(&mut INTERACTION.locked());
++        input
++    })
 +}
 +
-+fn handle_input(key: KeyEvent) -> Option<ModInput> {
++fn handle_input(key: KeyEvent, composer_empty: bool) -> Option<ModInput> {
 +    let mut interaction = INTERACTION.locked();
 +    // Held keys repeat only inside a dialog or a focused control, and never fire hotkeys or bindings.
 +    let repeated = repeats(key) && (interaction.focused.is_some() || modal(&interaction, key));
@@ -165906,7 +167049,13 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        key
 +    };
 +    if key.kind != KeyEventKind::Press {
-+        return modal(&interaction, key).then_some(ModInput::Consumed);
++        return (modal(&interaction, key)
++            || interaction.help.is_some()
++            || interaction.focus_region.is_some())
++        .then_some(ModInput::Consumed);
++    }
++    if interaction.help.is_some() {
++        return Some(help_input(&mut interaction, key));
 +    }
 +    let escape = (key.code, key.modifiers) == (KeyCode::Esc, KeyModifiers::NONE);
 +    let in_terminal = interaction.focused.as_ref().is_some_and(|focused| {
@@ -165915,13 +167064,19 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +            Some(ComponentTarget::Terminal(_, _))
 +        )
 +    });
-+    if (escape && !in_terminal) || crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
++    let all_keys = interaction
++        .focused
++        .as_ref()
++        .is_some_and(|focused| interaction.all_keys.contains(focused));
++    if (escape && !in_terminal && !all_keys)
++        || crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key)
++    {
 +        let dialog = interaction
 +            .dialog
 +            .clone()
 +            .filter(|dialog| interaction.dismissed.as_ref() != Some(dialog));
 +        if dialog.is_some() || interaction.focused.is_some() {
-+            if let Some(focused) = interaction.focused.take()
++            if let Some(focused) = interaction.focused.clone()
 +                && escape
 +            {
 +                crate::mod_surface::input_event(
@@ -165934,7 +167089,43 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +                    serde_json::json!({"key": "Esc", "text": null}),
 +                );
 +            }
++            let typing = interaction.focused.as_ref().is_some_and(|focused| {
++                interaction.key_panes.contains(focused)
++                    || matches!(
++                        interaction.targets.get(focused),
++                        Some(ComponentTarget::Terminal(_, _))
++                    )
++            });
++            match interaction.focus_region.clone() {
++                Some(region) if dialog.is_some() || typing && !escape => {
++                    enter_region(&mut interaction, &region);
++                    interaction.focused = None;
++                }
++                _ if dialog.is_none() => enter_region(&mut interaction, "chat"),
++                _ => interaction.focused = None,
++            }
 +            interaction.dismissed = dialog.or(interaction.dismissed.take());
++            return Some(ModInput::Consumed);
++        }
++        if interaction.focus_region.is_some() {
++            enter_region(&mut interaction, "chat");
++            return Some(ModInput::Consumed);
++        }
++        if !escape
++            && interaction.region_keys
++            && let Some(region) = interaction
++                .last_region
++                .clone()
++                .filter(|last| interaction.focus_areas.iter().any(|(name, _)| name == last))
++                .or_else(|| {
++                    interaction
++                        .focus_areas
++                        .iter()
++                        .find(|(name, _)| name != "chat")
++                        .map(|(name, _)| name.clone())
++                })
++        {
++            enter_region(&mut interaction, &region);
 +            return Some(ModInput::Consumed);
 +        }
 +    }
@@ -165948,6 +167139,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +            (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
 +        ))
 +        && interaction.focused.is_none()
++        && interaction.focus_region.is_none()
 +        && !interaction.order.is_empty()
 +    {
 +        interaction.focused = if matches!(key.code, KeyCode::BackTab | KeyCode::Up) {
@@ -165970,9 +167162,14 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    if let Some(focused) = interaction.focused.clone()
 +        && interaction.key_panes.contains(&focused)
 +    {
-+        if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
++        if !all_keys && (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
 +            interaction.focused = None;
 +            return None;
++        }
++        let region = interaction.component_region.get(&focused).cloned();
++        if let Some((name, action)) = context_binding(key, region.as_deref(), composer_empty, true)
++        {
++            return Some(run_context(&mut interaction, name, action, composer_empty));
 +        }
 +        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
@@ -166022,6 +167219,27 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        && edit_input(&mut interaction, &focused, key.code)
 +    {
 +        return Some(ModInput::Consumed);
++    }
++    let region = effective_region(&interaction);
++    let target_key = interaction
++        .focused
++        .as_ref()
++        .and_then(|focused| interaction.targets.get(focused))
++        .is_some_and(|target| match (key.code, key.modifiers) {
++            (KeyCode::Enter | KeyCode::Up | KeyCode::Down, KeyModifiers::NONE) => true,
++            (KeyCode::Char(' '), KeyModifiers::NONE) => !matches!(target, ComponentTarget::Pane),
++            (KeyCode::Left | KeyCode::Right, KeyModifiers::NONE) => {
++                matches!(target, ComponentTarget::Select { .. })
++            }
++            _ => false,
++        });
++    if region.is_some()
++        && !target_key
++        && !repeated
++        && !modal(&interaction, key)
++        && let Some((name, action)) = context_binding(key, region.as_deref(), composer_empty, false)
++    {
++        return Some(run_context(&mut interaction, name, action, composer_empty));
 +    }
 +    if let Some(focused) = interaction.focused.clone()
 +        && let Some(target) = interaction.targets.get(&focused).cloned()
@@ -166106,7 +167324,11 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        modal
 +            && matches!(
 +                action,
-+                ModKeyAction::Draft(_) | ModKeyAction::Insert { .. } | ModKeyAction::Submit { .. }
++                ModKeyAction::Draft(_)
++                    | ModKeyAction::Insert { .. }
++                    | ModKeyAction::Submit { .. }
++                    | ModKeyAction::Region { .. }
++                    | ModKeyAction::Help { .. }
 +            )
 +    };
 +    if !editing
@@ -166128,6 +167350,13 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        } else {
 +            ModInput::Binding(name, action)
 +        });
++    }
++    if !repeated
++        && region.is_none()
++        && let Some(binding) =
++            context_binding(key, None, composer_empty, false).filter(|(_, action)| !blocked(action))
++    {
++        return Some(ModInput::Binding(binding.0, binding.1));
 +    }
 +    if !repeated
 +        && let Some(binding) = with_cache(|cache| action_for(&cache.snapshot.view, key))
@@ -166166,7 +167395,13 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        interaction.focused = Some(id.clone());
 +        edit_input(&mut interaction, &id, key.code);
 +    }
-+    modal.then_some(ModInput::Consumed)
++    (modal
++        || interaction.focus_region.is_some()
++            && !key
++                .modifiers
++                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
++            && !matches!(key.code, KeyCode::F(_)))
++    .then_some(ModInput::Consumed)
 +}
 +
 +/// Held navigation and editing keys repeat; Enter, Space, Tab and Esc act once per press.
@@ -166287,10 +167522,12 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +
 +pub(crate) fn holds_keys() -> bool {
 +    let interaction = INTERACTION.locked();
-+    interaction
-+        .focused
-+        .as_ref()
-+        .is_some_and(|focused| interaction.targets.contains_key(focused))
++    interaction.focus_region.is_some()
++        || interaction.help.is_some()
++        || interaction
++            .focused
++            .as_ref()
++            .is_some_and(|focused| interaction.targets.contains_key(focused))
 +        || (interaction.dialog.is_some() && interaction.dialog != interaction.dismissed)
 +}
 +
@@ -166374,7 +167611,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +fn handle_paste(text: &str) -> bool {
 +    let mut interaction = INTERACTION.locked();
 +    let Some(focused) = interaction.focused.clone() else {
-+        return false;
++        return interaction.focus_region.is_some() || interaction.help.is_some();
 +    };
 +    if matches!(
 +        interaction.targets.get(&focused),
@@ -166396,7 +167633,7 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +        return true;
 +    }
 +    if !interaction.key_panes.contains(&focused) {
-+        return false;
++        return interaction.focus_region.is_some();
 +    }
 +    let mut event = serde_json::json!({"paste": bounded});
 +    if bounded.len() < text.len() {
@@ -166422,7 +167659,11 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    if crate::mod_layout::pointer(event) {
 +        return Some(ModPointer::Consumed);
 +    }
-+    observed(|| handle_pointer(event))
++    observed(|| {
++        let pointer = handle_pointer(event);
++        follow_region(&mut INTERACTION.locked());
++        pointer
++    })
 +}
 +
 +fn button_name(button: MouseButton) -> &'static str {
@@ -166622,6 +167863,18 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    let Some(hit) = hit else {
 +        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
 +            interaction.focused = None;
++            if let Some(region) = interaction
++                .focus_areas
++                .iter()
++                .find(|(_, area)| contains(*area, event.column, event.row))
++                .map(|(name, _)| name.clone())
++                .filter(|region| {
++                    interaction.focus_region.is_some()
++                        || interaction.region_keys && region != "chat"
++                })
++            {
++                enter_region(&mut interaction, &region);
++            }
 +            if interaction
 +                .dialog_area
 +                .is_some_and(|area| !contains(area, event.column, event.row))
@@ -166633,6 +167886,20 @@ index 0000000000000000000000000000000000000000..82dcf51197b3471fb4403f2cf458ead9
 +    };
 +    match event.kind {
 +        MouseEventKind::Down(MouseButton::Left) => {
++            if let Some(region) = interaction
++                .component_region
++                .get(&hit.id)
++                .filter(|region| {
++                    (interaction.region_keys || interaction.focus_region.is_some())
++                        && interaction
++                            .focus_areas
++                            .iter()
++                            .any(|(name, _)| name == *region)
++                })
++                .cloned()
++            {
++                interaction.focus_region = Some(region);
++            }
 +            interaction.focused = Some(hit.id);
 +            Some(ModPointer::Consumed)
 +        }
@@ -167269,10 +168536,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e85c36ed3
+index 0000000000000000000000000000000000000000..92bc8e1e33337ea688d09ad03438ef1e53a63332
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2050 @@
+@@ -0,0 +1,2185 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -167423,7 +168690,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            .unwrap();
 +        assert_ne!(buffer[cell].bg, Color::Reset);
 +        assert!(focus("buffer"));
-+        let press = |code, modifiers| input(KeyEvent::new(code, modifiers));
++        let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
 +        assert!(matches!(
 +            press(KeyCode::Tab, KeyModifiers::NONE),
 +            Some(ModInput::Consumed)
@@ -167548,15 +168815,15 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    let area = Rect::new(0, 0, 80, 24);
 +    render(area, area, &mut Buffer::empty(area), &dialog);
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE), true),
 +        Some(ModInput::Consumed)
 +    ));
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE), true),
 +        Some(ModInput::Binding(_, ModKeyAction::Insert { .. }))
 +    ));
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE), true),
 +        Some(ModInput::Binding(_, ModKeyAction::Command { .. }))
 +    ));
 +    preview(ModViewSnapshot::default());
@@ -167685,7 +168952,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    sync_interaction(&snapshot.view);
 +    let area = Rect::new(0, 0, 80, 24);
 +    render(area, area, &mut Buffer::empty(area), &snapshot);
-+    let key = |code| input(KeyEvent::new(code, KeyModifiers::NONE));
++    let key = |code| input(KeyEvent::new(code, KeyModifiers::NONE), true);
 +    let state = || {
 +        let interaction = INTERACTION.locked();
 +        (
@@ -167699,8 +168966,8 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    assert_eq!((state().0, state().1), ("rows".into(), Some(0)));
 +    let mut held = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
 +    held.kind = KeyEventKind::Repeat;
-+    input(held);
-+    input(held);
++    input(held, true);
++    input(held, true);
 +    assert_eq!(state().1, Some(2), "a held arrow repeats");
 +    key(KeyCode::Down);
 +    assert_eq!(
@@ -167728,7 +168995,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    let mut held_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
 +    held_enter.kind = KeyEventKind::Repeat;
 +    assert!(
-+        matches!(input(held_enter), Some(ModInput::Consumed)),
++        matches!(input(held_enter, true), Some(ModInput::Consumed)),
 +        "a held Enter acts once"
 +    );
 +    assert!(focus("rows"));
@@ -167770,10 +169037,10 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        Some("review")
 +    );
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), true),
 +        Some(ModInput::Consumed)
 +    ));
-+    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
++    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true) {
 +        Some(ModInput::Interaction(name, ModKeyAction::Command { command, args })) => {
 +            assert_eq!(name, "Review input");
 +            assert_eq!(command, "workspace:layout");
@@ -167783,10 +169050,10 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    }
 +    assert!(focus("side"));
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), true),
 +        Some(ModInput::Consumed)
 +    ));
-+    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
++    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true) {
 +        Some(ModInput::Interaction(_, ModKeyAction::Command { args, .. })) => {
 +            assert_eq!(args, "side right");
 +        }
@@ -167794,7 +169061,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    }
 +    assert!(focus("details"));
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), true),
 +        Some(ModInput::Consumed)
 +    ));
 +    sync_interaction(&snapshot.view);
@@ -167839,7 +169106,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    }
 +    assert!(
 +        matches!(
-+            input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
++            input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
 +            Some(ModInput::Consumed)
 +        ),
 +        "a modal dialog keeps Enter from the composer behind it"
@@ -167855,14 +169122,14 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    let mut repeat = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
 +    repeat.kind = KeyEventKind::Repeat;
 +    assert!(
-+        matches!(input(repeat), Some(ModInput::Consumed)),
++        matches!(input(repeat, true), Some(ModInput::Consumed)),
 +        "held keys stay in the dialog"
 +    );
 +    let narrow = Rect::new(0, 0, 40, 12);
 +    render(narrow, narrow, &mut Buffer::empty(narrow), &snapshot);
 +    assert!(focus("review"));
 +    assert!(matches!(
-+        input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
++        input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
 +        Some(ModInput::Consumed)
 +    ));
 +    assert_eq!(
@@ -167872,11 +169139,11 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            .focused,
 +        None
 +    );
-+    assert!(input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).is_none());
++    assert!(input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), true).is_none());
 +    let mut buffer = Buffer::empty(area);
 +    render(area, area, &mut buffer, &snapshot);
 +    assert!(!rows(&buffer, area).contains("Settings"));
-+    assert!(input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).is_none());
++    assert!(input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), true).is_none());
 +}
 +
 +fn logo() -> serde_json::Value {
@@ -168092,7 +169359,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        for name in ["close", "save", "cancel", "reset"] {
 +            let id = format!("theme_{name}");
 +            assert!(focus(&id));
-+            match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
++            match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true) {
 +                Some(ModInput::Interaction(_, ModKeyAction::Command { command, .. })) => {
 +                    assert_eq!(command, format!("fixture:{name}"))
 +                }
@@ -168162,7 +169429,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        render(area, chat, &mut buffer, &current);
 +        assert!(focus("theme_close"));
 +        assert!(
-+            matches!(input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
++            matches!(input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
 +            Some(ModInput::Interaction(_, ModKeyAction::Command { command, .. })) if command == "theme:close")
 +        );
 +        INTERACTION.lock().unwrap().dismissed = None;
@@ -168175,7 +169442,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            "a command run from an open dialog keeps the dialog's focus"
 +        );
 +        assert!(matches!(
-+            input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
++            input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
 +            Some(ModInput::Consumed)
 +        ));
 +        assert!(
@@ -168339,7 +169606,12 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            .input_values["query"]
 +            .clone()
 +    };
-+    let type_key = |character| input(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
++    let type_key = |character| {
++        input(
++            KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
++            true,
++        )
++    };
 +    draw(&view("a"));
 +    assert!(focus("query"));
 +    type_key('b');
@@ -168396,7 +169668,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    };
 +    let mut offsets = Vec::new();
 +    for _ in 0..20 {
-+        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
++        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), true);
 +        offsets.push(scroll());
 +    }
 +    offsets.dedup();
@@ -168412,7 +169684,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +        drawn.contains("row 2") && drawn.contains("row 9") && !drawn.contains("row 1"),
 +        "{drawn}"
 +    );
-+    input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
++    input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), true);
 +    assert_eq!(scroll(), 1);
 +    preview(ModViewSnapshot::default());
 +}
@@ -168466,7 +169738,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            .cloned()
 +            .collect::<Vec<_>>()
 +    };
-+    let press = |code| input(KeyEvent::new(code, KeyModifiers::NONE));
++    let press = |code| input(KeyEvent::new(code, KeyModifiers::NONE), true);
 +    let buffer = draw(&view(serde_json::json!(["a"])));
 +    assert!(rows(&buffer, area).contains("[x] Alpha"));
 +    assert!(focus("files"));
@@ -168520,10 +169792,15 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +            .focused
 +            .clone()
 +    };
-+    let alt = |character| input(KeyEvent::new(KeyCode::Char(character), KeyModifiers::ALT));
++    let alt = |character| {
++        input(
++            KeyEvent::new(KeyCode::Char(character), KeyModifiers::ALT),
++            true,
++        )
++    };
 +    assert_eq!(focused().as_deref(), Some("query"));
 +    assert!(alt('g').is_none());
-+    input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
++    input(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true);
 +    match alt('g') {
 +        Some(ModInput::Binding(name, ModKeyAction::Command { command, .. })) => {
 +            assert_eq!((name.as_str(), command.as_str()), ("Alt+g", "fixture:go"));
@@ -168598,7 +169875,7 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    sync_interaction(&snapshot.view);
 +    let area = Rect::new(0, 0, 80, 24);
 +    render(area, area, &mut Buffer::empty(area), &snapshot);
-+    let enter = || input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++    let enter = || input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
 +    assert!(focus("own"));
 +    match enter() {
 +        Some(ModInput::Interaction(_, ModKeyAction::Command { command, .. })) => {
@@ -169321,6 +170598,131 @@ index 0000000000000000000000000000000000000000..bd18dd9705e93e02b8b6bd695d7c796e
 +    assert!(top.contains("╔ Settings ═"), "{top}");
 +    let buttons = row(dialog.y + 1);
 +    assert!(buttons.contains("║ [ OK ] [ Cancel ]   "), "{buttons}");
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn layout_regions_take_focus_by_reserved_chord_direction_index_and_help() {
++    preview(ModViewSnapshot::default());
++    let snapshot = snapshot(serde_json::json!({
++        "layout": {"split": "horizontal", "ratio": [1, 2], "children": [
++            {"split": "vertical", "children": [{"content": "site:demo/files"}, {"content": "site:demo/git"}]},
++            {"split": "vertical", "ratio": [5, 1], "children": [{"content": "transcript"}, {"content": "composer"}]}]},
++        "sites": {
++            "demo/files": {"components": [{"type": "list", "id": "files", "label": "Files",
++                "rows": [{"value": "a", "label": "a", "spans": [{"text": "a.rs"}]}], "action": {"command": "demo:open"}}]},
++            "demo/git": {"components": [{"type": "text", "id": "git", "label": "Git", "text": "clean"}]}},
++        "key_contexts": [{"when": {"focus": "site"}, "owner": "demo", "keys": {
++            "1": {"region": 1}, "2": {"region": 2}, "j": {"region": "down"}, "l": {"region": "right"},
++            "?": {"action": {"help": true}, "label": "Show keys"}}}]
++    }));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 120, 40);
++    let draw = || {
++        let mut buffer = Buffer::empty(area);
++        render_owned(
++            area,
++            owned_chat_area(area, &snapshot, 0),
++            &mut buffer,
++            &snapshot,
++        );
++        render_help(area, &snapshot, &mut buffer);
++        buffer
++    };
++    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
++    let region = || INTERACTION.lock().unwrap().focus_region.clone();
++    let focused = || INTERACTION.lock().unwrap().focused.clone();
++    draw();
++    assert!(press(KeyCode::Char('l'), KeyModifiers::NONE).is_none());
++    assert!(matches!(
++        press(KeyCode::Char(']'), KeyModifiers::CONTROL),
++        Some(ModInput::Consumed)
++    ));
++    assert_eq!(region().as_deref(), Some("demo/files"));
++    assert_eq!(focused().as_deref(), Some("files"));
++    let buffer = draw();
++    assert_eq!(
++        buffer[(0, 0)].fg,
++        crate::style::accent_style().fg.unwrap_or(Color::Reset)
++    );
++    press(KeyCode::Char('j'), KeyModifiers::NONE);
++    assert_eq!((region().as_deref(), focused()), (Some("demo/git"), None));
++    assert!(matches!(
++        press(KeyCode::Char('x'), KeyModifiers::NONE),
++        Some(ModInput::Consumed)
++    ));
++    press(KeyCode::Char('l'), KeyModifiers::NONE);
++    assert_eq!(region(), None);
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!(region().as_deref(), Some("demo/git"));
++    press(KeyCode::Char('1'), KeyModifiers::NONE);
++    assert_eq!(
++        (region().as_deref(), focused().as_deref()),
++        (Some("demo/files"), Some("files"))
++    );
++    press(KeyCode::Char('?'), KeyModifiers::NONE);
++    let help = rows(&draw(), area);
++    assert!(
++        help.contains("Keys: demo/files") && help.contains("Show keys"),
++        "{help}"
++    );
++    for character in "/panel 2".chars() {
++        press(KeyCode::Char(character), KeyModifiers::NONE);
++    }
++    let filtered = rows(&draw(), area);
++    assert!(
++        filtered.contains("Focus panel 2") && !filtered.contains("Show keys"),
++        "{filtered}"
++    );
++    press(KeyCode::Enter, KeyModifiers::NONE);
++    assert_eq!(region().as_deref(), Some("demo/git"));
++    assert!(INTERACTION.lock().unwrap().help.is_none());
++    let held =
++        KeyEvent::new_with_kind(KeyCode::Char('x'), KeyModifiers::NONE, KeyEventKind::Repeat);
++    assert!(matches!(input(held, true), Some(ModInput::Consumed)));
++    assert!(paste("text"));
++    press(KeyCode::Esc, KeyModifiers::NONE);
++    assert_eq!(region(), None);
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    press(KeyCode::Char('1'), KeyModifiers::NONE);
++    assert_eq!(focused().as_deref(), Some("files"));
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!((region(), focused()), (None, None));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn all_keys_document_takes_escape_and_ctrl_c_and_its_owner_context_runs_first() {
++    preview(ModViewSnapshot::default());
++    let snapshot = snapshot(serde_json::json!({
++        "sidebar_width": 30,
++        "sites": {"demo/side": {"components": [{"type": "document", "id": "editor", "label": "Editor", "keys": "all", "lines": []}]}},
++        "key_contexts": [
++            {"when": {"focus": "demo/side"}, "owner": "demo", "keys": {"Alt+q": {"region": "chat"}}},
++            {"when": {"focus": "site"}, "owner": "other", "keys": {"Alt+w": {"help": true}}}]
++    }));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 100, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
++    let focused = || INTERACTION.lock().unwrap().focused.clone();
++    assert!(focus("editor"));
++    for (code, modifiers) in [
++        (KeyCode::Esc, KeyModifiers::NONE),
++        (KeyCode::Char('c'), KeyModifiers::CONTROL),
++        (KeyCode::Char('w'), KeyModifiers::ALT),
++    ] {
++        assert!(matches!(press(code, modifiers), Some(ModInput::Consumed)));
++        assert_eq!(focused().as_deref(), Some("editor"));
++    }
++    assert!(INTERACTION.lock().unwrap().help.is_none());
++    press(KeyCode::Char('q'), KeyModifiers::ALT);
++    assert_eq!(focused(), None);
++    assert!(focus("editor"));
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!(focused(), None);
 +    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

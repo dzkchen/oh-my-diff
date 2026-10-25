@@ -192,6 +192,7 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
         "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
+        "settings_file": loaded.settings_file,
         "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
     request["field_policies"] = ModHost::field_policies();
     request["surface"] = json!({

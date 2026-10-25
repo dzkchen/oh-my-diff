@@ -33,6 +33,8 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
+- `api.settingsFile` and the settings file (`settings_file_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions and `keys: 'all'` (`terminal_focus_v1`).
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -3480,6 +3482,8 @@ Leaving the component:
 - Ctrl+] leaves the component (terminals without the kitty keyboard protocol send it as Ctrl+5, which also leaves).
 - Ctrl+C leaves it and keeps its native meaning (interrupt or quit).
 - Esc goes to the mod and leaves the component or closes the dialog.
+- `keys: 'all'` (`terminal_focus_v1`, also on `module`) forwards Esc and Ctrl+C too, so only Ctrl+] (or Ctrl+5)
+  leaves. Key contexts of the component's site owner that name its site get each key first.
 
 Input callbacks run in the terminal process with read-only workspace access, and the view redraws as soon as one
 changes the mod's state. A key that must write (a save) publishes an `events.publish` hop whose `channel` callback
@@ -3518,6 +3522,44 @@ control's only affordance: name its slash command next to it in the hint.
 
 Key bindings and component actions run only the contributing mod's commands: a bare name is its own `id:name`, and
 a binding or control naming another mod's command is dropped.
+
+#### Focus regions, key contexts and help (`terminal_focus_v1`)
+
+With a view `layout`, the host computes focus regions every frame. The chat (transcript and composer) is region 0
+and each drawn `site:` leaf is a region named by its site, numbered from 1 in layout order; only a `tabs` node's
+active tab counts.
+
+- A `{region}` key action moves focus without a mod callback: `left`, `right`, `up` and `down` pick the nearest
+  region on that side, `next` and `previous` cycle in layout order, `chat` or `0` returns to the chat, a number
+  from 1 to 12 is that site region and a site name focuses that region. A region gets back the control last focused there, else its
+  first control that is not a keys component or terminal, else no control.
+- The focused region's frame draws in the accent color, or with its leaf's `style.focus` accent.
+- While a region has focus, keys it does not bind never reach the composer. Ctrl, Alt and F-keys still reach
+  `keybindings` and native shortcuts, and native prompts such as approvals keep their keys.
+- Esc in a region returns to the chat. Ctrl+] in a region returns to the chat, or from a focused keys component or
+  terminal to its region; in the chat it focuses the last region (else the first) when the view has key contexts.
+  Clicking a region or a control in it focuses the region, and pastes into a focused region never reach the
+  composer.
+
+View `key_contexts` bind keys that apply only while `when` holds, at most 8 contexts and 32 keys per mod (16 and 128
+composed):
+
+| `when` field | Holds when |
+| --- | --- |
+| `focus` | One name or a list: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
+| `composer` | `empty` or `draft`, by the composer's text. |
+
+- A context that cannot hold in the chat may also bind unmodified keys: named keys, Shift+Tab and single printable
+  characters (`h`, `1`, `[`, `?`, `G`). A context that can hold there takes `keybindings` key names, and there a key
+  that collides with a native binding is ignored as in `keybindings`.
+- A binding is a key action or `{action, label}`; `label` (at most 64 bytes) names it in the help overlay.
+- Contexts of the focused site's owner (the `owner` of `owner/site`) match first, then the others in composition
+  order. A focused control keeps Enter, Space, Up, Down and a select's Left and Right.
+- `{region}` and `{help: true}` also work in `keybindings`; commands follow the ownership rule below.
+
+`{help: true}` opens a host overlay listing the bindings that apply to the focused region with their labels and
+owning mod, then `keybindings` and the host keys. `/` searches, Up and Down (or `j` and `k`) move, Enter runs the
+selected binding and Esc clears the search or closes the overlay.
 
 #### `component_event`
 
@@ -3712,7 +3754,8 @@ One `style: TerminalBoxStyle` object styles a `box`, `pane` or `dialog`, an over
 - `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color (0–255 or `#rrggbb`). A filled or
   bordered box pads its rows to its width, so the fill reaches the edge; other boxes leave rows unpadded.
 - `direction: 'row'` lays children side by side (see [Row layout](#row-layout)).
-- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`; other surfaces refuse them
+- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`, and `focus` on a layout
+  `site:` leaf while its region has focus; other surfaces refuse them
   (see [Hover and focus accents](#hover-and-focus-accents)).
 
 ##### Row layout
@@ -4393,6 +4436,27 @@ once. Without `id` it writes the caller's own settings; with `id` it needs `pack
 Callbacks receive explicit settings over the schema's `default` values.
 
 `/omd` stays the native recovery path.
+
+#### Settings file (`settings_file_v1`)
+
+Experimental. A user can set a mod's settings in a file instead of through `settings.write`:
+`settings/<mod_id>.json`, `.yaml` or `.yml` in the mod store, the directory that holds `mods.json`.
+
+- At most one of the three files may exist (more than one is invalid), at most 64 KiB, and its top level must be an
+  object whose keys are the mod's setting names.
+- Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
+  digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
+  a wrongly typed value and a missing `required` setting are invalid.
+- Administrator-managed selections ignore the file.
+- An unreadable, oversize, unparsable or invalid file is skipped whole: the saved settings apply, the mod stays on and
+  its view diagnostics carry `settings_file_invalid: <reason>`.
+- Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
+- `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid', error: string | null}`. `path` is the
+  absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
+- `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
+  such keys with origin `file` and the file under `settings_file`.
+
+Require `settings_file_v1` to use it.
 
 ### Host limits
 
@@ -5250,6 +5314,8 @@ Runs `check`, and while its value differs from `until` advances virtual time by 
 
 #### Pointer and client steps
 
+- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
+  (offline steps have no focus).
 - `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
   receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
   with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached

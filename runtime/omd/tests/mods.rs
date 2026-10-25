@@ -3339,6 +3339,78 @@ fn settings_write_merges_schema_checked_values_over_defaults() {
 }
 
 #[test]
+fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store")).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify([api.settings, api.settingsFile]))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] = json!({"type":"object","properties":{
+        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"}},
+        "additionalProperties":false});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let directory = root.join("store/settings");
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = |extension: &str| directory.join(format!("fixture.{extension}"));
+    let mut runtime = host(&temp);
+    let read = |runtime: &mut ModHost| {
+        runtime.reload().unwrap();
+        let generation = runtime.generation();
+        let reply = runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap();
+        serde_json::from_str::<Value>(reply.as_str().unwrap()).unwrap()
+    };
+    assert_eq!(
+        read(&mut runtime),
+        json!([{"mode":"a"},{"path":file("json"),"status":"missing","error":null}])
+    );
+    codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap();
+    std::fs::write(file("yaml"), "mode: a\ncount: 3\n").unwrap();
+    assert!(runtime.refresh_due());
+    assert_eq!(
+        read(&mut runtime),
+        json!([{"mode":"a","count":3},{"path":file("yaml"),"status":"loaded","error":null}])
+    );
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["settings_origin"],
+        json!({"count":"file","mode":"file"})
+    );
+    let refused = codex_omd::write_settings(&store, "fixture", &json!({"count":4}));
+    assert!(
+        refused
+            .unwrap_err()
+            .to_string()
+            .starts_with("setting_set_by_file")
+    );
+    std::fs::write(file("json"), "{}").unwrap();
+    let invalid = read(&mut runtime);
+    assert_eq!(invalid[0], json!({"mode":"b"}));
+    assert_eq!(invalid[1]["status"], "invalid");
+    assert!(
+        invalid[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("more_than_one")
+    );
+    std::fs::remove_file(file("yaml")).unwrap();
+    std::fs::write(file("json"), r#"{"mode":"c"}"#).unwrap();
+    let invalid = read(&mut runtime);
+    assert_eq!(invalid[0], json!({"mode":"b"}));
+    assert_eq!(invalid[1]["error"], "invalid_setting: mode");
+    assert_eq!(runtime.status()["mods"][0]["error"], Value::Null);
+    std::fs::remove_file(file("json")).unwrap();
+    assert_eq!(read(&mut runtime)[1]["status"], "missing");
+}
+
+#[test]
 fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

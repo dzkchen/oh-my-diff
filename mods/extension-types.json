@@ -517,6 +517,12 @@
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_workspace",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Lays the screen out as numbered panels beside the chat through generic focus regions and key contexts; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

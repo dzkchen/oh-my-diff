@@ -45,6 +45,8 @@ pub struct ModView {
     pub status: Vec<String>,
     #[serde(default)]
     pub keybindings: BTreeMap<String, ModKeyAction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_contexts: Vec<ModKeyContext>,
     #[serde(default)]
     pub theme: ModTheme,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,6 +92,8 @@ pub struct ModViewPatch {
     pub status: Vec<String>,
     #[serde(default)]
     pub keybindings: BTreeMap<String, ModKeyAction>,
+    #[serde(default)]
+    pub key_contexts: Vec<ModKeyContext>,
     #[serde(default)]
     pub theme: ModThemePatch,
     #[serde(default)]
@@ -167,7 +171,11 @@ impl ModLayout {
                 leaves.push(leaf.content.clone());
                 match leaf.content.strip_prefix("site:") {
                     Some(site) => {
-                        valid_site(site) && leaf.style.as_ref().is_none_or(ModBoxStyle::still)
+                        valid_site(site)
+                            && leaf
+                                .style
+                                .as_ref()
+                                .is_none_or(|style| style.valid() && style.hover.is_none())
                     }
                     None => {
                         matches!(leaf.content.as_str(), "transcript" | "composer")
@@ -562,7 +570,7 @@ pub enum ModComponent {
         #[serde(default)]
         scroll: u16,
         #[serde(default)]
-        keys: bool,
+        keys: ModKeys,
         #[serde(default)]
         children: Vec<ModComponent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -617,7 +625,7 @@ pub enum ModComponent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<ModCommandAction>,
         #[serde(default)]
-        keys: bool,
+        keys: ModKeys,
     },
     Terminal {
         id: String,
@@ -666,8 +674,8 @@ pub enum ModComponent {
         props: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         height: Option<u16>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        keys: bool,
+        #[serde(default, skip_serializing_if = "ModKeys::is_off")]
+        keys: ModKeys,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pointer: bool,
     },
@@ -856,6 +864,57 @@ pub enum ModTone {
     Muted,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModKeys {
+    #[default]
+    Off,
+    On,
+    All,
+}
+
+impl ModKeys {
+    pub fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
+}
+
+impl Serialize for ModKeys {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Off => serializer.serialize_bool(false),
+            Self::On => serializer.serialize_bool(true),
+            Self::All => serializer.serialize_str("all"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ModKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        match Value::deserialize(deserializer)? {
+            Value::Bool(false) => Ok(Self::Off),
+            Value::Bool(true) => Ok(Self::On),
+            Value::String(text) if text == "all" => Ok(Self::All),
+            _ => Err(serde::de::Error::custom(
+                "keys must be true, false or \"all\"",
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModRegion {
+    Index(u8),
+    Name(String),
+}
+
+pub const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum ModKeyAction {
@@ -865,6 +924,116 @@ pub enum ModKeyAction {
     Command { command: String, args: String },
     Focus { focus: String },
     Copy { copy: String, label: String },
+    Region { region: ModRegion },
+    Help { help: bool },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModComposerWhen {
+    Empty,
+    Draft,
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+pub struct ModKeyWhen {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composer: Option<ModComposerWhen>,
+}
+
+impl<'de> Deserialize<'de> for ModKeyWhen {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Focus {
+            One(String),
+            Many(Vec<String>),
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            #[serde(default)]
+            focus: Option<Focus>,
+            #[serde(default)]
+            composer: Option<ModComposerWhen>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(Self {
+            focus: match raw.focus {
+                None => Vec::new(),
+                Some(Focus::One(focus)) => vec![focus],
+                Some(Focus::Many(focus)) => focus,
+            },
+            composer: raw.composer,
+        })
+    }
+}
+
+impl ModKeyWhen {
+    pub fn in_chat(&self) -> bool {
+        self.focus.is_empty() || self.focus.iter().any(|focus| focus == "chat")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModContextKey {
+    pub action: ModKeyAction,
+    pub label: Option<String>,
+}
+
+impl Serialize for ModContextKey {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match &self.label {
+            Some(label) => {
+                serde_json::json!({"action": self.action, "label": label}).serialize(serializer)
+            }
+            None => self.action.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ModContextKey {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        if let Some(object) = value.as_object()
+            && object.keys().map(String::as_str).collect::<BTreeSet<_>>()
+                == BTreeSet::from(["action", "label"])
+        {
+            return Ok(Self {
+                action: ModKeyAction::deserialize(object["action"].clone())
+                    .map_err(serde::de::Error::custom)?,
+                label: Some(
+                    object["label"]
+                        .as_str()
+                        .ok_or_else(|| serde::de::Error::custom("label must be a string"))?
+                        .to_owned(),
+                ),
+            });
+        }
+        Ok(Self {
+            action: ModKeyAction::deserialize(value).map_err(serde::de::Error::custom)?,
+            label: None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModKeyContext {
+    #[serde(default)]
+    pub when: ModKeyWhen,
+    pub keys: BTreeMap<String, ModContextKey>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub owner: String,
 }
 
 impl<'de> Deserialize<'de> for ModKeyAction {
@@ -914,6 +1083,19 @@ impl<'de> Deserialize<'de> for ModKeyAction {
             return Ok(Self::Copy {
                 copy: text(&object["copy"])?,
                 label: text(&object["label"])?,
+            });
+        }
+        if keys == BTreeSet::from(["region"]) {
+            return Ok(Self::Region {
+                region: ModRegion::deserialize(object["region"].clone())
+                    .map_err(serde::de::Error::custom)?,
+            });
+        }
+        if keys == BTreeSet::from(["help"]) {
+            return Ok(Self::Help {
+                help: object["help"]
+                    .as_bool()
+                    .ok_or_else(|| serde::de::Error::custom("help must be true"))?,
             });
         }
         Err(serde::de::Error::custom("invalid keybinding action"))
@@ -1700,6 +1882,13 @@ fn valid_action(action: &ModKeyAction) -> bool {
         ModKeyAction::Copy { copy, label } => {
             !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
         }
+        ModKeyAction::Region {
+            region: ModRegion::Index(index),
+        } => *index <= 12,
+        ModKeyAction::Region {
+            region: ModRegion::Name(name),
+        } => MOD_REGION_MOVES.contains(&name.as_str()) || valid_site(name),
+        ModKeyAction::Help { help } => *help,
     }
 }
 
@@ -1708,6 +1897,44 @@ fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>, limit: usize) -> bo
         && bindings
             .iter()
             .all(|(key, action)| mod_key_name(key) && valid_action(action))
+}
+
+pub fn context_key_name(key: &str) -> bool {
+    mod_key_name(key)
+        || key == "Shift+Tab"
+        || MOD_NAMED_KEYS.contains(&key)
+        || key.len() == 1 && key.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
+fn valid_contexts(contexts: &[ModKeyContext], limit: usize, key_limit: usize) -> bool {
+    contexts.len() <= limit
+        && contexts
+            .iter()
+            .map(|context| context.keys.len())
+            .sum::<usize>()
+            <= key_limit
+        && contexts.iter().all(|context| {
+            context.when.focus.len() <= 8
+                && context
+                    .when
+                    .focus
+                    .iter()
+                    .all(|focus| matches!(focus.as_str(), "chat" | "site") || valid_site(focus))
+                && context.when.focus.iter().collect::<BTreeSet<_>>().len()
+                    == context.when.focus.len()
+                && !context.keys.is_empty()
+                && context.keys.iter().all(|(key, binding)| {
+                    (if context.when.in_chat() {
+                        mod_key_name(key)
+                    } else {
+                        context_key_name(key)
+                    }) && valid_action(&binding.action)
+                        && binding
+                            .label
+                            .as_ref()
+                            .is_none_or(|label| !label.is_empty() && visible(label, 64))
+                })
+        })
 }
 
 fn valid_status(status: &[String]) -> bool {
@@ -1761,20 +1988,19 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
     );
 }
 
-fn valid_focus_targets(
-    bindings: &BTreeMap<String, ModKeyAction>,
-    sites: &BTreeMap<String, ModRenderSite>,
-) -> bool {
-    let mut ids = BTreeSet::new();
-    for site in sites.values() {
-        for component in &site.components {
-            component_ids(component, &mut ids);
-        }
-    }
-    bindings.values().all(|action| match action {
-        ModKeyAction::Focus { focus } => ids.contains(focus),
-        _ => true,
-    })
+fn valid_focus_targets(view: &ModView) -> bool {
+    let ids = site_component_ids(&view.sites);
+    view.keybindings
+        .values()
+        .chain(
+            view.key_contexts
+                .iter()
+                .flat_map(|context| context.keys.values().map(|binding| &binding.action)),
+        )
+        .all(|action| match action {
+            ModKeyAction::Focus { focus } => ids.contains(focus),
+            _ => true,
+        })
 }
 
 fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<ModComponent> {
@@ -1869,6 +2095,14 @@ impl ModViewPatch {
             (
                 "keybindings",
                 !valid_bindings(&patch.keybindings, MOD_KEY_LIMIT),
+            ),
+            (
+                "key_contexts",
+                !valid_contexts(&patch.key_contexts, 8, 32)
+                    || patch
+                        .key_contexts
+                        .iter()
+                        .any(|context| !context.owner.is_empty()),
             ),
             (
                 "panels",
@@ -2037,6 +2271,30 @@ impl ModViewPatch {
                 candidate.keybindings.insert(key, action);
             }
         }
+        let mut dropped_contexts = false;
+        for mut context in self.key_contexts {
+            context.keys.retain(|_, binding| match &mut binding.action {
+                ModKeyAction::Focus { focus } => composed.contains(focus),
+                ModKeyAction::Command { command, .. } => owned_command(id, command)
+                    .map(|owned| *command = owned)
+                    .is_some(),
+                _ => true,
+            });
+            let keys = candidate
+                .key_contexts
+                .iter()
+                .map(|context| context.keys.len())
+                .sum::<usize>();
+            if context.keys.is_empty() {
+                continue;
+            }
+            if candidate.key_contexts.len() >= 16 || keys + context.keys.len() > 128 {
+                dropped_contexts = true;
+                continue;
+            }
+            context.owner = id.to_owned();
+            candidate.key_contexts.push(context);
+        }
         let room = 4usize.saturating_sub(candidate.status.len());
         if !self.status.is_empty() && candidate.status.is_empty() || self.status.len() > room {
             claim("status".into());
@@ -2049,6 +2307,18 @@ impl ModViewPatch {
         ModView::parse_with(serde_json::to_value(&candidate)?, MOD_COMPOSED_KEY_LIMIT)?;
         *target = candidate;
         *claims = candidate_claims;
+        if dropped_contexts {
+            conflicts.push(ModViewConflict {
+                field: "key_contexts".into(),
+                owner: target
+                    .key_contexts
+                    .first()
+                    .map(|context| context.owner.clone())
+                    .unwrap_or_default(),
+                rejected: id.to_owned(),
+                origin: origin.to_owned(),
+            });
+        }
         Ok(conflicts)
     }
 }
@@ -2118,10 +2388,8 @@ impl ModView {
             ),
             ("status", !valid_status(&view.status)),
             ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
-            (
-                "keybindings.focus",
-                !valid_focus_targets(&view.keybindings, &view.sites),
-            ),
+            ("key_contexts", !valid_contexts(&view.key_contexts, 16, 128)),
+            ("keybindings.focus", !valid_focus_targets(&view)),
             (
                 "theme.syntax",
                 view.theme

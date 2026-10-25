@@ -629,6 +629,7 @@ const api = Object.freeze({
   } }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
+  settingsFile: Object.freeze(structuredCloneFallback(request.settings_file ?? { path: '', status: 'missing', error: null })),
   on(event, handler) {
     if (!activating) throw new Error('event_registration_outside_activation');
     const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;

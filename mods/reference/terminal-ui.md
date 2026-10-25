@@ -272,6 +272,8 @@ Leaving the component:
 - Ctrl+] leaves the component (terminals without the kitty keyboard protocol send it as Ctrl+5, which also leaves).
 - Ctrl+C leaves it and keeps its native meaning (interrupt or quit).
 - Esc goes to the mod and leaves the component or closes the dialog.
+- `keys: 'all'` (`terminal_focus_v1`, also on `module`) forwards Esc and Ctrl+C too, so only Ctrl+] (or Ctrl+5)
+  leaves. Key contexts of the component's site owner that name its site get each key first.
 
 Input callbacks run in the terminal process with read-only workspace access, and the view redraws as soon as one
 changes the mod's state. A key that must write (a save) publishes an `events.publish` hop whose `channel` callback
@@ -310,6 +312,44 @@ control's only affordance: name its slash command next to it in the hint.
 
 Key bindings and component actions run only the contributing mod's commands: a bare name is its own `id:name`, and
 a binding or control naming another mod's command is dropped.
+
+### Focus regions, key contexts and help (`terminal_focus_v1`)
+
+With a view `layout`, the host computes focus regions every frame. The chat (transcript and composer) is region 0
+and each drawn `site:` leaf is a region named by its site, numbered from 1 in layout order; only a `tabs` node's
+active tab counts.
+
+- A `{region}` key action moves focus without a mod callback: `left`, `right`, `up` and `down` pick the nearest
+  region on that side, `next` and `previous` cycle in layout order, `chat` or `0` returns to the chat, a number
+  from 1 to 12 is that site region and a site name focuses that region. A region gets back the control last focused there, else its
+  first control that is not a keys component or terminal, else no control.
+- The focused region's frame draws in the accent color, or with its leaf's `style.focus` accent.
+- While a region has focus, keys it does not bind never reach the composer. Ctrl, Alt and F-keys still reach
+  `keybindings` and native shortcuts, and native prompts such as approvals keep their keys.
+- Esc in a region returns to the chat. Ctrl+] in a region returns to the chat, or from a focused keys component or
+  terminal to its region; in the chat it focuses the last region (else the first) when the view has key contexts.
+  Clicking a region or a control in it focuses the region, and pastes into a focused region never reach the
+  composer.
+
+View `key_contexts` bind keys that apply only while `when` holds, at most 8 contexts and 32 keys per mod (16 and 128
+composed):
+
+| `when` field | Holds when |
+| --- | --- |
+| `focus` | One name or a list: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
+| `composer` | `empty` or `draft`, by the composer's text. |
+
+- A context that cannot hold in the chat may also bind unmodified keys: named keys, Shift+Tab and single printable
+  characters (`h`, `1`, `[`, `?`, `G`). A context that can hold there takes `keybindings` key names, and there a key
+  that collides with a native binding is ignored as in `keybindings`.
+- A binding is a key action or `{action, label}`; `label` (at most 64 bytes) names it in the help overlay.
+- Contexts of the focused site's owner (the `owner` of `owner/site`) match first, then the others in composition
+  order. A focused control keeps Enter, Space, Up, Down and a select's Left and Right.
+- `{region}` and `{help: true}` also work in `keybindings`; commands follow the ownership rule below.
+
+`{help: true}` opens a host overlay listing the bindings that apply to the focused region with their labels and
+owning mod, then `keybindings` and the host keys. `/` searches, Up and Down (or `j` and `k`) move, Enter runs the
+selected binding and Esc clears the search or closes the overlay.
 
 ### `component_event`
 
@@ -504,7 +544,8 @@ One `style: TerminalBoxStyle` object styles a `box`, `pane` or `dialog`, an over
 - `background` and `foreground`: a tone (`accent`, `muted`, ...) or a color (0–255 or `#rrggbb`). A filled or
   bordered box pads its rows to its width, so the fill reaches the edge; other boxes leave rows unpadded.
 - `direction: 'row'` lays children side by side (see [Row layout](#row-layout)).
-- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`; other surfaces refuse them
+- `hover` and `focus` take `{border?, background?, foreground?}` on a `box` or `pane`, and `focus` on a layout
+  `site:` leaf while its region has focus; other surfaces refuse them
   (see [Hover and focus accents](#hover-and-focus-accents)).
 
 #### Row layout
