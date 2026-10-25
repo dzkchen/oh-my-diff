@@ -24,7 +24,7 @@ SOURCES = (
     "scripts/package.py", "scripts/install_support.py",
     "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
     "upstream.lock.json", "runtime/patches/manifest.json", "runtime/plugins.lock.json",
-    "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
+    "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/conformance/compatibility.json",
     "mods/author/cli.mjs",
     "docs/install.md", "install.sh",
     "LICENSE", "LICENSE-APACHE", "NOTICE", "THIRD_PARTY_NOTICES.md", "runtime/crate-notices.txt",

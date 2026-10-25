@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -52,6 +53,51 @@ def profile_packages(profile):
     return PACKAGES if profile == "full" else PLATFORM_PACKAGES
 
 
+def link(source, target):
+    try:
+        os.link(source, target)
+    except OSError as error:
+        if error.errno == errno.EEXIST:
+            raise
+        shutil.copy2(source, target)
+
+
+def share(objects, path):
+    try:
+        name = support.digest(path)
+        stored = objects / name
+        objects.mkdir(exist_ok=True)
+        try:
+            os.link(path, stored)
+        except FileExistsError:
+            if not os.path.samestat(path.stat(), stored.stat()) and path.stat().st_mode == stored.stat().st_mode:
+                temporary = objects / f".{name}.{os.urandom(4).hex()}"
+                try:
+                    os.link(stored, temporary)
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def place(source, target, objects):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    if objects:
+        share(objects, target)
+    return support.digest(target)
+
+
+def deduplicate(root):
+    objects = root / "objects"
+    for directory in (root / "catalog", *root.glob("stores/*/sources"), *root.glob("releases/*/prefix/management"),
+                      *root.glob("releases/*/prefix/sources")):
+        for path in directory.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                share(objects, path)
+
+
 def sync_sources(manager, store, origin, packages):
     selections = {item.get("path"): item for item in invoke(manager, "selection-status", store)["selections"]}
     changed = []
@@ -71,7 +117,7 @@ def sync_sources(manager, store, origin, packages):
             staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
             for leftover in (staged, retired):
                 shutil.rmtree(leftover, ignore_errors=True)
-            shutil.copytree(origin / identifier, staged)
+            shutil.copytree(origin / identifier, staged, copy_function=link)
             if target.is_dir():
                 target.rename(retired)
             staged.rename(target)
@@ -204,13 +250,17 @@ def selected_text(record):
         root, installer = shlex.quote(update["root"]), f"OMD_PYTHON={shlex.quote(update['python'])} sh {shlex.quote(update['installer'])}"
         request = shlex.quote(str(Path(store) / "data/user/omd_update/store.json"))
         # The marker precedes the journal check and an update journals before reading markers, so each sees the other.
-        lines += [f"mkdir -p {root}/sessions && : > {root}/sessions/$$",
+        marker = f"{root}/sessions/$$"
+        lines += [f"mkdir -p {root}/sessions",
+                  f'for m in {root}/sessions/*; do [ -e "$m" ] && ! kill -0 "${{m##*/}}" 2>/dev/null && rm -f "$m"; done',
+                  f": > {marker}", f"trap {shlex.quote('rm -f ' + marker)} EXIT",
+                  "trap 'exit 129' HUP", "trap 'exit 130' INT", "trap 'exit 143' TERM",
                   f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/ready.json ] || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
                   "fi",
                   "unset OH_MY_DIFF_UPDATED",
-                  f"[ {root}/update/next -nt {root}/sessions/$$ ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
+                  f"[ {root}/update/next -nt {marker} ] || ({installer} tick --root {root} </dev/null >/dev/null 2>&1 &)",
                   f"OH_MY_DIFF_UPDATE=; [ -f {root}/update/state.json ] && read -r OH_MY_DIFF_UPDATE < {root}/update/state.json; export OH_MY_DIFF_UPDATE"]
     lines.append("unset OMD_INSTALL_PROFILE OMD_MOD_STORE")
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
@@ -227,7 +277,8 @@ def selected_text(record):
                     "request_max_retries": 0, "stream_max_retries": 0, "supports_websockets": False}
         for field, value in settings.items():
             flags += ["-c", f"model_providers.{provider['id']}.{field}={json.dumps(value)}"]
-    lines.append(f"exec {shlex.join([binary, *flags])} \"$@\"")
+    command = f"{shlex.join([binary, *flags])} \"$@\""
+    lines.append(f"{command}; exit $?" if update else f"exec {command}")
     return "\n".join(lines) + "\n"
 
 
@@ -504,7 +555,7 @@ def shelve(source, destination):
         staged = destination.with_name(f".{destination.name}.new")
         shutil.rmtree(staged, ignore_errors=True)
         staged.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, staged)
+        shutil.copytree(source, staged, copy_function=link)
         staged.rename(destination)
     return destination
 
@@ -559,6 +610,7 @@ def install(args):
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     managed = prefix.name == "prefix" and prefix.parent.parent.name == "releases"
+    objects = prefix.parents[2] / "objects" if managed else None
     made_store = False
     made_launchers = []
     try:
@@ -583,10 +635,7 @@ def install(args):
         management_root = prefix / "management"
         management_files = {}
         for name in MANAGEMENT_FILES:
-            target = management_root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, target)
-            management_files[name] = support.digest(target)
+            management_files[name] = place(ROOT / name, management_root / name, objects)
         installed_manager = artifacts / "omd-mod"
         if authority_broker.deployed():
             authority_broker.main(["pin", "--add", f"--manifest={signed_manifest(prefix)}", *(f"--pin={path}" for path in (
@@ -629,8 +678,7 @@ def install(args):
         for identifier in PACKAGES:
             package = packages[identifier]
             for name in package["files"]:
-                (prefix / "sources" / identifier / name).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / package["source"] / name, prefix / "sources" / identifier / name)
+                place(ROOT / package["source"] / name, prefix / "sources" / identifier / name, objects)
             if identifier in curated:
                 shelf = (shelve(prefix / "sources" / identifier, prefix.parents[2] / "catalog" / identifier / package["package_sha256"])
                          if managed else prefix / "sources" / identifier)
@@ -644,7 +692,7 @@ def install(args):
                                      "files": package["files"], "capabilities": package["capabilities"]}
             target = sources / identifier
             if not target.is_dir():
-                shutil.copytree(prefix / "sources" / identifier, target)
+                shutil.copytree(prefix / "sources" / identifier, target, copy_function=link)
                 trusted.append({"path": str(target), "sha256": package["package_sha256"],
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
@@ -744,6 +792,8 @@ def install(args):
         failed = [(package["id"], package["error"]) for package in result["packages"] if package["error"]]
         if failed:
             raise ValueError(f"first-party mod failed to load during installation: {failed}")
+        if managed:
+            deduplicate(prefix.parents[2])
         return result
     except BaseException:
         for launcher in made_launchers:

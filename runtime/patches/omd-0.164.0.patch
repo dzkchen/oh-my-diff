@@ -35151,10 +35151,18 @@ index f0b809ce50cd238a1e5208ccdd999695c1783658..6ca31803f6474287a816d074148b103c
      let key_hints = props.key_hints;
      // Passive footer context can come from the configurable status line, the
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view.rs b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e445057cb 100644
+index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..c695d95976b2016127d7cd180bb8bd9cd86858e8 100644
 --- a/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-@@ -39,6 +39,9 @@ use super::CancellationEvent;
+@@ -3,6 +3,7 @@
+ //! Controls and overflow indicators keep their own rows outside the result viewport.
+ //! Letter-labeled children are indented and do not consume numeric shortcuts.
+
++use codex_utils_fuzzy_match::fuzzy_match;
+ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyModifiers;
+@@ -39,6 +40,9 @@ use super::CancellationEvent;
  use super::bottom_pane_view::BottomPaneView;
  use super::bottom_pane_view::ViewCompletion;
  pub(crate) use super::picker_style::PickerSurface;
@@ -35164,7 +35172,23 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  use super::picker_style::render_scroll_indicators;
  use super::picker_style::selection_style;
  use super::popup_consts::MAX_POPUP_ROWS;
-@@ -280,6 +283,8 @@ pub(crate) struct SelectionViewParams {
+@@ -195,6 +199,7 @@ pub(crate) struct SelectionItem {
+     pub require_explicit_confirmation: bool,
+     pub dismiss_parent_on_child_accept: bool,
+     pub search_value: Option<String>,
++    pub selected_note: Option<String>,
+     pub disabled_reason: Option<String>,
+     /// Optional marker rendered in place of the number for a disabled row.
+     pub disabled_gutter_marker: Option<&'static str>,
+@@ -232,6 +237,7 @@ pub(crate) struct SelectionViewParams {
+     pub tabs: Vec<SelectionTab>,
+     pub initial_tab_id: Option<String>,
+     pub is_searchable: bool,
++    pub fuzzy_search: bool,
+     /// Optional non-text key that can toggle a row while printable keys edit the search query.
+     pub search_toggle_key: Option<KeyBinding>,
+     pub search_mode: SearchMode,
+@@ -280,6 +286,8 @@ pub(crate) struct SelectionViewParams {
 
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      pub on_cancel: OnCancelCallback,
@@ -35173,7 +35197,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  impl Default for SelectionViewParams {
-@@ -322,6 +327,7 @@ impl Default for SelectionViewParams {
+@@ -301,6 +309,7 @@ impl Default for SelectionViewParams {
+             tabs: Vec::new(),
+             initial_tab_id: None,
+             is_searchable: false,
++            fuzzy_search: false,
+             search_toggle_key: None,
+             search_mode: SearchMode::default(),
+             auto_number_shortcuts: true,
+@@ -322,6 +331,7 @@ impl Default for SelectionViewParams {
              on_selection_changed: None,
              allow_cancel: true,
              on_cancel: None,
@@ -35181,7 +35213,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          }
      }
  }
-@@ -390,6 +396,7 @@ pub(crate) struct ListSelectionView {
+@@ -358,6 +368,7 @@ pub(crate) struct ListSelectionView {
+     pub(super) dismiss_after_child_accept: bool,
+     pub(super) app_event_tx: AppEventSender,
+     is_searchable: bool,
++    fuzzy_search: bool,
+     search_toggle_key: Option<KeyBinding>,
+     search_mode: SearchMode,
+     search_active: bool,
+@@ -390,6 +401,7 @@ pub(crate) struct ListSelectionView {
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      on_cancel: OnCancelCallback,
      keymap: ListKeymap,
@@ -35189,7 +35229,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  const SELECTION_TOGGLE_ON_PREFIX: &str = "[*] ";
-@@ -472,7 +479,12 @@ impl ListSelectionView {
+@@ -472,7 +484,12 @@ impl ListSelectionView {
          let mut header = params.header;
          if params.title.is_some() || params.subtitle.is_some() {
              let title = params.title.map(|title| Line::from(title.bold()));
@@ -35203,7 +35243,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
              header = Box::new(ColumnRenderable::with([
                  header,
                  Box::new(
-@@ -546,6 +558,7 @@ impl ListSelectionView {
+@@ -515,6 +532,7 @@ impl ListSelectionView {
+             dismiss_after_child_accept: false,
+             app_event_tx,
+             is_searchable: params.is_searchable,
++            fuzzy_search: params.fuzzy_search,
+             search_toggle_key: params.search_toggle_key,
+             search_mode: params.search_mode,
+             search_active,
+@@ -546,6 +564,7 @@ impl ListSelectionView {
              allow_cancel: params.allow_cancel,
              on_cancel: params.on_cancel,
              keymap,
@@ -35211,7 +35259,82 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          };
          s.apply_filter();
          if s.tabs_enabled() && !has_initial_selected_idx && s.state.selected_idx.is_none() {
-@@ -1540,6 +1553,36 @@ impl Renderable for ListSelectionView {
+@@ -686,7 +705,20 @@ impl ListSelectionView {
+                     .flatten()
+             });
+
+-        if self.is_searchable && !self.search_query.is_empty() {
++        if self.is_searchable && self.fuzzy_search && !self.search_query.is_empty() {
++            let query = self.search_query.as_str();
++            self.filtered_indices = self
++                .active_items()
++                .iter()
++                .enumerate()
++                .filter_map(|(idx, item)| {
++                    let value = item.search_value.as_deref()?;
++                    fuzzy_match(value, query).map(|(_, score)| (score, idx))
++                })
++                .sorted()
++                .map(|(_, idx)| idx)
++                .collect();
++        } else if self.is_searchable && !self.search_query.is_empty() {
+             let query_lower = self.search_query.to_lowercase();
+             self.filtered_indices = self
+                 .active_items()
+@@ -1063,6 +1095,19 @@ impl ListSelectionView {
+         self.apply_filter();
+     }
+
++    pub(crate) fn select_actual_idx(&mut self, actual_idx: usize) {
++        if let Some(visible_idx) = self
++            .filtered_indices
++            .iter()
++            .position(|idx| *idx == actual_idx)
++        {
++            let len = self.visible_len();
++            self.state.selected_idx = Some(visible_idx);
++            self.state.ensure_visible(len, self.visible_rows(len));
++            self.fire_selection_changed();
++        }
++    }
++
+     pub(crate) fn take_last_selected_index(&mut self) -> Option<usize> {
+         self.last_selected_actual_idx.take()
+     }
+@@ -1110,7 +1155,14 @@ impl ListSelectionView {
+
+     fn footer_note_lines(&self, width: u16, show_selected_description: bool) -> Vec<Line<'static>> {
+         let wrap = |line| word_wrap_lines([line], usize::from(width.max(1)));
+-        let note = if show_selected_description {
++        let selected_note = self
++            .selected_actual_idx()
++            .and_then(|idx| self.active_items().get(idx))
++            .and_then(|item| item.selected_note.as_ref())
++            .map(|note| Line::from(note.clone()).dim());
++        let note = if selected_note.is_some() {
++            selected_note
++        } else if show_selected_description {
+             self.selected_actual_idx()
+                 .and_then(|idx| self.active_items().get(idx))
+                 .and_then(|item| item.description.as_ref())
+@@ -1133,6 +1185,16 @@ impl ListSelectionView {
+                 .unwrap_or(lines.len());
+             lines.resize(height.max(lines.len()), Line::default());
+         }
++        let note_height = self
++            .items
++            .iter()
++            .chain(self.search_items.iter())
++            .chain(self.tabs.iter().flat_map(|tab| tab.items.iter()))
++            .filter_map(|item| item.selected_note.as_deref())
++            .map(|note| wrap(Line::from(note).dim()).len())
++            .max()
++            .unwrap_or_default();
++        lines.resize(note_height.max(lines.len()), Line::default());
+         lines
+     }
+
+@@ -1540,6 +1602,36 @@ impl Renderable for ListSelectionView {
      }
 
      fn desired_height(&self, width: u16) -> u16 {
@@ -35248,7 +35371,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          // Inner content width after menu surface horizontal insets (2 per side).
          let inner_width = popup_content_width(width);
 
-@@ -1614,12 +1657,7 @@ impl Renderable for ListSelectionView {
+@@ -1614,12 +1706,7 @@ impl Renderable for ListSelectionView {
          height
      }
 
@@ -35262,7 +35385,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          let search_field_visible = self.search_field_visible();
          let inner_width = popup_content_width(area.width);
          let side_w = self.side_layout_width(inner_width);
-@@ -1906,6 +1944,14 @@ impl Renderable for ListSelectionView {
+@@ -1906,6 +1993,14 @@ impl Renderable for ListSelectionView {
                  Paragraph::new(hint_lines).dim().render(hint_area, buf);
              }
          }
@@ -104508,10 +104631,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c9819532c07
+index 0000000000000000000000000000000000000000..62e932544e25eb9fd681233e041abcc1aacb31d5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6230 @@
+@@ -0,0 +1,6231 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104878,6 +105001,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "ui_composition_v1",
 +    "ui_controls_v1",
 +    "terminal_panel_v1",
++    "terminal_panel_navigation_v1",
 +    "reactive_state_v1",
 +    "session_ports_v1",
 +    "structured_access_v1",
@@ -106169,7 +106293,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +                .collect::<Vec<_>>()
 +                .join(", ");
 +            return Err(failure(format!(
-+                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/COMPATIBILITY.md.",
++                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/conformance/COMPATIBILITY.md.",
 +                self.id, self.api,
 +            )));
 +        }
@@ -114265,7 +114389,7 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d21b3cb35
+index 0000000000000000000000000000000000000000..3cc9b8e006b689e9fb5cb855f9887f5cb1c5ffd1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114384,7 +114508,7 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/79"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
 +    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/81"},{"$ref":"#/$defs/81"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
@@ -114475,7 +114599,7 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "77": {"type":"object","properties":{"action":{"$ref":"#/$defs/71"},"id":{"type":"string"},"source":{"$ref":"#/$defs/76"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
 +    "78": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
 +    "79": {"type":"array","items":{"$ref":"#/$defs/78"}},
-+    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
++    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
 +    "81": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
 +    "82": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
 +    "83": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
@@ -150113,10 +150237,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec61d49ce0f
+index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec9c262c2f
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,879 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -150142,6 +150266,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyEventKind;
 +use crossterm::event::KeyModifiers;
++use itertools::Itertools as _;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
 +use ratatui::text::Line;
@@ -150180,6 +150305,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    label: String,
 +    #[serde(default)]
 +    description: Option<String>,
++    #[serde(default)]
++    group: Option<String>,
++    #[serde(default)]
++    keywords: Option<String>,
++    #[serde(default)]
++    detail: Option<String>,
 +    kind: PanelKind,
 +    #[serde(default)]
 +    value: Option<Value>,
@@ -150198,6 +150329,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    items: Vec<PanelItem>,
 +    #[serde(default)]
 +    search: bool,
++    #[serde(default)]
++    query: Option<String>,
++    #[serde(default)]
++    selected: Option<String>,
++    #[serde(default)]
++    close_args: Option<String>,
 +    action: ModCommandAction,
 +}
 +
@@ -150231,6 +150368,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            .filter(|command| codex_omd::mod_command_reference(command))
 +            .ok_or("terminal_panel_invalid: action must name one of the caller's commands")?;
 +        request.action.args = text(&request.action.args, 512, true)?;
++        request.query = request
++            .query
++            .map(|query| line(&query, 128, true))
++            .transpose()?;
++        request.selected = request
++            .selected
++            .map(|selected| text(&selected, 128, false))
++            .transpose()?;
++        request.close_args = request
++            .close_args
++            .map(|args| text(&args, 512, true))
++            .transpose()?;
 +        if request.tabs.len() > MAX_TABS || !(1..=MAX_ITEMS).contains(&request.items.len()) {
 +            return Err(format!(
 +                "terminal_panel_invalid: at most {MAX_TABS} tabs and 1-{MAX_ITEMS} items"
@@ -150268,6 +150417,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                .description
 +                .as_deref()
 +                .map(|description| line(description, 256, true))
++                .transpose()?;
++            item.group = item
++                .group
++                .as_deref()
++                .map(|group| line(group, 32, false))
++                .transpose()?;
++            item.keywords = item
++                .keywords
++                .as_deref()
++                .map(|keywords| line(keywords, 256, true))
++                .transpose()?;
++            item.detail = item
++                .detail
++                .as_deref()
++                .map(|detail| line(detail, 512, true))
 +                .transpose()?;
 +            item.value = Some(Self::value(item)?);
 +        }
@@ -150323,7 +150487,17 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +struct PanelState {
 +    tab: Option<String>,
 +    selected: Option<String>,
++    group: Option<String>,
 +    query: Option<String>,
++}
++
++enum Row<'a> {
++    Group {
++        name: &'a str,
++        count: usize,
++        collapsed: bool,
++    },
++    Item(&'a PanelItem),
 +}
 +
 +pub(crate) struct ModPanelView {
@@ -150331,6 +150505,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    request: ModPanelRequest,
 +    picker: ListSelectionView,
 +    tab: Option<String>,
++    collapsed: HashSet<String>,
++    last_query: Option<String>,
++    used_query: bool,
++    reported: bool,
 +    keymap: ListKeymap,
 +    app_event_tx: AppEventSender,
 +}
@@ -150342,17 +150520,28 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        app_event_tx: AppEventSender,
 +        keymap: ListKeymap,
 +    ) -> Self {
++        let state = PanelState {
++            selected: request.selected.clone(),
++            query: request.query.clone().filter(|query| !query.is_empty()),
++            ..PanelState::default()
++        };
++        let collapsed = HashSet::new();
 +        let picker = picker(
 +            &request,
-+            PanelState::default(),
++            state,
++            &collapsed,
 +            app_event_tx.clone(),
 +            keymap.clone(),
 +        );
 +        Self {
 +            caller,
++            last_query: request.query.clone().filter(|query| !query.is_empty()),
 +            request,
 +            picker,
 +            tab: None,
++            collapsed,
++            used_query: false,
++            reported: false,
 +            keymap,
 +            app_event_tx,
 +        }
@@ -150378,12 +150567,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn state(&self) -> PanelState {
++        let rows = self.rows();
++        let row = self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index));
 +        PanelState {
 +            tab: self.picker.active_tab_id().map(str::to_owned),
-+            selected: self
-+                .picker
-+                .selected_index()
-+                .and_then(|index| self.shown().get(index).map(|item| item.id.clone())),
++            selected: match row {
++                Some(Row::Item(item)) => Some(item.id.clone()),
++                _ => None,
++            },
++            group: match row {
++                Some(Row::Group { name, .. }) => Some((*name).to_owned()),
++                _ => None,
++            },
 +            query: self.picker.search_query().map(str::to_owned),
 +        }
 +    }
@@ -150392,23 +150590,98 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        self.picker = picker(
 +            &self.request,
 +            state,
++            &self.collapsed,
 +            self.app_event_tx.clone(),
 +            self.keymap.clone(),
 +        );
 +    }
 +
-+    fn shown(&self) -> Vec<&PanelItem> {
-+        shown(
++    fn rows(&self) -> Vec<Row<'_>> {
++        rows(
 +            &self.request,
 +            self.picker.active_tab_id(),
 +            self.picker.search_query(),
++            &self.collapsed,
 +        )
 +    }
 +
-+    fn activate(&mut self, index: usize) {
-+        let Some(id) = self.shown().get(index).map(|item| item.id.clone()) else {
++    fn jump(&self, key: KeyEvent) -> Option<usize> {
++        let KeyCode::Char(c) = key.code else {
++            return None;
++        };
++        if self.picker.search_query().is_some()
++            || !matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
++            || !c.is_alphabetic()
++            || self.keymap.action_for(key).is_some()
++        {
++            return None;
++        }
++        let rows = self.rows();
++        match c {
++            'g' => return (!rows.is_empty()).then_some(0),
++            'G' => return rows.len().checked_sub(1),
++            _ => {}
++        }
++        let initial = c.to_lowercase().to_string();
++        let start = self.picker.selected_index().map_or(0, |index| index + 1);
++        (0..rows.len())
++            .map(|offset| (start + offset) % rows.len())
++            .find(|index| {
++                matches!(rows[*index], Row::Item(item) if item.label.to_lowercase().starts_with(&initial))
++            })
++    }
++
++    fn report_close(&mut self) {
++        if self.reported || !self.picker.is_complete() {
++            return;
++        }
++        self.reported = true;
++        let Some(close_args) = self.request.close_args.clone() else {
 +            return;
 +        };
++        let rows = self.rows();
++        let selected = match self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index))
++        {
++            Some(Row::Item(item)) => item.id.clone(),
++            _ => "-".to_owned(),
++        };
++        let query = self.last_query.clone().unwrap_or_default();
++        self.app_event_tx.send(AppEvent::ModPanelCommand {
++            command: self.request.action.command.clone(),
++            args: arguments(&close_args, &selected, Some(&query)),
++        });
++    }
++
++    fn activate(&mut self, index: usize) {
++        let row = match self.rows().get(index) {
++            Some(Row::Group { name, .. }) => Err((*name).to_owned()),
++            Some(Row::Item(item)) => Ok(item.id.clone()),
++            None => return,
++        };
++        let id = match row {
++            Ok(id) => id,
++            Err(name) => {
++                if !self.collapsed.remove(&name) {
++                    self.collapsed.insert(name.clone());
++                }
++                let state = PanelState {
++                    selected: None,
++                    group: Some(name),
++                    ..self.state()
++                };
++                self.rebuild(state);
++                return;
++            }
++        };
++        self.last_query = self
++            .picker
++            .search_query()
++            .filter(|query| !query.is_empty())
++            .map(str::to_owned);
++        self.used_query = self.last_query.is_some();
 +        let Some(item) = self.request.items.iter_mut().find(|item| item.id == id) else {
 +            return;
 +        };
@@ -150467,6 +150740,43 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        .filter(|part| !part.is_empty())
 +        .collect::<Vec<_>>()
 +        .join(" ")
++}
++
++fn rows<'a>(
++    request: &'a ModPanelRequest,
++    tab: Option<&str>,
++    query: Option<&str>,
++    collapsed: &HashSet<String>,
++) -> Vec<Row<'a>> {
++    let shown = shown(request, tab, query);
++    if query.is_some_and(|query| !query.is_empty()) {
++        return shown.into_iter().map(Row::Item).collect();
++    }
++    let mut rows = shown
++        .iter()
++        .filter(|item| item.group.is_none())
++        .map(|item| Row::Item(item))
++        .collect::<Vec<_>>();
++    for name in shown
++        .iter()
++        .filter_map(|item| item.group.as_deref())
++        .unique()
++    {
++        let members = shown
++            .iter()
++            .filter(|item| item.group.as_deref() == Some(name))
++            .collect::<Vec<_>>();
++        let collapsed = collapsed.contains(name);
++        rows.push(Row::Group {
++            name,
++            count: members.len(),
++            collapsed,
++        });
++        if !collapsed {
++            rows.extend(members.into_iter().map(|item| Row::Item(item)));
++        }
++    }
++    rows
 +}
 +
 +fn shown<'a>(
@@ -150568,12 +150878,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        name: item.label.clone(),
 +        category_tag: value_label(item).map(|label| format!("{label:<20}")),
 +        search_value: Some(
-+            [Some(item.label.as_str()), tab, item.description.as_deref()]
-+                .into_iter()
-+                .flatten()
-+                .collect::<Vec<_>>()
-+                .join(" "),
++            [
++                Some(item.label.as_str()),
++                tab,
++                item.description.as_deref(),
++                item.keywords.as_deref(),
++            ]
++            .into_iter()
++            .flatten()
++            .collect::<Vec<_>>()
++            .join(" "),
 +        ),
++        selected_note: item.detail.clone(),
 +        description,
 +        footer_hint: Some(hint(
 +            keymap,
@@ -150586,9 +150902,30 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +}
 +
++fn group_item(
++    request: &ModPanelRequest,
++    name: &str,
++    count: usize,
++    collapsed: bool,
++    keymap: &ListKeymap,
++) -> SelectionItem {
++    SelectionItem {
++        name: format!("{} {name} ({count})", if collapsed { "▸" } else { "▾" }),
++        footer_hint: Some(hint(
++            keymap,
++            !request.tabs.is_empty(),
++            request.search,
++            Some(if collapsed { "expand" } else { "collapse" }),
++        )),
++        dismiss_on_select: false,
++        ..Default::default()
++    }
++}
++
 +fn picker(
 +    request: &ModPanelRequest,
 +    state: PanelState,
++    collapsed: &HashSet<String>,
 +    app_event_tx: AppEventSender,
 +    keymap: ListKeymap,
 +) -> ListSelectionView {
@@ -150596,34 +150933,34 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    let tab = state
 +        .tab
 +        .filter(|tab| request.tabs.iter().any(|known| &known.id == tab));
-+    let selected = state.selected.and_then(|selected| {
-+        shown(request, tab.as_deref(), query.as_deref())
-+            .iter()
-+            .position(|item| item.id == selected)
-+    });
++    let selected = rows(request, tab.as_deref(), query.as_deref(), collapsed)
++        .iter()
++        .position(|row| match row {
++            Row::Item(item) => state.selected.as_deref() == Some(item.id.as_str()),
++            Row::Group { name, .. } => state.group.as_deref() == Some(*name),
++        });
++    let rows_in = |tab: Option<&str>, collapsed: &HashSet<String>| {
++        rows(request, tab, None, collapsed)
++            .into_iter()
++            .map(|row| match row {
++                Row::Item(candidate) => item(request, candidate, &keymap, false),
++                Row::Group {
++                    name,
++                    count,
++                    collapsed,
++                } => group_item(request, name, count, collapsed, &keymap),
++            })
++            .collect::<Vec<_>>()
++    };
 +    let rows = if request.tabs.is_empty() {
-+        request.items.len()
++        rows(request, None, None, &HashSet::new()).len()
 +    } else {
 +        request
 +            .tabs
 +            .iter()
-+            .map(|tab| {
-+                request
-+                    .items
-+                    .iter()
-+                    .filter(|item| item.tab.as_ref() == Some(&tab.id))
-+                    .count()
-+            })
++            .map(|tab| rows(request, Some(&tab.id), None, &HashSet::new()).len())
 +            .max()
 +            .unwrap_or_default()
-+    };
-+    let items = |filter: &dyn Fn(&PanelItem) -> bool, searching: bool| {
-+        request
-+            .items
-+            .iter()
-+            .filter(|candidate| filter(candidate))
-+            .map(|candidate| item(request, candidate, &keymap, searching))
-+            .collect::<Vec<_>>()
 +    };
 +    let tabbed = !request.tabs.is_empty();
 +    let params = SelectionViewParams {
@@ -150638,15 +150975,20 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        },
 +        footer_hint: Some(hint(&keymap, tabbed, request.search, None)),
 +        is_searchable: request.search,
++        fuzzy_search: true,
 +        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
 +        search_placeholder: Some("Type to search".to_owned()),
 +        items: if tabbed {
 +            Vec::new()
 +        } else {
-+            items(&|_| true, false)
++            rows_in(None, collapsed)
 +        },
-+        search_items: if tabbed && request.search {
-+            items(&|_| true, true)
++        search_items: if request.search {
++            request
++                .items
++                .iter()
++                .map(|candidate| item(request, candidate, &keymap, true))
++                .collect()
 +        } else {
 +            Vec::new()
 +        },
@@ -150657,7 +150999,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                id: tab.id.clone(),
 +                label: tab.title.clone(),
 +                header: Box::new(()),
-+                items: items(&|item| item.tab.as_ref() == Some(&tab.id), false),
++                items: rows_in(Some(&tab.id), collapsed),
 +            })
 +            .collect(),
 +        initial_tab_id: tab,
@@ -150677,6 +151019,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        if key.kind == KeyEventKind::Release {
 +            return;
 +        }
++        if let Some(index) = self.jump(key) {
++            self.picker.select_actual_idx(index);
++            return;
++        }
 +        let plain = key.modifiers == KeyModifiers::NONE;
 +        if self.picker.selected_index().is_none()
 +            && (self.keymap.accept.is_pressed(key) || plain && key.code == KeyCode::Enter)
@@ -150692,10 +151038,30 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            }
 +            return;
 +        }
++        let searching = self.picker.search_query().is_some();
++        let searched = self
++            .picker
++            .search_query()
++            .and_then(|_| self.state().selected);
 +        self.picker.handle_key_event(key);
++        if searching && self.picker.search_query().is_none() {
++            if !self.used_query {
++                self.last_query = None;
++            }
++            self.used_query = false;
++        }
++        if let Some(id) = searched.filter(|_| self.picker.search_query().is_none())
++            && let Some(index) = self
++                .rows()
++                .iter()
++                .position(|row| matches!(row, Row::Item(item) if item.id == id))
++        {
++            self.picker.select_actual_idx(index);
++        }
 +        if let Some(index) = self.picker.take_last_selected_index() {
 +            self.activate(index);
 +        }
++        self.report_close();
 +    }
 +
 +    fn handle_paste(&mut self, text: String) -> bool {
@@ -150727,7 +151093,9 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn on_ctrl_c(&mut self) -> CancellationEvent {
-+        self.picker.on_ctrl_c()
++        let event = self.picker.on_ctrl_c();
++        self.report_close();
++        event
 +    }
 +
 +    fn mod_panel(&mut self) -> Option<&mut ModPanelView> {
@@ -150754,10 +151122,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b9246e57b91f
+index 0000000000000000000000000000000000000000..7c4fe0faa1a8f89e1483925c955e8d199d5c5162
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,203 @@
 +use super::*;
 +use crate::keymap::RuntimeKeymap;
 +use pretty_assertions::assert_eq;
@@ -150802,6 +151170,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +
 +fn press(view: &mut ModPanelView, code: KeyCode) {
 +    view.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE));
++}
++
++fn selected(view: &ModPanelView) -> String {
++    match view.rows().get(view.selected_index().unwrap()) {
++        Some(Row::Item(item)) => item.id.clone(),
++        Some(Row::Group { name, .. }) => format!("group {name}"),
++        None => String::new(),
++    }
 +}
 +
 +fn sent(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
@@ -150865,14 +151241,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    press(&mut view, KeyCode::Down);
 +    view.replace(request(true));
 +    assert_eq!(view.active_tab_id(), Some("more"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "reset");
++    assert_eq!(selected(&view), "reset");
 +    press(&mut view, KeyCode::Char('/'));
 +    for c in "mod".chars() {
 +        press(&mut view, KeyCode::Char(c));
 +    }
 +    view.replace(request(true));
 +    assert_eq!(view.search_query(), Some("mod"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "mode");
++    assert_eq!(selected(&view), "mode");
 +    press(&mut view, KeyCode::Char('z'));
 +    press(&mut view, KeyCode::Enter);
 +    assert!(!view.is_complete());
@@ -150887,6 +151263,71 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    );
 +    view.replace(request(false));
 +    assert_eq!(view.active_tab_id(), Some("more"));
++}
++
++#[test]
++fn groups_collapse_letters_jump_keywords_match_and_close_reports_the_state() {
++    let arguments = json!({
++        "title": "Mods", "search": true, "selected": "lsp", "close_args": "closed",
++        "action": {"command": "panel", "args": "set"},
++        "items": [
++            {"id": "logo", "label": "Logo", "group": "On", "kind": "toggle", "value": true},
++            {"id": "lsp", "label": "LSP view", "group": "On", "kind": "toggle", "value": true,
++                "detail": "Language servers card"},
++            {"id": "mini", "label": "Mini", "group": "Off", "kind": "toggle", "keywords": "omd mini"},
++            {"id": "usage", "label": "Usage", "group": "Off", "kind": "toggle"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(selected(&view), "lsp");
++    let area = Rect::new(0, 0, 60, view.desired_height(60));
++    let mut buf = Buffer::empty(area);
++    view.render(area, &mut buf);
++    let screen = (0..area.height)
++        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
++        .map(|position| buf[position].symbol().to_owned())
++        .collect::<String>();
++    assert!(screen.contains("▾ On (2)") && screen.contains("Language servers card"));
++    press(&mut view, KeyCode::Char('u'));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('g'));
++    assert_eq!(selected(&view), "group On");
++    press(&mut view, KeyCode::Enter);
++    assert_eq!(view.rows().len(), 4);
++    view.handle_key_event(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('/'));
++    for c in "omd".chars() {
++        press(&mut view, KeyCode::Char(c));
++    }
++    assert_eq!(selected(&view), "mini");
++    press(&mut view, KeyCode::Enter);
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert!(view.is_complete());
++    assert_eq!(
++        sent(&mut rx),
++        ["demo:panel set mini true", "demo:panel closed mini omd"]
++    );
++    let mut arguments = arguments;
++    arguments["query"] = json!("omd");
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("omd"));
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert_eq!(sent(&mut rx), ["demo:panel closed mini"]);
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
@@ -151810,12 +152251,13 @@ index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1fe097eb18
+index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69f56e5143
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,303 @@
 +use super::*;
 +use crate::app_event::AppEvent;
++use crate::bottom_pane::SearchMode;
 +use crate::bottom_pane::SelectionItem;
 +use crate::bottom_pane::SelectionViewParams;
 +use crate::bottom_pane::popup_consts::standard_popup_hint_line;
@@ -151841,6 +152283,38 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +        .chars()
 +        .take(120)
 +        .collect()
++}
++
++fn searchable(
++    view_id: &'static str,
++    title: &str,
++    header: Vec<Line<'static>>,
++    mut items: Vec<SelectionItem>,
++) -> SelectionViewParams {
++    for item in &mut items {
++        item.search_value = Some(format!(
++            "{} {}",
++            item.name,
++            item.description.as_deref().unwrap_or_default()
++        ));
++    }
++    let mut footer = standard_popup_hint_line();
++    footer
++        .spans
++        .extend([" · ".into(), "/".into(), " to search".into()]);
++    SelectionViewParams {
++        view_id: Some(view_id),
++        title: Some(title.to_string()),
++        header: Box::new(Paragraph::new(header)),
++        header_gap: 1,
++        footer_hint: Some(footer),
++        items,
++        is_searchable: true,
++        fuzzy_search: true,
++        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
++        search_placeholder: Some("Type to search".to_string()),
++        ..Default::default()
++    }
 +}
 +
 +fn mod_entries(root: PathBuf) -> Result<Vec<ModEntry>, String> {
@@ -152059,15 +152533,12 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +            ),
 +            Err(error) => (Vec::new(), format!("Mods are unavailable: {error}")),
 +        };
-+        self.bottom_pane.show_selection_view(SelectionViewParams {
-+            view_id: Some("omd-all-mods"),
-+            title: Some("All mods".to_string()),
-+            header: Box::new(Paragraph::new(vec![Line::from(header)])),
-+            header_gap: 1,
-+            footer_hint: Some(standard_popup_hint_line()),
++        self.bottom_pane.show_selection_view(searchable(
++            "omd-all-mods",
++            "All mods",
++            vec![Line::from(header)],
 +            items,
-+            ..Default::default()
-+        });
++        ));
 +        self.request_redraw();
 +    }
 +

@@ -4,7 +4,7 @@ Build a `/hello` command, test it, run it in `codex` and share it.
 
 A **mod** is a small TypeScript package that runs inside OMD. It can add commands and tools, change what the model
 sees, and draw on screen. Mod API `1.0.0` is stable, but only the current API loads and its experimental surfaces can change, so a mod may
-need changes after an update ([compatibility](../mods/COMPATIBILITY.md)).
+need changes after an update ([compatibility](../mods/conformance/COMPATIBILITY.md)).
 
 ## Before you begin
 
@@ -137,4 +137,4 @@ A dev build links the SDK from its install with a `file:` path under your home d
 - [Agent mod guide](AGENT_MOD_GUIDE.md): hand it to a coding agent. It also helps you
   [choose between a mod, plugin, skill or hook](AGENT_MOD_GUIDE.md#1-pick-the-right-kind-of-extension).
 - [Permissions](../mods/reference/capabilities.md#capabilities) and [how mods combine](../mods/reference/safety.md).
-- [Publishing rules](../mods/reference/packaging.md#publish-a-mod-to-npm) and [compatibility](../mods/COMPATIBILITY.md).
+- [Publishing rules](../mods/reference/packaging.md#publish-a-mod-to-npm) and [compatibility](../mods/conformance/COMPATIBILITY.md).

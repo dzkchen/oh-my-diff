@@ -402,6 +402,25 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual(store.exists(), existing)
                 self.assertFalse((root / "update/journal.json").exists())
 
+    def test_sessions_count_codex_binaries_and_launcher_shells_and_collect_drops_unlinked_objects(self):
+        (self.root / "sessions").mkdir()
+        listing = {"1": "/x/artifacts/codex -c a=b", "2": "/bin/sh /x/bin/codex", "3": "vim notes", "4": "vim notes", "5": ""}
+        for pid in listing:
+            (self.root / "sessions" / pid).touch()
+        os.utime(self.root / "sessions/4", (time.time(), time.time()))
+        ran = lambda arguments, **keywords: types.SimpleNamespace(stdout=listing[arguments[-1]])
+        os.utime(self.root / "sessions/3", (0, 0))
+        with patch.object(self.module.subprocess, "run", side_effect=ran):
+            self.assertEqual(sorted(self.module.sessions(self.root, None)), [1, 2, 4])
+        self.assertEqual(sorted(path.name for path in (self.root / "sessions").iterdir()), ["1", "2", "4"])
+        objects = self.root / "objects"
+        objects.mkdir()
+        (objects / "orphan").write_text("x")
+        (objects / "shared").write_text("y")
+        os.link(objects / "shared", self.root / "shared")
+        self.module.collect(self.root)
+        self.assertEqual([path.name for path in objects.iterdir()], ["shared"])
+
     def test_uninstall_removes_older_generations_before_current_and_cleans_leftovers(self):
         bin_dir = self.root / "bin"
         bin_dir.mkdir()

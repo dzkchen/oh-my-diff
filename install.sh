@@ -529,6 +529,7 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
+        collect(root)
         pinned = repin(generation, current, Path(upstream["path"]), args.bin_dir)
         settled(root, record["version"], held=None)
         return {"installed": profile, "profile_label": PROFILE_LABELS[profile], "version": record["version"],
@@ -538,6 +539,15 @@ def transaction(args, root, current, archive, url, expected, profile, upstream, 
                 "pruned": pruned, "prune_failures": failures,
                 **({"authority_broker": pinned} if pinned else {}),
                 **({"path_warning": warning} if (warning := path_warning(args.bin_dir)) else {})}
+
+
+def collect(root):
+    for path in (root / "objects").glob("*"):
+        try:
+            if path.stat().st_nlink == 1:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def restore_store(generation, upstream, bin_dir):
@@ -681,7 +691,7 @@ def uninstall(args, root, bin_dir, current):
 
 def uninstalled(root):
     (root / "current").unlink(missing_ok=True)
-    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions"]:
+    for leftover in [*(root / "releases").iterdir(), root / "update", root / "sessions", root / "objects"]:
         shutil.rmtree(leftover, ignore_errors=True)
     return {"uninstalled": True, "preserved_stores": str(root / "stores")}
 
@@ -736,8 +746,8 @@ def sessions(root, own):
         pid = int(marker.name) if marker.name.isdigit() else 0
         if not pid or pid == own:
             continue
-        name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-        if name and (Path(name).name == "codex" or time.time() - marker.stat().st_mtime < 60):
+        words = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True).stdout.split()
+        if words and (any(Path(word).name == "codex" for word in words) or time.time() - marker.stat().st_mtime < 60):
             live.append(pid)
         else:
             marker.unlink(missing_ok=True)
