@@ -68,6 +68,17 @@ test('advisor rejects invented citations, honors denial, and reports incomplete 
   assert.equal(foreign.state.status, 'reviewing');
 });
 
+test('without a workspace identity the advisor marks review unavailable but still observes', () => {
+  const request = advisorHost({}, { ...evidence, workspace_sha256: null });
+  const state = invoke(completed, request.host, advisorOptions).state;
+  assert.equal(state.status, 'unavailable');
+  assert.equal(state.reason, 'workspace_snapshot_unavailable');
+  assert.ok(!request.calls.some(call => ['workspace.snapshot', 'agents.spawn'].includes(call.operation)));
+  const unidentified = { ...evidence, workspace_sha256: null, records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn. '.repeat(8) }] };
+  const observer = advisorHost({ 'agents.spawn': () => ({ handle: 'observer-1', route: 'astra', permissions: 'read_only' }), 'routes.list': () => [{ name: 'astra', model: 'advisor-model' }] }, unidentified);
+  assert.equal(invoke(completed, observer.host, { ...advisorOptions, settings: { observe: true, route: 'astra' } }).state.observer.status, 'observing');
+});
+
 test('advisor keeps cross-thread and stale advice out of context, with explicit resume only', () => {
   const state = review().state;
   const context = { thread_id: 'thread-1', turn_id: 'turn-2', checkpoint: { live: { workspace_sha256: evidence.workspace_sha256 } } };

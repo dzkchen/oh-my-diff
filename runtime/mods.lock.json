@@ -22,11 +22,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "7489b66b79fb948549493bb9c93200cb8c0d1dc260b09bbbb1f67372c36c4108",
+        "index.ts": "1bdf324cfbbfc7fad07f8ae31ec229d671b23448b164caa0a3e362eedf28d2b4",
         "mod.json": "5c48848f9eca8c04eccf205a17cd9b8f616555f9b33099ecd89a7e7d863e34a0"
       },
       "id": "omd_advisor",
-      "package_sha256": "b971b8633f84c3a1dcea951299ffe56c484541aa14ca927c46b7f25b3887ce0d",
+      "package_sha256": "a974c3306ed55ab9bba88757a4294953c9169c1dc2b8d0e5ed06eb4bb80a070e",
       "source": "mods/first-party/omd_advisor",
       "version": "1.0.0"
     },
