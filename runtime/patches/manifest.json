@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.164.0.patch",
-    "sha256": "2f1f62d2aac2ccfd2feb3e8ec21020cdf6b0a420062d3205b7ff12078c62ba3f"
+    "sha256": "bf6e065d489e7d5d40a03638e114cbfa841bb588dfafcbba67206256a7d95b96"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -967,7 +967,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "ca394e5bfb1981d8b9115a9b6c9eb3259b869a0e890b37c99e7df29c8411387a"
+      "after": "fc69e7233df8d1258f923601727b68d94807520b5e5d26c8cbed8aace955e980"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1023,7 +1023,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "cf97e3d9541df9c07c2882a2079126a62fbfc7c1cb59aa9d6d9b8670961e1c8f"
+      "after": "323ce57d1e6d502dae1ed359d26bbb99ed6d55018ec3dd2fb2f8b96ffe667951"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,

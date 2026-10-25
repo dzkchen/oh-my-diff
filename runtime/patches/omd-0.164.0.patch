@@ -62902,10 +62902,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..89ee3609824544624422c82d815d99cc81ed5ccf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2498 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -62945,12 +62945,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +use codex_omd::ModHostCall;
 +use codex_omd::ModTool;
 +use codex_protocol::models::PermissionProfile;
-+use codex_protocol::models::PermissionProfileSnapshot;
-+use codex_protocol::permissions::FileSystemAccessMode;
-+use codex_protocol::permissions::FileSystemPath;
-+use codex_protocol::permissions::FileSystemSandboxEntry;
-+use codex_protocol::permissions::FileSystemSandboxPolicy;
-+use codex_utils_absolute_path::AbsolutePathBuf;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -63949,27 +63943,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        thread: Option<&str>,
 +        forked_from: Option<&str>,
 +    ) -> Result<(), String> {
-+        let profile = config.permissions.effective_permission_profile();
-+        if matches!(profile, PermissionProfile::External { .. }) {
-+            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-+        }
-+        let mut denies = Vec::new();
-+        for path in self.host.protected_paths() {
-+            if path
-+                .canonicalize()
-+                .map_err(|_| "protected_path_unavailable")?
-+                != path
-+                || path.starts_with(&self.host.repository)
-+            {
-+                return Err("protected_mod_path_must_be_canonical_and_external".into());
-+            }
-+            let path =
-+                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-+            denies.push(FileSystemSandboxEntry::new(
-+                FileSystemPath::Path { path: path.into() },
-+                FileSystemAccessMode::Deny,
-+            ));
-+        }
 +        config.model_provider.supports_websockets = false;
 +        if self
 +            .codex_config
@@ -63978,24 +63951,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        {
 +            config.update_plan_enabled = true;
 +        }
-+        let mut filesystem = profile.file_system_sandbox_policy();
-+        filesystem
-+            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-+        let protected = PermissionProfile::from_runtime_permissions(
-+            &filesystem,
-+            profile.network_sandbox_policy(),
-+        );
-+        config
-+            .permissions
-+            .shell_environment_policy
-+            .r#set
-+            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-+        config
-+            .permissions
-+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-+                protected,
-+            ))
-+            .map_err(|e| e.to_string())?;
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
@@ -72756,10 +72711,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
+index 0000000000000000000000000000000000000000..76e4879234b780c515117ee1606e4dc9b1f8771c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4358 @@
+@@ -0,0 +1,4390 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77117,6 +77072,38 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
 +    assert!(merge(json!({"success_per_call": "yes"})).is_err());
 +    assert!(merge(json!({"other": true})).is_err());
++}
++
++#[tokio::test]
++async fn thread_config_keeps_the_users_sandbox() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let profile = config.permissions.effective_permission_profile();
++    let environment = config.permissions.shell_environment_policy.r#set.clone();
++    codex_extension_api::ConfigContributor::prepare_thread_config(
++        &mods(&fixture.core),
++        &mut config,
++        None,
++        None,
++    )
++    .unwrap();
++    assert_eq!(config.permissions.effective_permission_profile(), profile);
++    assert_eq!(
++        config.permissions.shell_environment_policy.r#set,
++        environment
++    );
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
