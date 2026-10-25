@@ -1,7 +1,7 @@
-import type { ModAPI, TerminalPatch } from '../../api.d.ts';
+import type { Json, ModAPI, TerminalPatch } from '../../api.d.ts';
 
 type State = { running: boolean; lease: string | null; lid_closed: boolean; since: number; idle_since: number; paused: string | null;
-  offline: number; warned: boolean; failed: boolean; hotspot_checked: boolean };
+  offline: number; warned: boolean; failed: boolean; hotspot_checked: string };
 
 const CHECK_MS = 60_000;
 const NETWORK_CHECK_MS = 15_000;
@@ -12,15 +12,18 @@ const THERMAL = 'com.apple.system.thermalpressurelevel';
 const LOW_POWER = 'com.apple.system.lowpowermode';
 const TITLE = 'Oh My Diff awake';
 const IDLE: Partial<State> = { running: false, lease: null, lid_closed: false, since: 0, idle_since: 0, paused: null, offline: 0 };
+const USAGE = '/awake on|off · lid on|off · hotspot <network>|off · grace <seconds> · battery <percent> · hours <1-24>';
 
 export default function activate(api: ModAPI) {
+  api.builtins({ features: { remove: ['prevent_idle_sleep'] } });
+  const enabled = api.settings.enabled !== false;
   const graceMs = Math.max(0, Number(api.settings.grace_seconds ?? 120)) * 1000;
   const floor = Number(api.settings.battery_floor ?? 20);
   const hours = Math.min(24, Math.max(1, Number(api.settings.max_hours ?? 4)));
   const lidClosed = api.settings.lid_closed !== false;
   const hotspot = String(api.settings.hotspot_ssid ?? '').trim();
   const load = (): State => ({ running: false, lease: null, lid_closed: false, since: 0, idle_since: 0, paused: null, offline: 0, warned: false,
-    failed: false, hotspot_checked: false, ...(api.state.get() as Partial<State> | null) });
+    failed: false, hotspot_checked: '', ...(api.state.get() as Partial<State> | null) });
   const run = (program: string, argv: string[], unsandboxed = false) => {
     const result = api.host.tryCall('exec.run', { program, argv, timeout_ms: 20_000, max_output_bytes: 16_384, ...(unsandboxed ? { sandbox: 'none' as const } : {}) });
     return result.ok && result.value.exit_code === 0 && !result.value.timed_out ? result.value.stdout : null;
@@ -74,8 +77,8 @@ export default function activate(api: ModAPI) {
     Object.assign(state, { lease: held.value.lease, lid_closed: held.value.lid_closed, failed: false });
     api.state.set(state);
     if (previous) api.host.tryCall('power.release', { lease: previous });
-    if (state.lid_closed && hotspot && !state.hotspot_checked) {
-      state.hotspot_checked = true;
+    if (state.lid_closed && hotspot && state.hotspot_checked !== hotspot) {
+      state.hotspot_checked = hotspot;
       const device = wifi();
       const saved = device ? run('/usr/sbin/networksetup', ['-listpreferredwirelessnetworks', device], true) : null;
       if (saved !== null && !saved.split('\n').some(line => line.trim() === hotspot)) {
@@ -100,6 +103,11 @@ export default function activate(api: ModAPI) {
 
   const tick = (state: State) => {
     const now = Date.now();
+    if (!enabled) {
+      release(state);
+      api.state.set({ ...state, ...IDLE, running: state.running });
+      return;
+    }
     const active = state.running || agentsRunning();
     if (!active) {
       state.idle_since ||= now;
@@ -116,7 +124,7 @@ export default function activate(api: ModAPI) {
         state.paused = reason;
         tell(`Stopped keeping the Mac awake: ${reason}. It sleeps normally until the agents finish.`);
       } else if (!state.paused) {
-        if (!state.lease || lidClosed) acquire(state);
+        if (!state.lease || lidClosed || state.lid_closed) acquire(state);
         if (state.lease && state.lid_closed) rejoin(state);
       }
     }
@@ -131,6 +139,35 @@ export default function activate(api: ModAPI) {
   api.on('turn_start', () => tick({ ...load(), running: true }));
   api.on('turn_end', () => tick({ ...load(), running: false }));
   api.on('timer', event => { if (event.key === 'check') tick(load()); });
+  api.on('channel', event => { if (event.channel === 'omd_awake/apply') api.host.tryCall('events.schedule', { key: 'check', delay_ms: 1000 }); });
+
+  api.command('awake', input => {
+    const [verb = '', ...rest] = String(input ?? '').trim().split(/\s+/).filter(Boolean);
+    const value = rest.join(' '), number = Number(value);
+    const values: Record<string, Json> | null =
+      verb === 'on' || verb === 'off' ? { enabled: verb === 'on' }
+      : verb === 'lid' && (value === 'on' || value === 'off') ? { lid_closed: value === 'on' }
+      : verb === 'hotspot' && value ? { hotspot_ssid: value === 'off' ? '' : value }
+      : verb === 'grace' && value && Number.isInteger(number) && number >= 0 && number <= 3600 ? { grace_seconds: number }
+      : verb === 'battery' && value && Number.isInteger(number) && number >= 0 && number <= 100 ? { battery_floor: number }
+      : verb === 'hours' && value && Number.isInteger(number) && number >= 1 && number <= 24 ? { max_hours: number }
+      : null;
+    if (verb && !values) return { display: `Usage: ${USAGE}` };
+    const settings = { enabled, lid_closed: lidClosed, hotspot_ssid: hotspot, grace_seconds: graceMs / 1000, battery_floor: floor, max_hours: hours, ...values };
+    if (values) {
+      api.host.tryCall('events.publish', { channel: 'apply', data: null });
+      const written = api.host.tryCall('settings.write', { values });
+      if (!written.ok) return { display: `Not saved (${written.error})` };
+    }
+    const state = load();
+    const now = !settings.enabled ? 'off' : state.paused ? `paused: ${state.paused}` : !state.lease ? 'on, waiting for agents'
+      : state.lid_closed ? 'holding, lid can close' : 'holding, lid must stay open';
+    return { display: [
+      `Stay awake while agents work: ${now}`,
+      `Lid closed: ${settings.lid_closed ? 'on (needs the authority broker)' : 'off'} · grace ${settings.grace_seconds} s · battery floor ${settings.battery_floor}% · max ${settings.max_hours} h · hotspot: ${settings.hotspot_ssid || 'none'}`,
+      USAGE,
+    ].join('\n') };
+  }, { description: 'Keep the Mac awake while agents work (replaces Prevent sleep while running)', args_hint: 'on|off|lid|hotspot|grace|battery|hours' });
   for (const event of ['start', 'resume'] as const) {
     api.on(event, () => {
       const state = load();

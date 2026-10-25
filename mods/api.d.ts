@@ -611,7 +611,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';

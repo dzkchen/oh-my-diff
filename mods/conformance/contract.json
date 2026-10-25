@@ -998,14 +998,14 @@
     {
       "id": "tool.builtins",
       "group": "tool",
-      "decision": "Built-in commands and collaboration modes",
-      "observe": "the registry snapshot lists hidden commands and disabled modes",
-      "alter": "`api.builtins` hides commands and disables modes",
+      "decision": "Built-in commands, collaboration modes, surfaces and Codex features",
+      "observe": "the registry snapshot lists hidden commands, disabled modes and surfaces, and removed features",
+      "alter": "`api.builtins` removes commands, modes, surfaces and Codex features (`features.remove`, `builtins_features_v1`)",
       "replace": null,
       "timing": "registered at activation; applied at the next idle boundary; restored on disable, unload or failure",
       "ownership": "mod: which built-ins; host: protected recovery commands and the default mode",
-      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is clamped to default at turn start with a warning",
-      "native": "native plugins cannot remove built-in commands or modes",
+      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is left out of `collaborationMode/list` and refused by `thread/settings/update` and `turn/start`, and a resumed thread holding it is clamped to default at turn start with a warning; a removed feature reads as off and leaves every feature list without writing config",
+      "native": "native plugins cannot remove built-in commands, modes or features",
       "covers": {
         "capabilities": [
           "builtins"

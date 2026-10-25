@@ -1,6 +1,10 @@
 # omd_awake
 
-Keeps the Mac awake while a turn, a subagent or an automation run is working, and lets it sleep normally a short
+Replaces Codex's experimental "Prevent sleep while running" with `/awake`. While the mod is on, that feature is gone
+from the session: no `/experimental` row, no `codex features list` entry, and `prevent_idle_sleep` in `config.toml`
+has no effect. Turning the mod off brings it back as you left it.
+
+It keeps the Mac awake while a turn, a subagent or an automation run is working, and lets it sleep normally a short
 while after they finish. With the authority broker deployed it keeps a closed MacBook running on battery: the screen
 is off, the agents keep working and streaming, and macOS keeps managing the fans. When the work finishes with the lid
 still closed, the Mac goes to sleep.
@@ -25,6 +29,9 @@ only while the lid is open.
 
 ## Use it
 
+- `/awake` shows whether it is holding and the settings. `/awake on` and `/awake off` turn it on and off (it starts
+  on). `/awake lid on|off`, `/awake hotspot <network>|off`, `/awake grace <seconds>`, `/awake battery <percent>` and
+  `/awake hours <1-24>` change the settings; a change applies within a second.
 - The status line shows `awake · lid can close` (or `awake` without the broker) while it holds, `awake: winding
   down` during the grace period, and `awake off: <reason>` after a safeguard stopped it.
 - Every hold ends when the agents finish and the grace period passes, when you disable the mod, when the session
@@ -39,6 +46,7 @@ only while the lid is open.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
+| `enabled` | `true` | Stay awake while agents work (`/awake on`/`off`) |
 | `lid_closed` | `true` | Keep running with the lid closed (needs the broker) |
 | `grace_seconds` | `120` | Stay awake this long after the last turn or subagent finishes |
 | `battery_floor` | `20` | Stop at or below this battery percent while on battery |

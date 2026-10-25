@@ -57,6 +57,8 @@
         "events",
         "lifecycle",
         "terminal",
+        "commands",
+        "builtins",
         "agents",
         "exec",
         "os",
@@ -64,11 +66,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "10e816a118be1eb1dd059b495d8ea3c71ad9c278678f6027890a7ea1d085fc3e",
-        "mod.json": "5b97f845620391d0715aa9e71670a658796290ac26a9fd1c2d21d19aafe5961b"
+        "index.ts": "47b1697d362f16ff44b676b2577970d41550122e5fea2c20e93e49c69872d563",
+        "mod.json": "309e4a32d444e7b34db757978b032fe422faa849026898f8e249d12ba5f67d2b"
       },
       "id": "omd_awake",
-      "package_sha256": "af7eb6f511a0ea5eaeb2f1b9b642942122f8f30e5f69ce302750670f93fa81b1",
+      "package_sha256": "e3cc2cc6c82ae5e2e997976560f8c0fa77272e494cb253e37fb2179be26524e2",
       "source": "mods/first-party/omd_awake",
       "version": "1.0.0"
     },

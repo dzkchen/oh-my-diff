@@ -14,7 +14,7 @@ function machine({ battery = BATTERY(80), thermal = 0, lowPower = 0, agents = []
   return { battery, thermal, lowPower, agents, online, broker, saved, lid, leases: 0 };
 }
 
-function run(event, payload, state, mac, { settings = {}, now = NOW } = {}) {
+function run(event, payload, state, mac, { settings = {}, now = NOW, name = '' } = {}) {
   const calls = [];
   const exec = ({ program, argv }) => {
     const ok = stdout => ({ exit_code: 0, stdout, timed_out: false });
@@ -27,7 +27,7 @@ function run(event, payload, state, mac, { settings = {}, now = NOW } = {}) {
     }
     throw new Error(`unexpected ${program}`);
   };
-  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, payload,
+  const output = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state, event, name, payload,
     virtual_time_ms: now, hook_budget_ms: 2000 }, call => {
     calls.push(call);
     const args = call.arguments;
@@ -42,12 +42,14 @@ function run(event, payload, state, mac, { settings = {}, now = NOW } = {}) {
     if (call.operation === 'terminal.notice') return { shown: true };
     if (call.operation === 'terminal.notify') return { delivered: true, method: 'osc9' };
     if (call.operation === 'events.schedule') return args;
+    if (call.operation === 'events.publish') return { delivered: 1 };
+    if (call.operation === 'settings.write') return { written: true };
     throw new Error(`unexpected ${call.operation}`);
   });
   assert.equal(output.error, undefined, output.error);
   const view = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, settings, state: output.state,
     event: 'terminal', payload: { ledger: null }, virtual_time_ms: now, hook_budget_ms: 2000 }, () => { throw new Error('render calls the host'); });
-  return { state: output.state, status: view.value?.status ?? null,
+  return { state: output.state, value: output.value, status: view.value?.status ?? null,
     execs: calls.filter(call => call.operation === 'exec.run' && call.arguments.program === '/usr/sbin/networksetup').map(call => call.arguments.argv.join(' ')),
     calls: calls.filter(call => !['exec.run', 'agents.inventory'].includes(call.operation)).map(({ operation, arguments: args }) => [operation, args]) };
 }
@@ -97,6 +99,11 @@ test('without a working broker it warns once and holds idle sleep only, and reco
   const back = run('timer', { key: 'check' }, quiet.state, mac, { now: NOW + 2 * MINUTE });
   assert.deepEqual(back.status, ['awake · lid can close']);
   assert.equal(back.state.warned, false);
+  const lidOff = run('timer', { key: 'check' }, back.state, mac, { settings: { lid_closed: false }, now: NOW + 3 * MINUTE });
+  assert.deepEqual(ops(lidOff.calls), ['power.hold', 'power.release', 'events.schedule']);
+  assert.equal(lidOff.calls[0][1].lid_closed, false);
+  assert.deepEqual(lidOff.status, ['awake']);
+  assert.deepEqual(ops(run('timer', { key: 'check' }, lidOff.state, mac, { settings: { lid_closed: false }, now: NOW + 4 * MINUTE }).calls), ['events.schedule']);
   assert.deepEqual(run('turn_start', { turn_id: 't1' }, null, machine(), { settings: { lid_closed: false } }).calls[0], hold(false));
 });
 
@@ -129,6 +136,8 @@ test('with the lid closed it rejoins known Wi-Fi, then keeps joining the hotspot
   const settings = { hotspot_ssid: 'Phone' };
   const unsaved = run('turn_start', { turn_id: 't1' }, null, machine({ saved: ['Home'] }), { settings });
   assert.match(unsaved.calls.find(([op]) => op === 'terminal.notice')[1].text, /Phone isn't a saved Wi-Fi network/);
+  const changed = run('timer', { key: 'check' }, unsaved.state, machine({ saved: ['Home'] }), { settings: { hotspot_ssid: 'Cafe' }, now: NOW + MINUTE });
+  assert.match(changed.calls.find(([op]) => op === 'terminal.notice')[1].text, /Cafe isn't a saved Wi-Fi network/);
   const mac = machine({ lid: 'Yes' });
   const started = run('turn_start', { turn_id: 't1' }, null, mac, { settings });
   assert.deepEqual(ops(started.calls), ['power.hold', 'events.schedule']);
@@ -152,4 +161,24 @@ test('with the lid closed it rejoins known Wi-Fi, then keeps joining the hotspot
   const back = run('timer', { key: 'check' }, state, mac, { settings, now: NOW + 6 * MINUTE });
   assert.equal(back.state.offline, 0);
   assert.deepEqual(back.calls.at(-1), check(15_000));
+});
+
+test('/awake turns the hold on and off, changes settings and shows what it is doing', () => {
+  const mac = machine();
+  const held = run('turn_start', { turn_id: 't1' }, null, mac);
+  const shown = run('command', '', held.state, mac, { name: 'awake' });
+  assert.deepEqual(shown.calls, []);
+  assert.match(shown.value.display, /^Stay awake while agents work: holding, lid can close\nLid closed: on .* grace 120 s · battery floor 20% · max 4 h · hotspot: none\n/);
+  const off = run('command', 'off', held.state, mac, { name: 'awake' });
+  assert.deepEqual(off.calls, [['events.publish', { channel: 'apply', data: null }], ['settings.write', { values: { enabled: false } }]]);
+  assert.match(off.value.display, /^Stay awake while agents work: off/);
+  assert.deepEqual(run('command', 'hotspot My iPhone', held.state, mac, { name: 'awake' }).calls[1], ['settings.write', { values: { hotspot_ssid: 'My iPhone' } }]);
+  assert.deepEqual(run('command', 'hours 30', held.state, mac, { name: 'awake' }).calls, []);
+  assert.match(run('command', 'hours 30', held.state, mac, { name: 'awake' }).value.display, /^Usage: /);
+  const applied = run('channel', { channel: 'omd_awake/apply', data: null }, held.state, mac, { settings: { enabled: false } });
+  assert.deepEqual(applied.calls, [check(1000)]);
+  const released = run('timer', { key: 'check' }, applied.state, mac, { settings: { enabled: false } });
+  assert.deepEqual(released.calls, [['power.release', { lease: 'power-1' }]]);
+  assert.equal(released.status, null);
+  assert.deepEqual(run('turn_start', { turn_id: 't2' }, released.state, mac, { settings: { enabled: false } }).calls, []);
 });

@@ -358,6 +358,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "route_reload_v1",
     "route_write_v1",
     "power_hold_v1",
+    "builtins_features_v1",
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
     "render_hooks_v1",

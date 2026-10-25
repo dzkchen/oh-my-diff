@@ -578,6 +578,7 @@ fn publish(
     views.base(host, terminal, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
+    codex_features::set_removed(builtins.removed_features());
     let name = codex_omd::builtins_snapshot(&host.repository);
     // A missing snapshot reads as no controls, so a repository without any keeps no file.
     if builtins == codex_omd::BuiltinSnapshot::from_controls(&[]) {

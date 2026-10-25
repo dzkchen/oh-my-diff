@@ -16,7 +16,9 @@ Nothing to run. `/plan` is gone, and Shift+Tab no longer cycles into Plan mode.
 
 ## Needs and limits
 
-- A thread that asks for plan mode, such as an old plan-mode session, runs in the default mode with a warning.
+- Clients no longer see Plan, and a request for it is refused.
+- A thread that already holds plan mode, such as an old plan-mode session, runs in the default mode with a warning.
+- `request_user_input` is not offered unless the default mode is allowed to use it.
 - Permissions, approvals and your session data are unchanged.
 - Changes apply at the next turn. Turning the mod off brings plan mode back then.
 - OMD Core doesn't include it, but you can install it yourself.

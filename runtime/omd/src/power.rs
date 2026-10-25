@@ -340,13 +340,11 @@ impl Leases {
                 }
             }
         };
-        if let Some(broker) = &broker {
-            let (closed, end) = (broker.try_clone().map_err(|e| e.to_string())?, end.clone());
-            std::thread::spawn(move || {
-                until_closed(closed);
-                end();
-            });
-        }
+        let closed = broker
+            .as_ref()
+            .map(|broker| broker.try_clone().map(|closed| (closed, end.clone())))
+            .transpose()
+            .map_err(|e| e.to_string())?;
         let expiry = sleep_after(Duration::from_millis(duration), end);
         let mut records = self.records.lock().map_err(|_| "power_state_poisoned")?;
         if full(&records) {
@@ -365,6 +363,12 @@ impl Leases {
                 _expiry: expiry,
             },
         );
+        if let Some((closed, end)) = closed {
+            std::thread::spawn(move || {
+                until_closed(closed);
+                end();
+            });
+        }
         Ok(json!({"lease": lease, "lid_closed": lid_closed}))
     }
 

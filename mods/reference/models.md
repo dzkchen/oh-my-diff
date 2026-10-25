@@ -356,17 +356,24 @@ replaced bytes) or `final_request_refused` with its reason.
 
 ## Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`, registered during activation, hides
-slash commands, disables collaboration modes and turns off native surfaces from the next idle boundary until the
-mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}, features: {remove}})`, registered during
+activation, removes slash commands, collaboration modes, native surfaces and Codex features from the next idle
+boundary until the mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
 that session, including threads in its worktrees.
 
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
+  they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
+  experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. Keys must be
+  Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A turn that requests a disabled mode runs in the default mode with that mode's instructions cleared and a warning
-  (a `warning` notification for app-server clients), including the turn at whose boundary the mod loads.
+- A disabled mode is absent from `collaborationMode/list`, and `thread/settings/update` and `turn/start` refuse a
+  request for it with an error. A resumed thread that still holds a disabled mode is reported in the default mode
+  and runs its next turn there with that mode's instructions cleared and a warning (a `warning` notification for app-server clients),
+  including the turn at whose boundary the mod loads.
 - Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
 ## One-shot model calls and forks (`model_complete_v2`)

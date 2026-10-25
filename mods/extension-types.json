@@ -144,7 +144,7 @@
       "path": "mods/first-party/omd_awake",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Holds and releases host power leases from turn, timer and agent-inventory events; the host only keeps the generic lease."
+      "why_mod": "Removes Codex's prevent_idle_sleep feature with the generic builtins control and holds host power leases from turn, timer and agent-inventory events behind /awake."
     },
     {
       "path": "mods/first-party/omd_continue",
