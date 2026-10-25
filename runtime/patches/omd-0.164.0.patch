@@ -150237,10 +150237,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec9c262c2f
+index 0000000000000000000000000000000000000000..6f904ca11fac83082949a1059c54605f4f103437
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,892 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -150631,6 +150631,29 @@ index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec
 +            })
 +    }
 +
++    fn searching<R>(&mut self, step: impl FnOnce(&mut ListSelectionView) -> R) -> R {
++        let searched = self
++            .picker
++            .search_query()
++            .map(|_| self.state().selected);
++        let result = step(&mut self.picker);
++        if let Some(selected) = searched.filter(|_| self.picker.search_query().is_none()) {
++            if !self.used_query {
++                self.last_query = None;
++            }
++            self.used_query = false;
++            if let Some(id) = selected
++                && let Some(index) = self
++                    .rows()
++                    .iter()
++                    .position(|row| matches!(row, Row::Item(item) if item.id == id))
++            {
++                self.picker.select_actual_idx(index);
++            }
++        }
++        result
++    }
++
 +    fn report_close(&mut self) {
 +        if self.reported || !self.picker.is_complete() {
 +            return;
@@ -150932,6 +150955,15 @@ index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec
 +    let query = state.query.filter(|_| request.search);
 +    let tab = state
 +        .tab
++        .or_else(|| {
++            let selected = state.selected.as_deref()?;
++            request
++                .items
++                .iter()
++                .find(|item| item.id == selected)?
++                .tab
++                .clone()
++        })
 +        .filter(|tab| request.tabs.iter().any(|known| &known.id == tab));
 +    let selected = rows(request, tab.as_deref(), query.as_deref(), collapsed)
 +        .iter()
@@ -151038,26 +151070,7 @@ index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec
 +            }
 +            return;
 +        }
-+        let searching = self.picker.search_query().is_some();
-+        let searched = self
-+            .picker
-+            .search_query()
-+            .and_then(|_| self.state().selected);
-+        self.picker.handle_key_event(key);
-+        if searching && self.picker.search_query().is_none() {
-+            if !self.used_query {
-+                self.last_query = None;
-+            }
-+            self.used_query = false;
-+        }
-+        if let Some(id) = searched.filter(|_| self.picker.search_query().is_none())
-+            && let Some(index) = self
-+                .rows()
-+                .iter()
-+                .position(|row| matches!(row, Row::Item(item) if item.id == id))
-+        {
-+            self.picker.select_actual_idx(index);
-+        }
++        self.searching(|picker| picker.handle_key_event(key));
 +        if let Some(index) = self.picker.take_last_selected_index() {
 +            self.activate(index);
 +        }
@@ -151093,7 +151106,7 @@ index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec
 +    }
 +
 +    fn on_ctrl_c(&mut self) -> CancellationEvent {
-+        let event = self.picker.on_ctrl_c();
++        let event = self.searching(ListSelectionView::on_ctrl_c);
 +        self.report_close();
 +        event
 +    }
@@ -151122,10 +151135,10 @@ index 0000000000000000000000000000000000000000..5ec7a840286f6b90a344d5392682ccec
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c4fe0faa1a8f89e1483925c955e8d199d5c5162
+index 0000000000000000000000000000000000000000..9925d7ffd5a55f6a453e68938d6f53d63e48c9ad
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,240 @@
 +use super::*;
 +use crate::keymap::RuntimeKeymap;
 +use pretty_assertions::assert_eq;
@@ -151328,6 +151341,43 @@ index 0000000000000000000000000000000000000000..7c4fe0faa1a8f89e1483925c955e8d19
 +    press(&mut view, KeyCode::Esc);
 +    press(&mut view, KeyCode::Esc);
 +    assert_eq!(sent(&mut rx), ["demo:panel closed mini"]);
++}
++
++#[test]
++fn reopening_shows_the_selected_items_tab_and_ctrl_c_ends_a_search_like_esc() {
++    let mut arguments = json!({
++        "title": "Demo", "search": true, "selected": "reset", "query": "na", "close_args": "closed",
++        "tabs": [{"id": "main", "title": "Main"}, {"id": "more", "title": "More"}],
++        "action": {"command": "panel"},
++        "items": [
++            {"id": "alpha", "tab": "main", "label": "Alpha", "kind": "action"},
++            {"id": "name", "tab": "more", "label": "Name", "kind": "action"},
++            {"id": "reset", "tab": "more", "label": "Reset", "kind": "action"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("na"));
++    assert_eq!(view.on_ctrl_c(), CancellationEvent::Handled);
++    assert_eq!(view.search_query(), None);
++    view.on_ctrl_c();
++    assert!(view.is_complete());
++    assert_eq!(sent(&mut rx), ["demo:panel closed name"]);
++    arguments.as_object_mut().unwrap().remove("query");
++    let (tx, _rx) = unbounded_channel();
++    let view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.active_tab_id(), Some("more"));
++    assert_eq!(selected(&view), "reset");
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
@@ -152251,16 +152301,18 @@ index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69f56e5143
+index 0000000000000000000000000000000000000000..ca69813ad6ed79feef849f32dde0a74bb0af7dc9
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,307 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SearchMode;
 +use crate::bottom_pane::SelectionItem;
 +use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::picker_hint_line_for_keymap;
 +use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use crate::keymap::ListKeymap;
 +use codex_omd::ModStore;
 +use ratatui::text::Line;
 +use ratatui::widgets::Paragraph;
@@ -152290,6 +152342,7 @@ index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69
 +    title: &str,
 +    header: Vec<Line<'static>>,
 +    mut items: Vec<SelectionItem>,
++    keymap: &ListKeymap,
 +) -> SelectionViewParams {
 +    for item in &mut items {
 +        item.search_value = Some(format!(
@@ -152298,7 +152351,7 @@ index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69
 +            item.description.as_deref().unwrap_or_default()
 +        ));
 +    }
-+    let mut footer = standard_popup_hint_line();
++    let mut footer = picker_hint_line_for_keymap(keymap);
 +    footer
 +        .spans
 +        .extend([" · ".into(), "/".into(), " to search".into()]);
@@ -152538,6 +152591,7 @@ index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69
 +            "All mods",
 +            vec![Line::from(header)],
 +            items,
++            &self.bottom_pane.list_keymap(),
 +        ));
 +        self.request_redraw();
 +    }
@@ -152560,10 +152614,10 @@ index 0000000000000000000000000000000000000000..715214b4d6fcc8dd33dfb9e7399e3b69
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f22a85dde
+index 0000000000000000000000000000000000000000..73b902b4c0a364c19f3c48fc0fa47f0c6e501d3c
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,85 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -152633,6 +152687,21 @@ index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f
 +        !std::iter::from_fn(|| rx.try_recv().ok())
 +            .any(|event| matches!(event, AppEvent::OmdModToggle { .. }))
 +    );
++}
++
++#[test]
++fn all_mods_footer_follows_the_list_keymap() {
++    let mut keymap = crate::keymap::RuntimeKeymap::defaults().list;
++    keymap.cancel = vec![crate::key_hint::plain(KeyCode::Char('q'))];
++    let footer = searchable("view", "Title", Vec::new(), Vec::new(), &keymap)
++        .footer_hint
++        .expect("footer");
++    let text = footer
++        .spans
++        .iter()
++        .map(|span| span.content.as_ref())
++        .collect::<String>();
++    assert!(text.contains("q back") && text.ends_with("/ to search"), "{text}");
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644

@@ -127,7 +127,7 @@ class ProfileModeTests(unittest.TestCase):
                         self.assertFalse(prefix.exists())
                         self.assertEqual(list(bin_dir.iterdir()), [])
 
-    def test_identical_files_across_generations_catalog_and_store_are_one_inode(self):
+    def test_identical_files_across_generations_and_catalog_are_one_inode(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "source.ts"
@@ -137,12 +137,23 @@ class ProfileModeTests(unittest.TestCase):
                 profiles.place(source, prefix / "management/install.sh", root / "objects")
                 profiles.place(source, prefix / "sources/mod/index.ts", root / "objects")
             shelf = profiles.shelve(prefixes[1] / "sources/mod", root / "catalog/mod/sha")
-            shutil.copytree(prefixes[1] / "sources/mod", root / "stores/full/sources/mod", copy_function=profiles.link)
             files = [prefix / name for prefix in prefixes for name in ("management/install.sh", "sources/mod/index.ts")]
-            files += [shelf / "index.ts", root / "stores/full/sources/mod/index.ts", root / "objects" / profiles.support.digest(source)]
+            files += [shelf / "index.ts", root / "objects" / profiles.support.digest(source)]
             self.assertEqual({path.stat().st_ino for path in files}, {files[-1].stat().st_ino})
             self.assertEqual(files[0].stat().st_nlink, len(files))
             self.assertEqual([path.name for path in (root / "objects").iterdir()], [profiles.support.digest(source)])
+
+    def test_an_object_edited_in_place_is_replaced_not_reused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.ts"
+            source.write_text("export default 1\n")
+            edited = profiles.place(source, root / "releases/a/prefix/sources/mod/index.ts", root / "objects")
+            (root / "objects" / edited).write_text("tampered\n")
+            fresh = root / "releases/b/prefix/sources/mod/index.ts"
+            self.assertEqual(profiles.place(source, fresh, root / "objects"), edited)
+            self.assertEqual(fresh.read_text(), "export default 1\n")
+            self.assertTrue(os.path.samestat(fresh.stat(), (root / "objects" / edited).stat()))
 
     def test_identical_independent_copies_are_merged_and_every_generation_stays_valid(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -152,16 +163,24 @@ class ProfileModeTests(unittest.TestCase):
             copies = []
             for name in ("old", "new"):
                 for relative in (f"releases/{name}/prefix/management/install.sh", f"releases/{name}/prefix/sources/example/index.ts",
-                                 f"catalog/mod/{name}/index.ts", f"stores/full/sources/mod/{name}.ts"):
+                                 f"catalog/mod/{name}/index.ts"):
                     path = root / relative
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text("same")
                     copies.append(path)
-            different = root / "stores/full/sources/mod/other.ts"
+            store = root / "stores/full/sources/mod/index.ts"
+            store.parent.mkdir(parents=True)
+            store.write_text("same")
+            different = root / "catalog/mod/other.ts"
             different.write_text("different")
+            unreadable = root / "catalog/mod/unreadable.ts"
+            unreadable.write_text("same")
+            unreadable.chmod(0)
             profiles.deduplicate(root)
+            unreadable.chmod(0o644)
             self.assertEqual({path.stat().st_ino for path in copies}, {copies[0].stat().st_ino})
             self.assertEqual(copies[0].stat().st_nlink, len(copies) + 1)
+            self.assertEqual(store.stat().st_nlink, 1)
             self.assertNotEqual(different.stat().st_ino, copies[0].stat().st_ino)
             self.assertEqual(different.read_text(), "different")
             digest = profiles.support.digest(copies[0])
@@ -174,11 +193,11 @@ class ProfileModeTests(unittest.TestCase):
             self.assertFalse(prefix.exists())
             self.assertEqual(copies[1].read_text(), "same")
 
-    def test_launcher_removes_its_marker_on_exit_and_reaps_dead_ones_at_startup(self):
+    def test_launcher_reaps_dead_markers_and_execs_codex_as_the_marked_process(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             codex = base / "fake-codex"
-            codex.write_text(f'#!/bin/sh\nls {base}/root/sessions > {base}/seen\n[ -n "$KILLPARENT" ] && {{ kill -TERM $PPID; sleep 1; }}\nexit 7\n')
+            codex.write_text(f'#!/bin/sh\necho $$ > {base}/pid\nls {base}/root/sessions > {base}/seen\nexit 7\n')
             codex.chmod(0o755)
             record = {"binary": {"installed_path": str(codex)}, "store": str(base / "store"), "profile": "platform",
                       "activation": {"selection": "platform"},
@@ -189,13 +208,10 @@ class ProfileModeTests(unittest.TestCase):
             sessions.mkdir(parents=True)
             dead = subprocess.Popen(["true"])
             dead.wait()
-            for environment, status in (({}, 7), ({"KILLPARENT": "1"}, 143)):
-                (sessions / str(dead.pid)).touch()
-                result = subprocess.run(["sh", launcher], env={**os.environ, **environment})
-                self.assertEqual(result.returncode, status)
-                self.assertEqual(len((base / "seen").read_text().split()), 1)
-                self.assertNotIn(str(dead.pid), (base / "seen").read_text().split())
-                self.assertEqual(list(sessions.iterdir()), [])
+            (sessions / str(dead.pid)).touch()
+            result = subprocess.run(["sh", launcher])
+            self.assertEqual(result.returncode, 7)
+            self.assertEqual((base / "seen").read_text().split(), (base / "pid").read_text().split())
 
     def test_uninstall_removes_plugins_added_from_this_installation(self):
         with tempfile.TemporaryDirectory() as temporary:

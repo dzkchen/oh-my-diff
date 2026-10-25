@@ -62,6 +62,15 @@ def link(source, target):
         shutil.copy2(source, target)
 
 
+def relink(source, target, objects):
+    temporary = objects / f".{target.name}.{os.urandom(4).hex()}"
+    try:
+        os.link(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def share(objects, path):
     try:
         name = support.digest(path)
@@ -71,30 +80,30 @@ def share(objects, path):
             os.link(path, stored)
         except FileExistsError:
             if not os.path.samestat(path.stat(), stored.stat()) and path.stat().st_mode == stored.stat().st_mode:
-                temporary = objects / f".{name}.{os.urandom(4).hex()}"
-                try:
-                    os.link(stored, temporary)
-                    os.replace(temporary, path)
-                finally:
-                    temporary.unlink(missing_ok=True)
+                if support.digest(stored) == name:
+                    relink(stored, path, objects)
+                else:
+                    relink(path, stored, objects)
+        return name
     except OSError:
-        pass
+        return None
 
 
 def place(source, target, objects):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
-    if objects:
-        share(objects, target)
-    return support.digest(target)
+    return objects and share(objects, target) or support.digest(target)
 
 
 def deduplicate(root):
     objects = root / "objects"
-    for directory in (root / "catalog", *root.glob("stores/*/sources"), *root.glob("releases/*/prefix/management"),
-                      *root.glob("releases/*/prefix/sources")):
+    for directory in (root / "catalog", *root.glob("releases/*/prefix/management"), *root.glob("releases/*/prefix/sources")):
         for path in directory.rglob("*"):
-            if path.is_file() and not path.is_symlink():
+            try:
+                single = path.is_file() and not path.is_symlink() and path.stat().st_nlink == 1
+            except OSError:
+                continue
+            if single:
                 share(objects, path)
 
 
@@ -117,7 +126,7 @@ def sync_sources(manager, store, origin, packages):
             staged, retired = target.with_name(f".{identifier}.new"), target.with_name(f".{identifier}.old")
             for leftover in (staged, retired):
                 shutil.rmtree(leftover, ignore_errors=True)
-            shutil.copytree(origin / identifier, staged, copy_function=link)
+            shutil.copytree(origin / identifier, staged)
             if target.is_dir():
                 target.rename(retired)
             staged.rename(target)
@@ -253,8 +262,7 @@ def selected_text(record):
         marker = f"{root}/sessions/$$"
         lines += [f"mkdir -p {root}/sessions",
                   f'for m in {root}/sessions/*; do [ -e "$m" ] && ! kill -0 "${{m##*/}}" 2>/dev/null && rm -f "$m"; done',
-                  f": > {marker}", f"trap {shlex.quote('rm -f ' + marker)} EXIT",
-                  "trap 'exit 129' HUP", "trap 'exit 130' INT", "trap 'exit 143' TERM",
+                  f": > {marker}",
                   f'if [ -z "$OH_MY_DIFF_UPDATED" ] && {{ [ -e {root}/update/ready.json ] || [ -e {root}/update/journal.json ] || [ {request} -nt {root}/update/seen ]; }}; then',
                   f"  {installer} launch --root {root} --session $$",
                   f'  OH_MY_DIFF_UPDATED=1 exec {root}/current/bin/codex "$@"',
@@ -277,8 +285,7 @@ def selected_text(record):
                     "request_max_retries": 0, "stream_max_retries": 0, "supports_websockets": False}
         for field, value in settings.items():
             flags += ["-c", f"model_providers.{provider['id']}.{field}={json.dumps(value)}"]
-    command = f"{shlex.join([binary, *flags])} \"$@\""
-    lines.append(f"{command}; exit $?" if update else f"exec {command}")
+    lines.append(f"exec {shlex.join([binary, *flags])} \"$@\"")
     return "\n".join(lines) + "\n"
 
 
@@ -692,7 +699,7 @@ def install(args):
                                      "files": package["files"], "capabilities": package["capabilities"]}
             target = sources / identifier
             if not target.is_dir():
-                shutil.copytree(prefix / "sources" / identifier, target, copy_function=link)
+                shutil.copytree(prefix / "sources" / identifier, target)
                 trusted.append({"path": str(target), "sha256": package["package_sha256"],
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:

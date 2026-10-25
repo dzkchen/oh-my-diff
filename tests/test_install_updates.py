@@ -402,9 +402,9 @@ class UpdateSelection(unittest.TestCase):
                 self.assertEqual(store.exists(), existing)
                 self.assertFalse((root / "update/journal.json").exists())
 
-    def test_sessions_count_codex_binaries_and_launcher_shells_and_collect_drops_unlinked_objects(self):
+    def test_sessions_count_codex_processes_and_collect_drops_unlinked_objects(self):
         (self.root / "sessions").mkdir()
-        listing = {"1": "/x/artifacts/codex -c a=b", "2": "/bin/sh /x/bin/codex", "3": "vim notes", "4": "vim notes", "5": ""}
+        listing = {"1": "/x/artifacts/codex", "2": "codex", "3": "vim", "4": "vim", "5": ""}
         for pid in listing:
             (self.root / "sessions" / pid).touch()
         os.utime(self.root / "sessions/4", (time.time(), time.time()))

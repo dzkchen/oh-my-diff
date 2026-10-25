@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.164.0.patch",
-    "sha256": "c7295ad82718e0a5720eb1f997e02b4e2196dc9ca76da8559506b4cc1896e440"
+    "sha256": "e41ee9db6ebeb8626284a4ebebace074b1c74c5b116e61a17fbf4113b3a08d61"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -1927,11 +1927,11 @@
     },
     "codex-rs/tui/src/bottom_pane/mod_panel.rs": {
       "before": null,
-      "after": "83fbc16c764b11bea4c3b6c5bdd245c2bdd9a402bd874ab72f53b1d425820542"
+      "after": "b33b958c894c428e7bd4e088ab5e756fec408863530b5d18ecbdbd390f1a721e"
     },
     "codex-rs/tui/src/bottom_pane/mod_panel_tests.rs": {
       "before": null,
-      "after": "c283740be63b98c78c85ff224cc1126e3566b96204b28e8147e72d4dfe52a956"
+      "after": "b23045d9f3c12e1721dfffe64fac11fdaf9af1109de8574cd172245cef100778"
     },
     "codex-rs/tui/src/bottom_pane/paste_burst.rs": {
       "before": "709de5aad0d02d9d05e5320dfc4dc975063f78c4aa4daf6c2a72dc55812385eb",
@@ -1999,11 +1999,11 @@
     },
     "codex-rs/tui/src/chatwidget/omd_extensions.rs": {
       "before": null,
-      "after": "eca71b68e668f3fef8af2ca8f3db5c070ac156a003313bdd25349eeba9bd9cc8"
+      "after": "58c06ab24a4017fb534d3589f2de9c173e479e6d3b8400077f6f5885a2afcaef"
     },
     "codex-rs/tui/src/chatwidget/omd_extensions_tests.rs": {
       "before": null,
-      "after": "d57107b332c1e07702320c1781be0400ce70ebc782bfe1c793187e9a0b30c81f"
+      "after": "58f271d8420dd07451ce8d7f4bfbcbc3b6ce4051ca4dc512a40c808751d641cb"
     },
     "codex-rs/tui/src/chatwidget/protocol.rs": {
       "before": "ee591e2f5941a431df2d2f87122149eea0c8076ef749e4c9ed305b72f5d7a313",

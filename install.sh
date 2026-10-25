@@ -746,8 +746,8 @@ def sessions(root, own):
         pid = int(marker.name) if marker.name.isdigit() else 0
         if not pid or pid == own:
             continue
-        words = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True).stdout.split()
-        if words and (any(Path(word).name == "codex" for word in words) or time.time() - marker.stat().st_mtime < 60):
+        name = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if name and (Path(name).name == "codex" or time.time() - marker.stat().st_mtime < 60):
             live.append(pid)
         else:
             marker.unlink(missing_ok=True)
