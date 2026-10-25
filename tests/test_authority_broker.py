@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -90,6 +91,36 @@ class SignedReleaseAnchorTest(unittest.TestCase):
         code = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
         self.assertIn(f'RELEASE_KEY = "{authority_broker.RELEASE_KEY}"\n', code)
         self.assertIn(f'SIGNING_NAMESPACE = "{authority_broker.SIGNING_NAMESPACE}"\n', code)
+
+
+class PowerHelperDaemonTest(unittest.TestCase):
+    def test_install_runs_the_power_helper_as_root_for_the_broker_only_and_uninstall_restores_sleep(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "OhMyDiff/broker"
+            paths = {"ROOT": root, "TOOLS": root.parent / "tools", "COPY": root.parent / "tools/authority_broker.py",
+                     "HELPER": base / "helper", "DAEMON": base / "broker.plist",
+                     "POWER_DAEMON": base / "power.plist", "POWER_RECORD": root.parent / "power.json"}
+            commands = []
+            with mock.patch.multiple(authority_broker, **paths), \
+                    mock.patch.multiple(authority_broker, signed_releases=lambda _: [{"version": "1.0.0"}],
+                                        signed_hashes=lambda _: {}, signed_bytes=lambda *_: b"signed",
+                                        signed_cdhashes=lambda *_: ["pin"], create_account=lambda: None,
+                                        run=lambda *arguments, **_: commands.append(arguments)), \
+                    mock.patch("grp.getgrnam", return_value=mock.Mock(gr_gid=301)), \
+                    mock.patch("shutil.chown"), mock.patch("os.chown"):
+                authority_broker.install(base / "omd-broker", base / "tooling.py", [], [])
+                power = plistlib.loads(paths["POWER_DAEMON"].read_bytes())
+                self.assertEqual(power["ProgramArguments"], [str(paths["HELPER"]), "power"])
+                self.assertNotIn("UserName", power)
+                self.assertEqual(power["Sockets"]["Listener"], {"SockPathName": authority_broker.POWER_SOCKET,
+                                                                "SockPathMode": 0o660, "SockPathOwner": 0,
+                                                                "SockPathGroup": 301})
+                self.assertIn(("/bin/launchctl", "bootstrap", "system", paths["POWER_DAEMON"]), commands)
+                paths["POWER_RECORD"].write_text(json.dumps({"previous": True}))
+                authority_broker.uninstall()
+                self.assertIn(("/usr/bin/pmset", "-a", "disablesleep", "1"), commands)
+                self.assertFalse(paths["POWER_DAEMON"].exists() or paths["POWER_RECORD"].exists())
 
 
 class AdministratorPolicyFileTest(unittest.TestCase):

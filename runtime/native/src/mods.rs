@@ -643,6 +643,7 @@ impl Core {
             expansion::release_owner(self, &id);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_owned(&id, generation);
+                lead.session.power.release_owner(&id);
                 access::release_servers(lead, generation, Some(&id)).await;
             }
         }
@@ -684,6 +685,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                lead.session.power.retain(sources);
                 self.services.cleanup_stale(*generation, sources).await;
                 access::release_servers(lead, *generation, None).await;
             }
@@ -2076,6 +2078,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             expansion::release_thread(self, lead.thread);
             self.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
+            lead.session.power.clear();
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
         })

@@ -46,6 +46,7 @@ OMD Core includes only the first three.
 | `omd_privacy` | Hides secrets and chosen personal data from what's sent to the model; `/privacy` | |
 | `omd_usage` | A usage dialog: context, cache, cost and quota by request (Alt+a) | |
 | `omd_continue` | `/continue [note]` resumes interrupted work in the current session | |
+| `omd_awake` | Keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
 | `omd_lsp_sync` | Reports the errors each edit introduces to the agent; go to definition, references, rename | A language server on your `PATH`, such as `pyright-langserver`, `typescript-language-server` or `rust-analyzer` |
 | `omd_lsp_view` | Hover, symbols, code actions and formatting in `/lsp` | `omd_lsp_sync` turned on |
 | `omd_claude_cli` | Claude models in `/model`, using your Claude plan or API credits | Claude CLI 2.1.307 or newer and Node 22.18+. See [Claude](#claude). |

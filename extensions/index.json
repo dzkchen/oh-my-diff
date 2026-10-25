@@ -107,6 +107,22 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_awake",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Keeps the Mac awake, lid closed too, while turns or subagents run",
+      "source": "mods/first-party/omd_awake",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.164.0; OMD 1.2.0; mod API 1.0.0; power_hold_v1",
+      "tested_versions": [
+        "Codex 0.164.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "reviewed_candidate"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",

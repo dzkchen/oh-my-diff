@@ -33,6 +33,7 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
+- Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -45,7 +46,7 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
 | [Capabilities and authority grants](capabilities.md) | Every capability, authority grants, structured access, admission policy |
 | [Commands, files and data](exec-files-and-data.md) | `exec.run`, workspace reads and writes, `store.*`, reactive state |
 | [Models and routing](models.md) | Routes, the ledger, model requests and streams, request policy, one-shot model calls |
-| [Agents, contracts and sessions](agents-and-sessions.md) | Contracts, agents, peers, autonomous turns, submissions, lifecycle events |
+| [Agents, contracts and sessions](agents-and-sessions.md) | Contracts, agents, peers, power holds, autonomous turns, submissions, lifecycle events |
 | [App bridge, approvals and tools](tools-and-middleware.md) | The app-server bridge, approvals, continuation middleware, tool output, dynamic tools |
 | [Processes, kernels and events](processes-and-events.md) | Framed processes, code-mode kernels, adapters, channels and watches |
 | [Credentials and threads](credentials-and-threads.md) | Credentials, secrets, the thread store and turn activity |

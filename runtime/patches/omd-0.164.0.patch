@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f7ba352c0 100644
+index 7aff2ec26295627898a6417c83822aa6b3f8365a..861d846e70ed0d5137a96c89e4e8b1a22d72aaa2 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -141,7 +141,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4293,6 +4344,86 @@ dependencies = [
+@@ -4293,6 +4344,87 @@ dependencies = [
   "wiremock",
  ]
 
@@ -150,6 +150,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 +version = "1.2.0"
 +dependencies = [
 + "base64 0.22.1",
++ "codex-utils-sleep-inhibitor",
 + "ignore",
 + "image",
 + "libc",
@@ -228,7 +229,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "codex-otel"
  version = "0.164.0"
-@@ -4874,6 +5005,7 @@ dependencies = [
+@@ -4874,6 +5006,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -236,7 +237,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4948,6 +5080,8 @@ dependencies = [
+@@ -4948,6 +5081,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -245,7 +246,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4970,6 +5104,7 @@ dependencies = [
+@@ -4970,6 +5105,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -253,7 +254,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5582,6 +5717,19 @@ dependencies = [
+@@ -5582,6 +5718,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -273,7 +274,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -6700,7 +6848,7 @@ dependencies = [
+@@ -6700,7 +6849,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users 0.5.2",
@@ -282,7 +283,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -6803,6 +6951,12 @@ version = "1.2.1"
+@@ -6803,6 +6952,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -295,7 +296,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -7057,7 +7211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -7057,7 +7212,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -304,7 +305,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7209,7 +7363,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+@@ -7209,7 +7364,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
  dependencies = [
   "cfg-if",
   "rustix 1.1.4",
@@ -313,7 +314,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7450,6 +7604,16 @@ dependencies = [
+@@ -7450,6 +7605,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -330,7 +331,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7475,6 +7639,12 @@ dependencies = [
+@@ -7475,6 +7640,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -343,7 +344,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -7709,7 +7879,7 @@ dependencies = [
+@@ -7709,7 +7880,7 @@ dependencies = [
   "gobject-sys",
   "libc",
   "system-deps",
@@ -352,7 +353,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -8650,6 +8820,10 @@ name = "hashbrown"
+@@ -8650,6 +8821,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -363,7 +364,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 
  [[package]]
  name = "hashbrown"
-@@ -8870,6 +9044,20 @@ dependencies = [
+@@ -8870,6 +9045,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -384,7 +385,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9133,7 +9321,7 @@ dependencies = [
+@@ -9133,7 +9322,7 @@ dependencies = [
   "js-sys",
   "log",
   "wasm-bindgen",
@@ -393,7 +394,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -9348,6 +9536,12 @@ dependencies = [
+@@ -9348,6 +9537,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -406,7 +407,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "ignore"
  version = "0.4.25"
-@@ -9578,6 +9772,18 @@ dependencies = [
+@@ -9578,6 +9773,18 @@ dependencies = [
   "serde",
  ]
 
@@ -425,7 +426,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -9586,7 +9792,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -9586,7 +9793,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -434,7 +435,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -10444,6 +10650,12 @@ dependencies = [
+@@ -10444,6 +10651,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -447,7 +448,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -10567,7 +10779,7 @@ version = "0.50.3"
+@@ -10567,7 +10780,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -456,7 +457,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11297,7 +11509,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -11297,7 +11510,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
  dependencies = [
   "libc",
@@ -465,7 +466,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11411,6 +11623,15 @@ dependencies = [
+@@ -11411,6 +11624,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -481,7 +482,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -11605,7 +11826,7 @@ version = "0.11.3"
+@@ -11605,7 +11827,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -490,7 +491,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12233,7 +12454,7 @@ dependencies = [
+@@ -12233,7 +12455,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -499,7 +500,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12257,6 +12478,12 @@ version = "6.0.0"
+@@ -12257,6 +12479,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -512,7 +513,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -12723,7 +12950,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -12723,7 +12951,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -521,7 +522,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -13533,7 +13760,7 @@ dependencies = [
+@@ -13533,7 +13761,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.4.15",
@@ -530,7 +531,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13546,7 +13773,7 @@ dependencies = [
+@@ -13546,7 +13774,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.12.1",
@@ -539,7 +540,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13605,7 +13832,7 @@ dependencies = [
+@@ -13605,7 +13833,7 @@ dependencies = [
   "security-framework 3.5.1",
   "security-framework-sys",
   "webpki-root-certs",
@@ -548,7 +549,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13977,6 +14204,12 @@ dependencies = [
+@@ -13977,6 +14205,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -561,7 +562,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14363,6 +14596,12 @@ dependencies = [
+@@ -14363,6 +14597,12 @@ dependencies = [
   "time",
  ]
 
@@ -574,7 +575,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -14417,7 +14656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -14417,7 +14657,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -583,7 +584,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -14861,6 +15100,17 @@ version = "0.1.9"
+@@ -14861,6 +15101,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -601,7 +602,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -14980,6 +15230,335 @@ dependencies = [
+@@ -14980,6 +15231,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -937,7 +938,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15221,11 +15800,17 @@ version = "0.2.2"
+@@ -15221,11 +15801,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -957,7 +958,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  dependencies = [
   "filetime",
   "libc",
-@@ -15247,7 +15832,7 @@ dependencies = [
+@@ -15247,7 +15833,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix 1.1.4",
@@ -966,7 +967,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15303,7 +15888,7 @@ dependencies = [
+@@ -15303,7 +15889,7 @@ dependencies = [
   "parking_lot",
   "rustix 1.1.4",
   "signal-hook",
@@ -975,7 +976,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15380,7 +15965,7 @@ dependencies = [
+@@ -15380,7 +15966,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -984,7 +985,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16352,6 +16937,12 @@ version = "1.1.0"
+@@ -16352,6 +16938,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -997,7 +998,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -17061,7 +17652,7 @@ version = "0.1.11"
+@@ -17061,7 +17653,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -1006,7 +1007,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -17695,6 +18286,15 @@ version = "0.6.2"
+@@ -17695,6 +18287,15 @@ version = "0.6.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
@@ -59599,10 +59600,10 @@ index 0000000000000000000000000000000000000000..096710ab25143400080f58310d11d2d4
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9efb1d090
+index 0000000000000000000000000000000000000000..18dd09fdc3565f0e22c91c2399259d41a42e3a26
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,748 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -59693,6 +59694,7 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +    contract: std::sync::Mutex<contract::SessionContract>,
 +    contract_state: PathBuf,
 +    processes: Arc<managed_process::ManagedProcesses>,
++    power: Arc<codex_omd::power::Leases>,
 +    data: mods::DataScope,
 +    access: mods::AccessState,
 +}
@@ -60095,6 +60097,7 @@ index 0000000000000000000000000000000000000000..a6fa29d258c8456dcc90a11d4097dfe9
 +                self.repository_identity
 +            )),
 +            processes: Arc::new(managed_process::ManagedProcesses::default()),
++            power: Arc::default(),
 +            data: mods::DataScope::default(),
 +            access: mods::AccessState::default(),
 +            evidence,
@@ -62902,10 +62905,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..c680e888b2814b3af9ea0c80d748db725c943897
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2546 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63551,6 +63554,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            expansion::release_owner(self, &id);
 +            if let Some(lead) = lead {
 +                lead.session.processes.cleanup_owned(&id, generation);
++                lead.session.power.release_owner(&id);
 +                access::release_servers(lead, generation, Some(&id)).await;
 +            }
 +        }
@@ -63592,6 +63596,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            expansion::retain_sources(self, sources);
 +            if let Some(lead) = lead {
 +                lead.session.processes.cleanup_stale(*generation);
++                lead.session.power.retain(sources);
 +                self.services.cleanup_stale(*generation, sources).await;
 +                access::release_servers(lead, *generation, None).await;
 +            }
@@ -64984,6 +64989,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            expansion::release_thread(self, lead.thread);
 +            self.environment.clear(Some(&lead.thread.to_string()), None);
 +            lead.session.processes.cleanup();
++            lead.session.power.clear();
 +            lead.session.access.cleanup();
 +            let _ = lead.session.persist_cost_capture();
 +        })
@@ -78044,10 +78050,10 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2cc378cd4
+index 0000000000000000000000000000000000000000..8d3dd837443f62995632c3ea6322806ed9910bf4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,785 @@
+@@ -0,0 +1,801 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -78721,6 +78727,22 @@ index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2
 +        "peers.list" | "peers.send" => {
 +            let endpoints = super::peering::current_endpoints(core).await;
 +            core.peering.call(lead, &caller, request, endpoints)
++        }
++        "power.hold" | "power.release" => {
++            if operation == "power.hold" && caller.origin != Origin::Event {
++                return Err("host_operation_event_only: power.hold".into());
++            }
++            let power = lead.session.power.clone();
++            let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
++            tokio::task::spawn_blocking(move || {
++                if request.operation == "power.hold" {
++                    power.hold(&id, &source, &request.arguments)
++                } else {
++                    power.release(&id, &request.arguments)
++                }
++            })
++            .await
++            .map_err(|e| e.to_string())?
 +        }
 +        "turns.abort" => {
 +            #[derive(serde::Deserialize)]
@@ -83257,10 +83279,10 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3a5e508c6
+index 0000000000000000000000000000000000000000..4c9ea8d2a46a66eef2dd494d4c4aaa7275e707e9
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,25 @@
 +[package]
 +name = "codex-omd"
 +version = "1.2.0"
@@ -83281,6 +83303,7 @@ index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3
 +quick-xml = "=0.41.0"
 +tempfile = "=3.27.0"
 +libc = "=0.2.186"
++codex-utils-sleep-inhibitor = { workspace = true }
 +
 +[target.'cfg(target_os = "macos")'.dependencies]
 +security-framework = "=3.5.1"
@@ -92080,16 +92103,27 @@ index 0000000000000000000000000000000000000000..20e9a403e3c4886949bc5409da69b8fc
 +}
 diff --git a/codex-rs/omd/src/bin/omd-broker.rs b/codex-rs/omd/src/bin/omd-broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88876e1b3c7b5c7cec1f855d4fe060cbd46ecf1f
+index 0000000000000000000000000000000000000000..d361e339551a49833754c303be875e6a0bdced75
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-broker.rs
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,29 @@
++use std::os::unix::fs::MetadataExt;
 +use std::path::PathBuf;
 +use std::sync::Arc;
 +
 +fn main() -> std::process::ExitCode {
 +    let root = PathBuf::from(codex_omd::broker::ROOT);
 +    let served = codex_omd::broker::listener().and_then(|listener| {
++        if std::env::args().nth(1).as_deref() == Some("power") {
++            let setting = Arc::new(codex_omd::power::Setting::open(
++                PathBuf::from(codex_omd::power::PMSET),
++                PathBuf::from(codex_omd::power::IOREG),
++                PathBuf::from(codex_omd::power::RECORD),
++                std::fs::metadata(&root)?.uid(),
++            )?);
++            setting.serve(listener);
++            return Ok(());
++        }
 +        let broker = Arc::new(codex_omd::broker::Broker::open(root.clone())?);
 +        broker.serve(listener, Arc::new(codex_omd::broker::Pinned::new(&root)));
 +        Ok(())
@@ -93546,10 +93580,10 @@ index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04c34aa15e
+index 0000000000000000000000000000000000000000..0204d53be8bdf3db8cc51a6058822f59cea789d4
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,1003 @@
+@@ -0,0 +1,1025 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -93672,6 +93706,10 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +
 +    pub fn call(&mut self, op: &str, arguments: Value) -> io::Result<Value> {
 +        self.send(&json!({"op": op, "arguments": arguments}))
++    }
++
++    pub(crate) fn socket(&self) -> io::Result<UnixStream> {
++        self.stream.get_ref().try_clone()
 +    }
 +
 +    pub fn authorized(&mut self, op: &str, arguments: Value) -> io::Result<Value> {
@@ -93846,6 +93884,10 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +    }
 +}
 +
++pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
++    platform::peer_uid(stream)
++}
++
 +pub fn listener() -> io::Result<UnixListener> {
 +    platform::launchd_listener()
 +}
@@ -93866,6 +93908,7 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +
 +pub struct Broker {
 +    root: PathBuf,
++    pub(crate) power: PathBuf,
 +    state: Mutex<()>,
 +}
 +
@@ -93926,6 +93969,7 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +        }
 +        Ok(Self {
 +            root,
++            power: PathBuf::from(crate::power::SOCKET),
 +            state: Mutex::new(()),
 +        })
 +    }
@@ -93949,14 +93993,14 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +        let mut writer = stream.try_clone()?;
 +        let peer = stream.try_clone()?;
 +        let mut reader = BufReader::new(stream);
-+        let mut challenge = None;
++        let (mut challenge, mut hold) = (None, None);
 +        loop {
 +            let mut line = String::new();
 +            (&mut reader).take(LINE_BYTES).read_line(&mut line)?;
 +            if !line.ends_with('\n') {
 +                return Ok(());
 +            }
-+            let response = match self.request(&peer, &line, &mut challenge, gate) {
++            let response = match self.request(&peer, &line, &mut challenge, &mut hold, gate) {
 +                Ok(value) => json!({"ok": value}),
 +                Err(error) => json!({"error": error.to_string()}),
 +            };
@@ -93971,6 +94015,7 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +        peer: &UnixStream,
 +        line: &str,
 +        challenge: &mut Option<(String, String)>,
++        hold: &mut Option<crate::power::Hold>,
 +        gate: &dyn Gate,
 +    ) -> io::Result<Value> {
 +        let request: Request =
@@ -93979,6 +94024,17 @@ index 0000000000000000000000000000000000000000..f6b167244aa7a7a103d3cdbf676c1f04
 +            let nonce = nonce()?;
 +            *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
 +            return Ok(Value::String(nonce));
++        }
++        if request.op == "power.hold" {
++            if hold.is_some() {
++                return Err(failure("authority_power_held"));
++            }
++            *hold = Some(crate::power::Hold::start(
++                &self.power,
++                &request.arguments,
++                peer.try_clone()?,
++            )?);
++            return Ok(Value::Null);
 +        }
 +        // State is keyed by path, so only its owner (or, for an unwritten stream, its directory's owner) may name it.
 +        for (field, refused) in [
@@ -102615,10 +102671,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..06e97e5beb210094fe8e2d7220ed6d1400ffd17c
+index 0000000000000000000000000000000000000000..818759d3e976d82a2a2e7277b8d47aa4ec4f24ce
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,253 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -102643,6 +102699,7 @@ index 0000000000000000000000000000000000000000..06e97e5beb210094fe8e2d7220ed6d14
 +pub mod package_controls;
 +pub mod peers;
 +pub mod plan_routes;
++pub mod power;
 +pub mod process_raster;
 +pub mod resource_data;
 +pub mod route_writes;
@@ -104508,10 +104565,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c9819532c07
+index 0000000000000000000000000000000000000000..4f22b700d76d33dce7cd4278e3baf1dddc2c8339
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6230 @@
+@@ -0,0 +1,6239 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104871,6 +104928,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "pty_programs_v1",
 +    "route_reload_v1",
 +    "route_write_v1",
++    "power_hold_v1",
 +    "terminal_tabs_v1",
 +    "terminal_inline_sites_v1",
 +    "render_hooks_v1",
@@ -105019,6 +105077,8 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "environment.set",
 +    "peers.list",
 +    "peers.send",
++    "power.hold",
++    "power.release",
 +    "turns.queue",
 +    "turns.queued",
 +    "turns.dequeue",
@@ -105070,6 +105130,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "policy",
 +    "request_policy",
 +    "peers",
++    "power",
 +    "autonomous",
 +    "history_write",
 +    "history_persist",
@@ -105083,6 +105144,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "mcp",
 +    "policy",
 +    "peers",
++    "power",
 +    "autonomous",
 +    "history_write",
 +    "history_persist",
@@ -105135,6 +105197,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        "mcp" => "connect to the MCP servers it lists",
 +        "policy" => "refuse other mods or limit what they can do",
 +        "peers" => "message other Codex sessions",
++        "power" => "keep this Mac awake, also with the lid closed",
 +        "autonomous" => "queue and stop turns on its own",
 +        "history_write" => "rewrite this session's transcript",
 +        "history_persist" => "see and replace saved history text",
@@ -105171,6 +105234,9 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    }
 +    if granted("peers") {
 +        exposure.push("peers: this mod may discover and message instances of mods in your other OMD sessions on this mod store (in other repositories only when peer_access.projects is \"any\" on both sides) and receive their messages as untrusted data; delivery never starts a turn or shares authority, and messages are countersigned by the authority broker, so peers work only while it is deployed.");
++    }
++    if granted("power") {
++        exposure.push("power: this mod may keep this Mac from idle sleep and, while the authority broker is deployed, from all sleep including a closed lid, for at most 24 hours per hold; every hold ends when the mod releases it, is disabled or changes, or OMD exits, and the previous sleep setting comes back. A closed Mac keeps running and draws battery and heat.");
 +    }
 +    if granted("autonomous") {
 +        exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");
@@ -111851,10 +111917,10 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7699f0130036e5fad4f3d37f21d3c99bc251cfba
+index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc984865158ff1683
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,436 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -111947,6 +112013,7 @@ index 0000000000000000000000000000000000000000..7699f0130036e5fad4f3d37f21d3c99b
 +            "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
 +            "environment.read" | "environment.set" => Ok("exec"),
 +            "peers.list" | "peers.send" => Ok("peers"),
++            "power.hold" | "power.release" => Ok("power"),
 +            "turns.queue" | "turns.queued" | "turns.dequeue" => Ok("autonomous"),
 +            _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
 +                Ok("agents")
@@ -114265,10 +114332,10 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d21b3cb35
+index 0000000000000000000000000000000000000000..796175e21fc30d729b3cc2df16e0254fd8c30505
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,224 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -114321,6 +114388,8 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
++    "power.hold": {"arguments":{"type":"object","properties":{"reason":{"type":"string"},"lid_closed":{"anyOf":[{"const":false},{"const":true}]},"max_duration_ms":{"type":"number"}},"required":["reason","max_duration_ms"]},"result":{"type":"object","properties":{"lease":{"type":"string"},"lid_closed":{"type":"boolean"}},"required":["lease","lid_closed"]}},
++    "power.release": {"arguments":{"type":"object","properties":{"lease":{"type":"string"}},"required":["lease"]},"result":{"type":"object","properties":{"released":{"type":"boolean"}},"required":["released"]}},
 +    "turns.queue": {"arguments":{"type":"object","properties":{"prompt":{"type":"string"},"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"deadline_ms":{"type":"number"}},"required":["prompt","key"]},"result":{"type":"object","properties":{"key":{"type":"string"},"status":{"anyOf":[{"const":"queued"},{"const":"duplicate"}]},"paused":{"anyOf":[{"const":false},{"const":true}]}},"required":["key","status"]}},
 +    "turns.queued": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"paused":{"type":"boolean"},"started":{"type":"number"},"spent_microusd":{"type":"number"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"event":{"type":"string"},"queued_at_ms":{"type":"number"},"deadline_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["key","priority","event","queued_at_ms","deadline_ms"]}}},"required":["paused","started","spent_microusd","entries"]}},
 +    "turns.dequeue": {"arguments":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]},"result":{"$ref":"#/$defs/56"}},
@@ -114338,7 +114407,7 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "sidecars.stop": {"arguments":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]},"result":{}},
 +    "app.request": {"arguments":{"type":"object","properties":{"method":{"type":"string"},"params":{}},"required":["method","params"]},"result":{"anyOf":[{"type":"null"},{"type":"string"},{"type":"number"},{"const":false},{"const":true},{"type":"array","items":{}},{"type":"object","properties":{},"required":[],"additionalProperties":{}},{"$ref":"#/$defs/34"}]}},
 +    "app.respond": {"arguments":{"type":"object","properties":{"request_id":{},"result":{}},"required":["request_id","result"]},"result":{"type":"object","properties":{"resolved":{"const":true}},"required":["resolved"]}},
-+    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
++    "app.routes": {"arguments":{"type":"null"},"result":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"class":{"anyOf":[{"const":"input"},{"const":"network"},{"const":"history"},{"const":"context"},{"const":"tools"},{"const":"commands"},{"const":"lifecycle"},{"const":"interception"},{"const":"compaction"},{"const":"middleware"},{"const":"services"},{"const":"virtual_reads"},{"const":"terminal"},{"const":"exec"},{"const":"fs.read"},{"const":"fs.write"},{"const":"unix_sockets"},{"const":"model"},{"const":"agents"},{"const":"store"},{"const":"sessions"},{"const":"sessions_tools"},{"const":"contracts"},{"const":"builtins"},{"const":"threads"},{"const":"config"},{"const":"config.write"},{"const":"inventory"},{"const":"account"},{"const":"packages"},{"const":"approvals"},{"const":"events"},{"const":"credentials"},{"const":"composer"},{"const":"pty"},{"const":"outputs"},{"const":"os"},{"const":"approve"},{"const":"approve.override"},{"const":"request_policy"},{"const":"peers"},{"const":"power"},{"const":"autonomous"},{"const":"history_write"},{"const":"history_persist"},{"const":"fs.external"},{"const":"http"},{"const":"mcp"},{"const":"policy"}]},"contexts":{"type":"array","items":{"anyOf":[{"const":"event"},{"const":"user"}]}},"confirm":{"type":"boolean"}},"required":["method","class","contexts","confirm"]}}},
 +    "workspace.watch": {"arguments":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"recursive":{"anyOf":[{"const":false},{"const":true}]},"debounce_ms":{"type":"number"},"include_ignored":{"anyOf":[{"const":false},{"const":true}]},"key":{"type":"string"}},"required":["paths"]},"result":{"$ref":"#/$defs/61"}},
 +    "workspace.unwatch": {"arguments":{"anyOf":[{"$ref":"#/$defs/61"},{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}]},"result":{"$ref":"#/$defs/59"}},
 +    "events.publish": {"arguments":{"type":"object","properties":{"channel":{"type":"string"},"data":{},"correlation":{"type":"string"}},"required":["channel","data"]},"result":{"type":"object","properties":{"delivered":{"type":"number"},"dropped":{"type":"number"}},"required":["delivered","dropped"]}},
@@ -126628,6 +126697,689 @@ index 0000000000000000000000000000000000000000..f8b869378224741c22fa9ed735dab20e
 +    Ok(
 +        json!({"schema":1,"plugin_root":root,"component":path,"package":package,"activation":"requires separate mod-store trust and enable"}),
 +    )
++}
+diff --git a/codex-rs/omd/src/power.rs b/codex-rs/omd/src/power.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b349002160f2987f87adbaae424ba6797225fb2
+--- /dev/null
++++ b/codex-rs/omd/src/power.rs
+@@ -0,0 +1,404 @@
++use crate::broker;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::fs;
++use std::io;
++use std::io::BufRead;
++use std::io::BufReader;
++use std::io::Read;
++use std::io::Write;
++use std::net::Shutdown;
++use std::os::unix::net::UnixListener;
++use std::os::unix::net::UnixStream;
++use std::path::Path;
++use std::path::PathBuf;
++use std::process::Command;
++use std::sync::Arc;
++use std::sync::Mutex;
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::Ordering;
++use std::sync::mpsc;
++use std::time::Duration;
++
++pub const DAEMON: &str = "/Library/LaunchDaemons/dev.ohmydiff.broker.power.plist";
++pub const SOCKET: &str = "/var/run/dev.ohmydiff.broker.power.sock";
++pub const RECORD: &str = "/Library/Application Support/OhMyDiff/power.json";
++pub const PMSET: &str = "/usr/bin/pmset";
++pub const IOREG: &str = "/usr/sbin/ioreg";
++pub const MAX_DURATION_MS: u64 = 86_400_000;
++const MIN_DURATION_MS: u64 = 60_000;
++const REASON_BYTES: usize = 128;
++const LEASES_PER_OWNER: usize = 4;
++const HOLDERS_LIMIT: u64 = 256;
++const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
++const LINE_BYTES: u64 = 4096;
++
++fn failure(code: &str) -> io::Error {
++    io::Error::other(code.to_owned())
++}
++
++fn reply(stream: &mut UnixStream, value: Value) -> io::Result<()> {
++    let mut line = serde_json::to_vec(&value)?;
++    line.push(b'\n');
++    stream.write_all(&line)
++}
++
++fn until_closed(mut stream: UnixStream) {
++    let _ = stream.set_read_timeout(None);
++    let mut buffer = [0u8; 64];
++    loop {
++        match stream.read(&mut buffer) {
++            Ok(0) => return,
++            Ok(_) => {}
++            Err(error)
++                if matches!(
++                    error.kind(),
++                    io::ErrorKind::WouldBlock
++                        | io::ErrorKind::TimedOut
++                        | io::ErrorKind::Interrupted
++                ) => {}
++            Err(_) => return,
++        }
++    }
++}
++
++fn sleep_after(duration: Duration, expire: impl FnOnce() + Send + 'static) -> mpsc::Sender<()> {
++    let (cancel, cancelled) = mpsc::channel::<()>();
++    std::thread::spawn(move || {
++        if cancelled.recv_timeout(duration) == Err(mpsc::RecvTimeoutError::Timeout) {
++            expire();
++        }
++    });
++    cancel
++}
++
++pub struct Setting {
++    pmset: PathBuf,
++    ioreg: PathBuf,
++    record: PathBuf,
++    owner: u32,
++    holders: Mutex<u64>,
++}
++
++impl Setting {
++    pub fn open(pmset: PathBuf, ioreg: PathBuf, record: PathBuf, owner: u32) -> io::Result<Self> {
++        let setting = Self {
++            pmset,
++            ioreg,
++            record,
++            owner,
++            holders: Mutex::new(0),
++        };
++        setting.restore()?;
++        Ok(setting)
++    }
++
++    pub fn serve(self: Arc<Self>, listener: UnixListener) {
++        for stream in listener.incoming() {
++            let Ok(stream) = stream else {
++                std::thread::sleep(Duration::from_millis(100));
++                continue;
++            };
++            let setting = self.clone();
++            std::thread::spawn(move || setting.connection(stream));
++        }
++    }
++
++    fn connection(&self, mut stream: UnixStream) -> io::Result<()> {
++        if broker::peer_uid(&stream) != Some(self.owner) {
++            return reply(&mut stream, json!({"error": "authority_peer_unverified"}));
++        }
++        stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
++        let mut reader = BufReader::new(stream.try_clone()?);
++        let mut line = String::new();
++        (&mut reader).take(LINE_BYTES).read_line(&mut line)?;
++        stream.set_read_timeout(None)?;
++        let request: Value = serde_json::from_str(&line).unwrap_or_default();
++        if request != json!({"op": "hold"}) {
++            return reply(&mut stream, json!({"error": "authority_request_invalid"}));
++        }
++        if let Err(error) = self.acquire() {
++            return reply(&mut stream, json!({"error": error.to_string()}));
++        }
++        let replied = reply(&mut stream, json!({"ok": null}));
++        let _ = io::copy(&mut reader, &mut io::sink());
++        if let Err(error) = self.release() {
++            eprintln!("omd-broker power: restoring SleepDisabled failed: {error}");
++            std::process::exit(1);
++        }
++        replied
++    }
++
++    fn acquire(&self) -> io::Result<()> {
++        let mut holders = self
++            .holders
++            .lock()
++            .map_err(|_| failure("authority_state_poisoned"))?;
++        if *holders >= HOLDERS_LIMIT {
++            return Err(failure("authority_power_busy"));
++        }
++        if *holders == 0 && !self.record.exists() {
++            broker::write_private(&self.record, &json!({"previous": self.disabled()?}))?;
++            if let Err(error) = self.set(true) {
++                let _ = fs::remove_file(&self.record);
++                return Err(error);
++            }
++        }
++        *holders += 1;
++        Ok(())
++    }
++
++    fn release(&self) -> io::Result<()> {
++        let mut holders = self
++            .holders
++            .lock()
++            .map_err(|_| failure("authority_state_poisoned"))?;
++        *holders = holders.saturating_sub(1);
++        if *holders == 0 {
++            self.restore()?;
++        }
++        Ok(())
++    }
++
++    fn restore(&self) -> io::Result<()> {
++        let record: Value = match fs::read(&self.record) {
++            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
++            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
++            Err(error) => return Err(error),
++        };
++        let previous = record["previous"].as_bool().unwrap_or(false);
++        self.set(previous)?;
++        if !previous && self.lid_closed() {
++            Command::new(&self.pmset).arg("sleepnow").status()?;
++        }
++        fs::remove_file(&self.record)
++    }
++
++    fn lid_closed(&self) -> bool {
++        Command::new(&self.ioreg)
++            .args(["-r", "-k", "AppleClamshellState", "-d", "1"])
++            .output()
++            .is_ok_and(|output| {
++                String::from_utf8_lossy(&output.stdout).contains("\"AppleClamshellState\" = Yes")
++            })
++    }
++
++    fn disabled(&self) -> io::Result<bool> {
++        let output = Command::new(&self.pmset).arg("-g").output()?;
++        if !output.status.success() {
++            return Err(failure("authority_power_unavailable"));
++        }
++        Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
++            let mut fields = line.split_whitespace();
++            fields.next() == Some("SleepDisabled") && fields.next() == Some("1")
++        }))
++    }
++
++    fn set(&self, disabled: bool) -> io::Result<()> {
++        let value = if disabled { "1" } else { "0" };
++        let status = Command::new(&self.pmset)
++            .args(["-a", "disablesleep", value])
++            .status()?;
++        if status.success() {
++            Ok(())
++        } else {
++            Err(failure("authority_power_unavailable"))
++        }
++    }
++}
++
++pub(crate) struct Hold {
++    helper: UnixStream,
++    _expiry: mpsc::Sender<()>,
++}
++
++impl Hold {
++    pub(crate) fn start(socket: &Path, arguments: &Value, client: UnixStream) -> io::Result<Self> {
++        arguments["reason"]
++            .as_str()
++            .filter(|reason| !reason.is_empty() && reason.len() <= REASON_BYTES)
++            .ok_or_else(|| failure("authority_request_invalid"))?;
++        let duration = arguments["max_duration_ms"]
++            .as_u64()
++            .filter(|ms| (1..=MAX_DURATION_MS).contains(ms))
++            .ok_or_else(|| failure("authority_request_invalid"))?;
++        let mut helper =
++            UnixStream::connect(socket).map_err(|_| failure("authority_power_unavailable"))?;
++        helper.set_read_timeout(Some(REQUEST_TIMEOUT))?;
++        reply(&mut helper, json!({"op": "hold"}))?;
++        let mut line = String::new();
++        BufReader::new(&helper)
++            .take(LINE_BYTES)
++            .read_line(&mut line)?;
++        let answer: Value =
++            serde_json::from_str(&line).map_err(|_| failure("authority_power_unavailable"))?;
++        if let Some(error) = answer["error"].as_str() {
++            return Err(failure(error));
++        }
++        let ended = helper.try_clone()?;
++        std::thread::spawn(move || {
++            until_closed(ended);
++            let _ = client.shutdown(Shutdown::Both);
++        });
++        let watched = helper.try_clone()?;
++        let expiry = sleep_after(Duration::from_millis(duration), move || {
++            let _ = watched.shutdown(Shutdown::Both);
++        });
++        Ok(Self {
++            helper,
++            _expiry: expiry,
++        })
++    }
++}
++
++impl Drop for Hold {
++    fn drop(&mut self) {
++        let _ = self.helper.shutdown(Shutdown::Both);
++    }
++}
++
++struct Lease {
++    owner: String,
++    source: String,
++    _idle: codex_utils_sleep_inhibitor::SleepInhibitor,
++    broker: Option<UnixStream>,
++    _expiry: mpsc::Sender<()>,
++}
++
++impl Drop for Lease {
++    fn drop(&mut self) {
++        if let Some(broker) = &self.broker {
++            let _ = broker.shutdown(Shutdown::Both);
++        }
++    }
++}
++
++type Records = Arc<Mutex<BTreeMap<String, Lease>>>;
++
++#[derive(Default)]
++pub struct Leases {
++    broker: Option<PathBuf>,
++    records: Records,
++    next: AtomicU64,
++}
++
++impl Leases {
++    pub fn hold(&self, owner: &str, source: &str, arguments: &Value) -> Result<Value, String> {
++        let reason = arguments["reason"]
++            .as_str()
++            .filter(|reason| !reason.is_empty() && reason.len() <= REASON_BYTES)
++            .ok_or("power_request_invalid")?;
++        let duration = arguments["max_duration_ms"]
++            .as_u64()
++            .filter(|ms| (MIN_DURATION_MS..=MAX_DURATION_MS).contains(ms))
++            .ok_or("power_request_invalid")?;
++        let lid_closed = arguments["lid_closed"].as_bool().unwrap_or(false);
++        let full = |records: &BTreeMap<String, Lease>| {
++            records
++                .values()
++                .filter(|lease| lease.owner == owner)
++                .count()
++                >= LEASES_PER_OWNER
++        };
++        if full(&*self.records.lock().map_err(|_| "power_state_poisoned")?) {
++            return Err("power_lease_limit".into());
++        }
++        let broker = if lid_closed {
++            let socket = self
++                .broker
++                .clone()
++                .or_else(|| broker::deployed().then(|| PathBuf::from(broker::SOCKET)))
++                .ok_or("power_unavailable: the authority broker is not deployed")?;
++            let mut client = broker::Client::at(&socket).map_err(|error| error.to_string())?;
++            client
++                .call(
++                    "power.hold",
++                    json!({"reason": reason, "max_duration_ms": duration}),
++                )
++                .map_err(|error| match error.to_string().as_str() {
++                    "authority_operation_unknown" => {
++                        "power_unavailable: reinstall the authority broker for lid-closed holds"
++                            .to_owned()
++                    }
++                    other => other.to_owned(),
++                })?;
++            Some(client.socket().map_err(|error| error.to_string())?)
++        } else {
++            None
++        };
++        let mut idle = codex_utils_sleep_inhibitor::SleepInhibitor::new(true);
++        idle.set_turn_running(true);
++        let lease = format!("power-{}", self.next.fetch_add(1, Ordering::Relaxed) + 1);
++        let end = {
++            let (records, lease) = (Arc::downgrade(&self.records), lease.clone());
++            move || {
++                if let Some(records) = records.upgrade()
++                    && let Ok(mut records) = records.lock()
++                {
++                    records.remove(&lease);
++                }
++            }
++        };
++        if let Some(broker) = &broker {
++            let (closed, end) = (broker.try_clone().map_err(|e| e.to_string())?, end.clone());
++            std::thread::spawn(move || {
++                until_closed(closed);
++                end();
++            });
++        }
++        let expiry = sleep_after(Duration::from_millis(duration), end);
++        let mut records = self.records.lock().map_err(|_| "power_state_poisoned")?;
++        if full(&records) {
++            if let Some(broker) = &broker {
++                let _ = broker.shutdown(Shutdown::Both);
++            }
++            return Err("power_lease_limit".into());
++        }
++        records.insert(
++            lease.clone(),
++            Lease {
++                owner: owner.to_owned(),
++                source: source.to_owned(),
++                _idle: idle,
++                broker,
++                _expiry: expiry,
++            },
++        );
++        Ok(json!({"lease": lease, "lid_closed": lid_closed}))
++    }
++
++    pub fn release(&self, owner: &str, arguments: &Value) -> Result<Value, String> {
++        let lease = arguments["lease"].as_str().ok_or("power_request_invalid")?;
++        let mut records = self.records.lock().map_err(|_| "power_state_poisoned")?;
++        let released = records
++            .get(lease)
++            .is_some_and(|record| record.owner == owner);
++        if released {
++            records.remove(lease);
++        }
++        Ok(json!({"released": released}))
++    }
++
++    pub fn retain(&self, sources: &BTreeMap<String, String>) {
++        if let Ok(mut records) = self.records.lock() {
++            records.retain(|_, lease| sources.get(&lease.owner) == Some(&lease.source));
++        }
++    }
++
++    pub fn release_owner(&self, owner: &str) {
++        if let Ok(mut records) = self.records.lock() {
++            records.retain(|_, lease| lease.owner != owner);
++        }
++    }
++
++    pub fn clear(&self) {
++        if let Ok(mut records) = self.records.lock() {
++            records.clear();
++        }
++    }
++}
++
++#[cfg(test)]
++#[path = "power_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/power_tests.rs b/codex-rs/omd/src/power_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..e95b06b755d5be5bc63c50e8791ab36a389aaa36
+--- /dev/null
++++ b/codex-rs/omd/src/power_tests.rs
+@@ -0,0 +1,267 @@
++use super::*;
++use std::os::unix::fs::PermissionsExt;
++use std::time::Instant;
++
++struct OpenGate;
++
++impl broker::Gate for OpenGate {
++    fn peer(&self, _stream: &UnixStream) -> io::Result<()> {
++        Ok(())
++    }
++
++    fn authorize(&self, _: &UnixStream, _: &str, _: &str, _: Option<&str>) -> bool {
++        false
++    }
++}
++
++struct Machine {
++    _temp: tempfile::TempDir,
++    base: PathBuf,
++    helper: PathBuf,
++    broker: PathBuf,
++}
++
++impl Machine {
++    fn new(disabled: bool, owner: u32) -> Self {
++        let temp = tempfile::tempdir().unwrap();
++        let base = temp.path().canonicalize().unwrap();
++        let pmset = base.join("pmset");
++        fs::write(
++            &pmset,
++            "#!/bin/sh\nd=$(dirname \"$0\")\nif [ \"$1\" = sleepnow ]; then echo sleepnow >> \"$d/log\"; exit 0; fi\nif [ \"$1\" = -g ]; then printf 'System-wide power settings:\\n SleepDisabled\\t\\t%s\\n' \"$(cat \"$d/state\")\"; exit 0; fi\necho \"$3\" > \"$d/state\"\necho \"$3\" >> \"$d/log\"\n",
++        )
++        .unwrap();
++        let ioreg = base.join("ioreg");
++        fs::write(&ioreg, "#!/bin/sh\necho \"  \\\"AppleClamshellState\\\" = $(cat \"$(dirname \"$0\")/lid\")\"\n").unwrap();
++        for program in [&pmset, &ioreg] {
++            fs::set_permissions(program, fs::Permissions::from_mode(0o755)).unwrap();
++        }
++        fs::write(base.join("lid"), "No").unwrap();
++        fs::write(base.join("state"), if disabled { "1\n" } else { "0\n" }).unwrap();
++        let setting =
++            Arc::new(Setting::open(pmset, ioreg, base.join("power.json"), owner).unwrap());
++        let helper = base.join("helper.sock");
++        let listener = UnixListener::bind(&helper).unwrap();
++        std::thread::spawn(move || setting.serve(listener));
++        let root = base.join("broker");
++        fs::create_dir(&root).unwrap();
++        let mut served = broker::Broker::open(root).unwrap();
++        served.power = helper.clone();
++        let served = Arc::new(served);
++        let socket = base.join("broker.sock");
++        let listener = UnixListener::bind(&socket).unwrap();
++        std::thread::spawn(move || served.serve(listener, Arc::new(OpenGate)));
++        Self {
++            _temp: temp,
++            base,
++            helper,
++            broker: socket,
++        }
++    }
++
++    fn uid() -> u32 {
++        unsafe { libc::getuid() }
++    }
++
++    fn state(&self) -> String {
++        fs::read_to_string(self.base.join("state"))
++            .unwrap()
++            .trim()
++            .to_owned()
++    }
++
++    fn close_lid(&self) {
++        fs::write(self.base.join("lid"), "Yes").unwrap();
++    }
++
++    fn log(&self) -> String {
++        fs::read_to_string(self.base.join("log")).unwrap_or_default()
++    }
++
++    fn settles(&self, state: &str) {
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while self.state() != state || self.base.join("power.json").exists() != (state == "1") {
++            assert!(
++                Instant::now() < deadline,
++                "SleepDisabled stayed {}",
++                self.state()
++            );
++            std::thread::sleep(Duration::from_millis(10));
++        }
++    }
++
++    fn leases(&self) -> Leases {
++        Leases {
++            broker: Some(self.broker.clone()),
++            ..Leases::default()
++        }
++    }
++}
++
++fn hold(lid_closed: bool) -> Value {
++    json!({"reason": "agents working", "lid_closed": lid_closed, "max_duration_ms": 60_000})
++}
++
++#[test]
++fn lid_closed_leases_share_one_setting_and_the_last_one_restores_it_and_sleeps_a_closed_mac() {
++    let machine = Machine::new(false, Machine::uid());
++    machine.close_lid();
++    let leases = machine.leases();
++    let first = leases.hold("a", "s", &hold(true)).unwrap();
++    leases.hold("b", "s", &hold(true)).unwrap();
++    assert_eq!(first["lid_closed"], true);
++    machine.settles("1");
++    assert_eq!(
++        leases
++            .release("a", &json!({"lease": first["lease"]}))
++            .unwrap(),
++        json!({"released": true})
++    );
++    std::thread::sleep(Duration::from_millis(100));
++    assert_eq!(machine.state(), "1");
++    leases.release_owner("b");
++    machine.settles("0");
++    assert_eq!(machine.log(), "1\n0\nsleepnow\n");
++}
++
++#[test]
++fn a_setting_that_was_already_disabled_is_put_back() {
++    let machine = Machine::new(true, Machine::uid());
++    machine.close_lid();
++    let leases = machine.leases();
++    let held = leases.hold("a", "s", &hold(true)).unwrap();
++    machine.settles("1");
++    leases
++        .release("a", &json!({"lease": held["lease"]}))
++        .unwrap();
++    let deadline = Instant::now() + Duration::from_secs(5);
++    while machine.base.join("power.json").exists() {
++        assert!(Instant::now() < deadline);
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert_eq!(
++        (machine.state().as_str(), machine.log().as_str()),
++        ("1", "1\n1\n")
++    );
++}
++
++#[test]
++fn an_expired_broker_hold_restores_sleep() {
++    let machine = Machine::new(false, Machine::uid());
++    let mut client = broker::Client::at(&machine.broker).unwrap();
++    let arguments = json!({"reason": "agents working", "max_duration_ms": 200});
++    client.call("power.hold", arguments.clone()).unwrap();
++    assert_eq!(
++        client
++            .call("power.hold", arguments)
++            .unwrap_err()
++            .to_string(),
++        "authority_power_held"
++    );
++    machine.settles("1");
++    machine.settles("0");
++    assert!(client.call("anchor.get", json!({})).is_err());
++}
++
++#[test]
++fn a_record_left_by_a_failed_restore_keeps_the_setting_from_before_the_first_hold() {
++    let machine = Machine::new(true, Machine::uid());
++    fs::write(machine.base.join("power.json"), r#"{"previous":false}"#).unwrap();
++    let leases = machine.leases();
++    let held = leases.hold("a", "s", &hold(true)).unwrap();
++    leases
++        .release("a", &json!({"lease": held["lease"]}))
++        .unwrap();
++    machine.settles("0");
++}
++
++#[test]
++fn a_lease_ends_when_its_broker_connection_drops() {
++    let temp = tempfile::tempdir().unwrap();
++    let socket = temp.path().join("broker.sock");
++    let listener = UnixListener::bind(&socket).unwrap();
++    std::thread::spawn(move || {
++        let (stream, _) = listener.accept().unwrap();
++        let mut line = String::new();
++        BufReader::new(&stream).read_line(&mut line).unwrap();
++        (&stream).write_all(b"{\"ok\":null}\n").unwrap();
++    });
++    let leases = Leases {
++        broker: Some(socket),
++        ..Leases::default()
++    };
++    let held = leases.hold("a", "s", &hold(true)).unwrap();
++    let deadline = Instant::now() + Duration::from_secs(5);
++    while leases
++        .records
++        .lock()
++        .unwrap()
++        .contains_key(held["lease"].as_str().unwrap())
++    {
++        assert!(
++            Instant::now() < deadline,
++            "the lease outlived its broker connection"
++        );
++        std::thread::sleep(Duration::from_millis(10));
++    }
++}
++
++#[test]
++fn the_helper_restores_a_record_left_by_a_crash_and_refuses_other_users() {
++    let machine = Machine::new(true, Machine::uid() + 1);
++    assert_eq!(machine.state(), "1");
++    fs::write(machine.base.join("power.json"), r#"{"previous":false}"#).unwrap();
++    let base = &machine.base;
++    Setting::open(
++        base.join("pmset"),
++        base.join("ioreg"),
++        base.join("power.json"),
++        0,
++    )
++    .unwrap();
++    assert_eq!(machine.state(), "0");
++    assert!(!machine.base.join("power.json").exists());
++    let refused = Hold::start(
++        &machine.helper,
++        &json!({"reason": "agents working", "max_duration_ms": 1000}),
++        UnixStream::pair().unwrap().0,
++    );
++    assert_eq!(
++        refused.err().unwrap().to_string(),
++        "authority_peer_unverified"
++    );
++}
++
++#[test]
++fn leases_belong_to_their_owner_and_current_source() {
++    let leases = Leases::default();
++    let held = leases.hold("a", "s1", &hold(false)).unwrap();
++    assert_eq!(held["lid_closed"], false);
++    assert_eq!(
++        leases
++            .release("b", &json!({"lease": held["lease"]}))
++            .unwrap(),
++        json!({"released": false})
++    );
++    for _ in 1..LEASES_PER_OWNER {
++        leases.hold("a", "s1", &hold(false)).unwrap();
++    }
++    assert_eq!(
++        leases.hold("a", "s1", &hold(false)).unwrap_err(),
++        "power_lease_limit"
++    );
++    assert_eq!(
++        leases
++            .hold("b", "s1", &json!({"reason": "x", "max_duration_ms": 1000}))
++            .unwrap_err(),
++        "power_request_invalid"
++    );
++    leases.retain(&BTreeMap::from([("a".to_owned(), "s2".to_owned())]));
++    assert_eq!(
++        leases
++            .release("a", &json!({"lease": held["lease"]}))
++            .unwrap(),
++        json!({"released": false})
++    );
++    leases.hold("a", "s2", &hold(false)).unwrap();
 +}
 diff --git a/codex-rs/omd/src/process_raster.rs b/codex-rs/omd/src/process_raster.rs
 new file mode 100644

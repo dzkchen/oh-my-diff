@@ -315,6 +315,36 @@ Receiving never starts a turn, changes roots or routes, or lends authority; a re
 own work under its own grants. Revoking or expiring the grant, disabling the mod or stopping the session closes the
 registration.
 
+## Power holds (`power_hold_v1`)
+
+A mod with the `power` authority grant keeps the Mac awake. `power.hold {reason, lid_closed?, max_duration_ms}`
+returns `{lease, lid_closed}`; `power.release {lease}` returns `{released}`, false when the lease already ended or
+belongs to another mod. Only event callbacks (lifecycle events, timers, channels) may hold
+(`host_operation_event_only` otherwise); commands and the TUI can't reach either operation.
+
+Every lease holds an idle-sleep assertion, so the Mac doesn't sleep from inactivity while the lid is open; the display
+may still sleep. With `lid_closed: true` the lease also asks the authority broker to set `SleepDisabled`, which keeps a
+closed Mac running on battery. Leases from every mod and OMD process share that setting: the first records the previous
+value and the last one to end restores it, then sleeps the Mac if the lid is closed.
+
+A lease ends at `power.release`, after `max_duration_ms`, when the session stops and when OMD exits or crashes. A
+disabled, failed or changed mod loses its leases at the next host event in the session. If the broker or its helper
+exits, the setting is restored and the lease ends, so `power.release` then returns false; hold again to recover.
+
+| Limit | Value |
+| --- | --- |
+| `reason` | 1 to 128 bytes |
+| `max_duration_ms` | 60 s to 24 h |
+| Live leases per mod in a session | 4 |
+
+| Error | When |
+| --- | --- |
+| `power_unavailable` | `lid_closed` without the deployed broker, or a broker installed before power holds (run `omd-package broker install` again); lid-open holds still work |
+| `authority_power_unavailable` | The broker's power helper is not installed or could not change the setting |
+| `power_lease_limit` | The mod already holds 4 leases |
+| `host_operation_event_only` | `power.hold` from a tool, CLI or component callback |
+| `power_request_invalid` | `reason` or `max_duration_ms` is out of range |
+
 ## Autonomous turns (`autonomous_turns_v1`)
 
 A mod with the `autonomous` authority grant declares:

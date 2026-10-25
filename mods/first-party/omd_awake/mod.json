@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "omd_awake",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_awake"},
+  "capabilities": ["store", "events", "lifecycle", "terminal", "agents", "exec", "os", "power"],
+  "os_access": {"programs": ["/sbin/route", "/usr/sbin/networksetup"], "network": false},
+  "compatibility": {"required_features": ["agent_lifecycle_v1", "events_v1", "exec_v1", "lifecycle_events_v1", "power_hold_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "ui_controls_v1", "unrestricted_process_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "lid_closed": {"type": "boolean", "default": true, "title": "Lid closed", "description": "Keep running with the lid closed; needs the authority broker, otherwise only idle sleep is held"},
+      "grace_seconds": {"type": "number", "default": 120, "title": "Grace period", "description": "Seconds to stay awake after the last turn or subagent finishes"},
+      "battery_floor": {"type": "number", "default": 20, "title": "Battery floor", "description": "Stop at or below this battery percent while on battery"},
+      "max_hours": {"type": "number", "default": 4, "title": "Maximum hours", "description": "Stop after this many hours of continuous work (1 to 24)"},
+      "hotspot_ssid": {"type": "string", "default": "", "title": "Hotspot network", "description": "Personal Hotspot network to join when Wi-Fi drops with the lid closed; its password comes from the Keychain"}
+    },
+    "additionalProperties": false
+  }
+}
