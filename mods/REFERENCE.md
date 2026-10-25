@@ -1349,11 +1349,12 @@ The runner adds small helpers to `api`; each calls the host operations named her
 none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
-- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, omd_version, model,
+  provider, route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
   `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
   `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
-  records in shared state, such as watch IDs, by it.
+  records in shared state, such as watch IDs, by it. `omd_version` (experimental) is the OMD release, as in the
+  terminal `identity`.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -3916,6 +3917,7 @@ focused control. Both are hidden while an approval or popup replaces the compose
 The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
 
 - `codex_version` from the installed build;
+- `omd_version`, the installed OMD release, such as `1.2.0` or `1.3.0-rc.2` (experimental);
 - `install_profile` (`full`, `platform_only`, `private`, `unknown` or `unreported`);
 - effective `mode` (`omd`);
 - installed, enabled, active and failed mod counts.

@@ -3357,7 +3357,8 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let identity = runtime.identity("0.163.0", Some("full"), "omd");
     assert_eq!(
         identity,
-        json!({"codex_version":"0.163.0","install_profile":"full","mode":"omd",
+        json!({"codex_version":"0.163.0","omd_version":OMD_HOST_RELEASE,
+        "install_profile":"full","mode":"omd",
         "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
     );
     assert_eq!(

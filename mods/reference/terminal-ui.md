@@ -708,6 +708,7 @@ focused control. Both are hidden while an approval or popup replaces the compose
 The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
 
 - `codex_version` from the installed build;
+- `omd_version`, the installed OMD release, such as `1.2.0` or `1.3.0-rc.2` (experimental);
 - `install_profile` (`full`, `platform_only`, `private`, `unknown` or `unreported`);
 - effective `mode` (`omd`);
 - installed, enabled, active and failed mod counts.

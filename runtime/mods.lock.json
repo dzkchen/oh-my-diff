@@ -193,11 +193,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "ae32e25b79ee39d0ce46794204e5d97244f9f68fcfaef6465c91d602cfbdecef",
+        "index.ts": "adbc88ea35d41a0190ef9aa6c7a226920333d2540f01e3bd3dc7070d5e860422",
         "mod.json": "ac5a6c29a6c294213df1d95422a933aef7c0c643dff4b25d0935f2d546d4501f"
       },
       "id": "omd_logo",
-      "package_sha256": "27fa7d515f8246aa29f11b40b2c4b08d5868aa8d95c00927a3e20229c3a55042",
+      "package_sha256": "8982059b22826ab5ab37d17fd7f9da5289af3032ef387e047a4eeb2c664c4198",
       "source": "mods/first-party/omd_logo",
       "version": "1.0.0"
     },

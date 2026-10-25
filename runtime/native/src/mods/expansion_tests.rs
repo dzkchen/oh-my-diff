@@ -354,8 +354,11 @@ async fn session_info_reports_the_threads_current_cwd_and_model() {
     let manager = attach_thread(&mut fixture).await;
     let repository = fixture.lead.host.repository.clone();
     let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
-    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(info["omd_version"], codex_omd::OMD_HOST_RELEASE);
+    assert_eq!(cwd(info), Some(repository.clone()));
     let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
     std::fs::create_dir_all(&sub).unwrap();
     let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
