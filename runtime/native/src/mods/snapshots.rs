@@ -385,7 +385,7 @@ mod tests {
         thread: ThreadId,
         snapshot: Snapshot,
     ) -> Result<Value, String> {
-        let digest = snapshot.hash().unwrap();
+        let digest = snapshot.hash();
         store.insert(caller, thread, snapshot, digest)
     }
 
@@ -543,11 +543,10 @@ mod tests {
         std::fs::write(root.join("source"), "after").unwrap();
         assert_eq!(captured.files["source"].bytes, b"before");
         assert_ne!(
-            captured.hash().unwrap(),
+            captured.hash(),
             capture(&readable, &[], &paths, 128, &|| true)
                 .unwrap()
                 .hash()
-                .unwrap()
         );
         assert!(capture(&readable, &[], &paths, 1, &|| true).is_err());
         assert!(capture(&readable, &[], &paths, 128, &|| false).is_err());

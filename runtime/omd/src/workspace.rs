@@ -124,6 +124,10 @@ fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
 }
 
+fn too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
+}
+
 fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -698,79 +702,112 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
         && after.nlink() == 1)
 }
 
+fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
+    digest.update((name.len() as u64).to_le_bytes());
+    digest.update(name.as_bytes());
+    digest.update([u8::from(executable)]);
+    digest.update(contents);
+}
+
+/// Reads each existing path once, within `max_bytes` of names and contents, and fails if any changes meanwhile.
+fn visit(
+    root: &Path,
+    paths: &BTreeSet<String>,
+    max_bytes: usize,
+    mut read: impl FnMut(&str, &mut dyn Read, bool) -> io::Result<usize>,
+) -> io::Result<()> {
+    let root = root.canonicalize()?;
+    let directory = open_directory(&root)?;
+    let mut observed = BTreeMap::new();
+    let mut remaining = max_bytes;
+    for name in paths {
+        let path = safe_path(&root, name)?;
+        let mut input = match open_source(&directory, name) {
+            Ok(input) => input,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                observed.insert(name.clone(), None);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let metadata = input.metadata()?;
+        if !metadata.is_file() {
+            return Err(invalid("snapshot requires regular files"));
+        }
+        if metadata.nlink() != 1 {
+            return Err(invalid("snapshot hardlink rejected"));
+        }
+        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let count = read(
+            name,
+            &mut (&mut input).take(remaining.saturating_add(1) as u64),
+            executable,
+        )?;
+        let cost = count
+            .checked_add(name.len())
+            .ok_or_else(|| invalid("snapshot size overflow"))?;
+        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
+        let after = fs::symlink_metadata(&path)?;
+        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
+            return Err(invalid("source changed during snapshot"));
+        }
+        observed.insert(name.clone(), Some(metadata));
+    }
+    for (name, before) in observed {
+        match (before, open_source(&directory, &name)) {
+            (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
+            (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
+            _ => return Err(invalid("source tree changed during snapshot")),
+        }
+    }
+    Ok(())
+}
+
 impl Snapshot {
     pub fn capture(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<Self> {
-        let root = root.canonicalize()?;
-        let directory = open_directory(&root)?;
         let mut files = BTreeMap::new();
-        let mut observed = BTreeMap::new();
-        let mut remaining = max_bytes;
-        for name in paths {
-            let path = safe_path(&root, name)?;
-            let mut input = match open_source(&directory, name) {
-                Ok(input) => input,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    observed.insert(name.clone(), None);
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            let metadata = input.metadata()?;
-            if !metadata.is_file() {
-                return Err(invalid("snapshot requires regular files"));
-            }
-            {
-                use std::os::unix::fs::MetadataExt;
-                if metadata.nlink() != 1 {
-                    return Err(invalid("snapshot hardlink rejected"));
-                }
-            }
+        visit(root, paths, max_bytes, |name, input, executable| {
             let mut bytes = Vec::new();
-            (&mut input)
-                .take(remaining.saturating_add(1) as u64)
-                .read_to_end(&mut bytes)?;
-            let cost = bytes
-                .len()
-                .checked_add(name.len())
-                .ok_or_else(|| invalid("snapshot size overflow"))?;
-            remaining = remaining
-                .checked_sub(cost)
-                .ok_or_else(|| invalid("snapshot size limit"))?;
-            let after = fs::symlink_metadata(&path)?;
-            if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-                return Err(invalid("source changed during snapshot"));
-            }
-            let executable = {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            };
-            files.insert(name.clone(), File { bytes, executable });
-            observed.insert(name.clone(), Some(metadata));
-        }
-        for (name, before) in observed {
-            match (before, open_source(&directory, &name)) {
-                (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
-                (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
-                _ => return Err(invalid("source tree changed during snapshot")),
-            }
-        }
+            input.read_to_end(&mut bytes)?;
+            let read = bytes.len();
+            files.insert(name.to_owned(), File { bytes, executable });
+            Ok(read)
+        })?;
         Ok(Self { files })
     }
 
-    pub fn hash(&self) -> io::Result<String> {
-        struct Hasher(Sha256);
-        impl Write for Hasher {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.0.update(bytes);
-                Ok(bytes.len())
+    /// Same digest as `capture(...).hash()`, streamed without holding the contents.
+    pub fn digest(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<String> {
+        let mut digest = Sha256::new();
+        visit(root, paths, max_bytes, |name, input, executable| {
+            let mut contents = Sha256::new();
+            let mut buffer = [0; 64 * 1024];
+            let mut read = 0;
+            loop {
+                let count = input.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                contents.update(&buffer[..count]);
+                read += count;
             }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
+            frame(&mut digest, name, executable, &contents.finalize());
+            Ok(read)
+        })?;
+        Ok(format!("{:x}", digest.finalize()))
+    }
+
+    pub fn hash(&self) -> String {
+        let mut digest = Sha256::new();
+        for (name, file) in &self.files {
+            frame(
+                &mut digest,
+                name,
+                file.executable,
+                &Sha256::digest(&file.bytes),
+            );
         }
-        let mut hasher = Hasher(Sha256::new());
-        serde_json::to_writer(&mut hasher, self)?;
-        Ok(format!("{:x}", hasher.0.finalize()))
+        format!("{:x}", digest.finalize())
     }
 
     pub fn write_new(&self, root: &Path, max_bytes: usize) -> io::Result<()> {
@@ -782,7 +819,7 @@ impl Snapshot {
                 .and_then(|total| total.checked_add(file.bytes.len()))
                 .ok_or_else(|| invalid("snapshot size overflow"))?;
             if total > max_bytes {
-                return Err(invalid("snapshot size limit"));
+                return Err(too_large());
             }
             if Path::new(name)
                 .ancestors()
@@ -921,12 +958,35 @@ pub fn capture_tracked(
     approved_untracked: &BTreeSet<String>,
     max_bytes: usize,
 ) -> io::Result<Snapshot> {
+    tracked(root, approved_untracked, |paths| {
+        Snapshot::capture(root, paths, max_bytes)
+    })
+}
+
+/// The `capture_tracked` digest, or `None` when a tracked path is not `readable`.
+pub fn hash_tracked(
+    root: &Path,
+    approved_untracked: &BTreeSet<String>,
+    max_bytes: usize,
+    readable: impl Fn(&str) -> bool,
+) -> io::Result<Option<String>> {
+    tracked(root, approved_untracked, |paths| {
+        let digest = Snapshot::digest(root, paths, max_bytes)?;
+        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
+    })
+}
+
+fn tracked<T>(
+    root: &Path,
+    approved_untracked: &BTreeSet<String>,
+    capture: impl FnOnce(&BTreeSet<String>) -> io::Result<T>,
+) -> io::Result<T> {
     let paths = tracked_paths(root, approved_untracked)?;
-    let snapshot = Snapshot::capture(root, &paths, max_bytes)?;
+    let captured = capture(&paths)?;
     if tracked_paths(root, approved_untracked)? != paths {
         return Err(invalid("tracked path set changed during snapshot"));
     }
-    Ok(snapshot)
+    Ok(captured)
 }
 
 fn git(root: &Path) -> Command {
@@ -1037,6 +1097,22 @@ mod transaction_tests {
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
         assert_eq!(before.changed(&after).len(), 1);
+    }
+
+    #[test]
+    fn streamed_digest_matches_the_captured_snapshot_and_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        fs::write(root.join("b.sh"), "two\n").unwrap();
+        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let paths = BTreeSet::from(["a.txt".into(), "b.sh".into(), "gone".into()]);
+        let digest = Snapshot::digest(&root, &paths, 64).unwrap();
+        assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
+        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
+        assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
+        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
     }
 
     #[test]
