@@ -114,6 +114,66 @@ fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() 
 }
 
 #[test]
+fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
+    let layout = |site: Value, transcript: Value, composer: Value| {
+        json!({"layout": {"split": "horizontal", "children": [site,
+            {"split": "vertical", "children": [transcript, composer]}]}})
+    };
+    let (site, transcript, composer) = (
+        json!({"content": "site:a/b"}),
+        json!({"content": "transcript"}),
+        json!({"content": "composer"}),
+    );
+    let titled = |leaf: &Value, title: &str| {
+        let mut leaf = leaf.clone();
+        leaf["title"] = json!(title);
+        leaf
+    };
+    for valid in [
+        layout(
+            titled(&site, "Changes"),
+            titled(&transcript, "Chat"),
+            composer.clone(),
+        ),
+        layout(titled(&site, ""), titled(&transcript, ""), composer.clone()),
+        layout(
+            titled(&site, &"é".repeat(32)),
+            transcript.clone(),
+            composer.clone(),
+        ),
+    ] {
+        assert!(view(valid.clone()).is_ok(), "{valid}");
+        assert!(ModViewPatch::parse(valid).is_ok());
+    }
+    for invalid in [
+        layout(
+            titled(&site, &"x".repeat(65)),
+            transcript.clone(),
+            composer.clone(),
+        ),
+        layout(
+            titled(&site, "a\u{1b}[31m"),
+            transcript.clone(),
+            composer.clone(),
+        ),
+        layout(
+            site.clone(),
+            titled(&transcript, "line\nbreak"),
+            composer.clone(),
+        ),
+        layout(
+            site.clone(),
+            transcript.clone(),
+            titled(&composer, "Prompt"),
+        ),
+        layout(site.clone(), transcript.clone(), titled(&composer, "")),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+        assert!(ModViewPatch::parse(invalid).is_err());
+    }
+}
+
+#[test]
 fn patches_claim_layout_once() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();

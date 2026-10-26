@@ -195,8 +195,9 @@ export type TerminalComponent =
 export type TerminalRange = { start: number; end: number };
 export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'below_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
-  | { content: 'transcript' | 'composer' }
-  | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle & { focus?: TerminalBoxAccent } }
+  | { content: 'transcript'; title?: string }
+  | { content: 'composer' }
+  | { content: `site:${TerminalSiteName}`; style?: TerminalFrameStyle & { focus?: TerminalBoxAccent }; title?: string }
   | { split: 'horizontal' | 'vertical'; ratio?: number[]; gap?: number; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
 export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };

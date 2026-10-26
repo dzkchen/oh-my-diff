@@ -125,6 +125,8 @@ pub struct ModLayoutLeaf {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<ModBoxStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -169,17 +171,23 @@ impl ModLayout {
         match self {
             Self::Leaf(leaf) => {
                 leaves.push(leaf.content.clone());
+                let titled = leaf.title.as_ref().is_none_or(|title| visible(title, 64));
                 match leaf.content.strip_prefix("site:") {
                     Some(site) => {
                         valid_site(site)
+                            && titled
                             && leaf
                                 .style
                                 .as_ref()
                                 .is_none_or(|style| style.valid() && style.hover.is_none())
                     }
                     None => {
-                        matches!(leaf.content.as_str(), "transcript" | "composer")
-                            && leaf.style.is_none()
+                        leaf.style.is_none()
+                            && match leaf.content.as_str() {
+                                "transcript" => titled,
+                                "composer" => leaf.title.is_none(),
+                                _ => false,
+                            }
                     }
                 }
             }

@@ -35,6 +35,7 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 - `api.settingsFile` and the settings file (`settings_file_v1`).
 - Focus regions, `key_contexts`, the `region` and `help` key actions and `keys: 'all'` (`terminal_focus_v1`).
+- Layout leaf `title` (`terminal_layout_title_v1`).
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -3431,6 +3432,10 @@ document viewers, image previews, warnings, watermarks and dashboards.
 #### Layouts and component types
 
 Views may declare a `layout` tree of splits and tabs with transcript, composer and mod-named sites (`mod/site`).
+A `site:` or `transcript` leaf may set `title` (`terminal_layout_title_v1`), at most 64 bytes without control
+characters: a site's frame shows it instead of the site name and `''` draws no title, and a titled transcript gives
+its top row to a rule carrying the title, accented while the chat has focus in a view with `key_contexts`. A
+`composer` leaf takes no title.
 Components add `document` (up to 100,000 lines with anchors, selection and find), `diff`, `image`, `raster` and
 `terminal` (a PTY session).
 
@@ -3527,7 +3532,8 @@ a binding or control naming another mod's command is dropped.
 
 With a view `layout`, the host computes focus regions every frame. The chat (transcript and composer) is region 0
 and each drawn `site:` leaf is a region named by its site, numbered from 1 in layout order; only a `tabs` node's
-active tab counts.
+active tab counts. When a `tabs` node's active tab changes (a tab click or a new `active`), focus inside it moves to
+the node's newly drawn region.
 
 - A `{region}` key action moves focus without a mod callback: `left`, `right`, `up` and `down` pick the nearest
   region on that side, `next` and `previous` cycle in layout order, `chat` or `0` returns to the chat, a number

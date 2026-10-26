@@ -397,6 +397,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "mention_read_v1",
     "settings_file_v1",
     "terminal_focus_v1",
+    "terminal_layout_title_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",

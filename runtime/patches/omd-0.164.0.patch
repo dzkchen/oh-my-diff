@@ -104533,10 +104533,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a8665282e0771eaec56215dcf5c1f275b623e56
+index 0000000000000000000000000000000000000000..01067169a1f9f4505c3ed8e4b2c7fd043da56831
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6291 @@
+@@ -0,0 +1,6292 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104936,6 +104936,7 @@ index 0000000000000000000000000000000000000000..4a8665282e0771eaec56215dcf5c1f27
 +    "mention_read_v1",
 +    "settings_file_v1",
 +    "terminal_focus_v1",
++    "terminal_layout_title_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -122224,10 +122225,10 @@ index 0000000000000000000000000000000000000000..aaa1a6ed36124208427f7dcd85d0fdb5
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee10dc3d21bc66c8570f3ef22b4f487aaf240668
+index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c446fe67cf
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2469 @@
+@@ -0,0 +1,2477 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -122355,6 +122356,8 @@ index 0000000000000000000000000000000000000000..ee10dc3d21bc66c8570f3ef22b4f487a
 +    pub content: String,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub style: Option<ModBoxStyle>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub title: Option<String>,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -122399,17 +122402,23 @@ index 0000000000000000000000000000000000000000..ee10dc3d21bc66c8570f3ef22b4f487a
 +        match self {
 +            Self::Leaf(leaf) => {
 +                leaves.push(leaf.content.clone());
++                let titled = leaf.title.as_ref().is_none_or(|title| visible(title, 64));
 +                match leaf.content.strip_prefix("site:") {
 +                    Some(site) => {
 +                        valid_site(site)
++                            && titled
 +                            && leaf
 +                                .style
 +                                .as_ref()
 +                                .is_none_or(|style| style.valid() && style.hover.is_none())
 +                    }
 +                    None => {
-+                        matches!(leaf.content.as_str(), "transcript" | "composer")
-+                            && leaf.style.is_none()
++                        leaf.style.is_none()
++                            && match leaf.content.as_str() {
++                                "transcript" => titled,
++                                "composer" => leaf.title.is_none(),
++                                _ => false,
++                            }
 +                    }
 +                }
 +            }
@@ -124699,10 +124708,10 @@ index 0000000000000000000000000000000000000000..ee10dc3d21bc66c8570f3ef22b4f487a
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8e556f5112b66081a6b01569c642b1ce112092b6
+index 0000000000000000000000000000000000000000..0ce16cb62a684a01ce421b6f185ab3c1c614e472
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,318 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -124816,6 +124825,66 @@ index 0000000000000000000000000000000000000000..8e556f5112b66081a6b01569c642b1ce
 +        .unwrap();
 +    assert_eq!(conflicts[0].field, "sites.welcome");
 +    assert_eq!(conflicts[0].owner, "first");
++}
++
++#[test]
++fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
++    let layout = |site: Value, transcript: Value, composer: Value| {
++        json!({"layout": {"split": "horizontal", "children": [site,
++            {"split": "vertical", "children": [transcript, composer]}]}})
++    };
++    let (site, transcript, composer) = (
++        json!({"content": "site:a/b"}),
++        json!({"content": "transcript"}),
++        json!({"content": "composer"}),
++    );
++    let titled = |leaf: &Value, title: &str| {
++        let mut leaf = leaf.clone();
++        leaf["title"] = json!(title);
++        leaf
++    };
++    for valid in [
++        layout(
++            titled(&site, "Changes"),
++            titled(&transcript, "Chat"),
++            composer.clone(),
++        ),
++        layout(titled(&site, ""), titled(&transcript, ""), composer.clone()),
++        layout(
++            titled(&site, &"é".repeat(32)),
++            transcript.clone(),
++            composer.clone(),
++        ),
++    ] {
++        assert!(view(valid.clone()).is_ok(), "{valid}");
++        assert!(ModViewPatch::parse(valid).is_ok());
++    }
++    for invalid in [
++        layout(
++            titled(&site, &"x".repeat(65)),
++            transcript.clone(),
++            composer.clone(),
++        ),
++        layout(
++            titled(&site, "a\u{1b}[31m"),
++            transcript.clone(),
++            composer.clone(),
++        ),
++        layout(
++            site.clone(),
++            titled(&transcript, "line\nbreak"),
++            composer.clone(),
++        ),
++        layout(
++            site.clone(),
++            transcript.clone(),
++            titled(&composer, "Prompt"),
++        ),
++        layout(site.clone(), transcript.clone(), titled(&composer, "")),
++    ] {
++        assert!(view(invalid.clone()).is_err(), "{invalid}");
++        assert!(ModViewPatch::parse(invalid).is_err());
++    }
 +}
 +
 +#[test]
@@ -155052,10 +155121,10 @@ index 0000000000000000000000000000000000000000..444a73f47042d6e6a9d8cba4746d0a5c
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd2c8c2470
+index 0000000000000000000000000000000000000000..325ece823b891480f41262e9ff53906d528bbf5a
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,347 @@
 +use crate::omd::LockExt;
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
@@ -155073,6 +155142,8 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +    pub(crate) content: String,
 +    pub(crate) area: Rect,
 +    pub(crate) style: Option<codex_omd::ModBoxStyle>,
++    pub(crate) title: Option<String>,
++    pub(crate) tabs: Option<String>,
 +}
 +
 +#[derive(Clone, Debug, PartialEq, Eq)]
@@ -155097,6 +155168,7 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +pub(crate) struct Placement {
 +    pub(crate) regions: Vec<Region>,
 +    pub(crate) tabs: Vec<TabBar>,
++    pub(crate) heading: Option<(Rect, String)>,
 +    handles: Vec<Handle>,
 +}
 +
@@ -155151,13 +155223,32 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +    sizes
 +}
 +
-+fn walk(node: &ModLayout, area: Rect, path: &str, state: &State, out: &mut Placement) {
++fn walk(
++    node: &ModLayout,
++    area: Rect,
++    (path, outer): (&str, Option<&str>),
++    state: &State,
++    out: &mut Placement,
++) {
 +    match node {
-+        ModLayout::Leaf(leaf) => out.regions.push(Region {
-+            content: leaf.content.clone(),
-+            area,
-+            style: leaf.style,
-+        }),
++        ModLayout::Leaf(leaf) => {
++            let mut area = area;
++            if let Some(title) = leaf.title.as_ref().filter(|title| !title.is_empty())
++                && leaf.content == "transcript"
++                && area.height >= 2
++            {
++                out.heading = Some((Rect { height: 1, ..area }, title.clone()));
++                area.y += 1;
++                area.height -= 1;
++            }
++            out.regions.push(Region {
++                content: leaf.content.clone(),
++                area,
++                style: leaf.style,
++                title: leaf.title.clone(),
++                tabs: outer.map(str::to_owned),
++            });
++        }
 +        ModLayout::Split(split) => {
 +            let count = split.children.len();
 +            let weights = state
@@ -155190,7 +155281,7 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +                        Rect::new(area.x, starts[index], area.width, sizes[index])
 +                    }
 +                };
-+                walk(child, rect, &format!("{path}.{index}"), state, out);
++                walk(child, rect, (&format!("{path}.{index}"), outer), state, out);
 +                if index + 1 < count {
 +                    out.handles.push(Handle {
 +                        path: path.to_owned(),
@@ -155229,7 +155320,13 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +                area
 +            };
 +            if let Some(tab) = tabs.tabs.get(active) {
-+                walk(&tab.node, body, &format!("{path}.{active}"), state, out);
++                walk(
++                    &tab.node,
++                    body,
++                    (&format!("{path}.{active}"), outer.or(Some(path))),
++                    state,
++                    out,
++                );
 +            }
 +        }
 +    }
@@ -155245,7 +155342,7 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +        }
 +        state.owner = owner.map(str::to_owned);
 +        let mut placement = Placement::default();
-+        walk(layout, area, "r", state, &mut placement);
++        walk(layout, area, ("r", None), state, &mut placement);
 +        state.last = placement.clone();
 +        placement
 +    })
@@ -155377,10 +155474,10 @@ index 0000000000000000000000000000000000000000..bcd52799f44865bf30442f0ba28bbecd
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_layout_tests.rs b/codex-rs/tui/src/mod_layout_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..63e71803f6f9f0d672af2e4a66ab46c6be7c8513
+index 0000000000000000000000000000000000000000..430d9a5984e15be5e0dccb0e1f36c1538a4af5c6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout_tests.rs
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,118 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -155471,6 +155568,8 @@ index 0000000000000000000000000000000000000000..63e71803f6f9f0d672af2e4a66ab46c6
 +                border: Some(codex_omd::ModBoxBorder::Thick),
 +                ..Default::default()
 +            }),
++            title: None,
++            tabs: None,
 +        }
 +    );
 +    assert_eq!(placement.area("transcript"), Some(Rect::new(22, 0, 20, 10)));
@@ -162737,10 +162836,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78bf343ad8e
+index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969a22e371f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5543 @@
+@@ -0,0 +1,5606 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -162911,6 +163010,9 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +    last_region: Option<String>,
 +    region_focus: BTreeMap<String, String>,
 +    component_region: BTreeMap<String, String>,
++    /// The outermost `tabs` node path of each drawn site region, so focus stays there when its tab changes.
++    region_tabs: Vec<(String, String)>,
++    follow_tab: bool,
 +    region_keys: bool,
 +    help: Option<Help>,
 +}
@@ -163622,6 +163724,8 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +    last_region: None,
 +    region_focus: BTreeMap::new(),
 +    component_region: BTreeMap::new(),
++    region_tabs: Vec::new(),
++    follow_tab: false,
 +    region_keys: false,
 +    help: None,
 +});
@@ -165562,7 +165666,7 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
-+    begin_regions(&mut interaction, snapshot, Vec::new());
++    begin_regions(&mut interaction, snapshot, Vec::new(), Vec::new());
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -166131,7 +166235,17 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +    };
 +    let style = panel_style(&snapshot.view);
 +    let mut interaction = INTERACTION.locked();
-+    begin_regions(&mut interaction, snapshot, focus_areas(&placement));
++    let tabs = placement
++        .regions
++        .iter()
++        .filter_map(|region| {
++            Some((
++                region.content.strip_prefix("site:")?.to_owned(),
++                region.tabs.clone()?,
++            ))
++        })
++        .collect();
++    begin_regions(&mut interaction, snapshot, focus_areas(&placement), tabs);
 +    interaction.targets.clear();
 +    interaction.key_panes.clear();
 +    interaction.order.clear();
@@ -166170,7 +166284,10 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +            buffer,
 +            &mut interaction,
 +            frame,
-+            Some(Line::from(name.to_owned())),
++            match region.title.as_deref() {
++                Some("") => None,
++                title => Some(Line::from(title.unwrap_or(name).to_owned())),
++            },
 +        );
 +        if focused && region.style.and_then(|style| style.focus).is_none() {
 +            accent_edges(
@@ -166181,6 +166298,27 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +                buffer,
 +            );
 +        }
++    }
++    if let Some((area, title)) = &placement.heading {
++        let rule = glyph("─", "-");
++        let title_style = if interaction.region_keys && interaction.focus_region.is_none() {
++            crate::style::accent_style().bold()
++        } else {
++            Style::default()
++        };
++        let line = Line::from(vec![
++            ratatui::text::Span::styled(format!("{rule} "), style.dim()),
++            ratatui::text::Span::styled(title.clone(), title_style),
++            ratatui::text::Span::styled(
++                format!(" {}", rule.repeat(usize::from(area.width))),
++                style.dim(),
++            ),
++        ]);
++        Paragraph::new(crate::line_truncation::truncate_line_to_width(
++            line,
++            usize::from(area.width),
++        ))
++        .render(*area, buffer);
 +    }
 +    for bar in &placement.tabs {
 +        let spans = crate::mod_layout::tab_line(bar)
@@ -166194,6 +166332,11 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +            })
 +            .collect::<Vec<_>>();
 +        Paragraph::new(Line::from(spans)).render(bar.area, buffer);
++    }
++    if std::mem::take(&mut interaction.follow_tab)
++        && let Some(region) = interaction.focus_region.clone()
++    {
++        interaction.focused = region_control(&interaction, &region);
 +    }
 +    render_overlays(screen, snapshot, style, buffer, &mut interaction);
 +    render_dialog(screen, chat, snapshot, style, buffer, &mut interaction);
@@ -166217,6 +166360,7 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +    interaction: &mut Interaction,
 +    snapshot: &ModViewSnapshot,
 +    areas: Vec<(String, Rect)>,
++    tabs: Vec<(String, String)>,
 +) {
 +    interaction.all_keys.clear();
 +    interaction.component_region = snapshot
@@ -166231,14 +166375,28 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +        .collect();
 +    interaction.region_keys = !snapshot.view.key_contexts.is_empty();
 +    interaction.focus_areas = areas;
-+    if interaction.focus_region.as_ref().is_some_and(|region| {
++    if let Some(region) = interaction.focus_region.clone().filter(|region| {
 +        !interaction
 +            .focus_areas
 +            .iter()
 +            .any(|(name, _)| name == region)
 +    }) {
-+        interaction.focus_region = None;
++        let follow = interaction
++            .region_tabs
++            .iter()
++            .find(|(site, _)| *site == region)
++            .and_then(|(_, path)| tabs.iter().find(|(_, tabs)| tabs == path))
++            .map(|(site, _)| site.clone());
++        interaction.follow_tab = follow.is_some();
++        if follow.is_some()
++            && let Some(focused) = interaction.focused.take()
++            && interaction.component_region.get(&focused) == Some(&region)
++        {
++            interaction.region_focus.insert(region, focused);
++        }
++        interaction.focus_region = follow;
 +    }
++    interaction.region_tabs = tabs;
 +    follow_region(interaction);
 +}
 +
@@ -166602,7 +166760,11 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +        return;
 +    }
 +    interaction.focus_region = Some(name.to_owned());
-+    interaction.focused = interaction
++    interaction.focused = region_control(interaction, name);
++}
++
++fn region_control(interaction: &Interaction, name: &str) -> Option<String> {
++    interaction
 +        .region_focus
 +        .get(name)
 +        .filter(|id| region_entry(interaction, name, id))
@@ -166613,7 +166775,7 @@ index 0000000000000000000000000000000000000000..957312092fb6dbebea5bb4292891c78b
 +                .iter()
 +                .find(|id| region_entry(interaction, name, id))
 +                .cloned()
-+        });
++        })
 +}
 +
 +/// Orders candidates on that side of `from`: overlapping across the move first, then nearest, then best aligned.
@@ -168536,10 +168698,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..92bc8e1e33337ea688d09ad03438ef1e53a63332
+index 0000000000000000000000000000000000000000..3da1b5b6efb9a33c9b393a255d7720edcc4d51d7
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2185 @@
+@@ -0,0 +1,2266 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -170689,6 +170851,87 @@ index 0000000000000000000000000000000000000000..92bc8e1e33337ea688d09ad03438ef1e
 +    assert_eq!(focused().as_deref(), Some("files"));
 +    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
 +    assert_eq!((region(), focused()), (None, None));
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn layout_leaf_titles_replace_site_names_and_focus_stays_in_tabs_across_tab_switches() {
++    preview(ModViewSnapshot::default());
++    let view = |active: usize| {
++        snapshot(serde_json::json!({
++            "layout": {"split": "horizontal", "ratio": [2, 1], "children": [
++                {"split": "vertical", "ratio": [5, 1], "children": [
++                    {"content": "transcript", "title": "Chat"}, {"content": "composer"}]},
++                {"tabs": [{"title": "1 Files", "node": {"content": "site:demo/files", "title": ""}},
++                          {"title": "2 Git", "node": {"content": "site:demo/git", "title": "Git status"}}],
++                 "active": active}]},
++            "sites": {
++                "demo/files": {"components": [{"type": "list", "id": "files", "label": "Files",
++                    "rows": [{"value": "a", "label": "a", "spans": [{"text": "a.rs"}]}], "action": {"command": "demo:open"}}]},
++                "demo/git": {"components": [{"type": "list", "id": "git", "label": "Git",
++                    "rows": [{"value": "b", "label": "b", "spans": [{"text": "b.rs"}]}], "action": {"command": "demo:open"}}]}},
++            "key_contexts": [{"when": {"focus": "site"}, "owner": "demo", "keys": {"0": {"region": "chat"}}}]
++        }))
++    };
++    let area = Rect::new(0, 0, 120, 40);
++    let draw = |snapshot: &ModViewSnapshot| {
++        preview(snapshot.clone());
++        let mut buffer = Buffer::empty(area);
++        let chat = owned_chat_area(area, snapshot, 0);
++        render_owned(area, chat, &mut buffer, snapshot);
++        (buffer, chat)
++    };
++    let press = |code, modifiers| input(KeyEvent::new(code, modifiers), true);
++    let region = || INTERACTION.lock().unwrap().focus_region.clone();
++    let focused = || INTERACTION.lock().unwrap().focused.clone();
++    let accent = |buffer: &Buffer| buffer[(2, 0)].modifier.contains(Modifier::BOLD);
++
++    let (buffer, chat) = draw(&view(0));
++    let screen = rows(&buffer, area);
++    let lines = screen.lines().collect::<Vec<_>>();
++    assert_eq!(chat, Rect::new(0, 1, 80, 39));
++    assert!(
++        lines[0].starts_with(&format!("{} Chat ", glyph("─", "-"))),
++        "{screen}"
++    );
++    assert!(
++        lines[0].contains("1 Files") && !screen.contains("demo/"),
++        "{screen}"
++    );
++    assert!(accent(&buffer));
++
++    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
++    assert_eq!(
++        (region().as_deref(), focused().as_deref()),
++        (Some("demo/files"), Some("files"))
++    );
++    let (buffer, _) = draw(&view(0));
++    assert!(!accent(&buffer));
++
++    let (buffer, _) = draw(&view(1));
++    assert_eq!(
++        (region().as_deref(), focused().as_deref()),
++        (Some("demo/git"), Some("git"))
++    );
++    assert!(rows(&buffer, area).contains(" Git status "));
++
++    let click = MouseEvent {
++        kind: MouseEventKind::Down(MouseButton::Left),
++        column: 82,
++        row: 0,
++        modifiers: KeyModifiers::NONE,
++    };
++    assert!(crate::mod_layout::pointer(click));
++    draw(&view(1));
++    assert_eq!(
++        (region().as_deref(), focused().as_deref()),
++        (Some("demo/files"), Some("files"))
++    );
++
++    press(KeyCode::Char('0'), KeyModifiers::NONE);
++    let (buffer, _) = draw(&view(0));
++    assert_eq!((region(), focused(), accent(&buffer)), (None, None, true));
 +    preview(ModViewSnapshot::default());
 +}
 +
