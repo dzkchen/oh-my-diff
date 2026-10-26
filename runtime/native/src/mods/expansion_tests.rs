@@ -4377,18 +4377,7 @@ async fn thread_config_keeps_the_users_sandbox() {
         .await
         .unwrap();
     let profile = config.permissions.effective_permission_profile();
-    let mut environment = config.permissions.shell_environment_policy.r#set.clone();
-    environment.insert(
-        codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
-        fixture
-            .lead
-            .host
-            .protected_paths()
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
+    let environment = config.permissions.shell_environment_policy.r#set.clone();
     codex_extension_api::ConfigContributor::prepare_thread_config(
         &mods(&fixture.core),
         &mut config,
@@ -4400,5 +4389,18 @@ async fn thread_config_keeps_the_users_sandbox() {
     assert_eq!(
         config.permissions.shell_environment_policy.r#set,
         environment
+    );
+    assert_eq!(
+        config.permissions.sandbox_denied_paths,
+        fixture
+            .lead
+            .host
+            .protected_paths()
+            .iter()
+            .map(
+                |path| codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
+                    .unwrap()
+            )
+            .collect::<Vec<_>>()
     );
 }

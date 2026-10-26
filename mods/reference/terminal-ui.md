@@ -607,8 +607,8 @@ unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descript
 
 Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
 (`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
-switch tabs, `/` searches labels, descriptions, keywords and tab titles across every tab when `search` is true,
-ranking fuzzy matches best first, and Esc clears the search or closes the panel. Outside a search, a letter moves to
+switch tabs, `/` searches every tab when `search` is true: labels match fuzzily, best first, then items whose
+description, keywords or tab title contain the query; Esc clears the search or closes the panel. Outside a search, a letter moves to
 the next item whose label starts with it, `g` and `G` go to the first and last row, and Home, End, PgUp and PgDn work
 as in every Codex list.
 

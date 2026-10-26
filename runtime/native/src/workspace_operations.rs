@@ -57,19 +57,12 @@ impl WorkspaceAuthority {
         approved: &BTreeSet<String>,
         limit: usize,
     ) -> Result<Option<String>, String> {
-        let snapshot = match codex_omd::capture_tracked(&self.repository, approved, limit) {
-            Ok(snapshot) => snapshot,
-            Err(error) if error.to_string() == "snapshot size limit" => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        if snapshot
-            .files
-            .keys()
-            .any(|path| !self.readable(&self.repository.join(path)))
-        {
-            return Ok(None);
+        match codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
+            self.readable(&self.repository.join(path))
+        }) {
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
+            result => result.map_err(|error| error.to_string()),
         }
-        snapshot.hash().map(Some).map_err(|error| error.to_string())
     }
 
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
