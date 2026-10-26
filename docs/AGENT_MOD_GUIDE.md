@@ -297,7 +297,7 @@ api.on('migrate', ({ from }) => {
 | The mod breaks `codex` | `omd mods disable notes` from any shell, or `/omd` inside `codex`; `omd mods list` says why it failed |
 | An update broke it | `omd mods disable notes`, `omd mods rollback notes`, then `omd mods enable notes` |
 | `codex` won't start with mods | `omd-package activate direct`, then `omd-package activate full` once fixed |
-| Bad state after a change | Bump `state_version` and add a `migrate` handler ([compatibility](../mods/COMPATIBILITY.md#state-changes)) |
+| Bad state after a change | Bump `state_version` and add a `migrate` handler ([compatibility](../mods/conformance/COMPATIBILITY.md#state-changes)) |
 | A denial you don't understand | `omd-mod-author explain 'DENIAL TEXT'` |
 
 More repairs are in [Install and manage mods](manage-mods.md#when-a-mod-misbehaves).

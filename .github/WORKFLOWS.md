@@ -54,7 +54,7 @@ prerelease and never marked latest.
 
 ## Releases
 
-The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `changelog.json`. The
+The version lives in `runtime/release.lock.json`; release notes and `CHANGELOG.md` come from `release/changelog.json`. The
 host reports its crate version as the OMD release, so first set `codex-omd` and `codex-omd-runner` to the release
 version in a scratch tree, `build.py sync` and merge that; `mise run release` and `release.yml` refuse a mismatch.
 

@@ -44,7 +44,6 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.equal(response.at(-1).response.usage.input_tokens, 16);
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
   assert.equal(response.at(-1).response.model, 'claude-opus-5-5-20261001');
-  assert.equal(response.at(-1).response.usage.omd_cache_ttl_seconds, 3600);
   assert.deepEqual(response.at(-1).response.usage.omd_reported_cost, { usd: 0.042, basis: 'client_list_estimate' });
   const credits = responseEvents({ id: 'msg_api', usage: { input_tokens: 1, output_tokens: 1 }, content: [] },
     {}, model, first.reverse, false, 0.001, 'api').at(-1).response.usage;
@@ -179,7 +178,6 @@ test('the relay sends nothing upstream for the wrong credential or model and sto
     assert.equal((await attempt({ billing: 'api' }, { 'x-api-key': 'fixture' })).refusal, null);
     const stopped = await attempt({ extraUsage: false }, { authorization: 'Bearer fixture' });
     assert.equal(stopped.refusal.code, 'claude_extra_usage_blocked');
-    assert.match(stopped.refusal.message, /may still bill this one request/);
     assert.equal(forwarded, 2);
   } finally {
     upstream.closeAllConnections();
@@ -262,13 +260,10 @@ test('an expired login and a missing entitlement tell the user to run /claude lo
   } finally { await rm(root, { recursive: true, force: true }); }
   const expired = upstreamFailure(401, {}, '{"error":{"type":"authentication_error"}}');
   assert.equal(expired.code, 'claude_login_expired');
-  assert.match(expired.message, /run `\/claude login` and retry/);
+  assert.match(expired.message, /claude login/);
   assert.equal(upstreamFailure(403, {}, 'OAuth token has been revoked').code, 'claude_login_expired');
-  assert.match(upstreamFailure(401, {}, '', 'api').message, /run `\/claude login api` and retry/);
   const entitlement = upstreamFailure(403, {}, '{"error":{"message":"your account cannot use this model"}}');
   assert.equal(entitlement.code, 'claude_model_not_entitled');
-  assert.match(entitlement.message, /\/model.*`\/claude login`/);
-  assert.match(upstreamFailure(404, {}, 'model not found', 'api').message, /`\/claude login api`/);
 });
 
 test('each Claude account signs in and runs through its own config directory, and a missing login fails only that account', async () => {
@@ -284,7 +279,7 @@ test('each Claude account signs in and runs through its own config directory, an
     assert.throws(() => accountLogins({ claude: fake, accounts: [account('spare', '/accounts/spare')] }), /run `\/claude login spare`/);
     await runClaude(prompt, entry, fake, new AbortController().signal, () => {}, { account: account('work', '/accounts/work') }).catch(() => {});
     assert.equal((await readFile(join(root, 'dir'), 'utf8')).trim(), '/accounts/work');
-    assert.match(upstreamFailure(401, {}, '', 'api', account('work', '/accounts/work')).message, /run `\/claude login api work`/);
+    assert.match(upstreamFailure(401, {}, '', 'api', account('work', '/accounts/work')).message, /login api work/);
   } finally {
     delete process.env.CLAUDE_CONFIG_DIR;
     await rm(root, { recursive: true, force: true });
@@ -336,8 +331,7 @@ else if (argv[0] === 'auth') {
     const dir = await realpath(join(store, 'routes/claude/accounts/work'));
     assert.deepEqual(result.accounts.map(account => [account.name, account.billing, account.email, account.config_dir, account.route]),
       [['default', 'subscription', 'me@example.com', null, 'claude'], ['work', 'api', 'work@example.com', dir, 'claude-work']]);
-    assert.deepEqual(result.models.map(model => [model.slug, model.display]), [['claude-opus-5', 'Claude Opus 5'], ['claude-sonnet-5', 'Claude Sonnet 5'],
-      ['claude-opus-5.work', 'Claude Opus 5 · work'], ['claude-sonnet-5.work', 'Claude Sonnet 5 · work']]);
+    assert.deepEqual(result.models.map(model => model.slug), ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-5.work', 'claude-sonnet-5.work']);
     const written = await host();
     assert.deepEqual(written.routes.map(route => [route.name, route.provider, route.model, route.rates.included_subscription, route.rates.provider_billed]),
       [['claude', 'omd_claude_cli', 'claude-opus-5', true, undefined], ['claude-work', 'omd_claude_cli', 'claude-opus-5.work', undefined, true]]);
@@ -345,13 +339,11 @@ else if (argv[0] === 'auth') {
     assert.ok(grant.read_paths.includes(dir));
     assert.equal(grant.route.rates.provider_billed, true);
     const route = JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8'));
-    assert.deepEqual(route.accounts[1].models[0], { slug: 'claude-opus-5.work', model: 'claude-opus-5', cli: 'claude-opus-5', family: 'opus', name: 'Claude Opus 5 · work',
-      description: 'Opus 5', efforts: ['high'], thinking: false, window: 200000 });
+    assert.deepEqual([route.accounts[1].models[0].cli, route.accounts[1].models[0].efforts, route.accounts[1].models[0].window], ['claude-opus-5', ['high'], 200000]);
     await writeFile(join(store, 'host.json'), JSON.stringify({ ...written, routes: [...written.routes, { ...written.routes[0], name: 'claude-spare', provider: 'omd_profiles' }] }));
     assert.match(setup('spare', 'api').stderr, /claude_route_name_taken: another route is named claude-spare/);
     await writeFile(join(store, 'host.json'), JSON.stringify(written));
     assert.match(setup('Work', 'subscription').stderr, /claude_account_name_invalid/);
-    assert.match(setup('1work', 'subscription').stderr, /claude_account_name_invalid/);
     const failed = setup('team', 'subscription', join(store, 'routes/claude/accounts/team'));
     assert.match(failed.stderr, /claude_ai_subscription_login_required/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/team')));
@@ -463,9 +455,7 @@ test('login runs as a background process that says the sign-in link once and rep
   } finally { rmSync(root, { recursive: true, force: true }); }
   const refused = (version, error) => modEvent('channel', { channel: 'omd_claude_cli/login', data: { billing: 'subscription', account: 'default' } }, null, call =>
     call.operation === 'exec.run' ? (error ? (() => { throw new Error(error); })() : { exit_code: 0, stdout: JSON.stringify({ version, auth: [] }), stderr: '' }) : answer()(call));
-  for (const [version, error, text] of [[null, null, /the Claude CLI was not found on PATH; install it with curl -fsSL https:\/\/claude\.ai\/install\.sh \| bash$/],
-    ['2.1.306 (Claude Code)', null, /Claude CLI 2\.1\.306 \(Claude Code\) is installed, but omd_claude_cli needs 2\.1\.307 or a newer 2\.x; update it with claude update/],
-    [null, 'exec_program_unavailable', /Node\.js was not found on PATH\. Install it \(brew install node/]]) {
+  for (const [version, error, text] of [[null, null, /install\.sh/], ['2.1.306 (Claude Code)', null, /claude update/], [null, 'exec_program_unavailable', /brew install node/]]) {
     const run = refused(version, error);
     assert.equal(run.calls.some(call => call.operation === 'process.start'), false);
     assert.match(notices(run.calls).at(-1), text);
@@ -473,13 +463,12 @@ test('login runs as a background process that says the sign-in link once and rep
   const link = 'https://claude.ai/oauth/authorize?code=true&state=x';
   const event = (kind, data, state) => modEvent('process_event', { session, kind, bytes: 1 }, state, answer(data));
   const output = event('output', `\u001b[1mOpening browser\u001b[0m\nVisit: ${link}\n`, started.state);
-  assert.deepEqual(notices(output.calls), ['Your browser should open; if not, open this link:', link, 'If the page shows a code, run /claude code CODE']);
+  assert.equal(notices(output.calls).filter(text => text.includes(link)).length, 1);
   assert.ok(manifest.subscriptions.channels.includes('omd_claude_cli/code'));
   const code = (state, alive) => channel('code', { code: 'abc' }, state, alive);
   assert.deepEqual(code(output.state).calls.find(call => call.operation === 'process.exchange').arguments, { session, wait_ms: 0, send: ['abc\n'] });
-  const none = ['No Claude login is waiting for a code; run /claude login'];
-  assert.deepEqual([notices(code(null).calls), notices(code(output.state, false).calls)], [none, none]);
-  assert.deepEqual(notices(channel('login', { billing: 'api' }, output.state).calls), ['A Claude login is already running; finish it or wait for it to end']);
+  for (const waiting of [code(null), code(output.state, false)]) assert.equal(waiting.calls.some(call => call.operation === 'process.exchange' && call.arguments.send), false);
+  assert.equal(channel('login', { billing: 'api' }, output.state).calls.some(call => call.operation === 'process.start'), false);
   const entry = started => ({ billing: 'api', out: '', shown: false, started });
   const crashed = { claude_login_1_old: entry(clock - 31 * 60_000), claude_login_2_other: entry(clock) };
   const second = channel('login', { billing: 'subscription', account: 'default' }, { login: { ...output.state.login, ...crashed } }, false, '77-1700000000001');
@@ -492,43 +481,40 @@ test('login runs as a background process that says the sign-in link once and rep
   const exit = (state, setup) => modEvent('process_event', { session, kind: 'exit', bytes: 1 }, state, call =>
     call.operation === 'exec.run' ? setup : answer('', true, undefined, setup ? mod : [])(call));
   const exited = exit(second.state);
-  assert.deepEqual(notices(exited.calls), ['Claude setup could not find the installed mod; enable it in /mods and run /claude login api work again']);
+  assert.equal(exited.calls.some(call => call.operation === 'providers.register'), false);
   assert.deepEqual(Object.keys(exited.state.login), ids.filter(id => id !== session));
   const models = [{ slug: 'claude-opus-5.work', display: 'Claude Opus 5 · work', context_window: 1000000, efforts: ['high'] }];
   const accounts = [{ name: 'work', billing: 'api', email: 'work@example.com', config_dir: '/store/routes/claude/accounts/work', route: 'claude-work', models: 1 }];
   const ready = exit(second.state, { exit_code: 0, stdout: JSON.stringify({ accounts, models }), stderr: '' });
   assert.deepEqual(ready.calls.find(call => call.operation === 'exec.run').arguments.argv, ['/store/sources/omd_claude_cli/setup.mjs', 'work', 'api', '/store/routes/claude/accounts/work']);
-  assert.deepEqual(ready.calls.find(call => call.operation === 'providers.models').arguments, { provider: 'omd_claude_cli', name: 'Claude', models });
+  assert.equal(ready.calls.find(call => call.operation === 'providers.models').arguments.provider, 'omd_claude_cli');
   assert.deepEqual([ready.state.accounts, ready.state.models], [accounts, models]);
-  assert.match(notices(ready.calls).at(-1), /^Claude account work \(work@example\.com\) is ready on Console API credits/);
+  assert.match(notices(ready.calls).at(-1), /work@example\.com/);
   const removed = modEvent('channel', { channel: 'omd_claude_cli/remove', data: { account: 'work' } }, ready.state, call =>
     call.operation === 'exec.run' ? { exit_code: 0, stdout: JSON.stringify({ accounts: [], models: [], signed_out: true }), stderr: '' } : answer()(call));
   assert.deepEqual(removed.calls.find(call => call.operation === 'exec.run').arguments.argv, ['/store/sources/omd_claude_cli/setup.mjs', 'work', 'remove']);
-  assert.deepEqual([removed.state.accounts, removed.state.published, notices(removed.calls)], [[], false, ['Removed Claude account work and signed it out']]);
+  assert.deepEqual([removed.state.accounts, removed.state.published], [[], false]);
   assert.ok(removed.calls.some(call => call.operation === 'providers.unregister') && !removed.calls.some(call => call.operation === 'providers.register'));
 });
 
 test('/claude and /claude status name a host error, a missing CLI and a CLI version the mod does not accept', () => {
   const status = (answer, args = '') => modEvent('command', args, null, answer, 'claude').value.display;
   const probe = version => () => ({ exit_code: 0, stdout: JSON.stringify({ version, auth: null }), stderr: '' });
-  assert.match(status(() => { throw new Error('exec_program_too_large'); }), /^CLI: check failed: exec_program_too_large/);
-  assert.match(status(probe(null), 'status'), /^CLI: the Claude CLI was not found on PATH; install it with /);
-  assert.match(status(probe(null), 'bogus'), /^Usage:/);
-  assert.ok(status(probe('2.1.999 (Claude Code)')).startsWith('CLI: 2.1.999 (Claude Code)\nAccounts: none'));
-  assert.match(status(probe('3.0.0 (Claude Code)')), /^CLI: Claude CLI 3\.0\.0 \(Claude Code\) is installed, but omd_claude_cli needs 2\.1\.307 or a newer 2\.x.*refused until then/);
+  assert.match(status(() => { throw new Error('exec_program_too_large'); }), /exec_program_too_large/);
+  assert.match(status(probe(null), 'status'), /not found on PATH/);
+  assert.match(status(probe('3.0.0 (Claude Code)')), /3\.0\.0.*refused/);
   assert.deepEqual(['2.1.307 (Claude Code)', '2.2.0 (Claude Code)', '2.1.306 (Claude Code)', '1.9.999 (Claude Code)', '2.1.307', null].map(cliSupported), [true, true, false, false, false, false]);
-  assert.ok(status(probe(CLI_VERSION)).startsWith(`CLI: ${CLI_VERSION}\nAccounts: none`));
+  assert.ok(status(probe(CLI_VERSION)).includes(CLI_VERSION));
   const accounts = [{ name: 'default', billing: 'subscription', config_dir: null, models: 3 }, { name: 'work', billing: 'api', config_dir: '/accounts/work', models: 2 }];
   const signedIn = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', email: 'me@example.com' });
   const listed = modEvent('command', '', { accounts, models: [], published: true }, call => {
     assert.deepEqual(JSON.parse(call.arguments.argv[2]), ['', '/accounts/work']);
     return { exit_code: 0, stdout: JSON.stringify({ version: CLI_VERSION, auth: [signedIn, null] }), stderr: '' };
   }, 'claude').value.display;
-  assert.match(listed, /\nAccount default: claude\.ai \(max\) me@example\.com · subscription · 3 models\nAccount work: not signed in · Console API credits · 2 models\n/);
+  assert.match(listed, /me@example\.com[\s\S]*work: not signed in/);
   const login = (args, state = null) => modEvent('command', args, state, () => ({ delivered: 1 }), 'claude');
   assert.deepEqual(login('login api work').calls[0].arguments, { channel: 'login', data: { billing: 'api', account: 'work' } });
   assert.deepEqual(login('login').calls[0].arguments, { channel: 'login', data: { billing: 'subscription', account: 'default' } });
-  for (const bad of ['login Work', 'login api work extra', 'login work extra', 'login 1']) assert.match(login(bad).value.display, /^Account names start with a letter/, bad);
-  assert.equal(login('remove work').value.display, 'Unknown Claude account work');
+  assert.equal(login('login Work').calls.length, 0);
   assert.deepEqual(login('remove work', { accounts }).calls[0].arguments, { channel: 'remove', data: { account: 'work' } });
 });

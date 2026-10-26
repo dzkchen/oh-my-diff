@@ -79,7 +79,7 @@ version. Updates are signed and checked before they install, and `omd update rol
 
 ## Status
 
-Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/COMPATIBILITY.md)).
+Mod API `1.0.0` is stable; surfaces marked experimental can change ([compatibility](mods/conformance/COMPATIBILITY.md)).
 The API is still young, so expect new capabilities. If you need a specific one, open an issue or a PR.
 
 I focus mainly on critical fixes and on adding API capabilities for mods. If you'd like to take over

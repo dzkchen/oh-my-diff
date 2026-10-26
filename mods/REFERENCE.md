@@ -24,7 +24,7 @@ experimental:
 - A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
   experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
@@ -3801,10 +3801,10 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, query?, selected?, close_args?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
-tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
+tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, group?, keywords?, detail?, kind, value?, options?}` with
 unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
 
 | `kind` | `value` | Space or Enter |
@@ -3816,8 +3816,18 @@ unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descript
 
 Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
 (`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
-switch tabs, `/` searches labels, descriptions and tab titles across every tab when `search` is true, and Esc clears
-the search or closes the panel. A call with the title of the caller's open panel replaces it in place and keeps its
+switch tabs, `/` searches labels, descriptions, keywords and tab titles across every tab when `search` is true,
+ranking fuzzy matches best first, and Esc clears the search or closes the panel. Outside a search, a letter moves to
+the next item whose label starts with it, `g` and `G` go to the first and last row, and Home, End, PgUp and PgDn work
+as in every Codex list.
+
+Experimental (`terminal_panel_navigation_v1`): an item's `group` (up to 32 bytes) gathers items under a header row
+with their count, in order of first appearance after any ungrouped items; Space or Enter on the header collapses or
+expands it. `keywords` (up to 256 bytes) is searched but not shown, and `detail` (up to 512 bytes) shows below the
+list while the item is selected. `query` (up to 128 bytes) opens the panel with that search, and `selected` names the
+item to select first. With `close_args`, closing the panel runs `action.command` with `close_args`, the selected item
+id (`-` on a header) and the search the user last chose an item with (cleared when the user ends a search without
+choosing one), joined by spaces, so a mod can reopen the panel where the user left it. A call with the title of the caller's open panel replaces it in place and keeps its
 tab (also across a tab-less panel such as a confirmation), selected item and search; another title opens a new panel
 over it, and Esc returns to the one below. Only the user's own commands and panel actions open panels
 (`host_operation_user_only` elsewhere). Returns `{shown: true}`.
@@ -5358,7 +5368,9 @@ the `terminal` event input are unchanged.
 
 Without the broker, credential profiles, the trusted grant set, the task ledger and contract state are files in the
 mod store, so any process running as the user can read or change them, including an explicitly unsandboxed child,
-and `status.authority` reports `unprotected (same-user)`.
+and `status.authority` reports `unprotected (same-user)`. Agent commands that Codex runs in its sandbox can't reach
+the mod store, workspace leases, `host.json` protected paths or secret files; commands it runs without one (approved
+escalations, allow rules, full access, an external sandbox) can.
 
 #### The broker
 

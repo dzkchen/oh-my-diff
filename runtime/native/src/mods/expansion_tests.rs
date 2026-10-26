@@ -4359,3 +4359,46 @@ fn tool_batch_merges_opt_into_per_call_success_explicitly() {
     assert!(merge(json!({"success_per_call": "yes"})).is_err());
     assert!(merge(json!({"other": true})).is_err());
 }
+
+#[tokio::test]
+async fn thread_config_keeps_the_users_sandbox() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    let profile = config.permissions.effective_permission_profile();
+    let mut environment = config.permissions.shell_environment_policy.r#set.clone();
+    environment.insert(
+        codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
+        fixture
+            .lead
+            .host
+            .protected_paths()
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(config.permissions.effective_permission_profile(), profile);
+    assert_eq!(
+        config.permissions.shell_environment_policy.r#set,
+        environment
+    );
+}

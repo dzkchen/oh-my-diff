@@ -140,12 +140,12 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
-export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string } & (
+export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string; group?: string; keywords?: string; detail?: string } & (
   | { kind: 'toggle'; value?: boolean }
   | { kind: 'choice'; value?: string; options: TerminalSelectOption[] }
   | { kind: 'text'; value?: string }
   | { kind: 'action' });
-export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; action: TerminalCommandAction };
+export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; query?: string; selected?: string; close_args?: string; action: TerminalCommandAction };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };

@@ -24,7 +24,7 @@ experimental:
 - A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
   experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
