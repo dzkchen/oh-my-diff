@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { callback, runner, runnerSync, surface } from '../tests/mod_runner.mjs';
+import { callback, runner, runnerSync, surface } from './mod_runner.mjs';
 function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }

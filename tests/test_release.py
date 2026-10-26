@@ -24,12 +24,13 @@ class ReleaseTests(unittest.TestCase):
                         "commits": ["abcdef1"]},
                        {"date": "2026-10-08", "title": "Launch scope", "summary": "Smaller launch.",
                         "sections": [{"label": "Changed", "items": ["Waves"]}], "commits": ["1234567"]}]
-            (root / "changelog.json").write_text(json.dumps(entries))
+            (root / "release").mkdir()
+            (root / "release/changelog.json").write_text(json.dumps(entries))
             (root / "CHANGELOG.md").write_text(release.render(entries))
             (root / "lock.json").write_text(json.dumps({"version": "1.0.0"}))
             host_crates(root, "1.0.0")
             (root / "README.md").write_text("[changelog](CHANGELOG.md) [site](https://example.test)\n")
-            with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "changelog.json", MARKDOWN=root / "CHANGELOG.md",
+            with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "release/changelog.json", MARKDOWN=root / "CHANGELOG.md",
                                      LOCK=root / "lock.json"), \
                     mock.patch.object(release, "run", return_value="README.md\nCHANGELOG.md"):
                 release.check("1.0.0")
@@ -44,7 +45,7 @@ class ReleaseTests(unittest.TestCase):
                 host_crates(root, "1.0.0")
                 (root / "README.md").write_text("[guide](docs/missing.md) [first](CHANGELOG.md#100--2026-10-17) [gone](CHANGELOG.md#nope) <a href=\"docs/html.md\">x</a>\n")
                 entries[1]["commits"] = ["abcdef1"]
-                (root / "changelog.json").write_text(json.dumps(entries))
+                (root / "release/changelog.json").write_text(json.dumps(entries))
                 with self.assertRaises(SystemExit) as failure:
                     release.check()
                 self.assertIn("repeated commit abcdef1", str(failure.exception))
@@ -62,15 +63,16 @@ class ReleaseTests(unittest.TestCase):
             git("config", "user.email", "test@example.test")
             git("config", "user.name", "Test")
             (root / "a.txt").write_text("a\n")
-            shutil.copy(release.ROOT / "cliff.toml", root)
-            git("add", "a.txt", "cliff.toml")
+            (root / "release").mkdir()
+            shutil.copy(release.ROOT / "release/cliff.toml", root / "release")
+            git("add", "a.txt", "release/cliff.toml")
             git("commit", "-m", "feat: a")
             first = git("rev-parse", "--short=7", "HEAD")
             git("push", "origin", "main")
             git("switch", "-c", "release/v1.0.0")
             entries = [{"version": "1.0.0", "date": "2026-10-17", "title": "Oh My Diff 1.0.0", "summary": "First.",
                         "sections": [{"label": "New", "items": ["Curated line"]}], "commits": [first]}]
-            (root / "changelog.json").write_text(json.dumps(entries))
+            (root / "release/changelog.json").write_text(json.dumps(entries))
             (root / "CHANGELOG.md").write_text(release.render(entries))
             (root / "lock.json").write_text(json.dumps({"version": "1.0.0"}))
             host_crates(root, "1.0.0")
@@ -85,10 +87,10 @@ class ReleaseTests(unittest.TestCase):
             git("merge", "--no-ff", "someone/b", "-m", "Merge pull request #7 from someone/b\n\nfix: b")
             second = git("rev-parse", "--short=7", "HEAD")
             git("push", "origin", "main")
-            with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "changelog.json", MARKDOWN=root / "CHANGELOG.md",
+            with mock.patch.multiple(release, ROOT=root, CHANGELOG=root / "release/changelog.json", MARKDOWN=root / "CHANGELOG.md",
                                      LOCK=root / "lock.json"), mock.patch("builtins.print"):
                 release.refresh("1.0.0", "release/v1.0.0")
-            published = json.loads(git("show", "origin/release/v1.0.0:changelog.json"))
+            published = json.loads(git("show", "origin/release/v1.0.0:release/changelog.json"))
             self.assertEqual(published[0]["commits"], [first, second])
             self.assertEqual(published[0]["sections"], [{"label": "New", "items": ["Curated line"]},
                                                         {"label": "Fixed", "items": ["B (#7)"]}])

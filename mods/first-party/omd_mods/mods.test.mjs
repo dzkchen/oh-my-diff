@@ -10,18 +10,19 @@ const mod = (id, extra = {}) => ({ id, scope: 'user', description: null, install
   version: '1.0.0', source: 'npm', compatible: true, conflicts: [], settings: {}, settings_schema: null, ...extra });
 const logo = mod('omd_logo', { description: 'The OMD mark', settings: { size: 'big' }, settings_schema: { properties: { size: { type: 'string', enum: ['big', 'small'] }, 'max tokens': { type: 'number' } } } });
 
-function invoke(payload, { packages = [logo], generation = 1, ui_state, ...answers } = {}) {
+function invoke(payload, { packages = [logo], generation = 1, ui_state, state = null, ...answers } = {}) {
   const calls = [];
-  const reply = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state: null, settings: {}, event: 'command', name: 'mods', payload, ui_state }, call => {
+  const reply = callback({ source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: {}, event: 'command', name: 'mods', payload, ui_state }, call => {
     calls.push(call);
     if (call.operation in answers) return answers[call.operation](call.arguments);
     if (call.operation === 'packages.list') return { generation, reload_error: null, packages };
     if (call.operation === 'packages.index') return { packages: [] };
+    if (call.operation === 'commands.list') return { commands: [] };
     if (call.operation === 'terminal.panel') return { shown: true };
     assert.fail(`unexpected host call ${call.operation}`);
   });
   assert.equal(reply.error, undefined, reply.error);
-  return { ...reply, calls, ui: reply.ui_state === undefined ? null : JSON.parse(reply.ui_state), panels: calls.filter(call => call.operation === 'terminal.panel').map(call => call.arguments) };
+  return { ...reply, calls, stored: reply.state ?? null, ui: reply.ui_state === undefined ? null : JSON.parse(reply.ui_state), panels: calls.filter(call => call.operation === 'terminal.panel').map(call => call.arguments) };
 }
 const operations = reply => reply.calls.map(call => call.operation);
 
@@ -29,7 +30,7 @@ test('a toggle leaves redrawing to the host after a change and corrects the pane
   const opened = invoke('');
   assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_logo').value, true);
   const declined = invoke('panel user user:omd_logo false', { ui_state: opened.ui, 'packages.apply': () => ({ status: 'declined' }) });
-  assert.deepEqual(operations(declined), ['packages.list', 'packages.apply', 'packages.list', 'terminal.panel']);
+  assert.deepEqual(operations(declined), ['packages.list', 'packages.apply', 'packages.list', 'commands.list', 'terminal.panel']);
   assert.equal(declined.panels[0].items.find(item => item.id === 'user:omd_logo').value, true);
   const applied = invoke('panel user user:omd_logo false', { ui_state: opened.ui, 'packages.apply': () => ({ status: 'applied', generation: 2 }) });
   assert.deepEqual(operations(applied), ['packages.list', 'packages.apply']);
@@ -71,7 +72,7 @@ test('the mods mod cannot turn itself off or remove itself', () => {
   const opened = invoke('', { packages });
   assert.equal(opened.panels[0].items.find(item => item.id === 'user:omd_mods').kind, 'action');
   const pressed = invoke('panel user user:omd_mods', { packages, ui_state: opened.ui });
-  assert.deepEqual(operations(pressed), ['packages.list', 'terminal.panel']);
+  assert.deepEqual(operations(pressed), ['packages.list', 'commands.list', 'terminal.panel']);
   assert.deepEqual(invoke('omd_mods', { packages }).panels[0].items.map(item => item.id), ['do:update', 'do:rollback']);
   const typed = invoke('disable omd_mods', { packages });
   assert.deepEqual(operations(typed), ['packages.list']);
@@ -110,7 +111,8 @@ test('a required mod stays on and the directory offers installed mods only as up
   const opened = invoke('', { packages, 'packages.index': index });
   const items = opened.panels[0].items;
   assert.equal(items.find(item => item.id === 'user:omd_update').kind, 'action');
-  assert.deepEqual(items.filter(item => item.tab === 'directory' && /^(get|update):/.test(item.id)).map(item => item.id), ['update:user:omd_preview', 'get:omd_frecency']);
+  assert.deepEqual(items.filter(item => /^(get|update):/.test(item.id)).map(item => [item.id, item.tab, item.label]),
+    [['update:user:omd_preview', 'directory', 'Preview 1.0.0 → 1.2.0'], ['get:omd_frecency', 'installed', 'Frecency 1.0.0']]);
   const typed = invoke('disable omd_update', { packages });
   assert.deepEqual(operations(typed), ['packages.list']);
 });
@@ -125,4 +127,23 @@ test('a route setting offers a helper model and saves the route the host added',
     'settings.write': args => { written = args; return {}; } });
   assert.deepEqual(written, { id: 'omd_advisor', values: { route: 'plan-gpt-6-1-sol-omd_advisor' } });
   invoke('mod user:omd_advisor route:route', { packages: [advisor], ui_state: opened.ui, 'routes.add': () => ({ status: 'declined' }) });
+});
+
+test('the list groups mods by state, searches their commands and reopens where it was closed', () => {
+  const packages = [logo, mod('omd_usage', { enabled: false, effective: false }), mod('omd_preview', { failed: 'activation failed' })];
+  const index = () => ({ packages: [{ id: 'omd_frecency', description: 'Ranks files', latest: '1.0.0', installed: null, versions: [{ version: '1.0.0', blocked: null }] }] });
+  const commands = () => ({ commands: [{ command: 'usage', description: '', owner: 'omd_usage', hidden: false, args_hint: null, immediate: false, protected: false }] });
+  const opened = invoke('', { packages, 'packages.index': index, 'commands.list': commands });
+  const listed = opened.panels[0].items.filter(item => item.tab === 'installed').map(item => [item.id, item.group]);
+  assert.deepEqual(listed, [['user:omd_preview', 'Needs attention'], ['user:omd_logo', 'On'], ['user:omd_usage', 'Off'], ['get:omd_frecency', 'Available']]);
+  const usage = opened.panels[0].items.find(item => item.id === 'user:omd_usage');
+  assert.equal(usage.keywords, 'omd_usage /usage');
+  assert.match(usage.detail, /^off · every project · Commands: \/usage$/);
+  assert.match(opened.panels[0].items.find(item => item.id === 'user:omd_preview').detail, /Why it failed: activation failed/);
+  assert.equal(opened.panels[0].close_args, 'closed');
+  const closed = invoke('closed user:omd_usage use', { state: { onboarded: true } });
+  assert.deepEqual(operations(closed), []);
+  assert.deepEqual(closed.stored, { onboarded: true, selected: 'user:omd_usage', query: 'use' });
+  const reopened = invoke('', { packages, state: closed.stored });
+  assert.deepEqual([reopened.panels[0].selected, reopened.panels[0].query], ['user:omd_usage', 'use']);
 });

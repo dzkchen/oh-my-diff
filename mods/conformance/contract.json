@@ -227,7 +227,7 @@
     "operations:terminal.open": {"status":"frozen","consumer":{"path":"mods/examples/image_preview/index.ts","snippet":"api.host.call('terminal.open'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pane": {"status":"frozen","consumer":{"path":"mods/examples/reactive_dashboard/index.ts","snippet":"api.host.call('terminal.pane'"},"decision":"terminal.interaction"},
     "operations:terminal.panes": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
-    "operations:terminal.panel": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('terminal.panel'"},"decision":"terminal.controls"},
+    "operations:terminal.panel": {"status":"frozen","experimental_fields":["group","keywords","detail","query","selected","close_args"],"reason":"Panel navigation fields (terminal_panel_navigation_v1) were added after 1.0.0.","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('terminal.panel'"},"decision":"terminal.controls"},
     "operations:terminal.prompt": {"status":"frozen","consumer":{"path":"mods/examples/confirm_note/index.ts","snippet":"api.host.call('terminal.prompt'"},"decision":"terminal.media_and_prompts"},
     "operations:terminal.pty": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/index.ts","snippet":"api.host.call('terminal.pty'"},"decision":"terminal.pty"},
     "operations:terminal.selection": {"status":"frozen","consumer":{"path":"mods/examples/terminal/index.ts","snippet":"api.host.call('terminal.selection'"},"decision":"terminal.controls"},

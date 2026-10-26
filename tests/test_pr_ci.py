@@ -46,7 +46,7 @@ class PullRequestChecks(unittest.TestCase):
             "runtime/patches/codex.patch", "runtime/omd/src/lib.rs", "runtime/omd/README.md", "upstream.lock.json",
             "scripts/build_provenance.py", ".github/scripts/build.py", ".github/workflows/pr.yml",
             "mods/api.d.ts", "mods/pnpm-lock.yaml", "mods/conformance/host.json", "mise.toml",
-            "build.py", "Dockerfile", "new-build-input",
+            "build.py", "docker/Dockerfile", "new-build-input",
         ):
             with self.subTest(path=path):
                 self.assertTrue(needs_native(["README.md", path]))
