@@ -28152,6 +28152,20 @@ index 35c70df79d42912b80e71b0e5d98e03546abb360..30cfcf40a284f9cd39e30423ee930145
              tty: false,
              sandbox_permissions,
              additional_permissions: None,
+diff --git a/codex-rs/core/src/tools/sandboxing.rs b/codex-rs/core/src/tools/sandboxing.rs
+index d49273beb37fadf1dda778ef5ba8a047438dff69..c9e2b74d09c87efe2faeb52d4f3ce5e1a458ccd5 100644
+--- a/codex-rs/core/src/tools/sandboxing.rs
++++ b/codex-rs/core/src/tools/sandboxing.rs
+@@ -530,6 +530,9 @@ impl<'a> SandboxAttempt<'a> {
+             self.exec_server_permissions,
+             command.additional_permissions.as_ref(),
+         );
++        let exec_server_permissions =
++            codex_sandboxing::permissions_with_denied_paths(&exec_server_permissions, &command.env)
++                .unwrap_or(exec_server_permissions);
+         let mut request = self
+             .manager
+             .transform(SandboxTransformRequest {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
 index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..3e311fc0abdf24fffb1155aec9c5f9cb45b1e764 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
@@ -30784,6 +30798,167 @@ index d42a7c4ba7d126236868b43ec73861ae3f56113d..3db58f4e830a2be1abcad7ab7839e56d
                  }),
              },
          ))])
+diff --git a/codex-rs/sandboxing/src/lib.rs b/codex-rs/sandboxing/src/lib.rs
+index 5db90bba1ed508ca489297feebea342dc92254a0..20762ace1dc8ab3989198c2d08f66cb2bfc7fd24 100644
+--- a/codex-rs/sandboxing/src/lib.rs
++++ b/codex-rs/sandboxing/src/lib.rs
+@@ -30,6 +30,7 @@ pub use codex_windows_sandbox::WindowsSandboxProxySettingsMode;
+ pub use denial::is_likely_executor_managed_sandbox_denied;
+ pub use denial::is_likely_sandbox_denied;
+ pub use linux_pid_namespace::LinuxSandboxPidNamespace;
++pub use manager::SANDBOX_DENIED_PATHS_ENV;
+ pub use manager::SandboxCommand;
+ pub use manager::SandboxDirectSpawnTransformRequest;
+ pub use manager::SandboxExecRequest;
+@@ -40,6 +41,7 @@ pub use manager::SandboxType;
+ pub use manager::SandboxablePreference;
+ pub use manager::compatibility_sandbox_policy_for_permission_profile;
+ pub use manager::get_platform_sandbox;
++pub use manager::permissions_with_denied_paths;
+ pub use manager::with_managed_mitm_ca_readable_root;
+ pub use sandbox_integrity::FileContentsChecker;
+ pub use sandbox_integrity::IntegrityFinding;
+diff --git a/codex-rs/sandboxing/src/manager.rs b/codex-rs/sandboxing/src/manager.rs
+index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..f4952468083f9b714160cb8f1d10945647ed52c9 100644
+--- a/codex-rs/sandboxing/src/manager.rs
++++ b/codex-rs/sandboxing/src/manager.rs
+@@ -20,6 +20,9 @@ use codex_network_proxy::NetworkProxy;
+ use codex_protocol::config_types::WindowsSandboxLevel;
+ use codex_protocol::models::AdditionalPermissionProfile;
+ use codex_protocol::models::PermissionProfile;
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemPath;
++use codex_protocol::permissions::FileSystemSandboxEntry;
+ use codex_protocol::permissions::FileSystemSandboxPolicy;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
+ use codex_protocol::protocol::SandboxPolicy;
+@@ -32,6 +35,9 @@ use std::ffi::OsString;
+ use std::io;
+ use std::path::Path;
+
++/// Newline-separated host paths that sandboxed commands may not access; unsandboxed ones ignore it.
++pub const SANDBOX_DENIED_PATHS_ENV: &str = "OMD_SANDBOX_DENIED_PATHS";
++
+ #[cfg(target_os = "windows")]
+ const WINDOWS_SANDBOX_WRAPPER_SETUP_ENV_ALLOWLIST: &[&str] = &[
+     "USERNAME",
+@@ -368,6 +374,10 @@ impl SandboxManager {
+             use_legacy_landlock,
+             windows_sandbox_level,
+         } = request;
++        let denied = permissions_with_denied_paths(permissions, &command.env)
++            .filter(|_| sandbox != SandboxType::None);
++        command.env.remove(SANDBOX_DENIED_PATHS_ENV);
++        let permissions = denied.as_ref().unwrap_or(permissions);
+         #[cfg(target_os = "macos")]
+         let managed_network = command.managed_network.as_ref();
+         let additional_permissions = command.additional_permissions.take();
+@@ -828,6 +838,32 @@ fn linux_sandbox_arg0_override(exe: &Path) -> String {
+     }
+ }
+
++pub fn permissions_with_denied_paths(
++    permissions: &PermissionProfile,
++    env: &HashMap<String, String>,
++) -> Option<PermissionProfile> {
++    let denies = env
++        .get(SANDBOX_DENIED_PATHS_ENV)?
++        .lines()
++        .filter_map(|path| AbsolutePathBuf::from_absolute_path(path).ok())
++        .map(|path| {
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path { path: path.into() },
++                FileSystemAccessMode::Deny,
++            )
++        })
++        .collect();
++    let mut file_system = permissions.file_system_sandbox_policy();
++    file_system.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
++    Some(
++        PermissionProfile::from_runtime_permissions_with_enforcement(
++            permissions.enforcement(),
++            &file_system,
++            permissions.network_sandbox_policy(),
++        ),
++    )
++}
++
+ #[cfg(test)]
+ #[path = "manager_tests.rs"]
+ mod tests;
+diff --git a/codex-rs/sandboxing/src/manager_tests.rs b/codex-rs/sandboxing/src/manager_tests.rs
+index 22dcf916328ac454b5d33fce277a8e1442ad1022..3cf66de29066f98268e581f8a2221dd8afc25920 100644
+--- a/codex-rs/sandboxing/src/manager_tests.rs
++++ b/codex-rs/sandboxing/src/manager_tests.rs
+@@ -838,3 +838,68 @@ fn transform_for_direct_spawn_windows_materializes_inner_helper() {
+     );
+     assert!(materialized_helper.exists());
+ }
++
++#[cfg(target_os = "macos")]
++#[test]
++fn denied_paths_apply_only_to_sandboxed_commands() {
++    let manager = SandboxManager::new();
++    let temp_dir = TempDir::new().expect("create temp dir");
++    let root = canonicalize(temp_dir.path()).expect("canonicalize temp dir");
++    let workspace = AbsolutePathBuf::from_absolute_path(root.join("workspace")).expect("absolute");
++    let secret = AbsolutePathBuf::from_absolute_path(root.join("secret")).expect("absolute");
++    std::fs::create_dir(&workspace).expect("create workspace");
++    let workspace_uri = PathUri::from_abs_path(&workspace);
++    let permissions = PermissionProfile::from_runtime_permissions(
++        &FileSystemSandboxPolicy::workspace_write(
++            &[],
++            /*exclude_tmpdir_env_var*/ true,
++            /*exclude_slash_tmp*/ true,
++        ),
++        NetworkSandboxPolicy::Restricted,
++    );
++    let deny = FileSystemSandboxEntry::new(
++        FileSystemPath::Path {
++            path: PathUri::from_abs_path(&secret),
++        },
++        FileSystemAccessMode::Deny,
++    );
++    for (sandbox, denied) in [
++        (SandboxType::MacosSeatbelt, true),
++        (SandboxType::None, false),
++    ] {
++        let request = manager
++            .transform(SandboxTransformRequest {
++                command: SandboxCommand {
++                    program: "true".into(),
++                    args: Vec::new(),
++                    cwd: workspace_uri.clone(),
++                    env: HashMap::from([(
++                        super::SANDBOX_DENIED_PATHS_ENV.to_string(),
++                        secret.display().to_string(),
++                    )]),
++                    managed_network: None,
++                    additional_permissions: None,
++                },
++                permissions: &permissions,
++                sandbox,
++                enforce_managed_network: false,
++                environment_id: None,
++                network: None,
++                sandbox_policy_cwd: &workspace_uri,
++                sandbox_exe: None,
++                use_legacy_landlock: false,
++                windows_sandbox_level: WindowsSandboxLevel::Disabled,
++            })
++            .expect("transform");
++        assert!(!request.env.contains_key(super::SANDBOX_DENIED_PATHS_ENV));
++        assert_eq!(
++            request
++                .permission_profile
++                .file_system_sandbox_policy()
++                .entries
++                .contains(&deny),
++            denied,
++            "{sandbox:?}"
++        );
++    }
++}
 diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
 index 31e16dd72a9523bbb1c9b3eea00dc5377037e2e2..8eaf6b7b109ac5e33c37f2746585c00c3ca4533a 100644
 --- a/codex-rs/thread-store/Cargo.toml
@@ -33986,7 +34161,7 @@ index 57a66255c5544dd62a6754eb857cec017a7a9a65..9edd1b8e6240f0811afb4793125faab5
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d0fde9a80 100644
+index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..4a9019cef797703c5049327636a4780cec82c3f3 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -390,6 +390,7 @@ mod draft_state;
@@ -34513,7 +34688,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10518,6 +10754,138 @@ mod tests {
+@@ -10518,6 +10754,139 @@ mod tests {
          }
      }
 
@@ -34567,6 +34742,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
 +                id: "completion_fixture".into(),
 +                command: "fixture".into(),
 +            },
++            namespaced: false,
 +        };
 +        let _catalog = crate::mod_runtime::test_command_catalog(vec![command]);
 +        let _completions =
@@ -34913,7 +35089,7 @@ index bb14fbe533e5f4a4b0ed07c7ded099c3aa38c6aa..f33c7ca92a3d0a33838ea823ba4d1ab7
                      self.sparkle.draft.set(SparkleDraft::Untouched);
                      self.sparkle.command_input.borrow_mut().clear();
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb08e40a084 100644
+index f75d17f57d54fa8ee756daf970fe54310e319627..5e2520be9cc49f12c1ddd7383305cd9d67e57d41 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -30,6 +30,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -34932,7 +35108,30 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          })
          .collect();
          Self {
-@@ -230,8 +232,8 @@ impl CommandPopup {
+@@ -157,6 +159,22 @@ impl CommandPopup {
+     /// paired with optional highlight indices. Preserves the original
+     /// presentation order for built-ins and prompts.
+     fn filtered(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
++        let mut items = self.matches();
++        let listed = items
++            .iter()
++            .filter_map(|(item, _)| match item {
++                CommandItem::Mod(command) if !command.namespaced => Some(command.target.clone()),
++                _ => None,
++            })
++            .collect::<std::collections::HashSet<_>>();
++        items.retain(|(item, _)| match item {
++            CommandItem::Mod(command) => !command.namespaced || !listed.contains(&command.target),
++            CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => true,
++        });
++        items
++    }
++
++    fn matches(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
+         let filter = self.command_filter.trim();
+         let mut out: Vec<(CommandItem, Option<Vec<usize>>)> = Vec::new();
+         if filter.is_empty() {
+@@ -230,8 +248,8 @@ impl CommandPopup {
                          .unwrap_or(item.description())
                  } else {
                      item.description()
@@ -34943,7 +35142,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
                  let unavailable = self.is_unavailable(&item);
                  GenericDisplayRow {
                      category_tag: None,
-@@ -294,7 +296,7 @@ impl CommandPopup {
+@@ -294,7 +312,7 @@ impl CommandPopup {
          self.side_conversation_active
              && match item {
                  CommandItem::Builtin(cmd) => !cmd.available_in_side_conversation(),
@@ -34952,7 +35151,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              }
      }
  }
-@@ -304,6 +306,7 @@ impl CommandItem {
+@@ -304,6 +322,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.command(),
              Self::ServiceTier(command) => &command.name,
@@ -34960,7 +35159,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
 
-@@ -311,6 +314,7 @@ impl CommandItem {
+@@ -311,6 +330,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.description(),
              Self::ServiceTier(command) => &command.description,
@@ -34968,7 +35167,82 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
  }
-@@ -385,7 +389,7 @@ mod tests {
+@@ -373,6 +393,74 @@ mod tests {
+         assert!(popup.selected_item().is_some());
+     }
+
++    #[test]
++    fn mod_command_is_listed_once_and_namespaced_alias_only_when_typed() {
++        use crate::mod_runtime::ModSlashTarget;
++        use crate::mod_runtime::build;
++        use crate::mod_runtime::test_entry;
++        let target = |id: &str, command: &str| ModSlashTarget {
++            id: id.to_owned(),
++            command: command.to_owned(),
++        };
++        let mut commands = build(vec![
++            test_entry(
++                "counter:tally",
++                "tally",
++                "Tally",
++                target("counter", "tally"),
++            ),
++            test_entry(
++                "counter:model",
++                "model",
++                "Shadowed",
++                target("counter", "model"),
++            ),
++            test_entry(
++                "counter:review",
++                "review",
++                "Review",
++                target("counter", "review"),
++            ),
++            test_entry("viewer:show", "show", "Show", target("viewer", "show")),
++            test_entry("other:show", "show", "Show", target("other", "show")),
++        ]);
++        for (builtin, owner) in [("review", "counter:review"), ("diff", "viewer:show")] {
++            let mut replacement = commands
++                .iter()
++                .find(|command| command.invocation == owner)
++                .cloned()
++                .unwrap();
++            replacement.invocation = builtin.to_owned();
++            replacement.namespaced = false;
++            commands.push(replacement);
++        }
++        let _catalog = crate::mod_runtime::test_command_catalog(commands);
++        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
++        let mods = |popup: &CommandPopup| {
++            popup
++                .filtered_items()
++                .into_iter()
++                .filter_map(|item| match item {
++                    CommandItem::Mod(command) => Some(command.invocation),
++                    CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => None,
++                })
++                .collect::<Vec<_>>()
++        };
++        popup.on_composer_text_change("/".to_string());
++        assert_eq!(
++            mods(&popup),
++            vec!["tally", "counter:model", "other:show", "review", "diff"]
++        );
++        popup.on_composer_text_change("/ta".to_string());
++        assert_eq!(mods(&popup), vec!["tally"]);
++        popup.on_composer_text_change("/counter:t".to_string());
++        assert_eq!(mods(&popup), vec!["counter:tally"]);
++        assert_eq!(
++            crate::mod_runtime::find("counter:tally").map(|command| command.target),
++            Some(target("counter", "tally"))
++        );
++    }
++
+     #[test]
+     fn filter_includes_init_when_typing_prefix() {
+         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+@@ -385,7 +473,7 @@ mod tests {
          let matches = popup.filtered_items();
          let has_init = matches.iter().any(|item| match item {
              CommandItem::Builtin(cmd) => cmd.command() == "init",
@@ -34977,7 +35251,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          });
          assert!(
              has_init,
-@@ -406,6 +410,7 @@ mod tests {
+@@ -406,6 +494,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -34985,7 +35259,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected a selected command for exact match"),
          }
      }
-@@ -420,6 +425,7 @@ mod tests {
+@@ -420,6 +509,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected model command, got service tier {command:?}")
              }
@@ -34993,7 +35267,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected at least one match for '/mo'"),
          }
      }
-@@ -513,6 +519,7 @@ mod tests {
+@@ -513,6 +603,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35001,7 +35275,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert_eq!(
-@@ -581,6 +588,7 @@ mod tests {
+@@ -581,6 +672,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35009,7 +35283,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -656,6 +664,7 @@ mod tests {
+@@ -656,6 +748,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35017,7 +35291,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -689,6 +698,7 @@ mod tests {
+@@ -689,6 +782,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected plan command, got service tier {command:?}")
              }
@@ -35025,7 +35299,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              other => panic!("expected plan to be selected for exact match, got {other:?}"),
          }
      }
-@@ -702,6 +712,7 @@ mod tests {
+@@ -702,6 +796,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35151,10 +35425,18 @@ index f0b809ce50cd238a1e5208ccdd999695c1783658..6ca31803f6474287a816d074148b103c
      let key_hints = props.key_hints;
      // Passive footer context can come from the configurable status line, the
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view.rs b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e445057cb 100644
+index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..c695d95976b2016127d7cd180bb8bd9cd86858e8 100644
 --- a/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-@@ -39,6 +39,9 @@ use super::CancellationEvent;
+@@ -3,6 +3,7 @@
+ //! Controls and overflow indicators keep their own rows outside the result viewport.
+ //! Letter-labeled children are indented and do not consume numeric shortcuts.
+
++use codex_utils_fuzzy_match::fuzzy_match;
+ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyModifiers;
+@@ -39,6 +40,9 @@ use super::CancellationEvent;
  use super::bottom_pane_view::BottomPaneView;
  use super::bottom_pane_view::ViewCompletion;
  pub(crate) use super::picker_style::PickerSurface;
@@ -35164,7 +35446,23 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  use super::picker_style::render_scroll_indicators;
  use super::picker_style::selection_style;
  use super::popup_consts::MAX_POPUP_ROWS;
-@@ -280,6 +283,8 @@ pub(crate) struct SelectionViewParams {
+@@ -195,6 +199,7 @@ pub(crate) struct SelectionItem {
+     pub require_explicit_confirmation: bool,
+     pub dismiss_parent_on_child_accept: bool,
+     pub search_value: Option<String>,
++    pub selected_note: Option<String>,
+     pub disabled_reason: Option<String>,
+     /// Optional marker rendered in place of the number for a disabled row.
+     pub disabled_gutter_marker: Option<&'static str>,
+@@ -232,6 +237,7 @@ pub(crate) struct SelectionViewParams {
+     pub tabs: Vec<SelectionTab>,
+     pub initial_tab_id: Option<String>,
+     pub is_searchable: bool,
++    pub fuzzy_search: bool,
+     /// Optional non-text key that can toggle a row while printable keys edit the search query.
+     pub search_toggle_key: Option<KeyBinding>,
+     pub search_mode: SearchMode,
+@@ -280,6 +286,8 @@ pub(crate) struct SelectionViewParams {
 
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      pub on_cancel: OnCancelCallback,
@@ -35173,7 +35471,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  impl Default for SelectionViewParams {
-@@ -322,6 +327,7 @@ impl Default for SelectionViewParams {
+@@ -301,6 +309,7 @@ impl Default for SelectionViewParams {
+             tabs: Vec::new(),
+             initial_tab_id: None,
+             is_searchable: false,
++            fuzzy_search: false,
+             search_toggle_key: None,
+             search_mode: SearchMode::default(),
+             auto_number_shortcuts: true,
+@@ -322,6 +331,7 @@ impl Default for SelectionViewParams {
              on_selection_changed: None,
              allow_cancel: true,
              on_cancel: None,
@@ -35181,7 +35487,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          }
      }
  }
-@@ -390,6 +396,7 @@ pub(crate) struct ListSelectionView {
+@@ -358,6 +368,7 @@ pub(crate) struct ListSelectionView {
+     pub(super) dismiss_after_child_accept: bool,
+     pub(super) app_event_tx: AppEventSender,
+     is_searchable: bool,
++    fuzzy_search: bool,
+     search_toggle_key: Option<KeyBinding>,
+     search_mode: SearchMode,
+     search_active: bool,
+@@ -390,6 +401,7 @@ pub(crate) struct ListSelectionView {
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      on_cancel: OnCancelCallback,
      keymap: ListKeymap,
@@ -35189,7 +35503,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  const SELECTION_TOGGLE_ON_PREFIX: &str = "[*] ";
-@@ -472,7 +479,12 @@ impl ListSelectionView {
+@@ -472,7 +484,12 @@ impl ListSelectionView {
          let mut header = params.header;
          if params.title.is_some() || params.subtitle.is_some() {
              let title = params.title.map(|title| Line::from(title.bold()));
@@ -35203,7 +35517,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
              header = Box::new(ColumnRenderable::with([
                  header,
                  Box::new(
-@@ -546,6 +558,7 @@ impl ListSelectionView {
+@@ -515,6 +532,7 @@ impl ListSelectionView {
+             dismiss_after_child_accept: false,
+             app_event_tx,
+             is_searchable: params.is_searchable,
++            fuzzy_search: params.fuzzy_search,
+             search_toggle_key: params.search_toggle_key,
+             search_mode: params.search_mode,
+             search_active,
+@@ -546,6 +564,7 @@ impl ListSelectionView {
              allow_cancel: params.allow_cancel,
              on_cancel: params.on_cancel,
              keymap,
@@ -35211,7 +35533,82 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          };
          s.apply_filter();
          if s.tabs_enabled() && !has_initial_selected_idx && s.state.selected_idx.is_none() {
-@@ -1540,6 +1553,36 @@ impl Renderable for ListSelectionView {
+@@ -686,7 +705,20 @@ impl ListSelectionView {
+                     .flatten()
+             });
+
+-        if self.is_searchable && !self.search_query.is_empty() {
++        if self.is_searchable && self.fuzzy_search && !self.search_query.is_empty() {
++            let query = self.search_query.as_str();
++            self.filtered_indices = self
++                .active_items()
++                .iter()
++                .enumerate()
++                .filter_map(|(idx, item)| {
++                    let value = item.search_value.as_deref()?;
++                    fuzzy_match(value, query).map(|(_, score)| (score, idx))
++                })
++                .sorted()
++                .map(|(_, idx)| idx)
++                .collect();
++        } else if self.is_searchable && !self.search_query.is_empty() {
+             let query_lower = self.search_query.to_lowercase();
+             self.filtered_indices = self
+                 .active_items()
+@@ -1063,6 +1095,19 @@ impl ListSelectionView {
+         self.apply_filter();
+     }
+
++    pub(crate) fn select_actual_idx(&mut self, actual_idx: usize) {
++        if let Some(visible_idx) = self
++            .filtered_indices
++            .iter()
++            .position(|idx| *idx == actual_idx)
++        {
++            let len = self.visible_len();
++            self.state.selected_idx = Some(visible_idx);
++            self.state.ensure_visible(len, self.visible_rows(len));
++            self.fire_selection_changed();
++        }
++    }
++
+     pub(crate) fn take_last_selected_index(&mut self) -> Option<usize> {
+         self.last_selected_actual_idx.take()
+     }
+@@ -1110,7 +1155,14 @@ impl ListSelectionView {
+
+     fn footer_note_lines(&self, width: u16, show_selected_description: bool) -> Vec<Line<'static>> {
+         let wrap = |line| word_wrap_lines([line], usize::from(width.max(1)));
+-        let note = if show_selected_description {
++        let selected_note = self
++            .selected_actual_idx()
++            .and_then(|idx| self.active_items().get(idx))
++            .and_then(|item| item.selected_note.as_ref())
++            .map(|note| Line::from(note.clone()).dim());
++        let note = if selected_note.is_some() {
++            selected_note
++        } else if show_selected_description {
+             self.selected_actual_idx()
+                 .and_then(|idx| self.active_items().get(idx))
+                 .and_then(|item| item.description.as_ref())
+@@ -1133,6 +1185,16 @@ impl ListSelectionView {
+                 .unwrap_or(lines.len());
+             lines.resize(height.max(lines.len()), Line::default());
+         }
++        let note_height = self
++            .items
++            .iter()
++            .chain(self.search_items.iter())
++            .chain(self.tabs.iter().flat_map(|tab| tab.items.iter()))
++            .filter_map(|item| item.selected_note.as_deref())
++            .map(|note| wrap(Line::from(note).dim()).len())
++            .max()
++            .unwrap_or_default();
++        lines.resize(note_height.max(lines.len()), Line::default());
+         lines
+     }
+
+@@ -1540,6 +1602,36 @@ impl Renderable for ListSelectionView {
      }
 
      fn desired_height(&self, width: u16) -> u16 {
@@ -35248,7 +35645,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          // Inner content width after menu surface horizontal insets (2 per side).
          let inner_width = popup_content_width(width);
 
-@@ -1614,12 +1657,7 @@ impl Renderable for ListSelectionView {
+@@ -1614,12 +1706,7 @@ impl Renderable for ListSelectionView {
          height
      }
 
@@ -35262,7 +35659,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          let search_field_visible = self.search_field_visible();
          let inner_width = popup_content_width(area.width);
          let side_w = self.side_layout_width(inner_width);
-@@ -1906,6 +1944,14 @@ impl Renderable for ListSelectionView {
+@@ -1906,6 +1993,14 @@ impl Renderable for ListSelectionView {
                  Paragraph::new(hint_lines).dim().render(hint_area, buf);
              }
          }
@@ -37151,10 +37548,10 @@ index 1cc51a16460fa849162bb5db99615b07fddfc95e..32f73b5503cd95dd738244e891e56a4c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234fafb3d6e68f 100644
+index 7017aca6c14757840f69dfafed1a1edf816c5c4d..e23d69ac02bd32706c356f5f883cb9bac48182df 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-@@ -69,6 +69,37 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+@@ -69,6 +69,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
      }
  }
 
@@ -37170,6 +37567,7 @@ index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234faf
 +            id: "probe_fixture".to_string(),
 +            command: "probe".to_string(),
 +        },
++        namespaced: false,
 +    };
 +    chat.run_mod_command(command, String::new());
 +    assert_eq!(chat.held_mod_commands.len(), 1);
@@ -62904,10 +63302,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..5bcaa19c03fe790d4ddd1cdbe42448a0e93a774b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2518 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -62947,12 +63345,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +use codex_omd::ModHostCall;
 +use codex_omd::ModTool;
 +use codex_protocol::models::PermissionProfile;
-+use codex_protocol::models::PermissionProfileSnapshot;
-+use codex_protocol::permissions::FileSystemAccessMode;
-+use codex_protocol::permissions::FileSystemPath;
-+use codex_protocol::permissions::FileSystemSandboxEntry;
-+use codex_protocol::permissions::FileSystemSandboxPolicy;
-+use codex_utils_absolute_path::AbsolutePathBuf;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -63951,11 +64343,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        thread: Option<&str>,
 +        forked_from: Option<&str>,
 +    ) -> Result<(), String> {
-+        let profile = config.permissions.effective_permission_profile();
-+        if matches!(profile, PermissionProfile::External { .. }) {
-+            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-+        }
-+        let mut denies = Vec::new();
++        let mut denied = Vec::new();
 +        for path in self.host.protected_paths() {
 +            if path
 +                .canonicalize()
@@ -63965,13 +64353,16 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            {
 +                return Err("protected_mod_path_must_be_canonical_and_external".into());
 +            }
-+            let path =
-+                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-+            denies.push(FileSystemSandboxEntry::new(
-+                FileSystemPath::Path { path: path.into() },
-+                FileSystemAccessMode::Deny,
-+            ));
++            let path = path
++                .to_str()
++                .filter(|path| !path.contains('\n'))
++                .ok_or("protected_path_unavailable")?;
++            denied.push(path.to_owned());
 +        }
++        config.permissions.shell_environment_policy.r#set.insert(
++            codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
++            denied.join("\n"),
++        );
 +        config.model_provider.supports_websockets = false;
 +        if self
 +            .codex_config
@@ -63980,24 +64371,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        {
 +            config.update_plan_enabled = true;
 +        }
-+        let mut filesystem = profile.file_system_sandbox_policy();
-+        filesystem
-+            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-+        let protected = PermissionProfile::from_runtime_permissions(
-+            &filesystem,
-+            profile.network_sandbox_policy(),
-+        );
-+        config
-+            .permissions
-+            .shell_environment_policy
-+            .r#set
-+            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-+        config
-+            .permissions
-+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-+                protected,
-+            ))
-+            .map_err(|e| e.to_string())?;
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
@@ -72755,10 +73128,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
+index 0000000000000000000000000000000000000000..122068f73e85c6d6eba30a1f5efdf1930b8d216a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4358 @@
+@@ -0,0 +1,4404 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73115,8 +73488,11 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    let manager = attach_thread(&mut fixture).await;
 +    let repository = fixture.lead.host.repository.clone();
 +    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
-+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-+    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
++        .await
++        .unwrap();
++    assert_eq!(info["omd_version"], codex_omd::OMD_HOST_RELEASE);
++    assert_eq!(cwd(info), Some(repository.clone()));
 +    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
 +    std::fs::create_dir_all(&sub).unwrap();
 +    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
@@ -77117,6 +77493,49 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    assert!(merge(json!({"success_per_call": "yes"})).is_err());
 +    assert!(merge(json!({"other": true})).is_err());
 +}
++
++#[tokio::test]
++async fn thread_config_keeps_the_users_sandbox() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let profile = config.permissions.effective_permission_profile();
++    let mut environment = config.permissions.shell_environment_policy.r#set.clone();
++    environment.insert(
++        codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
++        fixture
++            .lead
++            .host
++            .protected_paths()
++            .iter()
++            .map(|path| path.display().to_string())
++            .collect::<Vec<_>>()
++            .join("\n"),
++    );
++    codex_extension_api::ConfigContributor::prepare_thread_config(
++        &mods(&fixture.core),
++        &mut config,
++        None,
++        None,
++    )
++    .unwrap();
++    assert_eq!(config.permissions.effective_permission_profile(), profile);
++    assert_eq!(
++        config.permissions.shell_environment_policy.r#set,
++        environment
++    );
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f3616bf60
@@ -78043,7 +78462,7 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2cc378cd4
+index 0000000000000000000000000000000000000000..20e315740c180df8b70c71468e70866e3b9b9780
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,785 @@
@@ -78705,7 +79124,7 @@ index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
 +                "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
-+                "model": snapshot.model,
++                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
 +                "route": account.and_then(|account| account.route), "turns_started": turns,
 +                "process_id": crate::accounting::process_id()}),
@@ -104544,10 +104963,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c9819532c07
+index 0000000000000000000000000000000000000000..46051c876e451b020f9c810dbf2b2bd78a973f56
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6230 @@
+@@ -0,0 +1,6231 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -104914,6 +105333,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +    "ui_composition_v1",
 +    "ui_controls_v1",
 +    "terminal_panel_v1",
++    "terminal_panel_navigation_v1",
 +    "reactive_state_v1",
 +    "session_ports_v1",
 +    "structured_access_v1",
@@ -106205,7 +106625,7 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +                .collect::<Vec<_>>()
 +                .join(", ");
 +            return Err(failure(format!(
-+                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/COMPATIBILITY.md.",
++                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/conformance/COMPATIBILITY.md.",
 +                self.id, self.api,
 +            )));
 +        }
@@ -110545,8 +110965,8 @@ index 0000000000000000000000000000000000000000..6fd1ba9c131f801cbc457d44fad97c98
 +        mode: &str,
 +    ) -> Value {
 +        let install_profile = install_profile.map_or("unreported", self::install_profile);
-+        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-+            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
++        json!({"codex_version": codex_version, "omd_version": OMD_HOST_RELEASE, "install_profile": install_profile,
++            "mode": mode, "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
 +                "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
 +    }
 +
@@ -114301,7 +114721,7 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d21b3cb35
+index 0000000000000000000000000000000000000000..89c79ca90a91786e7fc1b5319a839486c0ce4c7d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114420,13 +114840,13 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/79"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
 +    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/81"},{"$ref":"#/$defs/81"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
@@ -114511,7 +114931,7 @@ index 0000000000000000000000000000000000000000..a412d0aca833a4eaef2275a049e6bc0d
 +    "77": {"type":"object","properties":{"action":{"$ref":"#/$defs/71"},"id":{"type":"string"},"source":{"$ref":"#/$defs/76"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
 +    "78": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
 +    "79": {"type":"array","items":{"$ref":"#/$defs/78"}},
-+    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
++    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
 +    "81": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
 +    "82": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
 +    "83": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
@@ -135962,10 +136382,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf1c9083e0
+index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4de3b96f4
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4796 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -139325,7 +139745,8 @@ index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf
 +    let identity = runtime.identity("0.163.0", Some("full"), "omd");
 +    assert_eq!(
 +        identity,
-+        json!({"codex_version":"0.163.0","install_profile":"full","mode":"omd",
++        json!({"codex_version":"0.163.0","omd_version":OMD_HOST_RELEASE,
++        "install_profile":"full","mode":"omd",
 +        "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
 +    );
 +    assert_eq!(
@@ -150149,10 +150570,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec61d49ce0f
+index 0000000000000000000000000000000000000000..6f904ca11fac83082949a1059c54605f4f103437
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,892 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -150178,6 +150599,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyEventKind;
 +use crossterm::event::KeyModifiers;
++use itertools::Itertools as _;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
 +use ratatui::text::Line;
@@ -150216,6 +150638,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    label: String,
 +    #[serde(default)]
 +    description: Option<String>,
++    #[serde(default)]
++    group: Option<String>,
++    #[serde(default)]
++    keywords: Option<String>,
++    #[serde(default)]
++    detail: Option<String>,
 +    kind: PanelKind,
 +    #[serde(default)]
 +    value: Option<Value>,
@@ -150234,6 +150662,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    items: Vec<PanelItem>,
 +    #[serde(default)]
 +    search: bool,
++    #[serde(default)]
++    query: Option<String>,
++    #[serde(default)]
++    selected: Option<String>,
++    #[serde(default)]
++    close_args: Option<String>,
 +    action: ModCommandAction,
 +}
 +
@@ -150267,6 +150701,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            .filter(|command| codex_omd::mod_command_reference(command))
 +            .ok_or("terminal_panel_invalid: action must name one of the caller's commands")?;
 +        request.action.args = text(&request.action.args, 512, true)?;
++        request.query = request
++            .query
++            .map(|query| line(&query, 128, true))
++            .transpose()?;
++        request.selected = request
++            .selected
++            .map(|selected| text(&selected, 128, false))
++            .transpose()?;
++        request.close_args = request
++            .close_args
++            .map(|args| text(&args, 512, true))
++            .transpose()?;
 +        if request.tabs.len() > MAX_TABS || !(1..=MAX_ITEMS).contains(&request.items.len()) {
 +            return Err(format!(
 +                "terminal_panel_invalid: at most {MAX_TABS} tabs and 1-{MAX_ITEMS} items"
@@ -150304,6 +150750,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                .description
 +                .as_deref()
 +                .map(|description| line(description, 256, true))
++                .transpose()?;
++            item.group = item
++                .group
++                .as_deref()
++                .map(|group| line(group, 32, false))
++                .transpose()?;
++            item.keywords = item
++                .keywords
++                .as_deref()
++                .map(|keywords| line(keywords, 256, true))
++                .transpose()?;
++            item.detail = item
++                .detail
++                .as_deref()
++                .map(|detail| line(detail, 512, true))
 +                .transpose()?;
 +            item.value = Some(Self::value(item)?);
 +        }
@@ -150359,7 +150820,17 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +struct PanelState {
 +    tab: Option<String>,
 +    selected: Option<String>,
++    group: Option<String>,
 +    query: Option<String>,
++}
++
++enum Row<'a> {
++    Group {
++        name: &'a str,
++        count: usize,
++        collapsed: bool,
++    },
++    Item(&'a PanelItem),
 +}
 +
 +pub(crate) struct ModPanelView {
@@ -150367,6 +150838,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    request: ModPanelRequest,
 +    picker: ListSelectionView,
 +    tab: Option<String>,
++    collapsed: HashSet<String>,
++    last_query: Option<String>,
++    used_query: bool,
++    reported: bool,
 +    keymap: ListKeymap,
 +    app_event_tx: AppEventSender,
 +}
@@ -150378,17 +150853,28 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        app_event_tx: AppEventSender,
 +        keymap: ListKeymap,
 +    ) -> Self {
++        let state = PanelState {
++            selected: request.selected.clone(),
++            query: request.query.clone().filter(|query| !query.is_empty()),
++            ..PanelState::default()
++        };
++        let collapsed = HashSet::new();
 +        let picker = picker(
 +            &request,
-+            PanelState::default(),
++            state,
++            &collapsed,
 +            app_event_tx.clone(),
 +            keymap.clone(),
 +        );
 +        Self {
 +            caller,
++            last_query: request.query.clone().filter(|query| !query.is_empty()),
 +            request,
 +            picker,
 +            tab: None,
++            collapsed,
++            used_query: false,
++            reported: false,
 +            keymap,
 +            app_event_tx,
 +        }
@@ -150414,12 +150900,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn state(&self) -> PanelState {
++        let rows = self.rows();
++        let row = self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index));
 +        PanelState {
 +            tab: self.picker.active_tab_id().map(str::to_owned),
-+            selected: self
-+                .picker
-+                .selected_index()
-+                .and_then(|index| self.shown().get(index).map(|item| item.id.clone())),
++            selected: match row {
++                Some(Row::Item(item)) => Some(item.id.clone()),
++                _ => None,
++            },
++            group: match row {
++                Some(Row::Group { name, .. }) => Some((*name).to_owned()),
++                _ => None,
++            },
 +            query: self.picker.search_query().map(str::to_owned),
 +        }
 +    }
@@ -150428,23 +150923,121 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        self.picker = picker(
 +            &self.request,
 +            state,
++            &self.collapsed,
 +            self.app_event_tx.clone(),
 +            self.keymap.clone(),
 +        );
 +    }
 +
-+    fn shown(&self) -> Vec<&PanelItem> {
-+        shown(
++    fn rows(&self) -> Vec<Row<'_>> {
++        rows(
 +            &self.request,
 +            self.picker.active_tab_id(),
 +            self.picker.search_query(),
++            &self.collapsed,
 +        )
 +    }
 +
-+    fn activate(&mut self, index: usize) {
-+        let Some(id) = self.shown().get(index).map(|item| item.id.clone()) else {
++    fn jump(&self, key: KeyEvent) -> Option<usize> {
++        let KeyCode::Char(c) = key.code else {
++            return None;
++        };
++        if self.picker.search_query().is_some()
++            || !matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
++            || !c.is_alphabetic()
++            || self.keymap.action_for(key).is_some()
++        {
++            return None;
++        }
++        let rows = self.rows();
++        match c {
++            'g' => return (!rows.is_empty()).then_some(0),
++            'G' => return rows.len().checked_sub(1),
++            _ => {}
++        }
++        let initial = c.to_lowercase().to_string();
++        let start = self.picker.selected_index().map_or(0, |index| index + 1);
++        (0..rows.len())
++            .map(|offset| (start + offset) % rows.len())
++            .find(|index| {
++                matches!(rows[*index], Row::Item(item) if item.label.to_lowercase().starts_with(&initial))
++            })
++    }
++
++    fn searching<R>(&mut self, step: impl FnOnce(&mut ListSelectionView) -> R) -> R {
++        let searched = self
++            .picker
++            .search_query()
++            .map(|_| self.state().selected);
++        let result = step(&mut self.picker);
++        if let Some(selected) = searched.filter(|_| self.picker.search_query().is_none()) {
++            if !self.used_query {
++                self.last_query = None;
++            }
++            self.used_query = false;
++            if let Some(id) = selected
++                && let Some(index) = self
++                    .rows()
++                    .iter()
++                    .position(|row| matches!(row, Row::Item(item) if item.id == id))
++            {
++                self.picker.select_actual_idx(index);
++            }
++        }
++        result
++    }
++
++    fn report_close(&mut self) {
++        if self.reported || !self.picker.is_complete() {
++            return;
++        }
++        self.reported = true;
++        let Some(close_args) = self.request.close_args.clone() else {
 +            return;
 +        };
++        let rows = self.rows();
++        let selected = match self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index))
++        {
++            Some(Row::Item(item)) => item.id.clone(),
++            _ => "-".to_owned(),
++        };
++        let query = self.last_query.clone().unwrap_or_default();
++        self.app_event_tx.send(AppEvent::ModPanelCommand {
++            command: self.request.action.command.clone(),
++            args: arguments(&close_args, &selected, Some(&query)),
++        });
++    }
++
++    fn activate(&mut self, index: usize) {
++        let row = match self.rows().get(index) {
++            Some(Row::Group { name, .. }) => Err((*name).to_owned()),
++            Some(Row::Item(item)) => Ok(item.id.clone()),
++            None => return,
++        };
++        let id = match row {
++            Ok(id) => id,
++            Err(name) => {
++                if !self.collapsed.remove(&name) {
++                    self.collapsed.insert(name.clone());
++                }
++                let state = PanelState {
++                    selected: None,
++                    group: Some(name),
++                    ..self.state()
++                };
++                self.rebuild(state);
++                return;
++            }
++        };
++        self.last_query = self
++            .picker
++            .search_query()
++            .filter(|query| !query.is_empty())
++            .map(str::to_owned);
++        self.used_query = self.last_query.is_some();
 +        let Some(item) = self.request.items.iter_mut().find(|item| item.id == id) else {
 +            return;
 +        };
@@ -150503,6 +151096,43 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        .filter(|part| !part.is_empty())
 +        .collect::<Vec<_>>()
 +        .join(" ")
++}
++
++fn rows<'a>(
++    request: &'a ModPanelRequest,
++    tab: Option<&str>,
++    query: Option<&str>,
++    collapsed: &HashSet<String>,
++) -> Vec<Row<'a>> {
++    let shown = shown(request, tab, query);
++    if query.is_some_and(|query| !query.is_empty()) {
++        return shown.into_iter().map(Row::Item).collect();
++    }
++    let mut rows = shown
++        .iter()
++        .filter(|item| item.group.is_none())
++        .map(|item| Row::Item(item))
++        .collect::<Vec<_>>();
++    for name in shown
++        .iter()
++        .filter_map(|item| item.group.as_deref())
++        .unique()
++    {
++        let members = shown
++            .iter()
++            .filter(|item| item.group.as_deref() == Some(name))
++            .collect::<Vec<_>>();
++        let collapsed = collapsed.contains(name);
++        rows.push(Row::Group {
++            name,
++            count: members.len(),
++            collapsed,
++        });
++        if !collapsed {
++            rows.extend(members.into_iter().map(|item| Row::Item(item)));
++        }
++    }
++    rows
 +}
 +
 +fn shown<'a>(
@@ -150604,12 +151234,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        name: item.label.clone(),
 +        category_tag: value_label(item).map(|label| format!("{label:<20}")),
 +        search_value: Some(
-+            [Some(item.label.as_str()), tab, item.description.as_deref()]
-+                .into_iter()
-+                .flatten()
-+                .collect::<Vec<_>>()
-+                .join(" "),
++            [
++                Some(item.label.as_str()),
++                tab,
++                item.description.as_deref(),
++                item.keywords.as_deref(),
++            ]
++            .into_iter()
++            .flatten()
++            .collect::<Vec<_>>()
++            .join(" "),
 +        ),
++        selected_note: item.detail.clone(),
 +        description,
 +        footer_hint: Some(hint(
 +            keymap,
@@ -150622,44 +151258,74 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +}
 +
++fn group_item(
++    request: &ModPanelRequest,
++    name: &str,
++    count: usize,
++    collapsed: bool,
++    keymap: &ListKeymap,
++) -> SelectionItem {
++    SelectionItem {
++        name: format!("{} {name} ({count})", if collapsed { "▸" } else { "▾" }),
++        footer_hint: Some(hint(
++            keymap,
++            !request.tabs.is_empty(),
++            request.search,
++            Some(if collapsed { "expand" } else { "collapse" }),
++        )),
++        dismiss_on_select: false,
++        ..Default::default()
++    }
++}
++
 +fn picker(
 +    request: &ModPanelRequest,
 +    state: PanelState,
++    collapsed: &HashSet<String>,
 +    app_event_tx: AppEventSender,
 +    keymap: ListKeymap,
 +) -> ListSelectionView {
 +    let query = state.query.filter(|_| request.search);
 +    let tab = state
 +        .tab
++        .or_else(|| {
++            let selected = state.selected.as_deref()?;
++            request
++                .items
++                .iter()
++                .find(|item| item.id == selected)?
++                .tab
++                .clone()
++        })
 +        .filter(|tab| request.tabs.iter().any(|known| &known.id == tab));
-+    let selected = state.selected.and_then(|selected| {
-+        shown(request, tab.as_deref(), query.as_deref())
-+            .iter()
-+            .position(|item| item.id == selected)
-+    });
++    let selected = rows(request, tab.as_deref(), query.as_deref(), collapsed)
++        .iter()
++        .position(|row| match row {
++            Row::Item(item) => state.selected.as_deref() == Some(item.id.as_str()),
++            Row::Group { name, .. } => state.group.as_deref() == Some(*name),
++        });
++    let rows_in = |tab: Option<&str>, collapsed: &HashSet<String>| {
++        rows(request, tab, None, collapsed)
++            .into_iter()
++            .map(|row| match row {
++                Row::Item(candidate) => item(request, candidate, &keymap, false),
++                Row::Group {
++                    name,
++                    count,
++                    collapsed,
++                } => group_item(request, name, count, collapsed, &keymap),
++            })
++            .collect::<Vec<_>>()
++    };
 +    let rows = if request.tabs.is_empty() {
-+        request.items.len()
++        rows(request, None, None, &HashSet::new()).len()
 +    } else {
 +        request
 +            .tabs
 +            .iter()
-+            .map(|tab| {
-+                request
-+                    .items
-+                    .iter()
-+                    .filter(|item| item.tab.as_ref() == Some(&tab.id))
-+                    .count()
-+            })
++            .map(|tab| rows(request, Some(&tab.id), None, &HashSet::new()).len())
 +            .max()
 +            .unwrap_or_default()
-+    };
-+    let items = |filter: &dyn Fn(&PanelItem) -> bool, searching: bool| {
-+        request
-+            .items
-+            .iter()
-+            .filter(|candidate| filter(candidate))
-+            .map(|candidate| item(request, candidate, &keymap, searching))
-+            .collect::<Vec<_>>()
 +    };
 +    let tabbed = !request.tabs.is_empty();
 +    let params = SelectionViewParams {
@@ -150674,15 +151340,20 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        },
 +        footer_hint: Some(hint(&keymap, tabbed, request.search, None)),
 +        is_searchable: request.search,
++        fuzzy_search: true,
 +        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
 +        search_placeholder: Some("Type to search".to_owned()),
 +        items: if tabbed {
 +            Vec::new()
 +        } else {
-+            items(&|_| true, false)
++            rows_in(None, collapsed)
 +        },
-+        search_items: if tabbed && request.search {
-+            items(&|_| true, true)
++        search_items: if request.search {
++            request
++                .items
++                .iter()
++                .map(|candidate| item(request, candidate, &keymap, true))
++                .collect()
 +        } else {
 +            Vec::new()
 +        },
@@ -150693,7 +151364,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                id: tab.id.clone(),
 +                label: tab.title.clone(),
 +                header: Box::new(()),
-+                items: items(&|item| item.tab.as_ref() == Some(&tab.id), false),
++                items: rows_in(Some(&tab.id), collapsed),
 +            })
 +            .collect(),
 +        initial_tab_id: tab,
@@ -150713,6 +151384,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        if key.kind == KeyEventKind::Release {
 +            return;
 +        }
++        if let Some(index) = self.jump(key) {
++            self.picker.select_actual_idx(index);
++            return;
++        }
 +        let plain = key.modifiers == KeyModifiers::NONE;
 +        if self.picker.selected_index().is_none()
 +            && (self.keymap.accept.is_pressed(key) || plain && key.code == KeyCode::Enter)
@@ -150728,10 +151403,11 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            }
 +            return;
 +        }
-+        self.picker.handle_key_event(key);
++        self.searching(|picker| picker.handle_key_event(key));
 +        if let Some(index) = self.picker.take_last_selected_index() {
 +            self.activate(index);
 +        }
++        self.report_close();
 +    }
 +
 +    fn handle_paste(&mut self, text: String) -> bool {
@@ -150763,7 +151439,9 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn on_ctrl_c(&mut self) -> CancellationEvent {
-+        self.picker.on_ctrl_c()
++        let event = self.searching(ListSelectionView::on_ctrl_c);
++        self.report_close();
++        event
 +    }
 +
 +    fn mod_panel(&mut self) -> Option<&mut ModPanelView> {
@@ -150790,10 +151468,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b9246e57b91f
+index 0000000000000000000000000000000000000000..9925d7ffd5a55f6a453e68938d6f53d63e48c9ad
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,240 @@
 +use super::*;
 +use crate::keymap::RuntimeKeymap;
 +use pretty_assertions::assert_eq;
@@ -150838,6 +151516,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +
 +fn press(view: &mut ModPanelView, code: KeyCode) {
 +    view.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE));
++}
++
++fn selected(view: &ModPanelView) -> String {
++    match view.rows().get(view.selected_index().unwrap()) {
++        Some(Row::Item(item)) => item.id.clone(),
++        Some(Row::Group { name, .. }) => format!("group {name}"),
++        None => String::new(),
++    }
 +}
 +
 +fn sent(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
@@ -150901,14 +151587,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    press(&mut view, KeyCode::Down);
 +    view.replace(request(true));
 +    assert_eq!(view.active_tab_id(), Some("more"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "reset");
++    assert_eq!(selected(&view), "reset");
 +    press(&mut view, KeyCode::Char('/'));
 +    for c in "mod".chars() {
 +        press(&mut view, KeyCode::Char(c));
 +    }
 +    view.replace(request(true));
 +    assert_eq!(view.search_query(), Some("mod"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "mode");
++    assert_eq!(selected(&view), "mode");
 +    press(&mut view, KeyCode::Char('z'));
 +    press(&mut view, KeyCode::Enter);
 +    assert!(!view.is_complete());
@@ -150923,6 +151609,108 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    );
 +    view.replace(request(false));
 +    assert_eq!(view.active_tab_id(), Some("more"));
++}
++
++#[test]
++fn groups_collapse_letters_jump_keywords_match_and_close_reports_the_state() {
++    let arguments = json!({
++        "title": "Mods", "search": true, "selected": "lsp", "close_args": "closed",
++        "action": {"command": "panel", "args": "set"},
++        "items": [
++            {"id": "logo", "label": "Logo", "group": "On", "kind": "toggle", "value": true},
++            {"id": "lsp", "label": "LSP view", "group": "On", "kind": "toggle", "value": true,
++                "detail": "Language servers card"},
++            {"id": "mini", "label": "Mini", "group": "Off", "kind": "toggle", "keywords": "omd mini"},
++            {"id": "usage", "label": "Usage", "group": "Off", "kind": "toggle"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(selected(&view), "lsp");
++    let area = Rect::new(0, 0, 60, view.desired_height(60));
++    let mut buf = Buffer::empty(area);
++    view.render(area, &mut buf);
++    let screen = (0..area.height)
++        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
++        .map(|position| buf[position].symbol().to_owned())
++        .collect::<String>();
++    assert!(screen.contains("▾ On (2)") && screen.contains("Language servers card"));
++    press(&mut view, KeyCode::Char('u'));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('g'));
++    assert_eq!(selected(&view), "group On");
++    press(&mut view, KeyCode::Enter);
++    assert_eq!(view.rows().len(), 4);
++    view.handle_key_event(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('/'));
++    for c in "omd".chars() {
++        press(&mut view, KeyCode::Char(c));
++    }
++    assert_eq!(selected(&view), "mini");
++    press(&mut view, KeyCode::Enter);
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert!(view.is_complete());
++    assert_eq!(
++        sent(&mut rx),
++        ["demo:panel set mini true", "demo:panel closed mini omd"]
++    );
++    let mut arguments = arguments;
++    arguments["query"] = json!("omd");
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("omd"));
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert_eq!(sent(&mut rx), ["demo:panel closed mini"]);
++}
++
++#[test]
++fn reopening_shows_the_selected_items_tab_and_ctrl_c_ends_a_search_like_esc() {
++    let mut arguments = json!({
++        "title": "Demo", "search": true, "selected": "reset", "query": "na", "close_args": "closed",
++        "tabs": [{"id": "main", "title": "Main"}, {"id": "more", "title": "More"}],
++        "action": {"command": "panel"},
++        "items": [
++            {"id": "alpha", "tab": "main", "label": "Alpha", "kind": "action"},
++            {"id": "name", "tab": "more", "label": "Name", "kind": "action"},
++            {"id": "reset", "tab": "more", "label": "Reset", "kind": "action"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("na"));
++    assert_eq!(view.on_ctrl_c(), CancellationEvent::Handled);
++    assert_eq!(view.search_query(), None);
++    view.on_ctrl_c();
++    assert!(view.is_complete());
++    assert_eq!(sent(&mut rx), ["demo:panel closed name"]);
++    arguments.as_object_mut().unwrap().remove("query");
++    let (tx, _rx) = unbounded_channel();
++    let view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.active_tab_id(), Some("more"));
++    assert_eq!(selected(&view), "reset");
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
@@ -151846,15 +152634,18 @@ index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1fe097eb18
+index 0000000000000000000000000000000000000000..ca69813ad6ed79feef849f32dde0a74bb0af7dc9
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,307 @@
 +use super::*;
 +use crate::app_event::AppEvent;
++use crate::bottom_pane::SearchMode;
 +use crate::bottom_pane::SelectionItem;
 +use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::picker_hint_line_for_keymap;
 +use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use crate::keymap::ListKeymap;
 +use codex_omd::ModStore;
 +use ratatui::text::Line;
 +use ratatui::widgets::Paragraph;
@@ -151877,6 +152668,39 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +        .chars()
 +        .take(120)
 +        .collect()
++}
++
++fn searchable(
++    view_id: &'static str,
++    title: &str,
++    header: Vec<Line<'static>>,
++    mut items: Vec<SelectionItem>,
++    keymap: &ListKeymap,
++) -> SelectionViewParams {
++    for item in &mut items {
++        item.search_value = Some(format!(
++            "{} {}",
++            item.name,
++            item.description.as_deref().unwrap_or_default()
++        ));
++    }
++    let mut footer = picker_hint_line_for_keymap(keymap);
++    footer
++        .spans
++        .extend([" · ".into(), "/".into(), " to search".into()]);
++    SelectionViewParams {
++        view_id: Some(view_id),
++        title: Some(title.to_string()),
++        header: Box::new(Paragraph::new(header)),
++        header_gap: 1,
++        footer_hint: Some(footer),
++        items,
++        is_searchable: true,
++        fuzzy_search: true,
++        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
++        search_placeholder: Some("Type to search".to_string()),
++        ..Default::default()
++    }
 +}
 +
 +fn mod_entries(root: PathBuf) -> Result<Vec<ModEntry>, String> {
@@ -152095,15 +152919,13 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +            ),
 +            Err(error) => (Vec::new(), format!("Mods are unavailable: {error}")),
 +        };
-+        self.bottom_pane.show_selection_view(SelectionViewParams {
-+            view_id: Some("omd-all-mods"),
-+            title: Some("All mods".to_string()),
-+            header: Box::new(Paragraph::new(vec![Line::from(header)])),
-+            header_gap: 1,
-+            footer_hint: Some(standard_popup_hint_line()),
++        self.bottom_pane.show_selection_view(searchable(
++            "omd-all-mods",
++            "All mods",
++            vec![Line::from(header)],
 +            items,
-+            ..Default::default()
-+        });
++            &self.bottom_pane.list_keymap(),
++        ));
 +        self.request_redraw();
 +    }
 +
@@ -152125,10 +152947,10 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f22a85dde
+index 0000000000000000000000000000000000000000..73b902b4c0a364c19f3c48fc0fa47f0c6e501d3c
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,85 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -152198,6 +153020,21 @@ index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f
 +        !std::iter::from_fn(|| rx.try_recv().ok())
 +            .any(|event| matches!(event, AppEvent::OmdModToggle { .. }))
 +    );
++}
++
++#[test]
++fn all_mods_footer_follows_the_list_keymap() {
++    let mut keymap = crate::keymap::RuntimeKeymap::defaults().list;
++    keymap.cancel = vec![crate::key_hint::plain(KeyCode::Char('q'))];
++    let footer = searchable("view", "Title", Vec::new(), Vec::new(), &keymap)
++        .footer_hint
++        .expect("footer");
++    let text = footer
++        .spans
++        .iter()
++        .map(|span| span.content.as_ref())
++        .collect::<String>();
++    assert!(text.contains("q back") && text.ends_with("/ to search"), "{text}");
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
@@ -157805,10 +158642,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9bf938bc6
+index 0000000000000000000000000000000000000000..0d3ed49ff09ab167cee2ec6fd9dda6d23dbb4507
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1622 @@
+@@ -0,0 +1,1635 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -157841,6 +158678,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +    pub(crate) args_hint: Option<String>,
 +    pub(crate) immediate: bool,
 +    pub(crate) target: ModSlashTarget,
++    pub(crate) namespaced: bool,
 +}
 +
 +#[derive(Debug)]
@@ -157982,14 +158820,20 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +static HOST: Mutex<Option<Arc<Mutex<ModHost>>>> = Mutex::new(None);
 +
 +#[cfg(test)]
++thread_local! {
++    static TEST_CATALOG: std::cell::RefCell<Option<Vec<ModSlashCommand>>> =
++        const { std::cell::RefCell::new(None) };
++}
++
++#[cfg(test)]
 +pub(crate) fn test_command_catalog(commands: Vec<ModSlashCommand>) -> impl Drop {
-+    struct Restore(Option<(Instant, Vec<ModSlashCommand>)>);
++    struct Restore(Option<Vec<ModSlashCommand>>);
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
-+            *CATALOG.lock().unwrap() = self.0.take();
++            TEST_CATALOG.set(self.0.take());
 +        }
 +    }
-+    Restore(CATALOG.lock().unwrap().replace((Instant::now(), commands)))
++    Restore(TEST_CATALOG.replace(Some(commands)))
 +}
 +
 +/// Lets a test open the shared host from its own store, restoring the previous one after.
@@ -158193,6 +159037,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +            args_hint: entry.args_hint.clone(),
 +            immediate: entry.immediate,
 +            target: entry.target.clone(),
++            namespaced: true,
 +        });
 +        if conflict.is_none() && seen.insert(entry.bare.clone()) {
 +            commands.push(ModSlashCommand {
@@ -158201,6 +159046,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +                args_hint: entry.args_hint.clone(),
 +                immediate: entry.immediate,
 +                target: entry.target.clone(),
++                namespaced: false,
 +            });
 +        }
 +    }
@@ -158208,6 +159054,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +}
 +
 +pub(crate) fn slash_commands() -> Vec<ModSlashCommand> {
++    #[cfg(test)]
++    if let Some(commands) = TEST_CATALOG.with_borrow(Clone::clone) {
++        return commands;
++    }
 +    let mut cache = CATALOG.locked();
 +    if let Some((loaded, commands)) = cache.as_ref()
 +        && loaded.elapsed() < CATALOG_TTL
@@ -169483,10 +170333,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7a253b774
+index 0000000000000000000000000000000000000000..4dc2dbd458f3bf6dc75d0d79a897c25e70b6da0e
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,756 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -169807,6 +170657,7 @@ index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7
 +            id,
 +            command: target,
 +        },
++        namespaced: false,
 +    })
 +}
 +

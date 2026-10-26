@@ -4,8 +4,8 @@ Which hosts a mod runs on. The source is [compatibility.json](compatibility.json
 checks it against the host.
 
 API `1.0.0` is stable and supported through `2027-10-19`. Entries marked frozen in
-[the conformance registry](conformance/contract.json) keep their shape until then; a breaking change needs a
-major version and a migration note in [the reference](REFERENCE.md). Experimental entries (including the raster
+[the conformance registry](contract.json) keep their shape until then; a breaking change needs a
+major version and a migration note in [the reference](../REFERENCE.md). Experimental entries (including the raster
 surfaces `terminal.blit` and `process_raster_v1`), and the `experimental_fields` of frozen entries, may change in any
 release.
 
@@ -20,7 +20,7 @@ Only the current API loads.
 
 Upstream lag on 2026-10-23: none. Codex 0.164.0 is the latest stable Codex release. A newer Codex is supported once an
 OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
-([install](../docs/install.md#update)).
+([install](../../docs/install.md#update)).
 
 ## What the host checks
 

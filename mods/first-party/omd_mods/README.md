@@ -10,11 +10,12 @@ It is on by default in OMD+ and OMD Core. `/mods` cannot turn itself off or remo
 
 | Command or key | What it does |
 | --- | --- |
-| `/mods` | Open the panel where `/config` lives. Installed lists your mods as switches, Settings opens one mod's own panel and Directory installs new ones. |
+| `/mods` | Open the panel where `/config` lives. All lists your mods as switches grouped into Needs attention, On, Off and Available, with counts; Settings opens one mod's own panel and Directory installs from a source or updates. It reopens on the mod and search you last used. |
 | Up and Down | Move through the list; held keys repeat. |
+| A letter, `g`, `G`, PgUp, PgDn | Jump to the next mod with that initial, the top, the bottom or a page. |
 | Left and Right | Switch tabs. |
-| Space or Enter | Turn the highlighted mod on or off, change a setting or run an action. |
-| `/` | Search every tab as you type; Esc clears the search. |
+| Space or Enter | Turn the highlighted mod on or off, change a setting or run an action; on a group header, collapse or expand it. |
+| `/` | Fuzzy-search names, ids, descriptions and command names across every tab; Esc clears the search. The line below the list shows the highlighted mod's state and commands. |
 | Esc | Close the panel, or go back from a mod's own panel. |
 | `/mods MOD` | Open one mod's panel: its settings, Update, Roll back and Remove. |
 | `/mods ACTION MOD` | Run an action without the panel. Actions are `enable`, `disable`, `update`, `rollback`, `remove` and `trust`. |

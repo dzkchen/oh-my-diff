@@ -364,6 +364,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "ui_composition_v1",
     "ui_controls_v1",
     "terminal_panel_v1",
+    "terminal_panel_navigation_v1",
     "reactive_state_v1",
     "session_ports_v1",
     "structured_access_v1",
@@ -1655,7 +1656,7 @@ impl ModPackage {
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(failure(format!(
-                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/COMPATIBILITY.md.",
+                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/conformance/COMPATIBILITY.md.",
                 self.id, self.api,
             )));
         }
@@ -5995,8 +5996,8 @@ impl ModHost {
         mode: &str,
     ) -> Value {
         let install_profile = install_profile.map_or("unreported", self::install_profile);
-        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
+        json!({"codex_version": codex_version, "omd_version": OMD_HOST_RELEASE, "install_profile": install_profile,
+            "mode": mode, "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
                 "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
     }
 

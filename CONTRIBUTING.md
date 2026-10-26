@@ -12,6 +12,15 @@ small, focused changes fit best. For anything large, open an issue first.
   code in `runtime/` only gets general building blocks that many mods can use, never a single feature.
 - **A bug or docs fix:** send a pull request.
 
+## Find your way around
+
+- `runtime/`: the Codex patch, the OMD host crates and the release locks.
+- `mods/`: the published SDK at its top level (the `.d.ts` types, `author/` tooling, `REFERENCE.md` and `reference/`
+  docs), checked data in `conformance/`, and packages in `first-party/`, `examples/` and `ports/`.
+- `plugins/`, `extensions/`: bundled plugins and the curated package index.
+- `scripts/`, `tests/`, `install.sh`: build, install and check tooling. `docs/`: user and author guides.
+- `release/`: the changelog source and its `git-cliff` config. `docker/`: the Linux build container.
+
 ## Set up
 
 You need an Apple Silicon Mac with [mise](https://mise.jdx.dev) and [pnpm](https://pnpm.io) 11.14 or later.
@@ -71,11 +80,11 @@ python3 .github/scripts/build.py locks                                       # r
 
 ### Linux container
 
-The `Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
+`docker/Dockerfile` gives a Debian environment with the pinned Rust, Node, Python and pnpm, for building and testing
 without a Mac. OMD itself supports only Apple Silicon macOS, and the mod host runs mods only there.
 
 ```sh
-docker build -t oh-my-diff .
+docker build -f docker/Dockerfile -t oh-my-diff .
 docker run --rm -it -v omd-work:/home/omd/work oh-my-diff   # then the build.py commands above
 ```
 
