@@ -51,7 +51,7 @@ export type FinalRequestPage = {
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
-export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
@@ -222,7 +222,7 @@ export type ClientEntry = {
   viewport: { width: number; height: number; unit: string } | null; focused: boolean; attached_ms: number;
 };
 export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: ThemeColor | null];
-export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
+export type TerminalIdentity = { codex_version: string; omd_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;

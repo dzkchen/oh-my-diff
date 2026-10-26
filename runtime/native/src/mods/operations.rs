@@ -656,7 +656,7 @@ async fn run(
             Ok(
                 json!({"thread_id": lead.thread.to_string(), "root": host.repository,
                 "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
-                "model": snapshot.model,
+                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
                 "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
                 "route": account.and_then(|account| account.route), "turns_started": turns,
                 "process_id": crate::accounting::process_id()}),

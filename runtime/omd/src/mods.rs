@@ -5996,8 +5996,8 @@ impl ModHost {
         mode: &str,
     ) -> Value {
         let install_profile = install_profile.map_or("unreported", self::install_profile);
-        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
+        json!({"codex_version": codex_version, "omd_version": OMD_HOST_RELEASE, "install_profile": install_profile,
+            "mode": mode, "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
                 "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
     }
 

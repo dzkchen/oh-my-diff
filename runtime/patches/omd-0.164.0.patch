@@ -34161,7 +34161,7 @@ index 57a66255c5544dd62a6754eb857cec017a7a9a65..9edd1b8e6240f0811afb4793125faab5
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d0fde9a80 100644
+index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..4a9019cef797703c5049327636a4780cec82c3f3 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -390,6 +390,7 @@ mod draft_state;
@@ -34688,7 +34688,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10518,6 +10754,138 @@ mod tests {
+@@ -10518,6 +10754,139 @@ mod tests {
          }
      }
 
@@ -34742,6 +34742,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
 +                id: "completion_fixture".into(),
 +                command: "fixture".into(),
 +            },
++            namespaced: false,
 +        };
 +        let _catalog = crate::mod_runtime::test_command_catalog(vec![command]);
 +        let _completions =
@@ -35088,7 +35089,7 @@ index bb14fbe533e5f4a4b0ed07c7ded099c3aa38c6aa..f33c7ca92a3d0a33838ea823ba4d1ab7
                      self.sparkle.draft.set(SparkleDraft::Untouched);
                      self.sparkle.command_input.borrow_mut().clear();
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb08e40a084 100644
+index f75d17f57d54fa8ee756daf970fe54310e319627..5e2520be9cc49f12c1ddd7383305cd9d67e57d41 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -30,6 +30,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -35107,7 +35108,30 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          })
          .collect();
          Self {
-@@ -230,8 +232,8 @@ impl CommandPopup {
+@@ -157,6 +159,22 @@ impl CommandPopup {
+     /// paired with optional highlight indices. Preserves the original
+     /// presentation order for built-ins and prompts.
+     fn filtered(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
++        let mut items = self.matches();
++        let listed = items
++            .iter()
++            .filter_map(|(item, _)| match item {
++                CommandItem::Mod(command) if !command.namespaced => Some(command.target.clone()),
++                _ => None,
++            })
++            .collect::<std::collections::HashSet<_>>();
++        items.retain(|(item, _)| match item {
++            CommandItem::Mod(command) => !command.namespaced || !listed.contains(&command.target),
++            CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => true,
++        });
++        items
++    }
++
++    fn matches(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
+         let filter = self.command_filter.trim();
+         let mut out: Vec<(CommandItem, Option<Vec<usize>>)> = Vec::new();
+         if filter.is_empty() {
+@@ -230,8 +248,8 @@ impl CommandPopup {
                          .unwrap_or(item.description())
                  } else {
                      item.description()
@@ -35118,7 +35142,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
                  let unavailable = self.is_unavailable(&item);
                  GenericDisplayRow {
                      category_tag: None,
-@@ -294,7 +296,7 @@ impl CommandPopup {
+@@ -294,7 +312,7 @@ impl CommandPopup {
          self.side_conversation_active
              && match item {
                  CommandItem::Builtin(cmd) => !cmd.available_in_side_conversation(),
@@ -35127,7 +35151,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              }
      }
  }
-@@ -304,6 +306,7 @@ impl CommandItem {
+@@ -304,6 +322,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.command(),
              Self::ServiceTier(command) => &command.name,
@@ -35135,7 +35159,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
 
-@@ -311,6 +314,7 @@ impl CommandItem {
+@@ -311,6 +330,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.description(),
              Self::ServiceTier(command) => &command.description,
@@ -35143,7 +35167,82 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
  }
-@@ -385,7 +389,7 @@ mod tests {
+@@ -373,6 +393,74 @@ mod tests {
+         assert!(popup.selected_item().is_some());
+     }
+
++    #[test]
++    fn mod_command_is_listed_once_and_namespaced_alias_only_when_typed() {
++        use crate::mod_runtime::ModSlashTarget;
++        use crate::mod_runtime::build;
++        use crate::mod_runtime::test_entry;
++        let target = |id: &str, command: &str| ModSlashTarget {
++            id: id.to_owned(),
++            command: command.to_owned(),
++        };
++        let mut commands = build(vec![
++            test_entry(
++                "counter:tally",
++                "tally",
++                "Tally",
++                target("counter", "tally"),
++            ),
++            test_entry(
++                "counter:model",
++                "model",
++                "Shadowed",
++                target("counter", "model"),
++            ),
++            test_entry(
++                "counter:review",
++                "review",
++                "Review",
++                target("counter", "review"),
++            ),
++            test_entry("viewer:show", "show", "Show", target("viewer", "show")),
++            test_entry("other:show", "show", "Show", target("other", "show")),
++        ]);
++        for (builtin, owner) in [("review", "counter:review"), ("diff", "viewer:show")] {
++            let mut replacement = commands
++                .iter()
++                .find(|command| command.invocation == owner)
++                .cloned()
++                .unwrap();
++            replacement.invocation = builtin.to_owned();
++            replacement.namespaced = false;
++            commands.push(replacement);
++        }
++        let _catalog = crate::mod_runtime::test_command_catalog(commands);
++        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
++        let mods = |popup: &CommandPopup| {
++            popup
++                .filtered_items()
++                .into_iter()
++                .filter_map(|item| match item {
++                    CommandItem::Mod(command) => Some(command.invocation),
++                    CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => None,
++                })
++                .collect::<Vec<_>>()
++        };
++        popup.on_composer_text_change("/".to_string());
++        assert_eq!(
++            mods(&popup),
++            vec!["tally", "counter:model", "other:show", "review", "diff"]
++        );
++        popup.on_composer_text_change("/ta".to_string());
++        assert_eq!(mods(&popup), vec!["tally"]);
++        popup.on_composer_text_change("/counter:t".to_string());
++        assert_eq!(mods(&popup), vec!["counter:tally"]);
++        assert_eq!(
++            crate::mod_runtime::find("counter:tally").map(|command| command.target),
++            Some(target("counter", "tally"))
++        );
++    }
++
+     #[test]
+     fn filter_includes_init_when_typing_prefix() {
+         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+@@ -385,7 +473,7 @@ mod tests {
          let matches = popup.filtered_items();
          let has_init = matches.iter().any(|item| match item {
              CommandItem::Builtin(cmd) => cmd.command() == "init",
@@ -35152,7 +35251,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          });
          assert!(
              has_init,
-@@ -406,6 +410,7 @@ mod tests {
+@@ -406,6 +494,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -35160,7 +35259,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected a selected command for exact match"),
          }
      }
-@@ -420,6 +425,7 @@ mod tests {
+@@ -420,6 +509,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected model command, got service tier {command:?}")
              }
@@ -35168,7 +35267,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected at least one match for '/mo'"),
          }
      }
-@@ -513,6 +519,7 @@ mod tests {
+@@ -513,6 +603,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35176,7 +35275,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert_eq!(
-@@ -581,6 +588,7 @@ mod tests {
+@@ -581,6 +672,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35184,7 +35283,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -656,6 +664,7 @@ mod tests {
+@@ -656,6 +748,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35192,7 +35291,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -689,6 +698,7 @@ mod tests {
+@@ -689,6 +782,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected plan command, got service tier {command:?}")
              }
@@ -35200,7 +35299,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              other => panic!("expected plan to be selected for exact match, got {other:?}"),
          }
      }
-@@ -702,6 +712,7 @@ mod tests {
+@@ -702,6 +796,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -37449,10 +37548,10 @@ index 1cc51a16460fa849162bb5db99615b07fddfc95e..32f73b5503cd95dd738244e891e56a4c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234fafb3d6e68f 100644
+index 7017aca6c14757840f69dfafed1a1edf816c5c4d..e23d69ac02bd32706c356f5f883cb9bac48182df 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-@@ -69,6 +69,37 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+@@ -69,6 +69,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
      }
  }
 
@@ -37468,6 +37567,7 @@ index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234faf
 +            id: "probe_fixture".to_string(),
 +            command: "probe".to_string(),
 +        },
++        namespaced: false,
 +    };
 +    chat.run_mod_command(command, String::new());
 +    assert_eq!(chat.held_mod_commands.len(), 1);
@@ -73029,10 +73129,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0422cd384052b3d6c9a89f041bb7e6070c4f7161
+index 0000000000000000000000000000000000000000..122068f73e85c6d6eba30a1f5efdf1930b8d216a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4401 @@
+@@ -0,0 +1,4404 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73389,8 +73489,11 @@ index 0000000000000000000000000000000000000000..0422cd384052b3d6c9a89f041bb7e607
 +    let manager = attach_thread(&mut fixture).await;
 +    let repository = fixture.lead.host.repository.clone();
 +    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
-+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-+    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
++        .await
++        .unwrap();
++    assert_eq!(info["omd_version"], codex_omd::OMD_HOST_RELEASE);
++    assert_eq!(cwd(info), Some(repository.clone()));
 +    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
 +    std::fs::create_dir_all(&sub).unwrap();
 +    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
@@ -78360,7 +78463,7 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2cc378cd4
+index 0000000000000000000000000000000000000000..20e315740c180df8b70c71468e70866e3b9b9780
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,785 @@
@@ -79022,7 +79125,7 @@ index 0000000000000000000000000000000000000000..f4616e8c411d09811c0f134e6a8a46a2
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
 +                "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
-+                "model": snapshot.model,
++                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
 +                "route": account.and_then(|account| account.route), "turns_started": turns,
 +                "process_id": crate::accounting::process_id()}),
@@ -104824,7 +104927,7 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..62e932544e25eb9fd681233e041abcc1aacb31d5
+index 0000000000000000000000000000000000000000..46051c876e451b020f9c810dbf2b2bd78a973f56
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,6231 @@
@@ -110826,8 +110929,8 @@ index 0000000000000000000000000000000000000000..62e932544e25eb9fd681233e041abcc1
 +        mode: &str,
 +    ) -> Value {
 +        let install_profile = install_profile.map_or("unreported", self::install_profile);
-+        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-+            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
++        json!({"codex_version": codex_version, "omd_version": OMD_HOST_RELEASE, "install_profile": install_profile,
++            "mode": mode, "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
 +                "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
 +    }
 +
@@ -114582,7 +114685,7 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..3cc9b8e006b689e9fb5cb855f9887f5cb1c5ffd1
+index 0000000000000000000000000000000000000000..89c79ca90a91786e7fc1b5319a839486c0ce4c7d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,222 @@
@@ -114707,7 +114810,7 @@ index 0000000000000000000000000000000000000000..3cc9b8e006b689e9fb5cb855f9887f5c
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
@@ -136243,10 +136346,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf1c9083e0
+index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4de3b96f4
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4796 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -139606,7 +139709,8 @@ index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf
 +    let identity = runtime.identity("0.163.0", Some("full"), "omd");
 +    assert_eq!(
 +        identity,
-+        json!({"codex_version":"0.163.0","install_profile":"full","mode":"omd",
++        json!({"codex_version":"0.163.0","omd_version":OMD_HOST_RELEASE,
++        "install_profile":"full","mode":"omd",
 +        "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
 +    );
 +    assert_eq!(
@@ -158502,10 +158606,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9bf938bc6
+index 0000000000000000000000000000000000000000..0d3ed49ff09ab167cee2ec6fd9dda6d23dbb4507
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1622 @@
+@@ -0,0 +1,1635 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -158538,6 +158642,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +    pub(crate) args_hint: Option<String>,
 +    pub(crate) immediate: bool,
 +    pub(crate) target: ModSlashTarget,
++    pub(crate) namespaced: bool,
 +}
 +
 +#[derive(Debug)]
@@ -158679,14 +158784,20 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +static HOST: Mutex<Option<Arc<Mutex<ModHost>>>> = Mutex::new(None);
 +
 +#[cfg(test)]
++thread_local! {
++    static TEST_CATALOG: std::cell::RefCell<Option<Vec<ModSlashCommand>>> =
++        const { std::cell::RefCell::new(None) };
++}
++
++#[cfg(test)]
 +pub(crate) fn test_command_catalog(commands: Vec<ModSlashCommand>) -> impl Drop {
-+    struct Restore(Option<(Instant, Vec<ModSlashCommand>)>);
++    struct Restore(Option<Vec<ModSlashCommand>>);
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
-+            *CATALOG.lock().unwrap() = self.0.take();
++            TEST_CATALOG.set(self.0.take());
 +        }
 +    }
-+    Restore(CATALOG.lock().unwrap().replace((Instant::now(), commands)))
++    Restore(TEST_CATALOG.replace(Some(commands)))
 +}
 +
 +/// Lets a test open the shared host from its own store, restoring the previous one after.
@@ -158890,6 +159001,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +            args_hint: entry.args_hint.clone(),
 +            immediate: entry.immediate,
 +            target: entry.target.clone(),
++            namespaced: true,
 +        });
 +        if conflict.is_none() && seen.insert(entry.bare.clone()) {
 +            commands.push(ModSlashCommand {
@@ -158898,6 +159010,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +                args_hint: entry.args_hint.clone(),
 +                immediate: entry.immediate,
 +                target: entry.target.clone(),
++                namespaced: false,
 +            });
 +        }
 +    }
@@ -158905,6 +159018,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +}
 +
 +pub(crate) fn slash_commands() -> Vec<ModSlashCommand> {
++    #[cfg(test)]
++    if let Some(commands) = TEST_CATALOG.with_borrow(Clone::clone) {
++        return commands;
++    }
 +    let mut cache = CATALOG.locked();
 +    if let Some((loaded, commands)) = cache.as_ref()
 +        && loaded.elapsed() < CATALOG_TTL
@@ -170180,10 +170297,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7a253b774
+index 0000000000000000000000000000000000000000..4dc2dbd458f3bf6dc75d0d79a897c25e70b6da0e
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,755 @@
+@@ -0,0 +1,756 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -170504,6 +170621,7 @@ index 0000000000000000000000000000000000000000..cad6d6054b24bd110a7c8129380ea9a7
 +            id,
 +            command: target,
 +        },
++        namespaced: false,
 +    })
 +}
 +

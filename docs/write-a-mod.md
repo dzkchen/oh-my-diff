@@ -62,8 +62,8 @@ In a second terminal, start `codex` on that store:
 OMD_MODE=omd OMD_MOD_STORE=/tmp/my-store ~/.local/share/oh-my-diff/current/prefix/artifacts/codex
 ```
 
-Type `/hello`. You should see `Hello world`. The popup also lists it as `/my_mod:hello`; that form always works,
-and you need it when another mod or a built-in uses the same name.
+Type `/hello`. You should see `Hello world`. `/my_mod:hello` always works too; the popup lists that form instead
+when another mod or a built-in uses the same name.
 
 Edit the message in `index.ts` and save. Send any message, then `/hello` again.
 
