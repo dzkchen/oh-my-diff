@@ -141,6 +141,12 @@
       "why_mod": "Pins Codex's own update_plan steps above the composer from app notifications; adds no model tool."
     },
     {
+      "path": "mods/first-party/omd_awake",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Removes Codex's prevent_idle_sleep feature with the generic builtins control and holds host power leases from turn, timer and agent-inventory events behind /awake."
+    },
+    {
       "path": "mods/first-party/omd_continue",
       "extension_type": "mod",
       "role": "bundled",

@@ -49,6 +49,8 @@ These reject older hosts before activation, even when the API version matches.
 | `api.settingsFile` | `settings_file_v1` |
 | `key_contexts`, `region` and `help` key actions, `keys: 'all'` | `terminal_focus_v1` |
 | Layout leaf `title` | `terminal_layout_title_v1` |
+| `power.hold`/`power.release` | `power_hold_v1` |
+| `api.builtins` `features.remove` | `builtins_features_v1` |
 | `success_per_call` on a `tool_batch` merge | `tool_batch_success_v1` |
 | `value` in code-mode `tool` results and answers | `code_mode_values_v1` |
 | `workspace.watch`/`workspace.unwatch` `key` | `workspace_watch_key_v1` |

@@ -50,6 +50,30 @@
       "source": "mods/first-party/omd_auto_continue",
       "version": "1.0.0"
     },
+    "omd_awake": {
+      "api": "1.0.0",
+      "capabilities": [
+        "store",
+        "events",
+        "lifecycle",
+        "terminal",
+        "commands",
+        "builtins",
+        "agents",
+        "exec",
+        "os",
+        "power"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "a4fb1198e1d9f91de7132cd42c49acf2720fa50368ecf94302ba54678f764097",
+        "mod.json": "309e4a32d444e7b34db757978b032fe422faa849026898f8e249d12ba5f67d2b"
+      },
+      "id": "omd_awake",
+      "package_sha256": "a995617ae6196608e81cf8eda3993675d162c0fc4e32bb848713c3bd51f6bbf7",
+      "source": "mods/first-party/omd_awake",
+      "version": "1.0.0"
+    },
     "omd_claude_cli": {
       "api": "1.0.0",
       "capabilities": [

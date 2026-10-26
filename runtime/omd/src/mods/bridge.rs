@@ -90,6 +90,7 @@ impl ModHostCall {
             "mcp.connect" | "mcp.disconnect" => Ok("mcp"),
             "environment.read" | "environment.set" => Ok("exec"),
             "peers.list" | "peers.send" => Ok("peers"),
+            "power.hold" | "power.release" => Ok("power"),
             "turns.queue" | "turns.queued" | "turns.dequeue" => Ok("autonomous"),
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
                 Ok("agents")

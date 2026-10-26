@@ -36,6 +36,7 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `api.settingsFile` and the settings file (`settings_file_v1`).
 - Focus regions, `key_contexts`, the `region` and `help` key actions and `keys: 'all'` (`terminal_focus_v1`).
 - Layout leaf `title` (`terminal_layout_title_v1`).
+- Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -48,7 +49,7 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
 | [Capabilities and authority grants](#capabilities-and-authority-grants) | Every capability, authority grants, structured access, admission policy |
 | [Commands, files and data](#commands-files-and-data) | `exec.run`, workspace reads and writes, `store.*`, reactive state |
 | [Models and routing](#models-and-routing) | Routes, the ledger, model requests and streams, request policy, one-shot model calls |
-| [Agents, contracts and sessions](#agents-contracts-and-sessions) | Contracts, agents, peers, autonomous turns, submissions, lifecycle events |
+| [Agents, contracts and sessions](#agents-contracts-and-sessions) | Contracts, agents, peers, power holds, autonomous turns, submissions, lifecycle events |
 | [App bridge, approvals and tools](#app-bridge-approvals-and-tools) | The app-server bridge, approvals, continuation middleware, tool output, dynamic tools |
 | [Processes, kernels and events](#processes-kernels-and-events) | Framed processes, code-mode kernels, adapters, channels and watches |
 | [Credentials and threads](#credentials-and-threads) | Credentials, secrets, the thread store and turn activity |
@@ -225,6 +226,7 @@ access](#structured-access-structured_access_v1) describe how they are bound and
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
 | `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
+| `power` | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 | `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
@@ -238,7 +240,7 @@ mod that answered the call without running it.
 
 ### Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write`
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `power`, `autonomous`, `history_write`
 and `history_persist` are authority grants. The manifest declares their scope, which the trust digest binds, so
 changed content or a wider scope needs a new trust.
 
@@ -1267,17 +1269,23 @@ replaced bytes) or `final_request_refused` with its reason.
 
 ### Built-in controls
 
-`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}})`, registered during activation, hides
-slash commands, disables collaboration modes and turns off native surfaces from the next idle boundary until the
-mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
+`api.builtins({commands: {hide}, modes: {disable}, surfaces: {disable}, features: {remove}})`, registered during
+activation, removes slash commands, collaboration modes, native surfaces and Codex features from the next idle
+boundary until the mod is disabled, unloaded or fails. Controls belong to the directory OMD was launched in and cover every thread of
 that session, including threads in its worktrees.
 
 - `surfaces: {disable: ['status_line']}` turns off the upstream `/statusline` row at its source: its configured
   items are neither computed nor polled and reserve no height, the user's `tui.status_line` setting is untouched,
   and the row still draws when other mods publish `status` segments.
+- `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
+  they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
+  experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
+  managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A turn that requests a disabled mode runs in the default mode with that mode's instructions cleared and a warning
-  (a `warning` notification for app-server clients), including the turn at whose boundary the mod loads.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests or still holds one is reported in
+  the default mode and runs its next turn there with that mode's instructions cleared and a warning (a `warning`
+  notification for app-server clients), including the turn at whose boundary the mod loads.
 - Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
 ### One-shot model calls and forks (`model_complete_v2`)
@@ -1720,6 +1728,37 @@ The sender's package gets `peer_receipt` events:
 Receiving never starts a turn, changes roots or routes, or lends authority; a receiver that wants to act queues its
 own work under its own grants. Revoking or expiring the grant, disabling the mod or stopping the session closes the
 registration.
+
+### Power holds (`power_hold_v1`)
+
+A mod with the `power` authority grant keeps the Mac awake. `power.hold {reason, lid_closed?, max_duration_ms, lease?}`
+returns `{lease, lid_closed}`; passing a `lease` that is still live with the same `lid_closed` returns it unchanged,
+otherwise a new lease starts. `power.release {lease}` returns `{released}`, false when the lease already ended or
+belongs to another mod. Only event callbacks (lifecycle events, timers, channels) may hold
+(`host_operation_event_only` otherwise).
+
+Every lease holds an idle-sleep assertion, so the Mac doesn't sleep from inactivity while the lid is open; the display
+may still sleep. With `lid_closed: true` the lease also asks the authority broker to set `SleepDisabled`, which keeps a
+closed Mac running on battery. Leases from every mod and OMD process share that setting: the first records the previous
+value and the last one to end restores it, then sleeps the Mac if the lid is closed.
+
+A lease ends at `power.release`, after `max_duration_ms`, when the session stops and when OMD exits or crashes. A
+disabled, failed or changed mod loses its leases at the next host event in the session. If the broker or its helper
+exits, the setting is restored and the lease ends, so holding again with that `lease` starts a new one.
+
+| Limit | Value |
+| --- | --- |
+| `reason` | 1 to 128 bytes |
+| `max_duration_ms` | 60 s to 24 h |
+| Live leases per mod in a session | 4 |
+
+| Error | When |
+| --- | --- |
+| `power_unavailable` | `lid_closed` without the deployed broker, or a broker installed before power holds (run `omd-package broker install` again); lid-open holds still work |
+| `authority_power_unavailable` | The broker's power helper is not installed or could not change the setting |
+| `power_lease_limit` | The mod already holds 4 leases |
+| `host_operation_event_only` | `power.hold` from a tool, CLI or component callback |
+| `power_request_invalid` | `reason` or `max_duration_ms` is out of range |
 
 ### Autonomous turns (`autonomous_turns_v1`)
 
@@ -5454,6 +5493,10 @@ escalations, allow rules, full access, an external sandbox) can.
 `/var/run/dev.ohmydiff.broker.sock` only to peers whose kernel audit token resolves to a hardened-runtime binary
 whose code directory hash root has pinned. The broker asks the kernel for the running peer's signing status and
 code directory hash, never reading the executable, so binaries installed under a private home folder verify too.
+It also installs a root LaunchDaemon, `omd-broker power`, that answers only the broker's account on
+`/var/run/dev.ohmydiff.broker.power.sock` and does one thing: set `SleepDisabled` for [power holds](#power-holds-power_hold_v1)
+and put the previous value back when the last hold ends, the broker exits or it restarts after a crash, then sleep
+the Mac if its lid is closed.
 
 #### What the broker protects
 

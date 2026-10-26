@@ -43,6 +43,13 @@ pub struct Disabled {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct Removed {
+    #[serde(default)]
+    pub remove: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct BuiltinControls {
     #[serde(default)]
     pub commands: HiddenCommands,
@@ -50,8 +57,16 @@ pub struct BuiltinControls {
     pub modes: Disabled,
     #[serde(default)]
     pub surfaces: Disabled,
+    #[serde(default, skip_serializing_if = "Removed::is_empty")]
+    pub features: Removed,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, Option<String>>,
+}
+
+impl Removed {
+    fn is_empty(&self) -> bool {
+        self.remove.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
@@ -62,6 +77,8 @@ pub struct BuiltinSnapshot {
     pub disabled_modes: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub disabled_surfaces: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed_features: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub replaced_commands: BTreeMap<String, (String, String)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -132,6 +149,13 @@ impl BuiltinControls {
                 .disable
                 .iter()
                 .any(|surface| !SURFACES.contains(&surface.as_str()))
+            || controls.features.remove.len() > 32
+            || !unique(&controls.features.remove)
+            || controls
+                .features
+                .remove
+                .iter()
+                .any(|feature| !name(feature) || codex_features::feature_for_key(feature).is_none())
         {
             return Err("invalid_builtins".into());
         }
@@ -164,6 +188,13 @@ impl BuiltinSnapshot {
                 snapshot
                     .disabled_surfaces
                     .entry(surface.clone())
+                    .or_default()
+                    .push(owner.clone());
+            }
+            for feature in &controls.features.remove {
+                snapshot
+                    .removed_features
+                    .entry(feature.clone())
                     .or_default()
                     .push(owner.clone());
             }
@@ -228,6 +259,13 @@ impl BuiltinSnapshot {
 
     pub fn surface_disabled(&self, surface: &str) -> bool {
         self.disabled_surfaces.contains_key(surface)
+    }
+
+    pub fn removed_features(&self) -> BTreeSet<codex_features::Feature> {
+        self.removed_features
+            .keys()
+            .filter_map(|key| codex_features::feature_for_key(key))
+            .collect()
     }
 }
 
