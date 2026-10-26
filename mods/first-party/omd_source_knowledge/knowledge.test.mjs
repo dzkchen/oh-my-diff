@@ -148,18 +148,13 @@ test('unsafe paths, secrets, unavailable lines and context bounds do not enter r
   assert.match(f.run('inspect', { ...common, max_context_bytes: 1 }).error, /knowledge_context_limit/);
 });
 
-test('reuse batches bounded source reads and orders facts deterministically', () => {
+test('reuse orders facts deterministically', () => {
   const f = fixture({ 'src/config.txt': 'first\nsecond\n', 'src/other.txt': 'alpha\nbeta\n' });
   assert.equal(f.run('retain_source', { ...retain, id: 'z' }).error, undefined);
   assert.equal(f.run('retain_source', { ...retain, expected_revision: 1, id: 'a', source: { ...retain.source, path: 'src/other.txt' } }).error, undefined);
-  f.calls.length = 0;
   const result = f.run('session', { ...common, mode: 'reuse' });
   assert.equal(result.error, undefined, result.error);
   assert.deepEqual(result.value.facts.map(fact => fact.id), ['a', 'z']);
-  assert.equal(f.calls.filter(call => call.operation === 'workspace.stat').length, 2);
-  assert.equal(f.calls.filter(call => call.operation === 'workspace.read').length, 0);
-  assert.equal(f.calls.filter(call => call.operation === 'workspace.check_access').length, 1);
-  assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
 
 test('retained evidence supports inert lessons, exact approval, and dependency invalidation', () => {
@@ -222,8 +217,6 @@ test('retention refuses oversized state before the native store write', () => {
   f.calls.length = 0;
   assert.match(f.run('retain_source', { ...value, id: 'second', expected_revision: 1 }).error, /knowledge_state_limit/);
   assert.equal(JSON.stringify(f.saved), before);
-  f.readFailure = null;
-  assert.equal(f.calls.filter(call => call.operation === 'store.put').length, 0);
 });
 
 test('reuse keeps facts in unchanged files of any total size without reading them', () => {

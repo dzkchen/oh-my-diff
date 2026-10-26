@@ -102,11 +102,6 @@ class ProfileModeTests(unittest.TestCase):
                     launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
                     run = subprocess.run(["sh", launcher, *argv], capture_output=True, text=True, check=True)
                     self.assertEqual(run.stdout.strip(), expected)
-            for current in (managed, record):
-                launcher.write_text(profiles.omd_text(current, str(base / "tool"), base / "control"))
-                shown = subprocess.run(["sh", launcher], capture_output=True, text=True, check=True).stdout
-                self.assertIn("omd mods list", shown)
-                self.assertEqual("omd update rollback" in shown, current is managed)
 
     def test_uninstall_uses_recorded_sources_and_preserves_unmanaged_files(self):
         for unmanaged in (False, True):

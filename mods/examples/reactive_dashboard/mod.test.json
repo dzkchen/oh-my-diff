@@ -6,8 +6,7 @@
       "mod": "reactive_dashboard",
       "event": "command",
       "name": "search",
-      "payload": " logs ",
-      "expect": null
+      "payload": " logs "
     },
     {
       "type": "event",

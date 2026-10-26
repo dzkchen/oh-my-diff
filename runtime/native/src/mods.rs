@@ -37,12 +37,6 @@ use codex_omd::ModHost;
 use codex_omd::ModHostCall;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::PermissionProfileSnapshot;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -1041,11 +1035,7 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         thread: Option<&str>,
         forked_from: Option<&str>,
     ) -> Result<(), String> {
-        let profile = config.permissions.effective_permission_profile();
-        if matches!(profile, PermissionProfile::External { .. }) {
-            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-        }
-        let mut denies = Vec::new();
+        let mut denied = Vec::new();
         for path in self.host.protected_paths() {
             if path
                 .canonicalize()
@@ -1055,13 +1045,16 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             {
                 return Err("protected_mod_path_must_be_canonical_and_external".into());
             }
-            let path =
-                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-            denies.push(FileSystemSandboxEntry::new(
-                FileSystemPath::Path { path: path.into() },
-                FileSystemAccessMode::Deny,
-            ));
+            let path = path
+                .to_str()
+                .filter(|path| !path.contains('\n'))
+                .ok_or("protected_path_unavailable")?;
+            denied.push(path.to_owned());
         }
+        config.permissions.shell_environment_policy.r#set.insert(
+            codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
+            denied.join("\n"),
+        );
         config.model_provider.supports_websockets = false;
         if self
             .codex_config
@@ -1070,24 +1063,6 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         {
             config.update_plan_enabled = true;
         }
-        let mut filesystem = profile.file_system_sandbox_policy();
-        filesystem
-            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-        let protected = PermissionProfile::from_runtime_permissions(
-            &filesystem,
-            profile.network_sandbox_policy(),
-        );
-        config
-            .permissions
-            .shell_environment_policy
-            .r#set
-            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-        config
-            .permissions
-            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-                protected,
-            ))
-            .map_err(|e| e.to_string())?;
         let mut runtime = match self.runtime.try_lock() {
             Ok(runtime) => runtime,
             Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),

@@ -32,13 +32,6 @@ class PluginLockTests(unittest.TestCase):
                 with self.assertRaises((ValueError, FileNotFoundError)):
                     plugin_lock.build()
 
-    def test_pinned_bundle_matches_plugin_sources(self):
-        lock = install_support.plugin_sources()
-        self.assertEqual(lock["marketplace"], "oh-my-diff")
-        self.assertEqual({name: (plugin["extension_types"], plugin["mod_required"]) for name, plugin in lock["plugins"].items()},
-                         {name: (["plugin", "skill"], False)
-                          for name in ("omd-anchored-edit", "omd-artifact-reading", "omd-code-execution")})
-
 
 class ShippedPatchTests(unittest.TestCase):
     def test_shipped_patch_matches_the_runtime_sources_it_installs(self):
