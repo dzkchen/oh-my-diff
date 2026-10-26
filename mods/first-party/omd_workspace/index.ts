@@ -40,13 +40,14 @@ const LINES = 1_000;
 const START = 'omd_workspace_start';
 const LIST = 'omd_workspace_changes';
 const REFRESH = 'omd_workspace_refresh';
-const EXAMPLE = { keybinding: { main: 'm', help: DISABLED, grow: '>' }, layout: { mode: 'tabs', panels: ['terminal', 'changes'], side: 'left', ratio: [1, 3], portrait: 90 } };
+const EXAMPLE = { mode: 'tabs', panels: 'terminal, changes', side: 'left', dock_size: 25, portrait: 90, border: 'plain', key_main: 'm', key_help: DISABLED, key_grow: '>' };
 const encoder = new TextEncoder();
 
 const obj = (value: unknown): Record<string, Json> => (value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, Json> : {});
 const str = (value: unknown, bytes: number): string | null => (typeof value === 'string' && value && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && encoder.encode(value).length <= bytes ? value : null);
 const sitesOf = (panel: Panel) => panel.tabs?.map(tab => tab.site) ?? [panel.site];
-const leaf = (name: string, title: string): LayoutNode => ({ content: `site:${name}` as `site:${string}/${string}`, title });
+const BORDERS = ['rounded', 'plain', 'double', 'thick'] as const;
+const leaf = (name: string, title: string, border: typeof BORDERS[number]): LayoutNode => ({ content: `site:${name}` as `site:${string}/${string}`, title, style: { border } });
 const clip = (text: string) => {
   const kept: string[] = [];
   let size = 0;
@@ -59,7 +60,6 @@ const clip = (text: string) => {
 };
 
 export default function activate(api: ModAPI) {
-  const settings = { keybinding: obj(api.settings.keybinding), layout: obj(api.settings.layout) };
   const load = (): State => ({ off: false, registered: [], share: null, stack: {}, tabs: {}, dock: null, mode: null, threads: {}, ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const changed = (change: (state: State) => void) => {
@@ -82,24 +82,25 @@ export default function activate(api: ModAPI) {
   const keymap = () => {
     const keys: Record<string, string | null> = { ...KEYS };
     const invalid: string[] = [];
-    for (const [action, key] of Object.entries(settings.keybinding)) {
-      if (!(action in KEYS)) invalid.push(`${action}: unknown action`);
-      else if (key === DISABLED) keys[action] = null;
+    for (const action of Object.keys(KEYS)) {
+      const key = api.settings[`key_${action}`];
+      if (key === undefined || key === null || key === '') continue;
+      if (key === DISABLED) keys[action] = null;
       else if (typeof key === 'string' && KEY.test(key)) keys[action] = key;
-      else invalid.push(`${action}: invalid key ${JSON.stringify(key)}`);
+      else invalid.push(`key_${action}: invalid key ${JSON.stringify(key)}`);
     }
     return { keys, invalid };
   };
-  const right = settings.layout.side !== 'left';
-  const stacked = settings.layout.mode === 'stack';
-  const portrait = typeof settings.layout.portrait === 'number' ? settings.layout.portrait : 84;
-  const ratio = Array.isArray(settings.layout.ratio) && settings.layout.ratio.length === 2 && settings.layout.ratio.every(n => typeof n === 'number' && n > 0)
-    ? settings.layout.ratio as number[] : [1, 2];
-  const base = Math.round(100 * ratio[0] / (ratio[0] + ratio[1]));
+  const right = api.settings.side !== 'left';
+  const stacked = api.settings.mode === 'stack';
+  const portrait = typeof api.settings.portrait === 'number' ? api.settings.portrait : 84;
+  const border = BORDERS.find(name => name === api.settings.border) ?? 'rounded';
+  const base = typeof api.settings.dock_size === 'number' ? Math.min(85, Math.max(15, Math.round(api.settings.dock_size))) : 33;
+  const order = typeof api.settings.panels === 'string' ? api.settings.panels.split(/[\s,]+/).filter(Boolean) : [];
 
   const panels = (state: State): Panel[] => {
     const known = [...BUILTIN, ...[...state.registered].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))];
-    const wanted = Array.isArray(settings.layout.panels) ? [...new Set(settings.layout.panels)].flatMap(id => known.filter(panel => panel.id === id)) : known;
+    const wanted = order.length ? [...new Set(order)].flatMap(id => known.filter(panel => panel.id === id)) : known;
     let cells = 0;
     return wanted.filter(panel => (cells += panel.tabs?.length ?? 1) <= CELLS).slice(0, stacked ? STACK : TABS);
   };
@@ -121,8 +122,8 @@ export default function activate(api: ModAPI) {
     if (!list.length) return chat;
     const narrow = columns < portrait;
     const node = (panel: Panel, title: string): LayoutNode => panel.tabs
-      ? { tabs: panel.tabs.map(tab => ({ title: tab.title, node: leaf(tab.site, title) })), active: active(state, panel) }
-      : leaf(panel.site, title);
+      ? { tabs: panel.tabs.map(tab => ({ title: tab.title, node: leaf(tab.site, title, border) })), active: active(state, panel) }
+      : leaf(panel.site, title, border);
     const stack = state.stack[list.map(panel => panel.id).join()];
     const side: LayoutNode = !stacked
       ? { tabs: list.map((panel, index) => ({ title: `${index + 1} ${panel.title}`, node: node(panel, '') })), active: docked(state, list) }
@@ -293,8 +294,8 @@ export default function activate(api: ModAPI) {
     const file = api.settingsFile;
     return [
       `Settings file: ${file.path} (${file.status}${file.error ? `: ${file.error}` : ''})`,
-      `Keys: ${JSON.stringify(Object.fromEntries(Object.entries(keys).map(([action, key]) => [action, key ?? DISABLED])))}`,
-      `Layout: ${JSON.stringify({ mode: stacked ? 'stack' : 'tabs', panels: panels(state).map(panel => panel.id), side: right ? 'right' : 'left', ratio, portrait })}`,
+      `Keys: ${JSON.stringify(Object.fromEntries(Object.entries(keys).map(([action, key]) => [`key_${action}`, key ?? DISABLED])))}`,
+      `Layout: ${JSON.stringify({ mode: stacked ? 'stack' : 'tabs', panels: panels(state).map(panel => panel.id).join(', '), side: right ? 'right' : 'left', dock_size: base, portrait, border })}`,
       ...invalid.map(problem => `Ignored: ${problem}`),
       `Example file:\n${JSON.stringify(EXAMPLE, null, 2)}`,
     ].join('\n');

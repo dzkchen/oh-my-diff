@@ -4,11 +4,11 @@ A tabbed dock beside the chat. Turn it on and it owns the screen: your Git chang
 
 ```text
 ─ Chat ──────────────────────────── 1 Changes  2 Shell  3 Git
-transcript                         ┌──────────────────────────┐
+transcript                         ╭──────────────────────────╮
                                    │ 3 changed                │
                                    │ M src/a.ts               │
                                    │ diff …                   │
-› prompt                           └──────────────────────────┘
+› prompt                           ╰──────────────────────────╯
 ```
 
 On a narrow terminal (below `portrait` columns) the dock becomes a band below the prompt, tabs across its top:
@@ -19,9 +19,9 @@ transcript
 
 › prompt
  1 Changes  2 Shell  3 Git
-┌───────────────────────────────────┐
+╭───────────────────────────────────╮
 │ M src/a.ts                        │
-└───────────────────────────────────┘
+╰───────────────────────────────────╯
 ```
 
 ## Turn it on
@@ -55,7 +55,7 @@ Screen modes also work for the chat: `/workspace mode next chat` shrinks the doc
 
 ### Stack mode
 
-With `"layout": {"mode": "stack"}` the panels are split panels instead of tabs, each titled `N Title`: `1`-`9` focus that panel, `[` / `]` switch the tabs of a panel that has them, and `+` / `_` change the focused panel's screen mode. Below `portrait` columns the panels sit in a row below the chat.
+With `mode: stack` the panels are split panels instead of tabs, each titled `N Title`: `1`-`9` focus that panel, `[` / `]` switch the tabs of a panel that has them, and `+` / `_` change the focused panel's screen mode. Below `portrait` columns the panels sit in a row below the chat.
 
 ## Panels
 
@@ -82,12 +82,21 @@ Resizing (dragging the border or `=` / `-`), clicking a tab and the tab keys per
 
 ## Settings
 
-Set these in `/mods` or in `settings/omd_workspace.json` (or `.yaml`) in the mod store; `/workspace config` prints the path and an example.
+Every setting is its own row in `/mods` (open the workspace's settings there): choices for the frame, side and layout, text fields for sizes, panel order and keys. The same names work in `settings/omd_workspace.json` (or `.yaml`) in the mod store, which wins over `/mods`; `/workspace config` prints its path, the effective values and an example:
+
+```json
+{"border": "plain", "side": "left", "dock_size": 25, "key_main": "m", "key_help": "<disabled>"}
+```
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `keybinding` | `{}` | `{"ACTION": "KEY"}` or `"<disabled>"`. Actions: `panel_1` to `panel_9`, `main`, `left`, `left_alt`, `right`, `right_alt`, `next`, `help`, `mode_next`, `mode_previous`, `tab_previous`, `tab_next`, `panel_tab_previous`, `panel_tab_next`, `grow`, `shrink`, `focus_shell`. A key is a single character, a named key such as `Left` or `Tab`, F2–F12, or `Ctrl+x` / `Alt+x` with a lowercase letter or digit (not Ctrl+c, d, h, i, j, m or z). Invalid keys keep the default and show in `/workspace config`. |
-| `layout` | `{}` | `mode`: `tabs` (default) or `stack`; `panels`: ids in order (default: built-ins, then registrations); `side`: `right` (default) or `left`; `ratio`: `[panels, chat]` widths (default `[1, 2]`); `portrait`: columns below which the panels move below the chat (above it with `"side": "left"`), default 84 |
+| `border` | `rounded` | Frame of the panels: `rounded`, `plain`, `double` or `thick` |
+| `side` | `right` | Side of the chat the panels sit on: `right` or `left` |
+| `mode` | `tabs` | `tabs` (one dock) or `stack` (split panels) |
+| `dock_size` | `33` | Percent of the width the panels take, 15 to 85; resizing overrides it until `/workspace reset` |
+| `portrait` | `84` | Columns below which the panels move below the chat (above it with `side: left`) |
+| `panels` | empty | Panel ids in order, separated by commas (`changes, terminal`); empty shows built-ins, then registrations |
+| `key_ACTION` | see Keys | One per action: `key_panel_1` to `key_panel_9`, `key_main`, `key_left`, `key_left_alt`, `key_right`, `key_right_alt`, `key_next`, `key_help`, `key_mode_next`, `key_mode_previous`, `key_tab_previous`, `key_tab_next`, `key_panel_tab_previous`, `key_panel_tab_next`, `key_grow`, `key_shrink`, `key_focus_shell`. A key is a single character, a named key such as `Left` or `Tab`, F2–F12, or `Ctrl+x` / `Alt+x` with a lowercase letter or digit (not Ctrl+c, d, h, i, j, m or z); `<disabled>` turns it off. Invalid keys keep the default and show in `/workspace config`. |
 
 ## Needs and limits
 
@@ -95,6 +104,6 @@ Set these in `/mods` or in `settings/omd_workspace.json` (or `.yaml`) in the mod
 - At most 6 tabs (4 panels in stack mode) and 10 panel sites, counting each tab of a panel that has tabs; extra panels are left out. The first 50 changed files are listed, and a diff is cut at about 30 KB or 1,000 lines.
 - Below 60 columns or 12 rows the host drops the layout and shows its own.
 - The narrow band sits below the prompt, not between the transcript and the prompt: the host draws the transcript and the prompt as one chat area.
-- The dock size is shared between the wide and the narrow layout (default a third, from `ratio`) and stays between 15% and 85%.
+- The dock size is shared between the wide and the narrow layout (default a third, from `dock_size`) and stays between 15% and 85%.
 - Tab titles that don't fit the dock's width are cut off; those tabs are still reachable by number or `[` / `]`.
 - In stack mode, `dock` is not a screen-mode target; a mode whose panel is gone acts on all panels.
