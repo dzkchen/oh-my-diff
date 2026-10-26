@@ -321,6 +321,12 @@
       "why_mod": "Shows the attached-client roster and launches its own text renderer process that joins the session over the client protocol."
     },
     {
+      "path": "mods/examples/raster_wave",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Animates a half-block raster from timer callbacks with packed or JSON terminal.blit cells to show coalesced frames and measure frames shown per second."
+    },
+    {
       "path": "mods/examples/approval_desk",
       "extension_type": "mod",
       "role": "conformance_fixture",

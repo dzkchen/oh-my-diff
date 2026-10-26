@@ -1586,8 +1586,8 @@ impl ModComponent {
             } => {
                 identified(id, label, ids)
                     && visible(alt, 256)
-                    && width.is_none_or(|width| (1..=200).contains(&width))
-                    && height.is_none_or(|height| (1..=40).contains(&height))
+                    && width.is_none_or(|width| (1..=512).contains(&width))
+                    && height.is_none_or(|height| (1..=256).contains(&height))
             }
             Self::Module {
                 id,

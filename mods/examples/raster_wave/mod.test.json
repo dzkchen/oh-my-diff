@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "settings": {
+    "raster_wave": {"width": 8, "height": 2}
+  },
+  "host_operations": {
+    "events.publish": [{"result": {"delivered": 1, "dropped": 0}}],
+    "events.schedule": [{"result": {"key": "tick", "delay_ms": 100}}, {"result": {"key": "tick", "delay_ms": 16}}],
+    "terminal.blit": [{"result": {"frame": 1, "queued": 1, "frame_ms": 16}}]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "raster_wave", "event": "command", "name": "wave", "payload": "start", "expect": {"display": "Wave started"}},
+    {"type": "event", "event": "channel", "payload": {"publisher": "raster_wave", "channel": "raster_wave/wake", "data": null, "correlation": null, "sequence": 1, "dropped": 0}},
+    {"type": "event", "event": "timer", "payload": {"key": "tick"}},
+    {"type": "state", "mod": "raster_wave", "expect": {"running": true, "reduced": false, "started": 1000, "first": 1, "reported": 1, "status": "starting"}},
+    {"type": "terminal_mount", "mod": "raster_wave", "payload": {"event": "idle", "ledger": null},
+      "expect": {"layout": {"split": "vertical", "ratio": [3, 1], "children": [
+        {"content": "site:raster_wave/canvas"},
+        {"split": "vertical", "ratio": [4, 1], "children": [{"content": "transcript"}, {"content": "composer"}]}]},
+      "sites": {"raster_wave/canvas": {"mode": "replace", "components": [
+        {"type": "text", "id": "raster_wave_status", "label": "Wave status", "text": "starting"},
+        {"type": "raster", "id": "raster_wave", "label": "Wave", "alt": "Animated half-block wave", "width": 8, "height": 2}]}}}},
+    {"type": "invoke", "mod": "raster_wave", "event": "command", "name": "wave", "payload": "stop", "expect": {"display": "Wave stopped"}},
+    {"type": "event", "event": "timer", "payload": {"key": "tick"}}
+  ]
+}

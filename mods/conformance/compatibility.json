@@ -138,7 +138,8 @@
       "model_cache_v1",
       "composer_key_v1",
       "completion_tokens_v1",
-      "mention_read_v1"
+      "mention_read_v1",
+      "terminal_raster_packed_v1"
     ]
   },
   "apis": [

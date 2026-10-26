@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "raster_wave",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "description": "Animates a half-block wave in a raster with packed or JSON terminal.blit cells and reports the frames shown per second.",
+  "capabilities": [
+    "terminal",
+    "commands",
+    "events",
+    "store"
+  ],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "width": {"type": "number", "default": 64},
+      "height": {"type": "number", "default": 16},
+      "mode": {"type": "string", "enum": ["packed", "cells"], "default": "packed"}
+    }
+  },
+  "subscriptions": {
+    "channels": [
+      "raster_wave/wake"
+    ]
+  },
+  "compatibility": {
+    "required_features": [
+      "terminal_surface_v1",
+      "terminal_raster_v1",
+      "terminal_raster_packed_v1",
+      "events_v1",
+      "timers_v1",
+      "timers_16ms_v1"
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f7ba352c0 100644
+index 7aff2ec26295627898a6417c83822aa6b3f8365a..64f77829424473537eb8a2a0f064e1d8dcfa0270 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -265,7 +265,7 @@ version = "1.1.5"
@@ -141,7 +141,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4293,6 +4344,86 @@ dependencies = [
+@@ -4293,6 +4344,87 @@ dependencies = [
   "wiremock",
  ]
 
@@ -163,6 +163,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 + "socket2 0.6.3",
 + "tempfile",
 + "toml 0.9.11+spec-1.1.0",
++ "unicode-width 0.2.1",
 +]
 +
 +[[package]]
@@ -228,7 +229,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "codex-otel"
  version = "0.164.0"
-@@ -4874,6 +5005,7 @@ dependencies = [
+@@ -4874,6 +5006,7 @@ dependencies = [
   "pulldown-cmark",
   "serde",
   "serde_json",
@@ -236,7 +237,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "sqlx",
   "sqlx-macros",
   "tempfile",
-@@ -4948,6 +5080,8 @@ dependencies = [
+@@ -4948,6 +5081,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -245,7 +246,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4970,6 +5104,7 @@ dependencies = [
+@@ -4970,6 +5105,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -253,7 +254,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "codex-utils-sandbox-summary",
   "codex-utils-sleep-inhibitor",
   "codex-utils-string",
-@@ -5582,6 +5717,19 @@ dependencies = [
+@@ -5582,6 +5718,19 @@ dependencies = [
   "memchr",
  ]
 
@@ -273,7 +274,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "compact_str"
  version = "0.9.1"
-@@ -6700,7 +6848,7 @@ dependencies = [
+@@ -6700,7 +6849,7 @@ dependencies = [
   "libc",
   "option-ext",
   "redox_users 0.5.2",
@@ -282,7 +283,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -6803,6 +6951,12 @@ version = "1.2.1"
+@@ -6803,6 +6952,12 @@ version = "1.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
@@ -295,7 +296,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "dtor"
  version = "0.1.1"
-@@ -7057,7 +7211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -7057,7 +7212,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
  dependencies = [
   "libc",
@@ -304,7 +305,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7209,7 +7363,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+@@ -7209,7 +7364,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
  dependencies = [
   "cfg-if",
   "rustix 1.1.4",
@@ -313,7 +314,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -7450,6 +7604,16 @@ dependencies = [
+@@ -7450,6 +7605,16 @@ dependencies = [
   "percent-encoding",
  ]
 
@@ -330,7 +331,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "fs_extra"
  version = "1.3.0"
-@@ -7475,6 +7639,12 @@ dependencies = [
+@@ -7475,6 +7640,12 @@ dependencies = [
   "winapi",
  ]
 
@@ -343,7 +344,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "futures"
  version = "0.3.34"
-@@ -7709,7 +7879,7 @@ dependencies = [
+@@ -7709,7 +7880,7 @@ dependencies = [
   "gobject-sys",
   "libc",
   "system-deps",
@@ -352,7 +353,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -8650,6 +8820,10 @@ name = "hashbrown"
+@@ -8650,6 +8821,10 @@ name = "hashbrown"
  version = "0.14.5"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
@@ -363,7 +364,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
 
  [[package]]
  name = "hashbrown"
-@@ -8870,6 +9044,20 @@ dependencies = [
+@@ -8870,6 +9045,20 @@ dependencies = [
   "zeroize",
  ]
 
@@ -384,7 +385,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "http"
  version = "0.2.12"
-@@ -9133,7 +9321,7 @@ dependencies = [
+@@ -9133,7 +9322,7 @@ dependencies = [
   "js-sys",
   "log",
   "wasm-bindgen",
@@ -393,7 +394,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -9348,6 +9536,12 @@ dependencies = [
+@@ -9348,6 +9537,12 @@ dependencies = [
   "icu_properties",
  ]
 
@@ -406,7 +407,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "ignore"
  version = "0.4.25"
-@@ -9578,6 +9772,18 @@ dependencies = [
+@@ -9578,6 +9773,18 @@ dependencies = [
   "serde",
  ]
 
@@ -425,7 +426,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "is-terminal"
  version = "0.4.17"
-@@ -9586,7 +9792,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+@@ -9586,7 +9793,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
  dependencies = [
   "hermit-abi",
   "libc",
@@ -434,7 +435,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -10444,6 +10650,12 @@ dependencies = [
+@@ -10444,6 +10651,12 @@ dependencies = [
   "jni-sys 0.3.1",
  ]
 
@@ -447,7 +448,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "nibble_vec"
  version = "0.1.0"
-@@ -10567,7 +10779,7 @@ version = "0.50.3"
+@@ -10567,7 +10780,7 @@ version = "0.50.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
  dependencies = [
@@ -456,7 +457,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11297,7 +11509,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -11297,7 +11510,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
  dependencies = [
   "libc",
@@ -465,7 +466,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -11411,6 +11623,15 @@ dependencies = [
+@@ -11411,6 +11624,15 @@ dependencies = [
   "syn 2.0.117",
  ]
 
@@ -481,7 +482,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "parking"
  version = "2.2.1"
-@@ -11605,7 +11826,7 @@ version = "0.11.3"
+@@ -11605,7 +11827,7 @@ version = "0.11.3"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
  dependencies = [
@@ -490,7 +491,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12233,7 +12454,7 @@ dependencies = [
+@@ -12233,7 +12455,7 @@ dependencies = [
   "libc",
   "log",
   "socket2 0.6.3",
@@ -499,7 +500,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -12257,6 +12478,12 @@ version = "6.0.0"
+@@ -12257,6 +12479,12 @@ version = "6.0.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
@@ -512,7 +513,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "radix_trie"
  version = "0.2.1"
-@@ -12723,7 +12950,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -12723,7 +12951,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "cbb175c433c8e28a809d1f5773a2ae96e68c0ce40db865cbab1020bf33ae479c"
  dependencies = [
   "bitflags 2.13.1",
@@ -521,7 +522,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "critical-section",
   "hashbrown 0.17.1",
   "itertools 0.14.0",
-@@ -13533,7 +13760,7 @@ dependencies = [
+@@ -13533,7 +13761,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.4.15",
@@ -530,7 +531,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13546,7 +13773,7 @@ dependencies = [
+@@ -13546,7 +13774,7 @@ dependencies = [
   "errno",
   "libc",
   "linux-raw-sys 0.12.1",
@@ -539,7 +540,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13605,7 +13832,7 @@ dependencies = [
+@@ -13605,7 +13833,7 @@ dependencies = [
   "security-framework 3.5.1",
   "security-framework-sys",
   "webpki-root-certs",
@@ -548,7 +549,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -13977,6 +14204,12 @@ dependencies = [
+@@ -13977,6 +14205,12 @@ dependencies = [
   "uuid",
  ]
 
@@ -561,7 +562,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "sequence_trie"
  version = "0.3.6"
-@@ -14363,6 +14596,12 @@ dependencies = [
+@@ -14363,6 +14597,12 @@ dependencies = [
   "time",
  ]
 
@@ -574,7 +575,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "siphasher"
  version = "1.0.3"
-@@ -14417,7 +14656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -14417,7 +14657,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
  dependencies = [
   "libc",
@@ -583,7 +584,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -14861,6 +15100,17 @@ version = "0.1.9"
+@@ -14861,6 +15101,17 @@ version = "0.1.9"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
@@ -601,7 +602,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "stringprep"
  version = "0.1.5"
-@@ -14980,6 +15230,335 @@ dependencies = [
+@@ -14980,6 +15231,335 @@ dependencies = [
   "is_ci",
  ]
 
@@ -937,7 +938,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "symphonia"
  version = "0.6.0"
-@@ -15221,11 +15800,17 @@ version = "0.2.2"
+@@ -15221,11 +15801,17 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
@@ -957,7 +958,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  dependencies = [
   "filetime",
   "libc",
-@@ -15247,7 +15832,7 @@ dependencies = [
+@@ -15247,7 +15833,7 @@ dependencies = [
   "getrandom 0.4.2",
   "once_cell",
   "rustix 1.1.4",
@@ -966,7 +967,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15303,7 +15888,7 @@ dependencies = [
+@@ -15303,7 +15889,7 @@ dependencies = [
   "parking_lot",
   "rustix 1.1.4",
   "signal-hook",
@@ -975,7 +976,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -15380,7 +15965,7 @@ dependencies = [
+@@ -15380,7 +15966,7 @@ dependencies = [
   "phf",
   "sha2 0.10.9",
   "signal-hook",
@@ -984,7 +985,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
   "terminfo",
   "termios",
   "thiserror 1.0.69",
-@@ -16352,6 +16937,12 @@ version = "1.1.0"
+@@ -16352,6 +16938,12 @@ version = "1.1.0"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
@@ -997,7 +998,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  [[package]]
  name = "unicode-ident"
  version = "1.0.22"
-@@ -17061,7 +17652,7 @@ version = "0.1.11"
+@@ -17061,7 +17653,7 @@ version = "0.1.11"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
  dependencies = [
@@ -1006,7 +1007,7 @@ index 7aff2ec26295627898a6417c83822aa6b3f8365a..daf9a0773aa8d9392dbc1310ac82e92f
  ]
 
  [[package]]
-@@ -17695,6 +18286,15 @@ version = "0.6.2"
+@@ -17695,6 +18287,15 @@ version = "0.6.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 
@@ -45880,10 +45881,10 @@ index 0000000000000000000000000000000000000000..85c8d5498650ca65b97be34595306ffd
 +}
 diff --git a/codex-rs/app-server/src/omd_surface.rs b/codex-rs/app-server/src/omd_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975892c0eac
+index 0000000000000000000000000000000000000000..0eed4c7377f749e15fa7ca488d64c79fa4886fae
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface.rs
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,376 @@
 +use std::collections::HashMap;
 +use std::path::PathBuf;
 +use std::sync::Arc;
@@ -46106,9 +46107,9 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +    }
 +}
 +
-+type FrameState = Arc<Mutex<(u64, Instant)>>;
++type FrameState = Arc<Mutex<(u64, Instant, bool)>>;
 +
-+/// Paces mirrored `terminal.blit` frames like a drawing surface's queue: one frame per interval.
++/// Paces mirrored `terminal.blit` frames like a drawing surface's queue: one frame per interval, cells sent before a pending cells frame joining it.
 +#[derive(Default)]
 +struct Frames(Mutex<HashMap<String, FrameState>>);
 +
@@ -46127,7 +46128,8 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +            .and_then(|snapshot| snapshot.view.raster_size(key));
 +        let blit = client_surface::blit_request(caller, owner, size, arguments)?;
 +        let key = blit.key.clone();
-+        self.admit(&key, now, |next| {
++        let cells = matches!(blit.content, client_surface::BlitContent::Cells { .. });
++        self.admit(&key, now, cells, |next| {
 +            blit.checked(|source| call.snapshot_pixels(source, next))
 +                .map(|_| ())
 +        })
@@ -46137,6 +46139,7 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +        &self,
 +        key: &str,
 +        now: Instant,
++        cells: bool,
 +        snapshot: impl FnOnce(Instant) -> Result<(), client_surface::BlitError>,
 +    ) -> Result<Value, client_surface::BlitError> {
 +        let state = self
@@ -46144,25 +46147,42 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +            .lock()
 +            .unwrap_or_else(PoisonError::into_inner)
 +            .entry(key.to_owned())
-+            .or_insert_with(|| Arc::new(Mutex::new((0, now))))
++            .or_insert_with(|| Arc::new(Mutex::new((0, now, false))))
 +            .clone();
 +        let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
++        if cells && state.2 && state.1 > now {
++            return Ok(Self::reply(
++                state.0,
++                Self::backlog(state.1 - client_surface::BLIT_FRAME, now) + 1,
++            ));
++        }
 +        if let Some(reply) = Self::backpressure(&state, now) {
 +            return Ok(reply);
 +        }
 +        snapshot(state.1.max(now) + client_surface::BLIT_FRAME)?;
++        state.2 = cells;
 +        Ok(Self::accept(&mut state, now))
 +    }
 +
 +    #[cfg(test)]
-+    fn pace(&self, key: String, now: Instant) -> Value {
-+        self.admit(&key, now, |_| Ok(())).unwrap()
++    fn pace(&self, key: String, now: Instant, cells: bool) -> Value {
++        self.admit(&key, now, cells, |_| Ok(())).unwrap()
 +    }
 +
-+    fn backpressure((_, drained): &(u64, Instant), now: Instant) -> Option<Value> {
-+        let queued = drained.saturating_duration_since(now).as_millis()
-+            / client_surface::BLIT_FRAME.as_millis();
-+        if queued >= client_surface::BLIT_QUEUE_UPDATES as u128 {
++    fn backlog(drained: Instant, now: Instant) -> u128 {
++        drained.saturating_duration_since(now).as_millis() / client_surface::BLIT_FRAME.as_millis()
++    }
++
++    fn reply(frame: u64, queued: u128) -> Value {
++        json!({
++            "frame": frame,
++            "queued": queued,
++            "frame_ms": client_surface::BLIT_FRAME.as_millis() as u64,
++        })
++    }
++
++    fn backpressure((_, drained, _): &(u64, Instant, bool), now: Instant) -> Option<Value> {
++        if Self::backlog(*drained, now) >= client_surface::BLIT_QUEUE_UPDATES as u128 {
 +            let wait = drained.saturating_duration_since(now)
 +                - client_surface::BLIT_FRAME * (client_surface::BLIT_QUEUE_UPDATES as u32 - 1);
 +            return Some(json!({"status": "backpressure",
@@ -46171,16 +46191,11 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +        None
 +    }
 +
-+    fn accept((frame, drained): &mut (u64, Instant), now: Instant) -> Value {
-+        let queued = drained.saturating_duration_since(now).as_millis()
-+            / client_surface::BLIT_FRAME.as_millis();
++    fn accept((frame, drained, _): &mut (u64, Instant, bool), now: Instant) -> Value {
++        let queued = Self::backlog(*drained, now) + 1;
 +        *drained = (*drained).max(now) + client_surface::BLIT_FRAME;
 +        *frame += 1;
-+        json!({
-+            "frame": *frame,
-+            "queued": queued + 1,
-+            "frame_ms": client_surface::BLIT_FRAME.as_millis() as u64,
-+        })
++        Self::reply(*frame, queued)
 +    }
 +}
 +
@@ -46248,10 +46263,10 @@ index 0000000000000000000000000000000000000000..28263cf10500bb4bcaa94bd648b91975
 +mod tests;
 diff --git a/codex-rs/app-server/src/omd_surface_tests.rs b/codex-rs/app-server/src/omd_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d0811c2911eac70b76a8373faccb1cf087e5fc56
+index 0000000000000000000000000000000000000000..ad460520c91da450185dfb0d2ab60933dfcd21f0
 --- /dev/null
 +++ b/codex-rs/app-server/src/omd_surface_tests.rs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,188 @@
 +use super::*;
 +use crate::outgoing_message::OutgoingMessageSender;
 +use codex_app_server_protocol::OmdRecoveryReadResponse;
@@ -46268,7 +46283,7 @@ index 0000000000000000000000000000000000000000..d0811c2911eac70b76a8373faccb1cf0
 +    let (release, released) = std::sync::mpsc::channel();
 +    let copy = std::thread::spawn(move || {
 +        copying
-+            .admit("copying", now, |_| {
++            .admit("copying", now, false, |_| {
 +                started.send(()).unwrap();
 +                released.recv().unwrap();
 +                Ok(())
@@ -46279,13 +46294,30 @@ index 0000000000000000000000000000000000000000..d0811c2911eac70b76a8373faccb1cf0
 +        .unwrap();
 +    let other = frames.clone();
 +    let (sender, receiver) = std::sync::mpsc::channel();
-+    let worker =
-+        std::thread::spawn(move || sender.send(other.pace("independent".into(), now)).unwrap());
++    let worker = std::thread::spawn(move || {
++        sender
++            .send(other.pace("independent".into(), now, false))
++            .unwrap()
++    });
 +    let reply = receiver.recv_timeout(std::time::Duration::from_secs(1));
 +    release.send(()).unwrap();
 +    worker.join().unwrap();
 +    copy.join().unwrap();
 +    assert_eq!(reply.unwrap()["frame"], 1);
++}
++
++#[test]
++fn cells_sent_before_a_pending_cells_frame_join_it() {
++    let frames = Frames::default();
++    let now = Instant::now();
++    let at = |ms| now + std::time::Duration::from_millis(ms);
++    let reply = |frame: u64, queued: u64| json!({"frame": frame, "queued": queued, "frame_ms": 16});
++    assert_eq!(frames.pace("art".into(), now, true), reply(1, 1));
++    assert_eq!(frames.pace("art".into(), at(5), true), reply(1, 1));
++    assert_eq!(frames.pace("art".into(), at(6), false), reply(2, 1));
++    assert_eq!(frames.pace("art".into(), at(7), true), reply(3, 2));
++    assert_eq!(frames.pace("art".into(), at(8), true), reply(3, 2));
++    assert_eq!(frames.pace("art".into(), at(48), true), reply(4, 1));
 +}
 +
 +fn surface(transport: &mpsc::Sender<TransportEvent>) -> AppServerSurface {
@@ -84059,10 +84091,10 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3a5e508c6
+index 0000000000000000000000000000000000000000..c0a7afa69944cd95a7eb6c77216f6553c4f603c4
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,25 @@
 +[package]
 +name = "codex-omd"
 +version = "1.2.0"
@@ -84083,6 +84115,7 @@ index 0000000000000000000000000000000000000000..66452a137351ec84d06bd195cec078a3
 +quick-xml = "=0.41.0"
 +tempfile = "=3.27.0"
 +libc = "=0.2.186"
++unicode-width = "=0.2.1"
 +
 +[target.'cfg(target_os = "macos")'.dependencies]
 +security-framework = "=3.5.1"
@@ -96059,10 +96092,10 @@ index 0000000000000000000000000000000000000000..320c013e6b46dccc8f0ffa8d360bafd5
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c846bfac4e9
+index 0000000000000000000000000000000000000000..19a32579f30c44f90355d9d32755a70ed10b9613
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,1524 @@
+@@ -0,0 +1,1615 @@
 +use crate::app_routes::InvocationContext;
 +use base64::Engine as _;
 +use base64::engine::general_purpose::STANDARD;
@@ -97115,7 +97148,11 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +        notify(Observed::Mirrored {
 +            caller: caller.to_owned(),
 +            operation: operation.to_owned(),
-+            arguments,
++            arguments: if operation == "terminal.blit" {
++                unpacked(arguments)
++            } else {
++                arguments
++            },
 +            pixels: pixels.get().cloned(),
 +        });
 +    }
@@ -97336,7 +97373,7 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +
 +pub const BLIT_FRAME: Duration = Duration::from_millis(16);
 +pub const BLIT_QUEUE_UPDATES: usize = 32;
-+pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
++pub const BLIT_CALL_BYTES: usize = 256 * 1024;
 +
 +#[derive(Clone, Debug, Default, PartialEq)]
 +pub struct BlitCell {
@@ -97374,6 +97411,7 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +    key: String,
 +    rect: Option<BlitRect>,
 +    cells: Option<Vec<WireCell>>,
++    packed: Option<String>,
 +    image: Option<WireImage>,
 +    pixels: Option<crate::process_raster::PixelSource>,
 +}
@@ -97398,7 +97436,6 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +pub struct Blit {
 +    pub key: String,
 +    pub content: BlitContent,
-+    pub bytes: usize,
 +}
 +
 +pub const IMAGE_PIXELS: u32 = 4096;
@@ -97489,7 +97526,7 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +    ) -> Result<Self, BlitError> {
 +        if let BlitContent::Source(source) = &self.content {
 +            let pixels = snapshot(source)?;
-+            self.bytes = pixels.source.byte_len()?;
++            pixels.source.byte_len()?;
 +            self.content = BlitContent::Pixels(pixels);
 +        }
 +        if let BlitContent::Encoded { media_type, base64 } = &self.content {
@@ -97519,6 +97556,85 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +    }
 +}
 +
++enum Glyphs {
++    Cells(Vec<WireCell>),
++    Packed(String),
++}
++
++pub const PACKED_DEFAULT: u32 = 0x0100_0000;
++pub const PACKED_INDEXED: u32 = 0x0200_0000;
++
++fn packed_color(value: u32) -> Result<Option<crate::ModColor>, ()> {
++    let [blue, green, red, tag] = value.to_le_bytes();
++    match (tag, value & 0x00ff_ffff) {
++        (0, _) => Ok(Some(crate::ModColor::Rgb(red, green, blue))),
++        (1, 0) => Ok(None),
++        (2, index) if index <= 0xff => Ok(Some(crate::ModColor::Indexed(blue))),
++        _ => Err(()),
++    }
++}
++
++/// Little-endian `[code point, fg, bg]` u32 triplets, row by row; colors are `0x00RRGGBB`, `PACKED_DEFAULT` or `PACKED_INDEXED | index`.
++pub fn unpack(packed: &str, count: usize) -> Result<Vec<BlitCell>, String> {
++    let invalid = |detail: String| format!("terminal_blit_packed_invalid: {detail}");
++    let bytes = STANDARD
++        .decode(packed)
++        .map_err(|_| invalid("bad base64".into()))?;
++    if bytes.len() != count * 12 {
++        return Err(invalid(format!(
++            "{} bytes for {count} cells, expected {}",
++            bytes.len(),
++            count * 12
++        )));
++    }
++    bytes
++        .chunks_exact(12)
++        .enumerate()
++        .map(|(index, cell)| {
++            let word = |at: usize| {
++                u32::from_le_bytes([cell[at], cell[at + 1], cell[at + 2], cell[at + 3]])
++            };
++            let point = word(0);
++            let symbol = char::from_u32(point)
++                .filter(|glyph| unicode_width::UnicodeWidthChar::width(*glyph) == Some(1))
++                .ok_or_else(|| {
++                    invalid(format!(
++                        "cell {index} code point {point:#x} is not one printable column"
++                    ))
++                })?;
++            let color = |at: usize| {
++                packed_color(word(at))
++                    .map_err(|_| invalid(format!("cell {index} color {:#010x}", word(at))))
++            };
++            Ok(BlitCell {
++                symbol: symbol.to_string(),
++                fg: color(4)?,
++                bg: color(8)?,
++            })
++        })
++        .collect()
++}
++
++pub fn unpacked(mut arguments: Value) -> Value {
++    let count = arguments["rect"]["width"].as_u64().unwrap_or(0)
++        * arguments["rect"]["height"].as_u64().unwrap_or(0);
++    let cells = arguments
++        .get("packed")
++        .and_then(Value::as_str)
++        .and_then(|packed| unpack(packed, usize::try_from(count).ok()?).ok());
++    if let (Some(cells), Some(fields)) = (cells, arguments.as_object_mut()) {
++        fields.remove("packed");
++        fields.insert(
++            "cells".into(),
++            cells
++                .into_iter()
++                .map(|cell| serde_json::json!([cell.symbol, cell.fg, cell.bg]))
++                .collect(),
++        );
++    }
++    arguments
++}
++
 +/// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 +pub fn blit_request(
 +    caller: &str,
@@ -97526,16 +97642,21 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +    size: Option<(u16, u16)>,
 +    arguments: &Value,
 +) -> Result<Blit, BlitError> {
-+    let bytes = arguments.to_string().len();
-+    if bytes > BLIT_QUEUE_BYTES {
++    if arguments.to_string().len() > BLIT_CALL_BYTES {
 +        return Err("terminal_blit_too_large".into());
 +    }
 +    let blit: WireBlit =
 +        serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
-+    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.image, blit.pixels) {
-+        (Some(rect), Some(cells), None, None) => (Some((rect, cells)), None, None),
-+        (None, None, Some(image), None) => (None, Some(image), None),
-+        (None, None, None, Some(pixels)) => (None, None, Some(pixels)),
++    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.packed, blit.image, blit.pixels)
++    {
++        (Some(rect), Some(cells), None, None, None) => {
++            (Some((rect, Glyphs::Cells(cells))), None, None)
++        }
++        (Some(rect), None, Some(packed), None, None) => {
++            (Some((rect, Glyphs::Packed(packed))), None, None)
++        }
++        (None, None, None, Some(image), None) => (None, Some(image), None),
++        (None, None, None, None, Some(pixels)) => (None, None, Some(pixels)),
 +        _ => return Err("terminal_blit_invalid".into()),
 +    };
 +    match owner {
@@ -97547,28 +97668,32 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +        (Some((rect, cells)), _) => {
 +            let (width, height) =
 +                size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
++            let count = usize::from(rect.width) * usize::from(rect.height);
 +            if rect.width == 0
 +                || rect.height == 0
 +                || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
 +                || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
-+                || cells.len() != usize::from(rect.width) * usize::from(rect.height)
 +            {
 +                return Err("terminal_blit_invalid".into());
 +            }
-+            let cells = cells
-+                .into_iter()
-+                .map(|cell| {
-+                    let (symbol, fg, bg) = match cell {
-+                        WireCell::Glyph(symbol) => (symbol, None, None),
-+                        WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
-+                    };
-+                    (!symbol.is_empty()
-+                        && symbol.len() <= 16
-+                        && !symbol.chars().any(char::is_control))
-+                    .then_some(BlitCell { symbol, fg, bg })
-+                })
-+                .collect::<Option<Vec<_>>>()
-+                .ok_or("terminal_blit_invalid")?;
++            let cells = match cells {
++                Glyphs::Packed(packed) => unpack(&packed, count)?,
++                Glyphs::Cells(cells) if cells.len() == count => cells
++                    .into_iter()
++                    .map(|cell| {
++                        let (symbol, fg, bg) = match cell {
++                            WireCell::Glyph(symbol) => (symbol, None, None),
++                            WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
++                        };
++                        (!symbol.is_empty()
++                            && symbol.len() <= 16
++                            && !symbol.chars().any(char::is_control))
++                        .then_some(BlitCell { symbol, fg, bg })
++                    })
++                    .collect::<Option<Vec<_>>>()
++                    .ok_or("terminal_blit_invalid")?,
++                Glyphs::Cells(_) => return Err("terminal_blit_invalid".into()),
++            };
 +            BlitContent::Cells { rect, cells }
 +        }
 +        (None, Some(image)) => BlitContent::Encoded {
@@ -97580,7 +97705,6 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +    Ok(Blit {
 +        key: blit.key,
 +        content,
-+        bytes,
 +    })
 +}
 +
@@ -97589,10 +97713,10 @@ index 0000000000000000000000000000000000000000..a5398e6aab851d7a8983eebaeabb7c84
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..12a0dc6af64c4b1ccf75705253015bc8c8dfcac1
+index 0000000000000000000000000000000000000000..f49e17b382d90a7ce2b3d24f7e0ad5e2c8aceb29
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,609 @@
+@@ -0,0 +1,723 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -98201,6 +98325,120 @@ index 0000000000000000000000000000000000000000..12a0dc6af64c4b1ccf75705253015bc8
 +    assert!(decode_image(&bytes).is_err());
 +    assert!(decode_image(b"GIF89a").is_err());
 +    assert!(decode_image(&vec![0; 8 * 1024 * 1024 + 1]).is_err());
++}
++
++fn packed(cells: &[[u32; 3]]) -> String {
++    STANDARD.encode(
++        cells
++            .iter()
++            .flatten()
++            .flat_map(|word| word.to_le_bytes())
++            .collect::<Vec<_>>(),
++    )
++}
++
++#[test]
++fn packed_blits_decode_colors_and_refuse_invalid_cells_before_queueing() {
++    let request = |rect: &Value, packed: &str| {
++        blit_request(
++            "demo",
++            Some("demo"),
++            Some((4, 2)),
++            &json!({"key": "art", "rect": rect, "packed": packed}),
++        )
++    };
++    let rect = json!({"x": 1, "y": 1, "width": 3, "height": 1});
++    let cells = [
++        ['▀' as u32, 0x00ff_8000, PACKED_DEFAULT],
++        ['a' as u32, PACKED_INDEXED | 9, 0x0000_0001],
++        [' ' as u32, PACKED_DEFAULT, PACKED_INDEXED | 255],
++    ];
++    let Ok(Blit {
++        content: BlitContent::Cells { cells: decoded, .. },
++        ..
++    }) = request(&rect, &packed(&cells))
++    else {
++        panic!("packed cells decode");
++    };
++    assert_eq!(
++        decoded,
++        vec![
++            BlitCell {
++                symbol: "▀".into(),
++                fg: Some(crate::ModColor::Rgb(255, 128, 0)),
++                bg: None
++            },
++            BlitCell {
++                symbol: "a".into(),
++                fg: Some(crate::ModColor::Indexed(9)),
++                bg: Some(crate::ModColor::Rgb(0, 0, 1))
++            },
++            BlitCell {
++                symbol: " ".into(),
++                fg: None,
++                bg: Some(crate::ModColor::Indexed(255))
++            },
++        ]
++    );
++    let refused = |rect: &Value, packed: String| {
++        request(rect, &packed)
++            .err()
++            .map(|error| (error.kind, error.message))
++    };
++    let fatal = |message: &str| Some((BlitErrorKind::Fatal, message.to_owned()));
++    let cell = |point: u32, fg: u32| packed(&[[point, fg, PACKED_DEFAULT]]);
++    let one = json!({"x": 0, "y": 0, "width": 1, "height": 1});
++    assert_eq!(
++        refused(&one, "***".into()),
++        fatal("terminal_blit_packed_invalid: bad base64")
++    );
++    assert_eq!(
++        refused(&rect, cell('a' as u32, 0)),
++        fatal("terminal_blit_packed_invalid: 12 bytes for 3 cells, expected 36")
++    );
++    for point in [0x7, 0x4e00, 0x301, 0xd800, 0x11_0000] {
++        assert_eq!(
++            refused(&one, cell(point, 0)),
++            fatal(&format!(
++                "terminal_blit_packed_invalid: cell 0 code point {point:#x} is not one printable column"
++            ))
++        );
++    }
++    for color in [0x0100_0001, 0x0200_0100, 0x0300_0000] {
++        assert_eq!(
++            refused(&one, cell('a' as u32, color)),
++            fatal(&format!(
++                "terminal_blit_packed_invalid: cell 0 color {color:#010x}"
++            ))
++        );
++    }
++    for arguments in [
++        json!({"key": "art", "rect": one, "packed": cell('a' as u32, 0), "cells": ["a"]}),
++        json!({"key": "art", "packed": cell('a' as u32, 0)}),
++        json!({"key": "art", "rect": {"x": 3, "y": 0, "width": 2, "height": 1}, "packed": cell('a' as u32, 0)}),
++    ] {
++        assert_eq!(
++            blit_request("demo", Some("demo"), Some((4, 2)), &arguments)
++                .err()
++                .map(|error| error.message),
++            Some("terminal_blit_invalid".to_owned())
++        );
++    }
++    assert_eq!(
++        blit_request(
++            "intruder",
++            Some("demo"),
++            Some((4, 2)),
++            &json!({"key": "art", "rect": one, "packed": "***"})
++        )
++        .err(),
++        Some(BlitError::retryable("terminal_blit_not_owned"))
++    );
++    assert_eq!(
++        unpacked(json!({"key": "art", "rect": rect, "packed": packed(&cells)})),
++        json!({"key": "art", "rect": rect,
++            "cells": [["▀", "#ff8000", null], ["a", 9, "#000001"], [" ", null, 255]]})
++    );
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
@@ -105311,10 +105549,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..46051c876e451b020f9c810dbf2b2bd78a973f56
+index 0000000000000000000000000000000000000000..445bef9e414b7225beaa5b0cb018c4b356f896f6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6231 @@
+@@ -0,0 +1,6232 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105702,6 +105940,7 @@ index 0000000000000000000000000000000000000000..46051c876e451b020f9c810dbf2b2bd7
 +    "composer_key_v1",
 +    "completion_tokens_v1",
 +    "mention_read_v1",
++    "terminal_raster_packed_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -115069,10 +115308,10 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..89c79ca90a91786e7fc1b5319a839486c0ce4c7d
+index 0000000000000000000000000000000000000000..8532ae9a12c29cc4a13cad6317362ee034471a38
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,223 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -115190,10 +115429,10 @@ index 0000000000000000000000000000000000000000..89c79ca90a91786e7fc1b5319a839486
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
 +    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
-+    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/81"},{"$ref":"#/$defs/81"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
++    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/82"},{"$ref":"#/$defs/82"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"rect":{"$ref":"#/$defs/81"},"packed":{"type":"string"}},"required":["key","rect","packed"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
-+    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
-+    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
++    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/94"}},
++    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/85"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/94"}},
 +    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
@@ -115280,19 +115519,20 @@ index 0000000000000000000000000000000000000000..89c79ca90a91786e7fc1b5319a839486
 +    "78": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
 +    "79": {"type":"array","items":{"$ref":"#/$defs/78"}},
 +    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
-+    "81": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
-+    "82": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
-+    "83": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
-+    "84": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/82"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/83"}},"required":["prompt"]},
-+    "85": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
-+    "86": {"type":"array","items":{"$ref":"#/$defs/85"}},
-+    "87": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
-+    "88": {"type":"array","items":{"$ref":"#/$defs/87"}},
-+    "89": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
-+    "90": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
-+    "91": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/90"}},"required":["microusd","basis"]},
-+    "92": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
-+    "93": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/86"},"tool_calls":{"$ref":"#/$defs/88"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/89"},"cost":{"$ref":"#/$defs/91"},"timing":{"$ref":"#/$defs/92"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
++    "81": {"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},
++    "82": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
++    "83": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
++    "84": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
++    "85": {"type":"object","properties":{"prompt":{"type":"string"},"system":{"type":"string"},"context":{"type":"array","items":{"type":"string"}},"output":{"type":"object","properties":{"schema":{}},"required":["schema"]},"effort":{"$ref":"#/$defs/83"},"max_output_tokens":{"type":"number"},"timeout_ms":{"type":"number"},"cache":{"$ref":"#/$defs/84"}},"required":["prompt"]},
++    "86": {"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"]},
++    "87": {"type":"array","items":{"$ref":"#/$defs/86"}},
++    "88": {"type":"object","properties":{"call_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"string"},"executed":{"const":false}},"required":["call_id","tool","arguments","executed"]},
++    "89": {"type":"array","items":{"$ref":"#/$defs/88"}},
++    "90": {"type":"object","properties":{"read_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]},"write_tokens":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["read_tokens","write_tokens"]},
++    "91": {"anyOf":[{"const":"unknown"},{"const":"included_subscription"},{"const":"settled"},{"const":"unsettled"},{"const":"provider_reported"},{"const":"unpriced"},{"const":"synthetic"},{"const":"mixed"}]},
++    "92": {"type":"object","properties":{"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"$ref":"#/$defs/91"}},"required":["microusd","basis"]},
++    "93": {"type":"object","properties":{"duration_ms":{"type":"number"},"first_event_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["duration_ms","first_event_ms"]},
++    "94": {"type":"object","properties":{"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"incomplete"}]},"text":{"type":"string"},"content":{"$ref":"#/$defs/87"},"tool_calls":{"$ref":"#/$defs/89"},"stop_reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"model":{"anyOf":[{"type":"null"},{"type":"string"}]},"request_ids":{"type":"array","items":{"type":"string"}},"usage":{},"cache":{"$ref":"#/$defs/90"},"cost":{"$ref":"#/$defs/92"},"timing":{"$ref":"#/$defs/93"}},"required":["status","text","content","tool_calls","stop_reason","error","route","model","request_ids","usage","cache","cost","timing"]}
 +  }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_validation.rs b/codex-rs/omd/src/mods/operation_validation.rs
@@ -122854,7 +123094,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd65dd23bf
+index 0000000000000000000000000000000000000000..14f663dd0d568d04ebb40ce05d70792a31cea605
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
 @@ -0,0 +1,2201 @@
@@ -124446,8 +124686,8 @@ index 0000000000000000000000000000000000000000..e48e395c07297775c3d39bf680f8a6bd
 +            } => {
 +                identified(id, label, ids)
 +                    && visible(alt, 256)
-+                    && width.is_none_or(|width| (1..=200).contains(&width))
-+                    && height.is_none_or(|height| (1..=40).contains(&height))
++                    && width.is_none_or(|width| (1..=512).contains(&width))
++                    && height.is_none_or(|height| (1..=256).contains(&height))
 +            }
 +            Self::Module {
 +                id,
@@ -157395,10 +157635,10 @@ index 0000000000000000000000000000000000000000..2ae62c4a1998a7aa934295be198e9511
 +}
 diff --git a/codex-rs/tui/src/mod_raster.rs b/codex-rs/tui/src/mod_raster.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96cd53b997f
+index 0000000000000000000000000000000000000000..13a928cbf39ab550c97b755368989338180c0da4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster.rs
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,461 @@
 +use ratatui::style::Style;
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
@@ -157407,7 +157647,6 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +use serde_json::json;
 +use std::collections::BTreeMap;
 +use std::collections::BTreeSet;
-+use std::collections::VecDeque;
 +use std::sync::Mutex;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -157416,8 +157655,6 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +
 +use crate::omd::LockExt;
 +pub(crate) use codex_omd::client_surface::BLIT_FRAME as FRAME;
-+use codex_omd::client_surface::BLIT_QUEUE_BYTES as QUEUE_BYTES;
-+use codex_omd::client_surface::BLIT_QUEUE_UPDATES as QUEUE_UPDATES;
 +use codex_omd::client_surface::Blit as Update;
 +use codex_omd::client_surface::BlitCell as Cell;
 +use codex_omd::client_surface::BlitContent;
@@ -157432,8 +157669,9 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +    cells: Vec<Cell>,
 +    frame: Option<BlitContent>,
 +    drawn: bool,
-+    queue: VecDeque<Update>,
-+    queued_bytes: usize,
++    picture: Option<BlitContent>,
++    staged: Vec<Option<Cell>>,
++    dirty: Option<Instant>,
 +    applied: Option<Instant>,
 +    frames: u64,
 +    shown: u64,
@@ -157450,8 +157688,9 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +            cells: vec![Cell::default(); usize::from(width) * usize::from(height)],
 +            frame: None,
 +            drawn: false,
-+            queue: VecDeque::new(),
-+            queued_bytes: 0,
++            picture: None,
++            staged: Vec::new(),
++            dirty: None,
 +            applied: None,
 +            frames: 0,
 +            shown: 0,
@@ -157459,34 +157698,57 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +        }
 +    }
 +
-+    fn apply(&mut self, update: Update) {
-+        let _stage = codex_omd::frame_metrics::stage("raster_apply");
++    fn pending(&self) -> usize {
++        usize::from(self.picture.is_some()) + usize::from(self.dirty.is_some())
++    }
++
++    fn stage(&mut self, update: Update, now: Instant) {
 +        match update.content {
 +            BlitContent::Cells { rect, cells } => {
-+                self.frame = None;
++                if self.staged.is_empty() {
++                    self.staged = vec![None; self.cells.len()];
++                }
 +                let mut cells = cells.into_iter();
 +                for row in rect.y..rect.y + rect.height {
 +                    for column in rect.x..rect.x + rect.width {
 +                        if let Some(cell) = cells.next() {
-+                            self.cells[usize::from(row) * usize::from(self.width)
-+                                + usize::from(column)] = cell;
++                            self.staged[usize::from(row) * usize::from(self.width)
++                                + usize::from(column)] = Some(cell);
 +                        }
 +                    }
 +                }
++                self.dirty.get_or_insert(now);
 +            }
-+            frame @ (BlitContent::Image { .. } | BlitContent::Pixels(_)) => {
-+                self.cells.fill(Cell::default());
-+                self.frame = Some(frame);
++            picture @ (BlitContent::Image { .. } | BlitContent::Pixels(_)) => {
++                if self.dirty.take().is_some() {
++                    self.staged.fill(None);
++                }
++                self.picture = Some(picture);
 +            }
 +            BlitContent::Encoded { .. } | BlitContent::Source(_) => {}
 +        }
-+        self.queued_bytes -= update.bytes;
++    }
++
++    fn apply(&mut self) {
++        let _stage = codex_omd::frame_metrics::stage("raster_apply");
++        if let Some(picture) = self.picture.take() {
++            self.cells.fill(Cell::default());
++            self.frame = Some(picture);
++        } else {
++            self.frame = None;
++            for (cell, staged) in self.cells.iter_mut().zip(&mut self.staged) {
++                if let Some(staged) = staged.take() {
++                    *cell = staged;
++                }
++            }
++            self.dirty = None;
++        }
 +        self.frames += 1;
 +    }
 +
-+    /// Applies at most one queued update per frame interval; returns the wait for the next one.
++    /// Applies at most one pending frame per interval, the picture before the cells merged after it; returns the wait for the next one.
 +    fn advance(&mut self, now: Instant) -> Option<Duration> {
-+        if self.queue.is_empty() {
++        if self.pending() == 0 {
 +            return None;
 +        }
 +        let due = self.applied.map_or(Duration::ZERO, |applied| {
@@ -157495,11 +157757,10 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +        if !due.is_zero() {
 +            return Some(due);
 +        }
-+        let update = self.queue.pop_front()?;
-+        self.apply(update);
++        self.apply();
 +        let applied = self.next_tick(now);
 +        self.applied = Some(applied);
-+        (!self.queue.is_empty()).then(|| FRAME.saturating_sub(now - applied))
++        (self.pending() > 0).then(|| FRAME.saturating_sub(now - applied))
 +    }
 +
 +    fn next_tick(&self, now: Instant) -> Instant {
@@ -157509,10 +157770,9 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +    }
 +
 +    fn hidden(&self, now: Instant) -> bool {
-+        self.frames != self.shown
-+            && self
-+                .applied
-+                .is_some_and(|applied| now.saturating_duration_since(applied) >= FRAME * 4)
++        let stale = |since: Instant| now.saturating_duration_since(since) >= FRAME * 4;
++        (self.frames != self.shown && self.applied.is_some_and(stale))
++            || self.dirty.is_some_and(stale)
 +    }
 +}
 +
@@ -157630,7 +157890,7 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +                );
 +            }
 +            raster.advance(now);
-+            if !raster.queue.is_empty() {
++            if raster.pending() > 0 {
 +                return Ok(backpressure(raster, now));
 +            }
 +            next = raster.next_tick(now) + FRAME;
@@ -157643,11 +157903,6 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +            "terminal_blit_limit",
 +        ));
 +    }
-+    let bytes = update.bytes;
-+    let image = matches!(
-+        update.content,
-+        BlitContent::Image { .. } | BlitContent::Pixels(_)
-+    );
 +    let raster = rasters
 +        .entry(key.clone())
 +        .and_modify(|raster| {
@@ -157660,24 +157915,15 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +        })
 +        .or_insert_with(|| Raster::new(caller, width, height));
 +    raster.binding = binding;
-+    let full = |raster: &Raster| {
-+        !image && (raster.queue.len() >= QUEUE_UPDATES || raster.queued_bytes + bytes > QUEUE_BYTES)
-+    };
-+    if full(raster) {
-+        raster.advance(now);
++    if matches!(update.content, BlitContent::Cells { .. }) && raster.hidden(now) {
++        return Ok(
++            json!({"status": "backpressure", "retry_after_ms": HIDDEN_RETRY.as_millis() as u64}),
++        );
 +    }
-+    if full(raster) {
-+        return Ok(backpressure(raster, now));
-+    }
-+    if image {
-+        raster.queue.clear();
-+        raster.queued_bytes = 0;
-+    }
-+    raster.queued_bytes += bytes;
-+    raster.queue.push_back(update);
++    raster.stage(update, now);
 +    Ok(json!({
-+        "frame": raster.frames + raster.queue.len() as u64,
-+        "queued": raster.queue.len(),
++        "frame": raster.frames + raster.pending() as u64,
++        "queued": raster.pending(),
 +        "frame_ms": FRAME.as_millis() as u64,
 +    }))
 +}
@@ -157715,7 +157961,7 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +    if raster.frames != raster.shown {
 +        return Some(Duration::ZERO);
 +    }
-+    (!raster.queue.is_empty()).then(|| {
++    (raster.pending() > 0).then(|| {
 +        raster.applied.map_or(Duration::ZERO, |applied| {
 +            FRAME.saturating_sub(now.saturating_duration_since(applied))
 +        })
@@ -157856,10 +158102,10 @@ index 0000000000000000000000000000000000000000..dc2573730e8e01788308df411165d96c
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_raster_tests.rs b/codex-rs/tui/src/mod_raster_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1afb0a659
+index 0000000000000000000000000000000000000000..491fb99d09289a657cfbc1f5a85badaa8f9c4016
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_raster_tests.rs
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,463 @@
 +use super::*;
 +use base64::Engine as _;
 +use codex_omd::ModColor;
@@ -157893,66 +158139,130 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +    )
 +}
 +
-+#[test]
-+#[serial_test::serial]
-+fn blits_queue_and_apply_one_update_per_frame_interval() {
-+    let start = Instant::now();
-+    let key = "raster-queue";
-+    for glyph in ["a", "b"] {
-+        let reply = blit_at(
-+            key,
-+            "owner",
-+            json!({"rect": {"x": 1, "y": 0, "width": 2, "height": 1},
-+                "cells": [glyph, [glyph, "#ff0000", null]]}),
-+            start,
-+        )
-+        .expect("queued");
-+        assert_eq!(reply["frame_ms"], 16);
-+    }
-+    let (rows, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", start);
-+    assert_eq!(text(&rows), vec![" aa ", "    "]);
-+    assert_eq!(next, Some(FRAME));
-+    let (rows, next) = super::rows(
-+        key,
-+        Some("owner"),
-+        "chart",
-+        10,
-+        (4, 2),
-+        false,
-+        "",
-+        start + Duration::from_millis(5),
-+    );
-+    assert_eq!(text(&rows), vec![" aa ", "    "]);
-+    assert_eq!(next, Some(Duration::from_millis(11)));
-+    assert_eq!(
-+        pending_delay(key, start + Duration::from_millis(5)),
-+        Some(Duration::from_millis(11))
-+    );
-+    let (rows, next) = super::rows(
-+        key,
-+        Some("owner"),
-+        "chart",
-+        3,
-+        (4, 2),
-+        false,
-+        "",
-+        start + FRAME,
-+    );
-+    assert_eq!(
-+        text(&rows),
-+        vec![" bb", "   "],
-+        "narrow components clip the canvas"
-+    );
-+    assert_eq!(next, None);
-+    assert_eq!(
-+        rows[0].spans[3].style.fg,
-+        Some(crate::mod_ui::color(ModColor::Rgb(255, 0, 0)))
-+    );
++fn packed(cells: &[(char, u32, u32)]) -> String {
++    base64::engine::general_purpose::STANDARD.encode(
++        cells
++            .iter()
++            .flat_map(|(glyph, fg, bg)| [*glyph as u32, *fg, *bg])
++            .flat_map(u32::to_le_bytes)
++            .collect::<Vec<_>>(),
++    )
 +}
 +
 +#[test]
 +#[serial_test::serial]
-+fn blits_refuse_other_owners_bad_rects_and_report_backpressure() {
++fn cell_and_packed_blits_between_frames_merge_into_the_next_frame_in_order() {
++    let start = Instant::now();
++    let key = "raster-queue";
++    let at = |ms| start + Duration::from_millis(ms);
++    let draw = |width, no_color, now| {
++        super::rows(
++            key,
++            Some("owner"),
++            "chart",
++            width,
++            (4, 2),
++            no_color,
++            "",
++            now,
++        )
++    };
++    let cells = |rect: Value, cells: Value, now| {
++        blit_at(key, "owner", json!({"rect": rect, "cells": cells}), now).expect("queued")
++    };
++    let first = cells(
++        json!({"x": 1, "y": 0, "width": 2, "height": 1}),
++        json!(["a", "a"]),
++        start,
++    );
++    assert_eq!(first, json!({"frame": 1, "queued": 1, "frame_ms": 16}));
++    let (rows, next) = draw(10, false, start);
++    assert_eq!(
++        (text(&rows), next),
++        (vec![" aa ".into(), "    ".into()], None)
++    );
++    let merged = [
++        cells(
++            json!({"x": 1, "y": 0, "width": 2, "height": 1}),
++            json!(["b", ["b", "#ff0000", null]]),
++            at(1),
++        ),
++        blit(
++            "owner",
++            Some("owner".into()),
++            Some((4, 2)),
++            &json!({"key": key, "rect": {"x": 2, "y": 1, "width": 2, "height": 1},
++                "packed": packed(&[('c', 0x00ff_0000, 0x0100_0000), ('d', 0x0100_0000, 0x0200_0004)])}),
++            at(2),
++            |_, _| unreachable!(),
++        )
++        .expect("packed queued"),
++        cells(
++            json!({"x": 1, "y": 0, "width": 1, "height": 1}),
++            json!(["e"]),
++            at(3),
++        ),
++    ];
++    assert!(
++        merged
++            .iter()
++            .all(|reply| *reply == json!({"frame": 2, "queued": 1, "frame_ms": 16}))
++    );
++    let (rows, next) = draw(10, false, at(5));
++    assert_eq!(text(&rows), vec![" aa ", "    "]);
++    assert_eq!(next, Some(Duration::from_millis(11)));
++    assert_eq!(pending_delay(key, at(5)), Some(Duration::from_millis(11)));
++    let (rows, next) = draw(3, false, start + FRAME);
++    assert_eq!(
++        text(&rows),
++        vec![" eb", "  c"],
++        "one frame shows every merged update, later cells winning; narrow components clip"
++    );
++    assert_eq!(next, None);
++    let red = Some(crate::mod_ui::color(ModColor::Rgb(255, 0, 0)));
++    assert_eq!(rows[0].spans[3].style.fg, red);
++    assert_eq!(rows[1].spans[3].style.fg, red);
++    let (rows, _) = draw(10, false, start + FRAME);
++    assert_eq!(
++        rows[1].spans[4].style.bg,
++        Some(crate::mod_ui::color(ModColor::Indexed(4)))
++    );
++    let (rows, _) = draw(10, true, start + FRAME);
++    assert!(
++        rows.iter()
++            .flat_map(|row| &row.spans)
++            .all(|span| span.style == Style::default()),
++        "NO_COLOR drops packed and cell colors"
++    );
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn a_pending_picture_shows_before_later_cells_and_a_new_picture_drops_them() {
++    let now = Instant::now();
++    let key = "raster-picture-order";
++    let png = frame(2, 2, [1, 2, 3]);
++    let reply =
++        |frame: u64, queued: usize| json!({"frame": frame, "queued": queued, "frame_ms": 16});
++    assert_eq!(frame_at(key, png.clone(), now), Ok(reply(1, 1)));
++    assert_eq!(
++        blit_at(
++            key,
++            "owner",
++            json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]}),
++            now
++        ),
++        Ok(reply(2, 2))
++    );
++    assert_eq!(frame_at(key, png, now), Ok(reply(1, 1)));
++    assert!(rasters().get(key).expect("raster").dirty.is_none());
++    retain(&BTreeSet::new());
++}
++
++#[test]
++#[serial_test::serial]
++fn blits_refuse_other_owners_and_bad_rects_and_merge_until_the_raster_is_hidden() {
 +    let now = Instant::now();
 +    let cell = json!({"rect": {"x": 0, "y": 0, "width": 1, "height": 1}, "cells": ["x"]});
 +    assert_eq!(
@@ -157975,7 +158285,12 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +        ))
 +    );
 +    assert_eq!(
-+        blit_at(&"k".repeat(QUEUE_BYTES), "owner", cell.clone(), now),
++        blit_at(
++            &"k".repeat(codex_omd::client_surface::BLIT_CALL_BYTES),
++            "owner",
++            cell.clone(),
++            now
++        ),
 +        Err("terminal_blit_too_large".into())
 +    );
 +    for invalid in [
@@ -158000,12 +158315,16 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +        "",
 +        now,
 +    );
-+    for _ in 0..QUEUE_UPDATES {
-+        blit_at("raster-refuse", "owner", cell.clone(), now).expect("queued");
++    for _ in 0..64 {
++        assert_eq!(
++            blit_at("raster-refuse", "owner", cell.clone(), now).expect("merged"),
++            json!({"frame": 2, "queued": 1, "frame_ms": 16})
++        );
 +    }
 +    assert_eq!(
-+        blit_at("raster-refuse", "owner", cell, now).expect("reply"),
-+        json!({"status": "backpressure", "retry_after_ms": 16})
++        blit_at("raster-refuse", "owner", cell, now + FRAME * 4).expect("hidden"),
++        json!({"status": "backpressure", "retry_after_ms": 250}),
++        "cells merged into a frame left undrawn for four ticks"
 +    );
 +}
 +
@@ -158022,6 +158341,7 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +            now,
 +        )
 +        .expect("queued");
++        super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
 +    }
 +    let (lines, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
 +    assert_eq!(text(&lines)[0], "a   ");
@@ -158074,6 +158394,7 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +            now,
 +        )
 +        .expect("queued");
++        super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
 +    }
 +    let (lines, next) = super::rows(key, Some("owner"), "chart", 10, (4, 2), false, "", now);
 +    assert_eq!(text(&lines)[0], "a   ");
@@ -158238,7 +158559,7 @@ index 0000000000000000000000000000000000000000..1c6370eb1727ae87b781aef8f921fea1
 +            Err("terminal_blit_invalid".into())
 +        );
 +    }
-+    let oversized = json!({"media_type": "image/png", "base64": "A".repeat(QUEUE_BYTES)});
++    let oversized = json!({"media_type": "image/png", "base64": "A".repeat(codex_omd::client_surface::BLIT_CALL_BYTES)});
 +    assert_eq!(
 +        frame_at(key, oversized, now),
 +        Err("terminal_blit_too_large".into())

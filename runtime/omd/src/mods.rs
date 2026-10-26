@@ -385,6 +385,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "composer_key_v1",
     "completion_tokens_v1",
     "mention_read_v1",
+    "terminal_raster_packed_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
