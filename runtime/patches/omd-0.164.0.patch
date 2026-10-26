@@ -28152,6 +28152,20 @@ index 35c70df79d42912b80e71b0e5d98e03546abb360..30cfcf40a284f9cd39e30423ee930145
              tty: false,
              sandbox_permissions,
              additional_permissions: None,
+diff --git a/codex-rs/core/src/tools/sandboxing.rs b/codex-rs/core/src/tools/sandboxing.rs
+index d49273beb37fadf1dda778ef5ba8a047438dff69..c9e2b74d09c87efe2faeb52d4f3ce5e1a458ccd5 100644
+--- a/codex-rs/core/src/tools/sandboxing.rs
++++ b/codex-rs/core/src/tools/sandboxing.rs
+@@ -530,6 +530,9 @@ impl<'a> SandboxAttempt<'a> {
+             self.exec_server_permissions,
+             command.additional_permissions.as_ref(),
+         );
++        let exec_server_permissions =
++            codex_sandboxing::permissions_with_denied_paths(&exec_server_permissions, &command.env)
++                .unwrap_or(exec_server_permissions);
+         let mut request = self
+             .manager
+             .transform(SandboxTransformRequest {
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
 index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..3e311fc0abdf24fffb1155aec9c5f9cb45b1e764 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
@@ -30784,6 +30798,167 @@ index d42a7c4ba7d126236868b43ec73861ae3f56113d..3db58f4e830a2be1abcad7ab7839e56d
                  }),
              },
          ))])
+diff --git a/codex-rs/sandboxing/src/lib.rs b/codex-rs/sandboxing/src/lib.rs
+index 5db90bba1ed508ca489297feebea342dc92254a0..20762ace1dc8ab3989198c2d08f66cb2bfc7fd24 100644
+--- a/codex-rs/sandboxing/src/lib.rs
++++ b/codex-rs/sandboxing/src/lib.rs
+@@ -30,6 +30,7 @@ pub use codex_windows_sandbox::WindowsSandboxProxySettingsMode;
+ pub use denial::is_likely_executor_managed_sandbox_denied;
+ pub use denial::is_likely_sandbox_denied;
+ pub use linux_pid_namespace::LinuxSandboxPidNamespace;
++pub use manager::SANDBOX_DENIED_PATHS_ENV;
+ pub use manager::SandboxCommand;
+ pub use manager::SandboxDirectSpawnTransformRequest;
+ pub use manager::SandboxExecRequest;
+@@ -40,6 +41,7 @@ pub use manager::SandboxType;
+ pub use manager::SandboxablePreference;
+ pub use manager::compatibility_sandbox_policy_for_permission_profile;
+ pub use manager::get_platform_sandbox;
++pub use manager::permissions_with_denied_paths;
+ pub use manager::with_managed_mitm_ca_readable_root;
+ pub use sandbox_integrity::FileContentsChecker;
+ pub use sandbox_integrity::IntegrityFinding;
+diff --git a/codex-rs/sandboxing/src/manager.rs b/codex-rs/sandboxing/src/manager.rs
+index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..f4952468083f9b714160cb8f1d10945647ed52c9 100644
+--- a/codex-rs/sandboxing/src/manager.rs
++++ b/codex-rs/sandboxing/src/manager.rs
+@@ -20,6 +20,9 @@ use codex_network_proxy::NetworkProxy;
+ use codex_protocol::config_types::WindowsSandboxLevel;
+ use codex_protocol::models::AdditionalPermissionProfile;
+ use codex_protocol::models::PermissionProfile;
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemPath;
++use codex_protocol::permissions::FileSystemSandboxEntry;
+ use codex_protocol::permissions::FileSystemSandboxPolicy;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
+ use codex_protocol::protocol::SandboxPolicy;
+@@ -32,6 +35,9 @@ use std::ffi::OsString;
+ use std::io;
+ use std::path::Path;
+
++/// Newline-separated host paths that sandboxed commands may not access; unsandboxed ones ignore it.
++pub const SANDBOX_DENIED_PATHS_ENV: &str = "OMD_SANDBOX_DENIED_PATHS";
++
+ #[cfg(target_os = "windows")]
+ const WINDOWS_SANDBOX_WRAPPER_SETUP_ENV_ALLOWLIST: &[&str] = &[
+     "USERNAME",
+@@ -368,6 +374,10 @@ impl SandboxManager {
+             use_legacy_landlock,
+             windows_sandbox_level,
+         } = request;
++        let denied = permissions_with_denied_paths(permissions, &command.env)
++            .filter(|_| sandbox != SandboxType::None);
++        command.env.remove(SANDBOX_DENIED_PATHS_ENV);
++        let permissions = denied.as_ref().unwrap_or(permissions);
+         #[cfg(target_os = "macos")]
+         let managed_network = command.managed_network.as_ref();
+         let additional_permissions = command.additional_permissions.take();
+@@ -828,6 +838,32 @@ fn linux_sandbox_arg0_override(exe: &Path) -> String {
+     }
+ }
+
++pub fn permissions_with_denied_paths(
++    permissions: &PermissionProfile,
++    env: &HashMap<String, String>,
++) -> Option<PermissionProfile> {
++    let denies = env
++        .get(SANDBOX_DENIED_PATHS_ENV)?
++        .lines()
++        .filter_map(|path| AbsolutePathBuf::from_absolute_path(path).ok())
++        .map(|path| {
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path { path: path.into() },
++                FileSystemAccessMode::Deny,
++            )
++        })
++        .collect();
++    let mut file_system = permissions.file_system_sandbox_policy();
++    file_system.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
++    Some(
++        PermissionProfile::from_runtime_permissions_with_enforcement(
++            permissions.enforcement(),
++            &file_system,
++            permissions.network_sandbox_policy(),
++        ),
++    )
++}
++
+ #[cfg(test)]
+ #[path = "manager_tests.rs"]
+ mod tests;
+diff --git a/codex-rs/sandboxing/src/manager_tests.rs b/codex-rs/sandboxing/src/manager_tests.rs
+index 22dcf916328ac454b5d33fce277a8e1442ad1022..3cf66de29066f98268e581f8a2221dd8afc25920 100644
+--- a/codex-rs/sandboxing/src/manager_tests.rs
++++ b/codex-rs/sandboxing/src/manager_tests.rs
+@@ -838,3 +838,68 @@ fn transform_for_direct_spawn_windows_materializes_inner_helper() {
+     );
+     assert!(materialized_helper.exists());
+ }
++
++#[cfg(target_os = "macos")]
++#[test]
++fn denied_paths_apply_only_to_sandboxed_commands() {
++    let manager = SandboxManager::new();
++    let temp_dir = TempDir::new().expect("create temp dir");
++    let root = canonicalize(temp_dir.path()).expect("canonicalize temp dir");
++    let workspace = AbsolutePathBuf::from_absolute_path(root.join("workspace")).expect("absolute");
++    let secret = AbsolutePathBuf::from_absolute_path(root.join("secret")).expect("absolute");
++    std::fs::create_dir(&workspace).expect("create workspace");
++    let workspace_uri = PathUri::from_abs_path(&workspace);
++    let permissions = PermissionProfile::from_runtime_permissions(
++        &FileSystemSandboxPolicy::workspace_write(
++            &[],
++            /*exclude_tmpdir_env_var*/ true,
++            /*exclude_slash_tmp*/ true,
++        ),
++        NetworkSandboxPolicy::Restricted,
++    );
++    let deny = FileSystemSandboxEntry::new(
++        FileSystemPath::Path {
++            path: PathUri::from_abs_path(&secret),
++        },
++        FileSystemAccessMode::Deny,
++    );
++    for (sandbox, denied) in [
++        (SandboxType::MacosSeatbelt, true),
++        (SandboxType::None, false),
++    ] {
++        let request = manager
++            .transform(SandboxTransformRequest {
++                command: SandboxCommand {
++                    program: "true".into(),
++                    args: Vec::new(),
++                    cwd: workspace_uri.clone(),
++                    env: HashMap::from([(
++                        super::SANDBOX_DENIED_PATHS_ENV.to_string(),
++                        secret.display().to_string(),
++                    )]),
++                    managed_network: None,
++                    additional_permissions: None,
++                },
++                permissions: &permissions,
++                sandbox,
++                enforce_managed_network: false,
++                environment_id: None,
++                network: None,
++                sandbox_policy_cwd: &workspace_uri,
++                sandbox_exe: None,
++                use_legacy_landlock: false,
++                windows_sandbox_level: WindowsSandboxLevel::Disabled,
++            })
++            .expect("transform");
++        assert!(!request.env.contains_key(super::SANDBOX_DENIED_PATHS_ENV));
++        assert_eq!(
++            request
++                .permission_profile
++                .file_system_sandbox_policy()
++                .entries
++                .contains(&deny),
++            denied,
++            "{sandbox:?}"
++        );
++    }
++}
 diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
 index 31e16dd72a9523bbb1c9b3eea00dc5377037e2e2..8eaf6b7b109ac5e33c37f2746585c00c3ca4533a 100644
 --- a/codex-rs/thread-store/Cargo.toml
@@ -62902,10 +63077,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b0788b02404
+index 0000000000000000000000000000000000000000..5bcaa19c03fe790d4ddd1cdbe42448a0e93a774b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2543 @@
+@@ -0,0 +1,2518 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -62945,12 +63120,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +use codex_omd::ModHostCall;
 +use codex_omd::ModTool;
 +use codex_protocol::models::PermissionProfile;
-+use codex_protocol::models::PermissionProfileSnapshot;
-+use codex_protocol::permissions::FileSystemAccessMode;
-+use codex_protocol::permissions::FileSystemPath;
-+use codex_protocol::permissions::FileSystemSandboxEntry;
-+use codex_protocol::permissions::FileSystemSandboxPolicy;
-+use codex_utils_absolute_path::AbsolutePathBuf;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -63949,11 +64118,7 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        thread: Option<&str>,
 +        forked_from: Option<&str>,
 +    ) -> Result<(), String> {
-+        let profile = config.permissions.effective_permission_profile();
-+        if matches!(profile, PermissionProfile::External { .. }) {
-+            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-+        }
-+        let mut denies = Vec::new();
++        let mut denied = Vec::new();
 +        for path in self.host.protected_paths() {
 +            if path
 +                .canonicalize()
@@ -63963,13 +64128,16 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +            {
 +                return Err("protected_mod_path_must_be_canonical_and_external".into());
 +            }
-+            let path =
-+                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-+            denies.push(FileSystemSandboxEntry::new(
-+                FileSystemPath::Path { path: path.into() },
-+                FileSystemAccessMode::Deny,
-+            ));
++            let path = path
++                .to_str()
++                .filter(|path| !path.contains('\n'))
++                .ok_or("protected_path_unavailable")?;
++            denied.push(path.to_owned());
 +        }
++        config.permissions.shell_environment_policy.r#set.insert(
++            codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
++            denied.join("\n"),
++        );
 +        config.model_provider.supports_websockets = false;
 +        if self
 +            .codex_config
@@ -63978,24 +64146,6 @@ index 0000000000000000000000000000000000000000..001e0b7ef2efd9c0ca5bb326971e6b07
 +        {
 +            config.update_plan_enabled = true;
 +        }
-+        let mut filesystem = profile.file_system_sandbox_policy();
-+        filesystem
-+            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-+        let protected = PermissionProfile::from_runtime_permissions(
-+            &filesystem,
-+            profile.network_sandbox_policy(),
-+        );
-+        config
-+            .permissions
-+            .shell_environment_policy
-+            .r#set
-+            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-+        config
-+            .permissions
-+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-+                protected,
-+            ))
-+            .map_err(|e| e.to_string())?;
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
@@ -72756,10 +72906,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
+index 0000000000000000000000000000000000000000..0422cd384052b3d6c9a89f041bb7e6070c4f7161
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4358 @@
+@@ -0,0 +1,4401 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -77117,6 +77267,49 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
 +    assert!(merge(json!({"success_per_call": "yes"})).is_err());
 +    assert!(merge(json!({"other": true})).is_err());
++}
++
++#[tokio::test]
++async fn thread_config_keeps_the_users_sandbox() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let profile = config.permissions.effective_permission_profile();
++    let mut environment = config.permissions.shell_environment_policy.r#set.clone();
++    environment.insert(
++        codex_sandboxing::SANDBOX_DENIED_PATHS_ENV.into(),
++        fixture
++            .lead
++            .host
++            .protected_paths()
++            .iter()
++            .map(|path| path.display().to_string())
++            .collect::<Vec<_>>()
++            .join("\n"),
++    );
++    codex_extension_api::ConfigContributor::prepare_thread_config(
++        &mods(&fixture.core),
++        &mut config,
++        None,
++        None,
++    )
++    .unwrap();
++    assert_eq!(config.permissions.effective_permission_profile(), profile);
++    assert_eq!(
++        config.permissions.shell_environment_policy.r#set,
++        environment
++    );
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644

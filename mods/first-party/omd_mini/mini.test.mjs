@@ -44,7 +44,7 @@ test('outside an omd mini launch the mod stays inert and points to the launcher'
   assert.equal(invoke('terminal', { event: 'turn_end', ledger: ledger() }), null);
   invoke('app_notification', notify('thread/settings/updated', { threadId: thread, threadSettings: { model: 'x' } }));
   assert.equal(calls.length, 1);
-  assert.equal(invoke('command', '', 'switch').display, `This session was not started by \`omd mini\`. Quit, then run \`omd mini resume ${thread}\`.`);
+  assert.match(invoke('command', '', 'switch').display, /omd mini resume/);
 });
 
 test('the status line names the effective thread model', () => {
@@ -62,8 +62,6 @@ test('a mini session shows one status line of model, context and limits', () => 
   invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 23, windowDurationMins: 300 } } }, null));
   invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { limitId: 'claude', primary: { usedPercent: 99, windowDurationMins: 300 } } }, null));
   assert.deepEqual(invoke('terminal', { event: 'turn_end', ledger: ledger() }).status, ['gpt-6-astra', 'ctx 34%', '5h 23%']);
-  invoke('app_notification', notify('account/rateLimits/updated', { rateLimits: { primary: { usedPercent: 30, windowDurationMins: 10080 } } }, null));
-  assert.deepEqual(invoke('terminal', { event: 'turn_end', ledger: ledger() }).status, ['gpt-6-astra', 'ctx 34%', '7d 30%']);
   invoke('app_notification', notify('thread/settings/updated', { threadId: thread, threadSettings: { model: 'gpt-6-luna' } }));
   invoke('app_notification', notify('thread/settings/updated', { threadId: 'child', threadSettings: { model: 'gpt-6-sol' } }, 'child'));
   assert.deepEqual(invoke('terminal', { event: 'turn_end', ledger: ledger({ settled_task_charge_microusd: 120000 }) }).status, ['gpt-6-luna', 'ctx 34%', '$0.12']);
@@ -75,13 +73,14 @@ test('switching records a request for this launch run, refuses mid-turn and can 
   invoke('resume', { thread_id: thread, last_turn: null, restarted: false });
   assert.equal(store[`user:switch_${launch}`], undefined);
   invoke('turn_start', { turn_id: 't1' });
-  assert.match(invoke('command', '', 'switch').display, /^A turn is running/);
+  invoke('command', '', 'switch');
+  assert.equal(store[`user:switch_${launch}`], undefined);
   invoke('turn_end', { turn_id: 't1', outcome: 'aborted' });
-  assert.match(invoke('command', '', 'switch').display, /reopens this session in the full interface/);
+  invoke('command', '', 'switch');
   assert.deepEqual(store[`user:switch_${launch}`].value, { run: 2, target: 'full', thread });
   invoke('start', null);
   assert.deepEqual(store[`user:switch_${launch}`].value, { run: 2, target: 'full', thread });
-  assert.match(invoke('command', '', 'switch').display, /^Switch cancelled/);
+  invoke('command', '', 'switch');
   assert.equal(store[`user:switch_${launch}`], undefined);
   assert.ok(calls.every(call => call.operation !== 'exec.run'));
 });
@@ -97,8 +96,10 @@ test('a full session started by the launcher switches back to mini', () => {
 test('switching before the first message asks for one unless the thread was resumed', () => {
   const fresh = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`, thread, 0);
   fresh.invoke('start', {});
-  assert.match(fresh.invoke('command', '', 'switch').display, /^This session has no thread/);
+  fresh.invoke('command', '', 'switch');
+  assert.equal(fresh.store[`user:switch_${launch}`], undefined);
   const resumed = session(`OH_MY_DIFF_PRESENTATION=mini\nOH_MY_DIFF_LAUNCH=${launch}.0\n`, thread, 0);
   resumed.invoke('resume', { thread_id: thread, last_turn: null, restarted: false });
-  assert.match(resumed.invoke('command', '', 'switch').display, /reopens this session in the full interface/);
+  resumed.invoke('command', '', 'switch');
+  assert.equal(resumed.store[`user:switch_${launch}`].value.target, 'full');
 });

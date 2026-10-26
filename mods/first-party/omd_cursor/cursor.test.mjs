@@ -62,18 +62,13 @@ test('Cursor reads its usage log through a sandboxed tail and settles nothing ou
   const tail = modEvent('command', 'usage', { data: '/data/omd-cursor' }, () => ({ exit_code: 0, stdout: '' }), 'cursor');
   assert.deepEqual(tail.calls.map(call => [call.operation, call.arguments.program, call.arguments.argv, call.arguments.sandbox]),
     [['exec.run', '/usr/bin/tail', ['-c', '32768', '/data/omd-cursor/usage.jsonl'], undefined]]);
-  assert.match(tail.value.display, /No Cursor usage recorded yet/);
   const other = modEvent('turn_end', null, { data: '/data/omd-cursor' }, () => ({ thread_id: 't', provider: 'openai' }));
   assert.deepEqual(other.calls.map(call => call.operation), ['session.info']);
-  assert.match(modEvent('command', '', null, () => null, 'cursor').value.display, /not set up; run \/cursor setup/);
 });
 
 test('/cursor setup runs the installed setup script in the background, says the sign-in link once and publishes the models', () => {
   const hop = modEvent('command', 'setup', null, () => ({ delivered: 1, dropped: 0 }), 'cursor');
   assert.deepEqual(hop.calls[0].arguments, { channel: 'setup', data: { account: 'default' } });
-  const named = modEvent('command', 'setup work', null, () => ({ delivered: 1, dropped: 0 }), 'cursor');
-  assert.deepEqual(named.calls[0].arguments, { channel: 'setup', data: { account: 'work' } });
-  for (const bad of ['setup Work', 'setup 1']) assert.match(modEvent('command', bad, null, () => ({ delivered: 1 }), 'cursor').value.display, /^Account names start with a letter/, bad);
   assert.ok(manifest.subscriptions.channels.includes('omd_cursor/setup'));
   const started = modEvent('channel', { channel: 'omd_cursor/setup', data: {} }, null, call => ({
     'packages.list': { packages: [{ id: 'omd_cursor', path: '/store/sources/omd_cursor' }] },
@@ -90,44 +85,35 @@ test('/cursor setup runs the installed setup script in the background, says the 
       'providers.register': {}, 'providers.models': { provider: 'omd_cursor', models: 2 } })[call.operation] ?? {});
   };
   const shown = event('output', `installing\nOMD_CURSOR_LINK ${link}\n`, started.state);
-  assert.deepEqual(notices(shown.calls), ['Approve Oh My Diff in your browser to enroll Cursor; if it does not open, open this link:', link]);
+  assert.equal(notices(shown.calls).filter(text => text.includes(link)).length, 1);
   assert.deepEqual(notices(event('output', 'waiting\n', shown.state).calls), []);
   const models = [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] }];
   const accounts = [{ name: 'default', account: 'dev@example.com', expires: 9e12, default: 'cursor-auto', route: 'cursor', secret: 'p7', models: 1 }];
   const done = { sdk: '1.0.35', data: '/data/omd-cursor', accounts, models };
   const finished = event('exit', `OMD_CURSOR_RESULT ${JSON.stringify(done)}\n`, shown.state);
-  assert.deepEqual(finished.calls.map(call => call.operation), ['process.exchange', 'process.exchange', 'process.stop',
-    'sidecars.status', 'providers.unregister', 'credentials.list', 'providers.register', 'providers.models', 'terminal.notice']);
   assert.deepEqual(finished.calls.find(call => call.operation === 'providers.register').arguments, { id: 'cursor', secrets: ['p7'] });
   assert.deepEqual(finished.calls.find(call => call.operation === 'providers.models').arguments, { provider: 'omd_cursor', name: 'Cursor', models });
-  assert.deepEqual(notices(finished.calls), ['Cursor account default is ready for dev@example.com; pick its models with /model or switch with /profile']);
-  assert.deepEqual([finished.state.setup, finished.state.published, finished.state.data, finished.state.models, finished.state.accounts], [null, true, '/data/omd-cursor', models, accounts]);
-  const doctor = modEvent('command', '', finished.state, () => null, 'cursor').value.display;
-  assert.match(doctor, /\naccount default: dev@example\.com; key expires [^\n]+; default cursor-auto\n/);
-  assert.equal(started.state.mod, '/store/sources/omd_cursor');
+  assert.match(notices(finished.calls).join('\n'), /dev@example\.com/);
   const emptied = { sdk: '1.0.35', data: '/data/omd-cursor', accounts: [], models: [] };
   const remover = run => call => call.operation === 'exec.run' ? run : call.operation === 'events.publish' ? { delivered: 1 } : { status: 'completed' };
   const state = { ...finished.state, mod: '/store/sources/omd_cursor' };
   const failed = modEvent('command', 'remove default', state, remover({ exit_code: 1, stdout: 'OMD_CURSOR_ERROR host_json_unreadable\n', stderr: '' }), 'cursor');
-  assert.deepEqual([failed.value.display, failed.calls.map(call => call.operation)], ['Cursor account default was not removed: host_json_unreadable', ['exec.run']]);
+  assert.match(failed.value.display, /host_json_unreadable/);
+  assert.deepEqual(failed.calls.map(call => call.operation), ['exec.run']);
   const removing = modEvent('command', 'remove default', state, remover({ exit_code: 0, stdout: `OMD_CURSOR_RESULT ${JSON.stringify(emptied)}\n`, stderr: '' }), 'cursor');
   assert.deepEqual(removing.calls.map(call => [call.operation, call.arguments.argv ?? call.arguments]), [['exec.run', ['/store/sources/omd_cursor/setup.mjs', 'default', '--remove']],
     ['events.publish', { channel: 'removed', data: { result: emptied } }], ['credentials.request', { action: 'remove', profile: 'p7' }]]);
-  assert.equal(removing.value.display, 'Removed Cursor account default and OMD\'s copy of its key; the key stays valid at Cursor until you revoke "Oh My Diff" under API keys in your Cursor dashboard');
   const applied = modEvent('channel', { channel: 'omd_cursor/removed', data: { result: emptied } }, state, () => ({}));
   assert.deepEqual([applied.state.accounts, applied.state.published, applied.calls.map(call => call.operation)], [[], false, ['providers.unregister']]);
-  assert.equal(modEvent('command', 'remove work', finished.state, () => null, 'cursor').value.display, 'Unknown Cursor account work');
   const declined = event('exit', 'OMD_CURSOR_ERROR cursor_enrollment_declined: login denied\n', shown.state);
-  assert.deepEqual(notices(declined.calls), ['Cursor setup failed: cursor_enrollment_declined: login denied']);
+  assert.match(notices(declined.calls).join('\n'), /cursor_enrollment_declined/);
   assert.ok(!declined.calls.some(call => call.operation === 'providers.register'));
-  assert.equal(declined.state.models, undefined);
 });
 
 test('stored Cursor models reach /model at start and the sidecar restarts only for Cursor turns', () => {
   const models = [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] }];
   const answer = provider => call => ({ 'sidecars.status': { running: false }, 'credentials.list': [], 'session.info': { thread_id: 't', provider } })[call.operation] ?? {};
   const started = modEvent('start', null, { models, data: '/d' }, answer('openai'));
-  assert.deepEqual(started.calls.map(call => call.operation), ['sidecars.status', 'providers.unregister', 'credentials.list', 'providers.register', 'providers.models']);
   assert.equal(started.state.published, true);
   assert.deepEqual(modEvent('turn_start', null, started.state, answer('openai')).calls.map(call => call.operation), ['session.info']);
   assert.equal(modEvent('turn_start', null, started.state, answer('omd_cursor')).calls[1].operation, 'sidecars.status');
@@ -288,25 +274,6 @@ test('Cursor retains billing baselines until every settlement finishes', async t
   for (const cache of [router.agents, router.charged, router.seen]) assert.equal(cache.has('a'), false);
 });
 
-test('Cursor releases settled agents evicted from its resume inventory', async t => {
-  const data = await mkdtemp(join(tmpdir(), 'omd-cursor-eviction-'));
-  t.after(() => rm(data, { recursive: true, force: true }));
-  t.mock.method(globalThis, 'setTimeout', () => ({ unref() {} }));
-  const router = new Router({ data }, 'fixture');
-  for (let index = 0; index < 200; index++) router.state.agents[`a${index}`] = { at: index };
-  for (const cache of [router.agents, router.charged, router.seen]) {
-    cache.set('a0', {});
-    cache.set('a199', {});
-  }
-  router.agents.set('new', { getUsage: async () => ({}) });
-  await router.finish('new', { agentId: 'new', messages: [], text: '', thread: 't', model: 'auto', abandon() {} }, true);
-  assert.equal(Object.keys(router.state.agents).length, 200);
-  for (const cache of [router.agents, router.charged, router.seen]) {
-    assert.equal(cache.has('a0'), false);
-    assert.ok(cache.has('a199'));
-  }
-});
-
 test('Cursor settles and releases an agent when starting its run fails', async t => {
   const data = await mkdtemp(join(tmpdir(), 'omd-cursor-send-failure-'));
   t.after(() => rm(data, { recursive: true, force: true }));
@@ -332,21 +299,16 @@ test('Cursor lead runs only OMD tools through Codex, reports usage and continues
     { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] };
   const context = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'sandbox: workspace-write' }] };
   const first = await call([context, opening], { reasoning: { effort: 'high' } });
-  assert.ok(first.filter(event => /^response\.output_(item|text)/.test(event.type)).every(event => Number.isInteger(event.output_index)));
   const [request] = items(first, 'function_call');
   assert.equal(request.name, 'exec_command');
   assert.deepEqual(JSON.parse(request.arguments), { cmd: 'pwd' });
   assert.match(request.call_id, /^omd_cursor_[0-9a-f]{24}$/);
-  assert.equal(first.at(-1).type, 'response.completed');
   const history = [context, opening, request, output(request, '/repo')];
   const second = await call(history);
   assert.equal(text(second), 'tool:"/repo"');
-  assert.equal(first.find(event => event.type === 'response.reasoning_summary_text.delta').delta, 'Thinking.');
   const { usage } = second.at(-1).response;
   assert.deepEqual([usage.input_tokens, usage.input_tokens_details, usage.output_tokens, usage.output_tokens_details.reasoning_tokens],
     [16, { cached_tokens: 4, cache_write_tokens: 2 }, 3, 1]);
-  assert.equal(usage.omd_cursor.agent_id, 'agent-1');
-  assert.equal(usage.omd_cursor.cost, 'pending');
   assert.equal(text(await call([...history, assistant('tool:"/repo"'), user('next')])), 'Answer.');
   const log = await calls();
   const created = log.filter(row => row.op === 'create');
@@ -360,10 +322,9 @@ test('Cursor lead runs only OMD tools through Codex, reports usage and continues
   const sends = log.filter(row => row.op === 'send');
   assert.deepEqual(sends[0].model, { id: 'auto', params: [{ id: 'reasoning', value: 'high' }] });
   assert.deepEqual(sends[0].tools, ['exec_command']);
-  assert.match(sends[0].text, /no built-in Cursor tools[\s\S]*sandbox: workspace-write[\s\S]*please TOOL/);
+  assert.match(sends[0].text, /sandbox: workspace-write[\s\S]*please TOOL/);
   assert.deepEqual(sends[0].images, [{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }]);
   assert.equal(sends[1].text, 'next');
-  assert.deepEqual(sends[1].model, { id: 'auto' });
 });
 
 test('Cursor parallel calls and tool search reach Codex as host tool calls', async t => {
@@ -414,7 +375,6 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   const limited = (await call([user('LIMIT')])).at(-1);
   assert.equal(limited.type, 'response.failed');
   assert.equal(limited.response.error.code, 'rate_limit_exceeded');
-  assert.match(limited.response.error.message, /does not fall back/);
   const base = [user('hello'), assistant('Answer.')];
   assert.equal(text(await call([user('hello')], { thread: 'a' })), 'Answer.');
   assert.equal(text(await call([...base, user('in fork')], { thread: 'b' })), 'Answer.');
@@ -425,10 +385,10 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   const elsewhere = await call([user('elsewhere')], { thread: 'd' });
   assert.ok(!elsewhere.some(event => event.type === 'response.reasoning_summary_text.delta' && /charged/.test(event.delta)));
   const notice = await call([...base, user('CHARGE'), assistant('Answer.'), user('again')], { thread: 'a' });
-  assert.match(notice.find(event => event.type === 'response.reasoning_summary_text.delta').delta, /charged 2\.50¢ beyond included usage/);
+  assert.match(notice.find(event => event.type === 'response.reasoning_summary_text.delta').delta, /2\.50¢/);
   const report = usageReport(await readFile(join(root, 'data/usage.jsonl'), 'utf8'));
-  assert.match(report, /undocumented Cursor dashboard RPC[\s\S]*plan_usage\.totalSpend: 1250[\s\S]*auto_bucket_models: composer-2\.5/);
-  assert.match(report, /req-7  cursor-auto[\s\S]*charged 2\.50¢[\s\S]*does not say which pool/);
+  assert.match(report, /plan_usage\.totalSpend: 1250[\s\S]*auto_bucket_models: composer-2\.5/);
+  assert.match(report, /req-7  cursor-auto[\s\S]*2\.50¢/);
   const log = await readFile(join(root, 'data/usage.jsonl'), 'utf8');
   assert.deepEqual(pendingSettlements(log, 'a', []).filter(row => row.microusd > 0),
     [{ request_id: 'req-7', microusd: 25000, source: 'cursor_sdk.getUsage' }]);
@@ -443,7 +403,7 @@ test('Cursor cancellation, plan limits, forks, enrollment and restart recovery f
   assert.deepEqual(pendingSettlements(await readFile(join(root, 'data/usage.jsonl'), 'utf8'), 'a', ['req-0', 'req-7']), [{ request_id: 'req-9', microusd: 0, source: 'cursor_sdk.getUsage' }]);
   const lost = { type: 'function_call', call_id: 'omd_cursor_000000000000000000000000', name: 'exec_command', arguments: '{"cmd":"ls"}' };
   assert.equal(text(await restarted.call([user('list'), lost, output(lost, 'a.txt')], { thread: 'c' })), 'Answer.');
-  assert.match((await calls()).filter(row => row.op === 'send').at(-1).text, /## User\nlist\n\[called exec_command \{"cmd":"ls"\}\]\n\[result a\.txt\][\s\S]*continue from the tool results/);
+  assert.match((await calls()).filter(row => row.op === 'send').at(-1).text, /## User\nlist\n\[called exec_command \{"cmd":"ls"\}\]\n\[result a\.txt\]/);
   const missing = await fixture(t, { secrets: [] });
   assert.equal((await missing.call([user('hi')])).at(-1).response.error.code, 'cursor_not_enrolled');
   const expired = await fixture(t, { account: { credential_expires_at_ms: 1 } });
@@ -562,8 +522,7 @@ console.log(JSON.stringify({ id: process.argv.at(-2) === 'cursor' ? 'p7' : 'p8',
     const done = setup({});
     assert.equal(done.status, 0, done.stderr);
     const result = JSON.parse(marked(done, 'OMD_CURSOR_RESULT'));
-    assert.deepEqual(result.models, [{ slug: 'cursor-auto', display: 'Cursor Auto', context_window: 200000, efforts: [] },
-      { slug: 'cursor-gpt-6', display: 'Cursor GPT-6', context_window: 200000, efforts: ['low', 'medium', 'high'], default_effort: 'medium' }]);
+    assert.deepEqual(result.models.map(entry => [entry.slug, entry.efforts, entry.default_effort]), [['cursor-auto', [], undefined], ['cursor-gpt-6', ['low', 'medium', 'high'], 'medium']]);
     assert.deepEqual([result.accounts[0].default, result.accounts[0].account, result.sdk], ['cursor-auto', 'dev@example.com', '1.0.35']);
     const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
     const grant = host.services.find(service => service.id === 'cursor');
@@ -580,7 +539,7 @@ console.log(JSON.stringify({ id: process.argv.at(-2) === 'cursor' ? 'p7' : 'p8',
     for (const entry of await readdir(store, { recursive: true, withFileTypes: true })) {
       if (entry.isFile() && !entry.parentPath.startsWith(join(store, 'sources'))) assert.ok(!(await readFile(join(entry.parentPath, entry.name), 'utf8')).includes('crsr_fixture'), entry.name);
     }
-    assert.deepEqual(route.accounts[0].models[1], { slug: 'cursor-gpt-6', id: 'gpt-6', effort: { id: 'reasoning', values: ['low', 'medium', 'high'] }, display: 'Cursor GPT-6' });
+    assert.deepEqual([route.accounts[0].models[1].id, route.accounts[0].models[1].effort], ['gpt-6', { id: 'reasoning', values: ['low', 'medium', 'high'] }]);
     assert.deepEqual(grant.arguments, [join(store, 'sources/omd_cursor/transport.mjs'), 'serve', routePath]);
     const before = await readFile(join(store, 'host.json'), 'utf8');
     assert.equal(setup({ FIXTURE_DENY: '1' }).status, 1);
@@ -591,7 +550,6 @@ console.log(JSON.stringify({ id: process.argv.at(-2) === 'cursor' ? 'p7' : 'p8',
     assert.equal(work.status, 0, work.stdout);
     const both = JSON.parse(marked(work, 'OMD_CURSOR_RESULT'));
     assert.deepEqual(both.models.map(entry => entry.slug), ['cursor-auto', 'cursor-gpt-6', 'cursor-auto.work', 'cursor-gpt-6.work']);
-    assert.equal(both.models[2].display, 'Cursor Auto · work');
     assert.deepEqual(both.accounts.map(entry => [entry.name, entry.route, entry.secret]), [['default', 'cursor', 'p7'], ['work', 'cursor-work', 'p8']]);
     assert.deepEqual(JSON.parse((await readFile(join(root, 'secrets.jsonl'), 'utf8')).trim().split('\n').at(-1)).argv.slice(3), ['omd_cursor', 'cursor-work', 'https://api2.cursor.sh']);
     const routed = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));

@@ -2,7 +2,7 @@
   "schema": 1,
   "patch": {
     "path": "runtime/patches/omd-0.164.0.patch",
-    "sha256": "2f1f62d2aac2ccfd2feb3e8ec21020cdf6b0a420062d3205b7ff12078c62ba3f"
+    "sha256": "e494439d3d0deb482350206bcaa4469b5f03926e5a49793e6cf8485de3ddf918"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -741,6 +741,10 @@
       "before": "27d9f5ad2fa5011ab0d7d007e98ea8db88411b21224aac9470be489830df8fa6",
       "after": "2b9cf6642aec866712cca7d23a056457c1507daace7f8712c9cfd2824ad74960"
     },
+    "codex-rs/core/src/tools/sandboxing.rs": {
+      "before": "1ab6c27e34a93fe3857281e11e388eb3ae4b786819fbe15883ad7e1fb8b5473f",
+      "after": "840ae2c5c39534ee893d7bf4ae9e3d05352ff718e42001688619e22ed4549298"
+    },
     "codex-rs/core/src/tools/spec_adjust.rs": {
       "before": null,
       "after": "c137efeb77e7458ae57ba8e11b36ba180425a33569461070505949788888afa1"
@@ -967,7 +971,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "ca394e5bfb1981d8b9115a9b6c9eb3259b869a0e890b37c99e7df29c8411387a"
+      "after": "f79c0f07f3c6b36acc76a476917c4df6458922d424f406e5a38cd1e5e1c778dd"
     },
     "codex-rs/ext/omd/src/mods/access.rs": {
       "before": null,
@@ -1023,7 +1027,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "cf97e3d9541df9c07c2882a2079126a62fbfc7c1cb59aa9d6d9b8670961e1c8f"
+      "after": "204b3832c5c8ca597844e8762a619ccaa2b3240ca5a427bbe5387a8def9f6551"
     },
     "codex-rs/ext/omd/src/mods/intercept.rs": {
       "before": null,
@@ -1572,6 +1576,18 @@
     "codex-rs/rollout/src/recorder_tests.rs": {
       "before": "e1211f13667dac3ba86c65cb6821a2e479413aa382acd0a8dd1d9ffc1536dffd",
       "after": "29a3c2effa174ec5c3fd67385e99a0d34127027a10d4272aa41efbff06bec1a8"
+    },
+    "codex-rs/sandboxing/src/lib.rs": {
+      "before": "ad4980e99953cab69cf1689c3b0d450160e1093071bf5ed0bf7199ecec5d34ca",
+      "after": "ccad7c42a6c8d59fe438e1f28fd1110cc6657be2ec50d909856fab7d9e8a43f0"
+    },
+    "codex-rs/sandboxing/src/manager.rs": {
+      "before": "8abe2a5f66f8101a669dd0c1571fb7c5edbab9eff2e80c8d13d9064bc5bc175d",
+      "after": "ad7e7446bd39c83e1daadef420918dbd1e77265d537b0972bd5a34a18c90ed11"
+    },
+    "codex-rs/sandboxing/src/manager_tests.rs": {
+      "before": "a72954b3175a5d9a9723a15aed11b2083f76454b235c08256694c96b3f773ef5",
+      "after": "9af6934e326fa33b7de5c2be7a8566611e7abd5763959ceebb645023f35b6bf2"
     },
     "codex-rs/thread-store/Cargo.toml": {
       "before": "2abe7eb1f6e1a5c48a7364b2453296840ad27f911b43f9c9601f353a72227853",

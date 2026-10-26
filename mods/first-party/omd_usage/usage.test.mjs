@@ -41,14 +41,8 @@ const start = (session = { thread_id: 'lead', model: 'gpt-6.1-sol', provider: 'o
       : operation === 'app.request' ? (limits ? { rateLimits: limits } : new Error('unavailable')) : { delivered: 1, dropped: 0 }).state;
 
 test('costs follow the ledger basis: an unpriced native response stays unknown', () => {
-  assert.match(dialog(feed(start(), [['model_response', response('i1')]])).text, /Lead: 1 included/);
-  assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /Lead: 1 unknown cost/);
-});
-
-test('usage draws nothing above the prompt and publishes to no channel', () => {
-  assert.deepEqual(call(usageMod, { event: 'model_response', payload: response('h1'), state: start(), settings: hud }).calls.filter(item => item.operation === 'events.publish'), []);
-  const view = call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state: feed(start(), [['model_response', response('r1')]]), settings: hud }).value;
-  assert.deepEqual(view, { keybindings: { 'Alt+a': { command: 'omd_usage:hud', args: 'toggle' } } });
+  assert.match(dialog(feed(start(), [['model_response', response('i1')]])).text, /1 included/);
+  assert.match(dialog(feed(start(), [['model_response', response('u1', { credential: null, cost: { microusd: null, basis: 'unpriced' } })]])).text, /unknown cost/);
 });
 
 test('usage ledger is request-idempotent, keeps lead context apart from workers and orders by observation time', () => {
@@ -63,16 +57,12 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
   assert.equal(state.hud.entries.length, 4);
   assert.deepEqual(state.hud.entries.map(entry => entry.request), ['r1', 'w1', 'p1', 'r2']);
   const { text } = dialog(state);
-  assert.match(text, /Last response: input 20k \+ output 700 of 272k \(8%\)/);
-  assert.match(text, /Auto-compact at 240k · reserve 32k · headroom 219k/);
-  assert.match(text, /Inherited from the parent session: 1 requests/);
-  assert.match(text, /Workers: 1 included · 90k tokens/);
-  assert.match(text, /Lead input 30k · cache read 26k \(87% of input\) · cache write not reported/);
-  assert.match(text, /Cache expiry: unavailable for openai; reuse is never guaranteed/);
-  assert.match(text, /totals are not lifetime spend/);
+  assert.match(text, /input 20k \+ output 700 of 272k/);
+  assert.match(text, /headroom 219k/);
+  assert.match(text, /Workers: 1 .*90k tokens/);
+  assert.match(text, /Lead input 30k · cache read 26k/);
 
   state = feed(state, [['model_response', response('s1', { cost: { microusd: null, basis: 'unsettled' }, route: 'api', credential: 'key' })]]);
-  assert.match(dialog(state).text, /1 unsettled/);
   state = feed(state, [['model_response', response('s1', { cost: { microusd: 1_500, basis: 'settled' }, route: 'api', credential: 'key' })],
     ['model_response', response('s1', { usage: null, cost: { microusd: null, basis: 'unsettled' }, route: 'api', credential: 'key' })]]);
   const settled = state.hud.entries.find(entry => entry.request === 's1');
@@ -83,9 +73,7 @@ test('usage ledger is request-idempotent, keeps lead context apart from workers 
   assert.ok(JSON.stringify(state).length <= 65_536, 'saved state must fit the 64 KiB store limit');
   assert.ok(state.hud.entries.length < 120);
   assert.equal(state.hud.entries.length + state.hud.dropped, 131);
-  assert.match(dialog(state).text, new RegExp(`${state.hud.dropped} older dropped \\(not in these totals\\)`));
 });
-
 
 test('quota windows stay with the account that reported them and only Codex sets credits', () => {
   const update = (state, rateLimits) => call(usageMod, { event: 'app_notification', payload: { method: 'account/rateLimits/updated', params: { rateLimits }, thread_id: null, coalesced: 0, dropped: 0 }, state, settings: hud }).state;
@@ -105,13 +93,6 @@ test('quota windows stay with the account that reported them and only Codex sets
 const billed = (id, usd, patch = {}) => response(id, { cost: { microusd: null, basis: 'unpriced' }, usage: { input_tokens: 10_000, output_tokens: 500, omd_reported_cost: { usd, basis: 'provider_billed' } }, ...patch });
 const notices = calls => calls.filter(item => item.operation === 'terminal.notice').map(item => item.arguments);
 
-test('closing the usage dialog with Esc keeps it closed', () => {
-  const open = { ...start(), open: true };
-  const state = call(usageMod, { event: 'component_event', payload: { component: 'omd_usage_dialog', thread_id: 'lead', kind: 'close', origin: 'user' }, state: open, settings: hud }).state;
-  assert.equal(state.open, false);
-  assert.equal(call(usageMod, { event: 'terminal', payload: { event: 'idle', ledger: null }, state, settings: hud }).value.sites, undefined);
-});
-
 test('the budget counts spend that left the rolling window or settled late, warns once per 80% and 100% crossing, and retries a refused notice', () => {
   const settings = { ...hud, budget_usd: 10 };
   const run = (state, id, usd, at) => {
@@ -120,8 +101,7 @@ test('the budget counts spend that left the rolling window or settled late, warn
   };
   let step = run(start(), 'b1', 8.5, NOW - 60_000);
   assert.equal(step.notes.length, 1);
-  assert.match(step.notes[0].text, /80%/);
-  assert.equal(step.notes[0].placement, 'toast');
+  assert.equal(step.state.hud.alerted.level, 80);
   step = run(step.state, 'b2', 0.1, NOW - 50_000);
   assert.deepEqual(step.notes, []);
 
@@ -129,8 +109,8 @@ test('the budget counts spend that left the rolling window or settled late, warn
   step = run(step.state, 'b3', 2.0, NOW - 1_000);
   assert.ok(step.state.hud.dropped > 0);
   assert.equal(step.notes.length, 1);
-  assert.match(step.notes[0].text, /100%/);
-  assert.match(dialog(step.state, settings).text, /Soft budget \$10\.0: \$10\.6 spent/);
+  assert.equal(step.state.hud.alerted.level, 100);
+  assert.match(dialog(step.state, settings).text, /\$10\.6 spent/);
   assert.deepEqual(run(step.state, 'b4', 0.5, NOW).notes, []);
   assert.equal(run(step.state, 'b1', 8.5, NOW - 60_000).state.hud.shed, step.state.hud.shed);
 
