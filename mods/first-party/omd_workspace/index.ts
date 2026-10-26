@@ -1,4 +1,4 @@
-import type { CommandResult, Json, KeyAction, KeyContext, LayoutNode, ModAPI, TerminalComponent, TerminalPatch } from '@oh-my-diff/mod-api';
+import type { CommandResult, Json, KeyAction, KeyContext, LayoutNode, ModAPI, TerminalComponent, TerminalPatch } from '../../api.d.ts';
 
 type Tab = { title: string; site: string };
 type Panel = { id: string; title: string; site: string; tabs?: Tab[]; order?: number };

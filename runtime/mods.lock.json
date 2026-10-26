@@ -633,11 +633,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "579039ff01605b090fb4d526c8608b58e7c58d5fa27e5e04d3f2b17d4b112692",
+        "index.ts": "14bbad7f5659ea0ac8b376d1a8a94ed5c5f8b8e60e187c6de0b74ddf1b3011d2",
         "mod.json": "dc99a7d985c6d250385e486559253daf1c5284d64a2f3e1583639304f0b6eedd"
       },
       "id": "omd_workspace",
-      "package_sha256": "d022de695e799c04f57f3a38200078fce20913165be42c370cfc3ba11951ed80",
+      "package_sha256": "ef1f99c37d44636f50d9d3cfebb1749f5012def060b24a92d7e4ffda9af06525",
       "source": "mods/first-party/omd_workspace",
       "version": "1.0.0"
     }
