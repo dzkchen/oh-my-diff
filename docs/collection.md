@@ -3,7 +3,7 @@
 What ships with OMD+, and which mods are on.
 
 - **Installed:** the mod is on disk and listed in `/mods`.
-- **Active (on):** the mod is running. OMD+ installs every mod below and turns on only the first group.
+- **Active (on):** the mod is running. OMD+ installs every mod below except the experimental ones and turns on only the first group.
 - **Experimental:** mod API surfaces marked experimental can change between releases. There may be missing API capabilities, just open an issue for it to be added!
 - **Unsupported:** Linux, Intel Macs, and mods from other sources. OMD shows their permissions and asks before you
   turn them on; it does not review them.
@@ -60,6 +60,15 @@ OMD Core includes only the first three.
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
+
+## Experimental
+
+Not installed with OMD+, and may change or go away. Install one yourself with `omd install <mod>`, then
+`omd mods enable <mod>`.
+
+| Mod | What it does | What it needs |
+| --- | --- | --- |
+| `omd_awake` | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
 
 ## What mods cost
 

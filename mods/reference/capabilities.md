@@ -64,6 +64,7 @@ access](#structured-access-structured_access_v1) describe how they are bound and
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
 | `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
+| `power` | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
 | `history_write` | `app.request thread/rewrite` on the current thread and threads the mod started (`history_rewrite_v1`) |
 | `history_persist` | `history_persist` interceptors, which see and may replace every stored history text (`history_persist_v1`) |
@@ -77,7 +78,7 @@ mod that answered the call without running it.
 
 ## Unrestricted processes and delegated approvals
 
-`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `autonomous`, `history_write`
+`os`, `approve`, `approve.override`, `http`, `fs.external`, `mcp`, `policy`, `peers`, `power`, `autonomous`, `history_write`
 and `history_persist` are authority grants. The manifest declares their scope, which the trust digest binds, so
 changed content or a wider scope needs a new trust.
 

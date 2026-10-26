@@ -107,6 +107,22 @@
       "support_status": "reviewed_candidate"
     },
     {
+      "id": "omd_awake",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Replaces Prevent sleep while running with /awake: keeps the Mac awake, lid closed too, while agents work",
+      "source": "mods/first-party/omd_awake",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.164.0; OMD 1.2.0; mod API 1.0.0; power_hold_v1, builtins_features_v1",
+      "tested_versions": [
+        "Codex 0.164.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",

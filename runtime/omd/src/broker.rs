@@ -122,6 +122,10 @@ impl Client {
         self.send(&json!({"op": op, "arguments": arguments}))
     }
 
+    pub(crate) fn socket(&self) -> io::Result<UnixStream> {
+        self.stream.get_ref().try_clone()
+    }
+
     pub fn authorized(&mut self, op: &str, arguments: Value) -> io::Result<Value> {
         let nonce = self.call(
             "challenge",
@@ -294,6 +298,10 @@ impl Gate for Pinned {
     }
 }
 
+pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    platform::peer_uid(stream)
+}
+
 pub fn listener() -> io::Result<UnixListener> {
     platform::launchd_listener()
 }
@@ -314,6 +322,7 @@ struct Request {
 
 pub struct Broker {
     root: PathBuf,
+    pub(crate) power: PathBuf,
     state: Mutex<()>,
 }
 
@@ -374,6 +383,7 @@ impl Broker {
         }
         Ok(Self {
             root,
+            power: PathBuf::from(crate::power::SOCKET),
             state: Mutex::new(()),
         })
     }
@@ -397,14 +407,14 @@ impl Broker {
         let mut writer = stream.try_clone()?;
         let peer = stream.try_clone()?;
         let mut reader = BufReader::new(stream);
-        let mut challenge = None;
+        let (mut challenge, mut hold) = (None, None);
         loop {
             let mut line = String::new();
             (&mut reader).take(LINE_BYTES).read_line(&mut line)?;
             if !line.ends_with('\n') {
                 return Ok(());
             }
-            let response = match self.request(&peer, &line, &mut challenge, gate) {
+            let response = match self.request(&peer, &line, &mut challenge, &mut hold, gate) {
                 Ok(value) => json!({"ok": value}),
                 Err(error) => json!({"error": error.to_string()}),
             };
@@ -419,6 +429,7 @@ impl Broker {
         peer: &UnixStream,
         line: &str,
         challenge: &mut Option<(String, String)>,
+        hold: &mut Option<crate::power::Hold>,
         gate: &dyn Gate,
     ) -> io::Result<Value> {
         let request: Request =
@@ -427,6 +438,17 @@ impl Broker {
             let nonce = nonce()?;
             *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
             return Ok(Value::String(nonce));
+        }
+        if request.op == "power.hold" {
+            if hold.is_some() {
+                return Err(failure("authority_power_held"));
+            }
+            *hold = Some(crate::power::Hold::start(
+                &self.power,
+                &request.arguments,
+                peer.try_clone()?,
+            )?);
+            return Ok(Value::Null);
         }
         // State is keyed by path, so only its owner (or, for an unwritten stream, its directory's owner) may name it.
         for (field, refused) in [

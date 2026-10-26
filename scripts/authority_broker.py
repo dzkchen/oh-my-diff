@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -15,10 +16,14 @@ import tempfile
 LABEL = "dev.ohmydiff.broker"
 DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 SOCKET = "/var/run/dev.ohmydiff.broker.sock"
+POWER_LABEL = "dev.ohmydiff.broker.power"
+POWER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.power.plist")
+POWER_SOCKET = "/var/run/dev.ohmydiff.broker.power.sock"
 ROOT = Path("/Library/Application Support/OhMyDiff/broker")
 POLICY = ROOT.parent / "policy.json" if sys.platform == "darwin" else Path("/etc/oh-my-diff/policy.json")
 HELPER = Path("/Library/PrivilegedHelperTools/dev.ohmydiff.broker")
 TOOLS = ROOT.parent / "tools"
+POWER_RECORD = ROOT.parent / "power.json"
 COPY = TOOLS / "authority_broker.py"
 RELEASE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGhcSdBwdX2rgdAjg2JwbF7A1KCswnSZpwbdFsaLKo6G"
 SIGNING_NAMESPACE = "oh-my-diff-release"
@@ -200,8 +205,14 @@ def install(helper, tooling, binaries, manifests):
     daemon = {"Label": LABEL, "ProgramArguments": [str(HELPER)], "UserName": ACCOUNT, "GroupName": ACCOUNT,
               "Sockets": {"Listener": {"SockPathName": SOCKET, "SockPathMode": 0o666}}}
     write_root(DAEMON, plistlib.dumps(daemon), 0o644)
-    run("/bin/launchctl", "bootout", f"system/{LABEL}", check=False)
-    run("/bin/launchctl", "bootstrap", "system", DAEMON)
+    power = {"Label": POWER_LABEL, "ProgramArguments": [str(HELPER), "power"], "RunAtLoad": True,
+             "KeepAlive": {"SuccessfulExit": False, "Crashed": True},
+             "Sockets": {"Listener": {"SockPathName": POWER_SOCKET, "SockPathMode": 0o660, "SockPathOwner": 0,
+                                      "SockPathGroup": grp.getgrnam(ACCOUNT).gr_gid}}}
+    write_root(POWER_DAEMON, plistlib.dumps(power), 0o644)
+    for label, plist in ((LABEL, DAEMON), (POWER_LABEL, POWER_DAEMON)):
+        run("/bin/launchctl", "bootout", f"system/{label}", check=False)
+        run("/bin/launchctl", "bootstrap", "system", plist)
     return {"deployed": True, "pins": pins}
 
 
@@ -213,8 +224,15 @@ def reset():
 
 
 def uninstall():
-    run("/bin/launchctl", "bootout", f"system/{LABEL}", check=False)
-    for path in (DAEMON, HELPER, Path(SOCKET)):
+    for label in (LABEL, POWER_LABEL):
+        run("/bin/launchctl", "bootout", f"system/{label}", check=False)
+    if POWER_RECORD.is_file():
+        try:
+            previous = json.loads(POWER_RECORD.read_text()).get("previous") is True
+        except (ValueError, AttributeError):
+            previous = False
+        run("/usr/bin/pmset", "-a", "disablesleep", "1" if previous else "0")
+    for path in (DAEMON, POWER_DAEMON, HELPER, Path(SOCKET), Path(POWER_SOCKET), POWER_RECORD):
         path.unlink(missing_ok=True)
     shutil.rmtree(TOOLS, ignore_errors=True)
     for name in RIGHTS:

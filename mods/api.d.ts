@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'sessions_tools' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'autonomous' | 'history_write'
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override' | 'request_policy' | 'peers' | 'power' | 'autonomous' | 'history_write'
   | 'history_persist' | 'fs.external' | 'http' | 'mcp' | 'policy';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
@@ -399,6 +399,9 @@ export interface HostOperations {
   'agents.inventory': { arguments: null; result: { agents: AgentRecord[] } };
   'peers.list': { arguments: { package?: string } | null; result: { session: string; peers: { session: string; package: string; repository: string; same_project: boolean }[] } };
   'peers.send': { arguments: { to: string; package?: string; data: Json; correlation?: string; ttl_ms?: number }; result: PeerReceipt };
+  /** Requires power_hold_v1 and the `power` grant: keeps the Mac awake until released, expired, the mod changes or OMD exits. */
+  'power.hold': { arguments: { reason: string; lid_closed?: boolean; max_duration_ms: number; lease?: string }; result: { lease: string; lid_closed: boolean } };
+  'power.release': { arguments: { lease: string }; result: { released: boolean } };
   'turns.queue': { arguments: { prompt: string; key: string; priority?: 'high' | 'normal' | 'low'; deadline_ms?: number }; result: { key: string; status: 'queued' | 'duplicate'; paused?: boolean } };
   'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };
   'turns.dequeue': { arguments: { key: string }; result: { removed: boolean } };
@@ -608,7 +611,7 @@ export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfac
 export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
 export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
 export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; keys?: Record<KeymapAction, KeymapKey | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; surfaces?: { disable?: 'status_line'[] }; features?: { remove?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 /** Callback completion rejects cancelled or stale authority before committing state. The `crypto` global exists only when mod.json declares `"environment": ["crypto"]`. See REFERENCE.md. */
 export interface ModAPI {
   readonly version: '1.0.0';

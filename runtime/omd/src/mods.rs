@@ -357,6 +357,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "pty_programs_v1",
     "route_reload_v1",
     "route_write_v1",
+    "power_hold_v1",
+    "builtins_features_v1",
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
     "render_hooks_v1",
@@ -507,6 +509,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "environment.set",
     "peers.list",
     "peers.send",
+    "power.hold",
+    "power.release",
     "turns.queue",
     "turns.queued",
     "turns.dequeue",
@@ -558,6 +562,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "policy",
     "request_policy",
     "peers",
+    "power",
     "autonomous",
     "history_write",
     "history_persist",
@@ -571,6 +576,7 @@ pub const AUTHORITY_CAPABILITIES: &[&str] = &[
     "mcp",
     "policy",
     "peers",
+    "power",
     "autonomous",
     "history_write",
     "history_persist",
@@ -601,7 +607,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "sessions" => "read session history",
         "sessions_tools" => "read tool arguments and outputs in session history",
         "contracts" => "set task completion rules",
-        "builtins" => "run and hide built-in commands",
+        "builtins" => "run and hide built-in commands, modes and Codex features",
         "threads" => "start and manage threads",
         "config" => "read Codex settings",
         "config.write" => "change Codex settings",
@@ -623,6 +629,7 @@ pub fn capability_phrase(capability: &str) -> &str {
         "mcp" => "connect to the MCP servers it lists",
         "policy" => "refuse other mods or limit what they can do",
         "peers" => "message other Codex sessions",
+        "power" => "keep this Mac awake, also with the lid closed",
         "autonomous" => "queue and stop turns on its own",
         "history_write" => "rewrite this session's transcript",
         "history_persist" => "see and replace saved history text",
@@ -659,6 +666,9 @@ pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
     }
     if granted("peers") {
         exposure.push("peers: this mod may discover and message instances of mods in your other OMD sessions on this mod store (in other repositories only when peer_access.projects is \"any\" on both sides) and receive their messages as untrusted data; delivery never starts a turn or shares authority, and messages are countersigned by the authority broker, so peers work only while it is deployed.");
+    }
+    if granted("power") {
+        exposure.push("power: this mod may keep this Mac from idle sleep and, while the authority broker is deployed, from all sleep including a closed lid, for at most 24 hours per hold; every hold ends when the mod releases it, is disabled or changes, or OMD exits, and the previous sleep setting comes back. A closed Mac keeps running and draws battery and heat.");
     }
     if granted("autonomous") {
         exposure.push("autonomous: this mod may queue prompts that start turns while you are idle and continue a finished turn, within its autonomy limits; queued turns are labelled with the mod, keep your permissions and route, pause when you interrupt, and stop when you disable or revoke the mod.");

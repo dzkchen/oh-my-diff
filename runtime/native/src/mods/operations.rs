@@ -672,6 +672,22 @@ async fn run(
             let endpoints = super::peering::current_endpoints(core).await;
             core.peering.call(lead, &caller, request, endpoints)
         }
+        "power.hold" | "power.release" => {
+            if operation == "power.hold" && caller.origin != Origin::Event {
+                return Err("host_operation_event_only: power.hold".into());
+            }
+            let power = lead.session.power.clone();
+            let (id, source) = (caller.id.to_owned(), caller.source.to_owned());
+            tokio::task::spawn_blocking(move || {
+                if request.operation == "power.hold" {
+                    power.hold(&id, &source, &request.arguments)
+                } else {
+                    power.release(&id, &request.arguments)
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
         "turns.abort" => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
