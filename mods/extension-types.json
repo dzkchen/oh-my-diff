@@ -522,7 +522,7 @@
       "path": "mods/first-party/omd_workspace",
       "extension_type": "mod",
       "role": "bundled",
-      "why_mod": "Lays the screen out as numbered panels beside the chat through generic focus regions and key contexts; adds no model tool."
+      "why_mod": "Lays the screen out as a tabbed dock beside the chat through generic layouts, leaf titles, focus regions and key contexts; adds no model tool."
     }
   ],
   "synthetic_fixtures": [

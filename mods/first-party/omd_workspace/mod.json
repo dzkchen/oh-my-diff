@@ -4,17 +4,17 @@
   "version": "1.0.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "A lazygit-style workspace: numbered side panels for a shell and Git changes beside the chat, with focus keys, screen modes and a panel registry",
+  "description": "A tabbed dock beside the chat for a shell, Git changes and other mods' panels, with focus keys, resize keys, screen modes and a panel registry",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_workspace"},
   "capabilities": ["terminal", "commands", "store", "exec", "pty", "services", "lifecycle", "inventory"],
-  "compatibility": {"required_features": ["store_v1", "exec_v1", "terminal_surface_v1", "terminal_lists_v1", "terminal_tabs_v1", "terminal_pty_v1", "terminal_focus_v1", "settings_file_v1", "service_dispatch_v1", "lifecycle_events_v1"]},
+  "compatibility": {"required_features": ["store_v1", "exec_v1", "terminal_surface_v1", "terminal_lists_v1", "terminal_tabs_v1", "terminal_pty_v1", "terminal_focus_v1", "terminal_layout_title_v1", "settings_file_v1", "service_dispatch_v1", "lifecycle_events_v1"]},
   "services": {"exports": [{"name": "omd.workspace", "version": "1.0.0", "methods": {"register": {"input": "object", "output": "object"}, "unregister": {"input": "object", "output": "object"}, "panels": {"input": "null", "output": "object"}}}]},
   "settings_schema": {
     "type": "object",
     "properties": {
-      "keybinding": {"type": "object", "default": {}, "title": "Key overrides", "description": "Action to key, or <disabled>: panel_1 to panel_9, main, left, left_alt, right, right_alt, next, help, mode_next, mode_previous, tab_previous, tab_next, focus_shell"},
-      "layout": {"type": "object", "default": {}, "title": "Layout", "description": "panels (ids), side (left or right), ratio ([side, chat]) and portrait (columns below which panels stack)"}
+      "keybinding": {"type": "object", "default": {}, "title": "Key overrides", "description": "Action to key, or <disabled>: panel_1 to panel_9, main, left, left_alt, right, right_alt, next, help, mode_next, mode_previous, tab_previous, tab_next, panel_tab_previous, panel_tab_next, grow, shrink, focus_shell"},
+      "layout": {"type": "object", "default": {}, "title": "Layout", "description": "mode (tabs or stack), panels (ids), side (right or left), ratio ([panels, chat]) and portrait (columns below which the panels move below or above the chat)"}
     },
     "additionalProperties": false
   }
