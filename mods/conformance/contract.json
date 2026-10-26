@@ -40,6 +40,7 @@
     "capabilities:packages": {"status":"frozen","consumer":{"path":"mods/examples/package_panel/mod.json","snippet":"\"packages\""},"decision":"coordination.packages"},
     "capabilities:peers": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "capabilities:policy": {"status":"frozen","consumer":{"path":"mods/examples/admission_guard/mod.json","snippet":"\"policy\""},"decision":"coordination.admission"},
+    "capabilities:power": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "capabilities:pty": {"status":"frozen","consumer":{"path":"mods/examples/shell_pane/mod.json","snippet":"\"pty\""},"decision":"terminal.pty"},
     "capabilities:request_policy": {"status":"frozen","consumer":{"path":"mods/first-party/omd_privacy/mod.json","snippet":"\"request_policy\""},"decision":"kernel.final_request_policy"},
     "capabilities:services": {"status":"frozen","consumer":{"path":"mods/examples/service-consumer/mod.json","snippet":"\"services\""},"decision":"kernel.inter_mod_services"},
@@ -183,6 +184,8 @@
     "operations:packages.reload": {"status":"frozen","consumer":{"path":"mods/first-party/omd_mods/index.ts","snippet":"api.host.tryCall('packages.reload'"},"decision":"coordination.packages"},
     "operations:peers.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:peers.send": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
+    "operations:power.hold": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
+    "operations:power.release": {"status":"experimental","reason":"Added after 1.0.0 for power holds; experimental."},
     "operations:process.exchange": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.exchange'"},"decision":"tool.managed_process"},
     "operations:process.start": {"status":"frozen","consumer":{"path":"mods/examples/external_client/index.ts","snippet":"api.host.tryCall('process.start'"},"decision":"tool.managed_process"},
     "operations:process.status": {"status":"frozen","consumer":{"path":"mods/first-party/omd_lsp_sync/client.ts","snippet":"api.host.tryCall('process.status'"},"decision":"tool.managed_process"},
@@ -995,14 +998,14 @@
     {
       "id": "tool.builtins",
       "group": "tool",
-      "decision": "Built-in commands and collaboration modes",
-      "observe": "the registry snapshot lists hidden commands and disabled modes",
-      "alter": "`api.builtins` hides commands and disables modes",
+      "decision": "Built-in commands, collaboration modes, surfaces and Codex features",
+      "observe": "the registry snapshot lists hidden commands, disabled modes and surfaces, and removed features",
+      "alter": "`api.builtins` removes commands, modes, surfaces and Codex features (`features.remove`, `builtins_features_v1`)",
       "replace": null,
       "timing": "registered at activation; applied at the next idle boundary; restored on disable, unload or failure",
       "ownership": "mod: which built-ins; host: protected recovery commands and the default mode",
-      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is clamped to default at turn start with a warning",
-      "native": "native plugins cannot remove built-in commands or modes",
+      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is left out of `collaborationMode/list` and refused by `thread/settings/update` and `turn/start`, and a resumed thread holding it is clamped to default at turn start with a warning; a removed feature reads as off and leaves every feature list without writing config",
+      "native": "native plugins cannot remove built-in commands, modes or features",
       "covers": {
         "capabilities": [
           "builtins"
@@ -1956,6 +1959,30 @@
           "peer_send",
           "peer_receive"
         ]
+      }
+    },
+    {
+      "id": "coordination.power_holds",
+      "group": "coordination",
+      "decision": "Explicitly granted leases that keep the Mac awake",
+      "observe": null,
+      "alter": "hold an idle-sleep assertion, and with the deployed broker `SleepDisabled`, until released or expired (`power.hold`, `power.release`)",
+      "replace": null,
+      "timing": "immediate; a lease ends on release, expiry, session stop, host exit and broker or helper loss, and at the next host event after its mod is disabled, fails or changes",
+      "ownership": "user: the hash-bound, expiring and revocable `power` grant; host: per-mod leases and expiry; broker: reference-counted `SleepDisabled` restored to its previous value",
+      "limits": "lid-closed holds fail closed without the deployed broker; 60 s to 24 h per lease; 4 live leases per mod in a session",
+      "native": "upstream `features.prevent_idle_sleep` holds an idle assertion during a turn only",
+      "covers": {
+        "capabilities": [
+          "power"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "power.hold",
+          "power.release"
+        ],
+        "intercepts": []
       }
     },
     {

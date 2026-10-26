@@ -90,6 +90,10 @@ escalations, allow rules, full access, an external sandbox) can.
 `/var/run/dev.ohmydiff.broker.sock` only to peers whose kernel audit token resolves to a hardened-runtime binary
 whose code directory hash root has pinned. The broker asks the kernel for the running peer's signing status and
 code directory hash, never reading the executable, so binaries installed under a private home folder verify too.
+It also installs a root LaunchDaemon, `omd-broker power`, that answers only the broker's account on
+`/var/run/dev.ohmydiff.broker.power.sock` and does one thing: set `SleepDisabled` for [power holds](agents-and-sessions.md#power-holds-power_hold_v1)
+and put the previous value back when the last hold ends, the broker exits or it restarts after a crash, then sleep
+the Mac if its lid is closed.
 
 ### What the broker protects
 

@@ -572,6 +572,10 @@ fn publish(
     views.base(host, terminal, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
+    codex_features::set_removed(
+        &host.repository.to_string_lossy(),
+        builtins.removed_features(),
+    );
     let name = codex_omd::builtins_snapshot(&host.repository);
     // A missing snapshot reads as no controls, so a repository without any keeps no file.
     if builtins == codex_omd::BuiltinSnapshot::from_controls(&[]) {
@@ -637,6 +641,7 @@ impl Core {
             expansion::release_owner(self, &id);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_owned(&id, generation);
+                lead.session.power.release_owner(&id);
                 access::release_servers(lead, generation, Some(&id)).await;
             }
         }
@@ -678,6 +683,7 @@ impl Core {
             expansion::retain_sources(self, sources);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_stale(*generation);
+                lead.session.power.retain(sources);
                 self.services.cleanup_stale(*generation, sources).await;
                 access::release_servers(lead, *generation, None).await;
             }
@@ -2047,6 +2053,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
             expansion::release_thread(self, lead.thread);
             self.environment.clear(Some(&lead.thread.to_string()), None);
             lead.session.processes.cleanup();
+            lead.session.power.clear();
+            codex_features::set_removed(
+                &lead.host.repository.to_string_lossy(),
+                Default::default(),
+            );
             lead.session.access.cleanup();
             let _ = lead.session.persist_cost_capture();
         })

@@ -29,6 +29,7 @@ DEFAULT_ACTIVE = ("omd_auto_continue", "omd_idle_compact", "omd_inspector", "omd
                   "omd_plan_panel", "omd_plan_removal", "omd_statusline", "omd_tool_lines", "omd_update")
 PACKAGES = tuple(sorted(support.mods_lock()["packages"]))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods", "omd_update")
+EXPERIMENTAL_PACKAGES = ("omd_awake",)
 HOST_TOOLS = ("omd", "omd-contract")
 LAUNCHERS = ("codex", "omd-mod-author", "omd-package", *HOST_TOOLS, "omd-mod")
 UNINSTALL_JOURNAL = ".uninstall.json"
@@ -50,7 +51,9 @@ def invoke(*arguments):
 
 
 def profile_packages(profile):
-    return PACKAGES if profile == "full" else PLATFORM_PACKAGES
+    if profile == "full":
+        return tuple(identifier for identifier in PACKAGES if identifier not in EXPERIMENTAL_PACKAGES)
+    return PLATFORM_PACKAGES
 
 
 def link(source, target):
@@ -676,7 +679,7 @@ def install(args):
         sources.mkdir(exist_ok=True)
         trusted, enabled = [], []
         curated = {entry["id"]: entry for entry in json.loads((ROOT / "extensions/index.json").read_text())["packages"]
-                   if entry["extension_type"] == "mod" and entry["support_status"] in ("reviewed_candidate", "supported")}
+                   if entry["extension_type"] == "mod" and entry["support_status"] in ("experimental", "reviewed_candidate", "supported")}
         catalog = {identifier: [{"version": entry["version"], "integrity": entry["published"]["sha256"],
                                  "source": {"kind": "repository", "repository": entry["published"]["repository"],
                                             "revision": entry["published"]["revision"], "subdirectory": entry["source"]},
