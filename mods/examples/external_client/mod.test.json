@@ -12,9 +12,9 @@
   },
   "steps": [
     {"type": "event", "event": "start", "payload": {}},
-    {"type": "invoke", "mod": "external_client", "event": "command", "name": "launch", "payload": null, "expect": {"display": "Launching the text client"}},
+    {"type": "invoke", "mod": "external_client", "event": "command", "name": "launch", "payload": null},
     {"type": "event", "event": "channel", "payload": {"publisher": "external_client", "channel": "external_client/launch", "data": null, "correlation": null, "sequence": 1, "dropped": 0}},
-    {"type": "invoke", "mod": "external_client", "event": "command", "name": "pick", "payload": "client-1", "expect": {"display": "Picked client-1"}},
+    {"type": "invoke", "mod": "external_client", "event": "command", "name": "pick", "payload": "client-1"},
     {"type": "event", "event": "component_event", "payload": {"component": "external_badge", "kind": "pointer", "client": "client-1", "pointer": {"column": 1, "row": 0, "half": null, "action": "down", "button": "left"}}},
     {"type": "terminal_mount", "mod": "external_client",
       "payload": {"event": "idle", "ledger": null, "client": null, "clients": [

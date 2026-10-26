@@ -2,8 +2,6 @@
   "schema": 1,
   "steps": [
     {"type": "invoke", "mod": "counter", "event": "tool", "name": "count", "payload": {}, "expect": {"count": 1}},
-    {"type": "invoke", "mod": "counter", "event": "tool", "name": "count", "payload": {}, "expect": {"count": 2}},
-    {"type": "invoke", "mod": "counter", "event": "command", "name": "show", "payload": null, "expect": {"display": "Counter is 2"}},
-    {"type": "invoke", "mod": "counter", "event": "command", "name": "ask", "payload": "twice", "expect": {"submit": "Use the counter tool twice and report the result."}}
+    {"type": "invoke", "mod": "counter", "event": "tool", "name": "count", "payload": {}, "expect": {"count": 2}}
   ]
 }

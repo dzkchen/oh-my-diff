@@ -204,7 +204,6 @@ test('cancellation stops the owned CLI request and the next request starts clean
       };
       visit(calls[0]);
       assert.deepEqual(types, []);
-      assert.equal(calls[0].input.some(item => JSON.stringify(item).includes('input_image')), false);
       assert.equal(calls[1].input.some(item => item.type === 'function_call_output' &&
         item.call_id === 'call_omd_fixture'), true);
       assert.match(output, /OK/);

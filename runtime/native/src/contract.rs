@@ -437,9 +437,14 @@ impl SessionContract {
 
 pub(crate) fn current_candidate(host: &Host) -> Result<String, String> {
     let approved = host.config.approved_untracked.iter().cloned().collect();
-    codex_omd::capture_tracked(&host.repository, &approved, host.config.snapshot_bytes)
-        .and_then(|snapshot| snapshot.hash())
-        .map_err(|error| error.to_string())
+    codex_omd::hash_tracked(
+        &host.repository,
+        &approved,
+        host.config.snapshot_bytes,
+        |_| true,
+    )
+    .map(Option::unwrap_or_default)
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

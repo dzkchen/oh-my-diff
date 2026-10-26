@@ -24,7 +24,7 @@ experimental:
 - A frozen entry's `experimental_fields` (fields added after 1.0.0, such as the `workspace.watch` `key`) are
   experimental too.
 
-Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/COMPATIBILITY.md).
+Version and support rules are in [COMPATIBILITY.md](https://github.com/dzkchen/oh-my-diff/blob/main/mods/conformance/COMPATIBILITY.md).
 
 Examples of experimental surfaces (the conformance registry, `mods/conformance/contract.json`, is authoritative):
 
@@ -664,7 +664,10 @@ candidate_sha256}`. It freezes the current tracked and approved-untracked files,
 workspace (`agents` is also required). `expected` rejects a changed candidate.
 
 - References are bound to the caller, package source, generation and thread.
-- Each mod generation and thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB; a full host
+- A capture holds at most 128 MiB of file contents and paths (`snapshot_bytes` in the host config can lower it); a
+  larger workspace fails with `snapshot size limit`. Turn evidence then carries `workspace_sha256: null`, as it does
+  when a captured path is unreadable.
+- Each mod generation and thread holds at most 8 snapshots and 128 MiB, the host at most 32 and 256 MiB; a full host
   evicts the oldest snapshot of the largest holder.
 - Identical captures are deduplicated, and the registry clears on owner cleanup or session stop.
 - Snapshots do not authorize reading denied paths.
@@ -1352,11 +1355,12 @@ The runner adds small helpers to `api`; each calls the host operations named her
 none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
-- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, omd_version, model,
+  provider, route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
   `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
   `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
-  records in shared state, such as watch IDs, by it.
+  records in shared state, such as watch IDs, by it. `omd_version` (experimental) is the OMD release, as in the
+  terminal `identity`.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths
@@ -3849,10 +3853,10 @@ focused, scroll}]}`; a pane is `visible` while its header row was on screen in t
 
 ##### `terminal.panel`
 
-`terminal.panel {title, subtitle?, tabs?, items, search?, action}` (`terminal_panel_v1`) opens Codex's
+`terminal.panel {title, subtitle?, tabs?, items, search?, query?, selected?, close_args?, action}` (`terminal_panel_v1`) opens Codex's
 own list panel in the bottom pane, where `/config` lives. `title` is at most 128 bytes and `subtitle` at most 2,000
 bytes of plain text that keeps its line breaks. `tabs` lists up to 8 `{id, title}` (titles up to 32 bytes); with
-tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, kind, value?, options?}` with
+tabs, every item names its `tab`. `items` holds 1–200 `{id, tab?, label, description?, group?, keywords?, detail?, kind, value?, options?}` with
 unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descriptions up to 256 bytes:
 
 | `kind` | `value` | Space or Enter |
@@ -3864,8 +3868,18 @@ unique ids without spaces (up to 128 bytes), labels up to 128 bytes and descript
 
 Each change runs the caller's command `action.command` with `args`, the item id and the new value joined by spaces
 (`set bars true`), and the panel shows the new value at once. Up and Down move and repeat while held, Left and Right
-switch tabs, `/` searches labels, descriptions and tab titles across every tab when `search` is true, and Esc clears
-the search or closes the panel. A call with the title of the caller's open panel replaces it in place and keeps its
+switch tabs, `/` searches every tab when `search` is true: labels match fuzzily, best first, then items whose
+description, keywords or tab title contain the query; Esc clears the search or closes the panel. Outside a search, a letter moves to
+the next item whose label starts with it, `g` and `G` go to the first and last row, and Home, End, PgUp and PgDn work
+as in every Codex list.
+
+Experimental (`terminal_panel_navigation_v1`): an item's `group` (up to 32 bytes) gathers items under a header row
+with their count, in order of first appearance after any ungrouped items; Space or Enter on the header collapses or
+expands it. `keywords` (up to 256 bytes) is searched but not shown, and `detail` (up to 512 bytes) shows below the
+list while the item is selected. `query` (up to 128 bytes) opens the panel with that search, and `selected` names the
+item to select first. With `close_args`, closing the panel runs `action.command` with `close_args`, the selected item
+id (`-` on a header) and the search the user last chose an item with (cleared when the user ends a search without
+choosing one), joined by spaces, so a mod can reopen the panel where the user left it. A call with the title of the caller's open panel replaces it in place and keeps its
 tab (also across a tab-less panel such as a confirmation), selected item and search; another title opens a new panel
 over it, and Esc returns to the one below. Only the user's own commands and panel actions open panels
 (`host_operation_user_only` elsewhere). Returns `{shown: true}`.
@@ -3965,6 +3979,7 @@ focused control. Both are hidden while an approval or popup replaces the compose
 The `terminal` input carries a read-only `identity` (`terminal_identity_v1`):
 
 - `codex_version` from the installed build;
+- `omd_version`, the installed OMD release, such as `1.2.0` or `1.3.0-rc.2` (experimental);
 - `install_profile` (`full`, `platform_only`, `private`, `unknown` or `unreported`);
 - effective `mode` (`omd`);
 - installed, enabled, active and failed mod counts.
@@ -5428,7 +5443,9 @@ the `terminal` event input are unchanged.
 
 Without the broker, credential profiles, the trusted grant set, the task ledger and contract state are files in the
 mod store, so any process running as the user can read or change them, including an explicitly unsandboxed child,
-and `status.authority` reports `unprotected (same-user)`.
+and `status.authority` reports `unprotected (same-user)`. Agent commands that Codex runs in its sandbox can't reach
+the mod store, workspace leases, `host.json` protected paths or secret files; commands it runs without one (approved
+escalations, allow rules, full access, an external sandbox) can.
 
 #### The broker
 

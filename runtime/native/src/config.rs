@@ -109,8 +109,10 @@ fn worker_limits() -> WorkerLimits {
     }
 }
 
+pub(crate) const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
+
 fn snapshot_bytes() -> usize {
-    8 * 1024 * 1024
+    SNAPSHOT_BYTES
 }
 
 fn max_request_bytes() -> usize {
@@ -182,7 +184,7 @@ impl HostConfig {
                 .iter()
                 .any(|arg| arg.is_empty() || arg.len() > 1024)
             || self.routes.len() > 32
-            || self.snapshot_bytes == 0
+            || !(1..=SNAPSHOT_BYTES).contains(&self.snapshot_bytes)
             || self.max_request_bytes == 0
             || self.protected.len() > 32
             || self.approved_untracked.len() > 256

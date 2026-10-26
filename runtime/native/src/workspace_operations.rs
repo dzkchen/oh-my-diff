@@ -36,7 +36,7 @@ fn local_context(
     Ok(context)
 }
 
-pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
+pub(super) async fn workspace_identity(lead: &crate::Lead) -> Result<Option<String>, String> {
     let authority = WorkspaceAuthority::for_lead(lead).await?;
     let approved = lead
         .host
@@ -46,23 +46,25 @@ pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::
         .cloned()
         .collect();
     let limit = lead.host.config.snapshot_bytes;
-    tokio::task::spawn_blocking(move || {
-        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
-            .map_err(|error| error.to_string())?;
-        if snapshot
-            .files
-            .keys()
-            .any(|path| !authority.readable(&authority.repository.join(path)))
-        {
-            return Err("workspace_snapshot_permission_denied".to_owned());
-        }
-        Ok(snapshot)
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    tokio::task::spawn_blocking(move || authority.identity(&approved, limit))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 impl WorkspaceAuthority {
+    fn identity(
+        &self,
+        approved: &BTreeSet<String>,
+        limit: usize,
+    ) -> Result<Option<String>, String> {
+        match codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
+            self.readable(&self.repository.join(path))
+        }) {
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
+            result => result.map_err(|error| error.to_string()),
+        }
+    }
+
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
         let environments = call
             .environments
@@ -808,5 +810,31 @@ mod tests {
             std::fs::read_to_string(root.join("index.ts")).unwrap(),
             "export * from './new';\n"
         );
+    }
+
+    #[test]
+    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(root.join("a.py"), "source\n").unwrap();
+        let mut approved = BTreeSet::from(["a.py".to_owned()]);
+        let readable = authority(root.clone(), FileSystemAccessMode::Read);
+        assert!(readable.identity(&approved, 1024).unwrap().is_some());
+        assert_eq!(readable.identity(&approved, 4), Ok(None));
+        assert_eq!(
+            authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
+            Ok(None)
+        );
+        std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
+        approved.insert("link".to_owned());
+        assert!(readable.identity(&approved, 1024).is_err());
     }
 }

@@ -354,8 +354,11 @@ async fn session_info_reports_the_threads_current_cwd_and_model() {
     let manager = attach_thread(&mut fixture).await;
     let repository = fixture.lead.host.repository.clone();
     let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
-    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(info["omd_version"], codex_omd::OMD_HOST_RELEASE);
+    assert_eq!(cwd(info), Some(repository.clone()));
     let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
     std::fs::create_dir_all(&sub).unwrap();
     let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
@@ -4355,4 +4358,49 @@ fn tool_batch_merges_opt_into_per_call_success_explicitly() {
     assert!(!merge(json!({"success_per_call": false})).unwrap()[0].success_per_call);
     assert!(merge(json!({"success_per_call": "yes"})).is_err());
     assert!(merge(json!({"other": true})).is_err());
+}
+
+#[tokio::test]
+async fn thread_config_keeps_the_users_sandbox() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    let profile = config.permissions.effective_permission_profile();
+    let environment = config.permissions.shell_environment_policy.r#set.clone();
+    codex_extension_api::ConfigContributor::prepare_thread_config(
+        &mods(&fixture.core),
+        &mut config,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(config.permissions.effective_permission_profile(), profile);
+    assert_eq!(
+        config.permissions.shell_environment_policy.r#set,
+        environment
+    );
+    assert_eq!(
+        config.permissions.sandbox_denied_paths,
+        fixture
+            .lead
+            .host
+            .protected_paths()
+            .iter()
+            .map(
+                |path| codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
+                    .unwrap()
+            )
+            .collect::<Vec<_>>()
+    );
 }

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CHANGELOG = ROOT / "changelog.json"
+CHANGELOG = ROOT / "release/changelog.json"
 MARKDOWN = ROOT / "CHANGELOG.md"
 LOCK = ROOT / "runtime/release.lock.json"
 REFERENCE = ROOT / "mods/REFERENCE.md"
@@ -42,7 +42,7 @@ def sections(entry):
 
 def render(entries):
     lines = ["# Changelog", "",
-             "Generated from [`changelog.json`](changelog.json) by `mise run release`; the Oh My Diff site and "
+             "Generated from [`release/changelog.json`](release/changelog.json) by `mise run release`; the Oh My Diff site and "
              "GitHub Releases use the same entries. Entries before the first release are daily development notes.", ""]
     for entry in entries:
         lines += [heading(entry), "", entry["summary"], "", *sections(entry)]
@@ -52,7 +52,7 @@ def render(entries):
 def notes(entries, version):
     entry = next((item for item in entries if item.get("version") == version), None)
     if entry is None:
-        raise SystemExit(f"changelog.json has no {version} entry")
+        raise SystemExit(f"release/changelog.json has no {version} entry")
     channel = " --channel prerelease" if "-" in version else ""
     return "\n".join([entry["summary"], "", *sections(entry),
                       "```sh",
@@ -126,7 +126,7 @@ def check(version=None):
     if [entry["date"] for entry in entries] != sorted((entry["date"] for entry in entries), reverse=True):
         problems.append("entries must be newest first")
     if MARKDOWN.read_text() != render(entries):
-        problems.append("CHANGELOG.md is stale; regenerate it from changelog.json with `python3 scripts/release.py render`")
+        problems.append("CHANGELOG.md is stale; regenerate it from release/changelog.json with `python3 scripts/release.py render`")
     if version is not None:
         if not VERSION.fullmatch(version):
             problems.append(f"{version} is not vMAJOR.MINOR.PATCH or -rc.N")
@@ -154,7 +154,7 @@ def changes(commits, existing=()):
     grouped = {label: [] for label in LABELS}
     for section in existing:
         grouped[section["label"]] += section["items"]
-    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "cliff.toml"))
+    context = json.loads(run("git", "cliff", "--context", "--config", ROOT / "release/cliff.toml"))
     for item in (commit for release in context for commit in release["commits"]):
         line = item["message"].splitlines()[0]
         text = line[:1].upper() + line[1:]
@@ -209,7 +209,7 @@ def prepare(version, summary):
     run("git", "push", "--set-upstream", "origin", branch)
     run("gh", "pr", "create", "--repo", REPOSITORY, "--base", "main", "--head", branch,
         "--title", f"chore(release): {version}",
-        "--body", "Review and edit the generated `changelog.json` entry, then run `python3 scripts/release.py render`. "
+        "--body", "Review and edit the generated `release/changelog.json` entry, then run `python3 scripts/release.py render`. "
                   f"Run `mise run release -- {version}` again to cover changes merged to main since, and once more after "
                   "this merges to tag it.", capture=False)
 
@@ -252,7 +252,7 @@ def main():
     prepare_parser.add_argument("--summary", help="one-sentence release summary")
     check_parser = commands.add_parser("check", help="verify changelog, links and, with VERSION, release versions")
     check_parser.add_argument("version", nargs="?")
-    commands.add_parser("render", help="regenerate CHANGELOG.md from changelog.json")
+    commands.add_parser("render", help="regenerate CHANGELOG.md from release/changelog.json")
     commands.add_parser("notes").add_argument("version")
     rollback_parser = commands.add_parser("rollback", help="withdraw a published release")
     rollback_parser.add_argument("version")
