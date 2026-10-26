@@ -57038,10 +57038,10 @@ index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b636
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491c35944cb
+index 0000000000000000000000000000000000000000..07fe3e11a50b9f67da065401c5ac99940d441945
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/config.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,266 @@
 +use crate::accounting::Rates;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -57153,8 +57153,10 @@ index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491
 +    }
 +}
 +
++pub(crate) const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
++
 +fn snapshot_bytes() -> usize {
-+    8 * 1024 * 1024
++    SNAPSHOT_BYTES
 +}
 +
 +fn max_request_bytes() -> usize {
@@ -57226,7 +57228,7 @@ index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491
 +                .iter()
 +                .any(|arg| arg.is_empty() || arg.len() > 1024)
 +            || self.routes.len() > 32
-+            || self.snapshot_bytes == 0
++            || !(1..=SNAPSHOT_BYTES).contains(&self.snapshot_bytes)
 +            || self.max_request_bytes == 0
 +            || self.protected.len() > 32
 +            || self.approved_untracked.len() > 256
@@ -69998,10 +70000,10 @@ index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/evidence.rs b/codex-rs/ext/omd/src/mods/evidence.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82e034befd4b72a2f1c0cfe36cdf3d59f736ce1b
+index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f44b5488ef
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/evidence.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,241 @@
 +use super::*;
 +
 +pub(super) struct Cursor {
@@ -70171,10 +70173,7 @@ index 0000000000000000000000000000000000000000..82e034befd4b72a2f1c0cfe36cdf3d59
 +    .map_err(|e| e.to_string())?;
 +    packet = codex_omd::turn_evidence::combine(cursor.prefix.clone(), packet)
 +        .map_err(|error| error.to_string())?;
-+    let sha = crate::workspace_operations::workspace_snapshot(lead)
-+        .await?
-+        .hash()
-+        .map_err(|e| e.to_string())?;
++    let sha = crate::workspace_operations::workspace_identity(lead).await?;
 +    packet["workspace_sha256"] = json!(sha);
 +    packet["thread_id"] = json!(lead.thread.to_string());
 +    packet["outcome"] = json!(outcome);
@@ -79988,10 +79987,10 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5f9f31ecb
+index 0000000000000000000000000000000000000000..39ec5eda3d3727f923c4c3065095216b85fcc7f5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1071 @@
+@@ -0,0 +1,1073 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -80001,6 +80000,8 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +use std::collections::BTreeSet;
 +use std::path::Path;
 +use std::time::Duration;
++
++const SERVICE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 +
 +#[derive(Clone, Deserialize)]
 +#[serde(deny_unknown_fields)]
@@ -80799,7 +80800,7 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +            return Err("service_argument_limit".into());
 +        }
 +        let task = lead.session.task.clone();
-+        let output_bytes = host.config.snapshot_bytes;
++        let output_bytes = SERVICE_OUTPUT_BYTES;
 +        let timeout = lead
 +            .session
 +            .task
@@ -81065,17 +81066,17 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4945b07efad6652f288c7cf503f5519cf8b40e5d
+index 0000000000000000000000000000000000000000..e7dbc063f7e88b37f0c34af984a31dbbf1139363
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/snapshots.rs
 @@ -0,0 +1,669 @@
 +use super::*;
++use crate::config::SNAPSHOT_BYTES;
 +use codex_omd::Snapshot;
 +use codex_omd::resource_data::ResourceRef;
 +use std::collections::BTreeSet;
 +
 +const SNAPSHOT_LIMIT: usize = 8;
-+const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 +const SNAPSHOT_TOTAL_LIMIT: usize = 32;
 +const SNAPSHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 +const EXECUTION_LIMIT: usize = 64;
@@ -82197,10 +82198,10 @@ index 0000000000000000000000000000000000000000..d8f561fd4086b22febedcc8955c07359
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed6e8cf002
+index 0000000000000000000000000000000000000000..6b5eeb2780a66045e378dd052fc53207078e25f9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,812 @@
+@@ -0,0 +1,847 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -82239,7 +82240,7 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +    Ok(context)
 +}
 +
-+pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
++pub(super) async fn workspace_identity(lead: &crate::Lead) -> Result<Option<String>, String> {
 +    let authority = WorkspaceAuthority::for_lead(lead).await?;
 +    let approved = lead
 +        .host
@@ -82249,23 +82250,32 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +        .cloned()
 +        .collect();
 +    let limit = lead.host.config.snapshot_bytes;
-+    tokio::task::spawn_blocking(move || {
-+        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
-+            .map_err(|error| error.to_string())?;
-+        if snapshot
-+            .files
-+            .keys()
-+            .any(|path| !authority.readable(&authority.repository.join(path)))
-+        {
-+            return Err("workspace_snapshot_permission_denied".to_owned());
-+        }
-+        Ok(snapshot)
-+    })
-+    .await
-+    .map_err(|error| error.to_string())?
++    tokio::task::spawn_blocking(move || authority.identity(&approved, limit))
++        .await
++        .map_err(|error| error.to_string())?
 +}
 +
 +impl WorkspaceAuthority {
++    fn identity(
++        &self,
++        approved: &BTreeSet<String>,
++        limit: usize,
++    ) -> Result<Option<String>, String> {
++        let snapshot = match codex_omd::capture_tracked(&self.repository, approved, limit) {
++            Ok(snapshot) => snapshot,
++            Err(error) if error.to_string() == "snapshot size limit" => return Ok(None),
++            Err(error) => return Err(error.to_string()),
++        };
++        if snapshot
++            .files
++            .keys()
++            .any(|path| !self.readable(&self.repository.join(path)))
++        {
++            return Ok(None);
++        }
++        snapshot.hash().map(Some).map_err(|error| error.to_string())
++    }
++
 +    pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
 +        let environments = call
 +            .environments
@@ -83011,6 +83021,32 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +            std::fs::read_to_string(root.join("index.ts")).unwrap(),
 +            "export * from './new';\n"
 +        );
++    }
++
++    #[test]
++    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        assert!(
++            std::process::Command::new("git")
++                .args(["init", "--quiet"])
++                .current_dir(&root)
++                .status()
++                .unwrap()
++                .success()
++        );
++        std::fs::write(root.join("a.py"), "source\n").unwrap();
++        let mut approved = BTreeSet::from(["a.py".to_owned()]);
++        let readable = authority(root.clone(), FileSystemAccessMode::Read);
++        assert!(readable.identity(&approved, 1024).unwrap().is_some());
++        assert_eq!(readable.identity(&approved, 4), Ok(None));
++        assert_eq!(
++            authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
++            Ok(None)
++        );
++        std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
++        approved.insert("link".to_owned());
++        assert!(readable.identity(&approved, 1024).is_err());
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs

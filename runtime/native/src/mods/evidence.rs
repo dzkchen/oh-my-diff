@@ -167,10 +167,7 @@ pub(super) async fn finish(
     .map_err(|e| e.to_string())?;
     packet = codex_omd::turn_evidence::combine(cursor.prefix.clone(), packet)
         .map_err(|error| error.to_string())?;
-    let sha = crate::workspace_operations::workspace_snapshot(lead)
-        .await?
-        .hash()
-        .map_err(|e| e.to_string())?;
+    let sha = crate::workspace_operations::workspace_identity(lead).await?;
     packet["workspace_sha256"] = json!(sha);
     packet["thread_id"] = json!(lead.thread.to_string());
     packet["outcome"] = json!(outcome);

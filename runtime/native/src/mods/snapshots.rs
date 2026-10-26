@@ -1,10 +1,10 @@
 use super::*;
+use crate::config::SNAPSHOT_BYTES;
 use codex_omd::Snapshot;
 use codex_omd::resource_data::ResourceRef;
 use std::collections::BTreeSet;
 
 const SNAPSHOT_LIMIT: usize = 8;
-const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 const SNAPSHOT_TOTAL_LIMIT: usize = 32;
 const SNAPSHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 const EXECUTION_LIMIT: usize = 64;
