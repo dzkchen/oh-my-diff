@@ -1317,7 +1317,7 @@ impl Agents {
         if !active() {
             return Err("snapshot_cancelled".into());
         }
-        let digest = snapshot.hash().map_err(|e| e.to_string())?;
+        let digest = snapshot.hash();
         if input
             .expected
             .as_ref()
@@ -1423,7 +1423,7 @@ impl Agents {
         if changed.len() > 128 {
             return Err("isolated_worker_change_limit".into());
         }
-        let candidate_sha256 = proposed.hash().map_err(|e| e.to_string())?;
+        let candidate_sha256 = proposed.hash();
         let outcome = operations::gate(
             core,
             lead,
@@ -1658,7 +1658,7 @@ impl Agents {
                             let parent = parent_config(lead).await?;
                             let (_, proposed) = candidate(lead, &parent, &workspace.root).await?;
                             agent.candidate = Some((
-                                proposed.hash().map_err(|e| e.to_string())?,
+                                proposed.hash(),
                                 workspace
                                     .base
                                     .changed_paths(&proposed)

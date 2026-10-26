@@ -18099,7 +18099,7 @@ index dab5a6062feac96c18191492443aee46f0742369..d4329dd8326f04cec4a3997cae909566
 +    }
  }
 diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
-index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..5f00ca6e654c6321e1851cb067d15e10145b401b 100644
+index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..a3ff9e2a4dcd233fe9bb2e3d9bd7bfee05d46f50 100644
 --- a/codex-rs/app-server/src/request_processors/turn_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
 @@ -135,6 +135,7 @@ struct ThreadSettingsBuildParams {
@@ -18126,22 +18126,7 @@ index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..5f00ca6e654c6321e1851cb067d15e10
              service_tier,
              effort,
              summary,
-@@ -824,6 +827,14 @@ impl TurnRequestProcessor {
-             ));
-         }
-
-+        if let Some(mode) = collaboration_mode.as_ref().map(|mode| mode.mode)
-+            && self.thread_manager.collaboration_mode_disabled(mode)
-+        {
-+            return Err(invalid_request(format!(
-+                "the {} collaboration mode is disabled by an installed mod",
-+                mode.display_name()
-+            )));
-+        }
-         let collaboration_mode =
-             collaboration_mode.map(|mode| self.normalize_collaboration_mode(mode));
-         let has_environment_override = environment_requests.is_some();
-@@ -843,6 +854,7 @@ impl TurnRequestProcessor {
+@@ -843,6 +846,7 @@ impl TurnRequestProcessor {
              || sandbox_policy.is_some()
              || permissions.is_some()
              || model.is_some()
@@ -18149,7 +18134,7 @@ index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..5f00ca6e654c6321e1851cb067d15e10
              || service_tier.is_some()
              || effort.is_some()
              || summary.is_some()
-@@ -906,6 +918,7 @@ impl TurnRequestProcessor {
+@@ -906,6 +910,7 @@ impl TurnRequestProcessor {
                      profile_workspace_roots: profile_workspace_roots.clone(),
                      windows_sandbox_level: None,
                      model: model.clone(),
@@ -18157,7 +18142,7 @@ index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..5f00ca6e654c6321e1851cb067d15e10
                      effort: effort.clone(),
                      summary,
                      service_tier: service_tier.clone(),
-@@ -930,6 +943,7 @@ impl TurnRequestProcessor {
+@@ -930,6 +935,7 @@ impl TurnRequestProcessor {
              active_permission_profile,
              windows_sandbox_level: None,
              model,
@@ -18165,7 +18150,7 @@ index 1ce59c4cf4a0dcfd6087379e35d0532e5021a36b..5f00ca6e654c6321e1851cb067d15e10
              effort,
              summary,
              service_tier,
-@@ -967,6 +981,7 @@ impl TurnRequestProcessor {
+@@ -967,6 +973,7 @@ impl TurnRequestProcessor {
                      sandbox_policy: params.sandbox_policy,
                      permissions: params.permissions,
                      model: params.model,
@@ -21375,7 +21360,7 @@ index 3d97b6864ac824fb3a559914bd0322f5b44f014c..a010f3166a9ef071c5692dafcc6546c6
          return Err(CodexErr::TurnAborted);
      }
 diff --git a/codex-rs/core/src/config/managed_features.rs b/codex-rs/core/src/config/managed_features.rs
-index dc57ca9216fcede9ddf2b8a08144c98b6006db80..8c25da4a5d0b0dee3138d5c209bf161ecb85044c 100644
+index dc57ca9216fcede9ddf2b8a08144c98b6006db80..52cf4306f428f2aaf54482cfc8685e3591c57637 100644
 --- a/codex-rs/core/src/config/managed_features.rs
 +++ b/codex-rs/core/src/config/managed_features.rs
 @@ -127,7 +127,7 @@ impl ManagedFeatures {
@@ -21387,27 +21372,38 @@ index dc57ca9216fcede9ddf2b8a08144c98b6006db80..8c25da4a5d0b0dee3138d5c209bf161e
              if let Some(enabled) = next.pinned_features.get(&feature) {
                  refreshed.pinned_features.insert(feature, *enabled);
              } else {
-@@ -199,13 +199,13 @@ fn validate_pinned_features_constraint(
-     };
-     let allowed = feature_requirements_display(pinned_features);
+@@ -184,6 +184,9 @@ fn normalize_candidate(
+
      for (feature, enabled) in pinned_features {
--        if normalized_features.enabled(*feature) != *enabled {
-+        if normalized_features.configured(*feature) != *enabled {
-             return Err(ConstraintError::InvalidValue {
-                 field_name: "features",
-                 candidate: format!(
-                     "{}={}",
-                     feature.key(),
--                    normalized_features.enabled(*feature)
-+                    normalized_features.configured(*feature)
-                 ),
-                 allowed,
-                 requirement_source: source.clone(),
+         candidate.set_enabled(*feature, *enabled);
++        if *enabled {
++            candidate.pin(*feature);
++        }
+     }
+     candidate.normalize_dependencies();
+     candidate
 diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
-index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a359504c6c125 100644
+index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..2cf69d4faccebfa5e0816b27edee2ecc1e28e149 100644
 --- a/codex-rs/core/src/config/mod.rs
 +++ b/codex-rs/core/src/config/mod.rs
-@@ -1217,6 +1217,7 @@ pub struct CodeModeConfig {
+@@ -348,6 +348,8 @@ pub struct Permissions {
+     pub allow_login_shell: bool,
+     /// Policy used to build process environments for shell/unified exec.
+     pub shell_environment_policy: ShellEnvironmentPolicy,
++    /// Paths a sandboxed process may not access, added by host extensions.
++    pub sandbox_denied_paths: Vec<AbsolutePathBuf>,
+     /// Effective Windows sandbox mode derived from `[windows].sandbox` or
+     /// legacy feature keys.
+     pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
+@@ -372,6 +374,7 @@ impl Permissions {
+             network: None,
+             allow_login_shell: true,
+             shell_environment_policy: ShellEnvironmentPolicy::default(),
++            sandbox_denied_paths: Vec::new(),
+             windows_sandbox_mode: None,
+             windows_sandbox_type: SandboxType::None,
+         })
+@@ -1217,6 +1220,7 @@ pub struct CodeModeConfig {
      pub direct_only_tool_namespaces: Vec<String>,
      /// Keep code mode fail-closed when the standalone host is unavailable.
      pub disable_in_process_fallback: bool,
@@ -21415,7 +21411,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
  }
 
  impl Default for CodeModeConfig {
-@@ -1228,6 +1229,7 @@ impl Default for CodeModeConfig {
+@@ -1228,6 +1232,7 @@ impl Default for CodeModeConfig {
              excluded_tool_namespaces: Vec::new(),
              direct_only_tool_namespaces: Vec::new(),
              disable_in_process_fallback: false,
@@ -21423,7 +21419,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
          }
      }
  }
-@@ -2832,6 +2834,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
+@@ -2832,6 +2837,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
          disable_in_process_fallback: host
              .and_then(|config| config.disable_in_process_fallback)
              .unwrap_or_default(),
@@ -21433,7 +21429,7 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
      }
  }
 
-@@ -3971,6 +3976,7 @@ impl Config {
+@@ -3971,6 +3979,7 @@ impl Config {
 
          let model_providers =
              merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
@@ -21441,6 +21437,14 @@ index 3f6c1cc9e14c5d78542cdd99d6daa97e1e9957c5..ee8e1df6fecda307fe2db1fe037a3595
                  .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
          let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
+@@ -4478,6 +4487,7 @@ impl Config {
+                 network,
+                 allow_login_shell,
+                 shell_environment_policy,
++                sandbox_denied_paths: Vec::new(),
+                 windows_sandbox_mode,
+                 windows_sandbox_type,
+             },
 diff --git a/codex-rs/core/src/config/runtime_refresh.rs b/codex-rs/core/src/config/runtime_refresh.rs
 index a57a5d5aa9e25b5028e65b2a8850c145405eeea4..1afce5931d9b102d4d9f8291ecf7aaddc54e94a3 100644
 --- a/codex-rs/core/src/config/runtime_refresh.rs
@@ -21550,6 +21554,53 @@ index f39be3fb41fee1371036f393d5d1f62057225b60..09207670d42c6c775b213d4a9099c320
          // all function/tool calls must have a corresponding output
          normalize::ensure_call_outputs_present(items);
 
+diff --git a/codex-rs/core/src/environment_selection.rs b/codex-rs/core/src/environment_selection.rs
+index 1d81033895ef59871f995cd5efd0a893e3d7ecd3..c145ece80313533c340d88bf650a93817c38bf30 100644
+--- a/codex-rs/core/src/environment_selection.rs
++++ b/codex-rs/core/src/environment_selection.rs
+@@ -218,6 +218,7 @@ pub(crate) struct StartingTurnEnvironment {
+     resolution: TurnEnvironmentResolution,
+     environment: Arc<Environment>,
+     owner_config_result: Option<PendingConfiguration>,
++    sandbox_denied_paths: Vec<AbsolutePathBuf>,
+ }
+
+ /// Uses the current thread defaults when requested and records who owns later config updates.
+@@ -1037,9 +1038,8 @@ impl ThreadEnvironments {
+
+     fn snapshot_state(state: &Mutex<ThreadEnvironmentsState>) -> TurnEnvironmentSnapshot {
+         // Keep the startup results, but not the senders that would keep removed Pending work alive.
++        let state = state.lock().unwrap_or_else(PoisonError::into_inner);
+         let environments = state
+-            .lock()
+-            .unwrap_or_else(PoisonError::into_inner)
+             .environments
+             .iter()
+             .map(|environment| {
+@@ -1054,6 +1054,7 @@ impl ThreadEnvironments {
+                             .as_ref()
+                             .map(pending_configuration)
+                     }),
++                    sandbox_denied_paths: state.thread_defaults.sandbox_denied_paths.clone(),
+                 })
+             })
+             .collect();
+@@ -1149,6 +1150,7 @@ impl TurnEnvironmentState {
+                     environment.shell_snapshot_v2_supported;
+                 turn_environment.user_home_dir = environment.user_home_dir;
+                 turn_environment.temporary_directories = environment.temporary_directories;
++                turn_environment.sandbox_denied_paths = starting.sandbox_denied_paths;
+                 Self::Ready(turn_environment)
+             }
+             Some(Err(err)) => {
+@@ -2583,6 +2585,7 @@ url = "ws://127.0.0.1:8765"
+                     config: EnvironmentConfigState::Ready(test_environment_config()),
+                 },
+                 config_origin: EnvironmentConfigOrigin::Thread,
++                sandbox_denied_paths: Vec::new(),
+                 resolution: futures::future::pending().boxed().shared(),
+                 environment: Arc::new(
+                     Environment::create_for_tests(/*exec_server_url*/ None)
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
 index f72396e38320e838e21b6a9ceaaa433ada62f0c0..afe29a5047a79c99f4257fe6ef33f6dc3b1d6836 100644
 --- a/codex-rs/core/src/exec.rs
@@ -22353,10 +22404,44 @@ index 08a99f81dc219661c71fc6d2d0c10caa4bd2cc7e..85d77ca3b41c847bc789e66d18ad5a1d
                      warn!("failed to refresh {description} config: {err}");
                  }
 diff --git a/codex-rs/core/src/session/environment.rs b/codex-rs/core/src/session/environment.rs
-index 8c9e75111dc7f2a1f2c7333400cfbe00ee09e58d..8538e3806145ee78e904c21e88a7f78f9d43240e 100644
+index 8c9e75111dc7f2a1f2c7333400cfbe00ee09e58d..6ea258ca3f65e225ffef2a5a8222de0233f77697 100644
 --- a/codex-rs/core/src/session/environment.rs
 +++ b/codex-rs/core/src/session/environment.rs
-@@ -170,7 +170,47 @@ impl Session {
+@@ -13,6 +13,7 @@ use codex_protocol::protocol::EnvironmentConfig;
+ use codex_protocol::protocol::EnvironmentConfigState;
+ use codex_protocol::protocol::TurnEnvironmentSelection;
+ use codex_protocol::sandbox::SandboxType;
++use codex_utils_absolute_path::AbsolutePathBuf;
+
+ use crate::config::ConstraintError;
+ use crate::config::ConstraintResult;
+@@ -26,6 +27,8 @@ use crate::session::session::SessionSettingsUpdate;
+ #[derive(Clone)]
+ pub(crate) struct ThreadEnvironmentDefaults {
+     pub(crate) common: EnvironmentConfig,
++    /// Host-added paths denied to sandboxed processes; fixed for the thread.
++    pub(crate) sandbox_denied_paths: Vec<AbsolutePathBuf>,
+     // Chosen once when the session starts; it does not apply to remote environments.
+     local_windows_sandbox_type: SandboxType,
+ }
+@@ -34,10 +37,16 @@ impl ThreadEnvironmentDefaults {
+     pub(crate) fn new(common: EnvironmentConfig, local_windows_sandbox_type: SandboxType) -> Self {
+         Self {
+             common,
++            sandbox_denied_paths: Vec::new(),
+             local_windows_sandbox_type,
+         }
+     }
+
++    pub(crate) fn with_sandbox_denied_paths(mut self, paths: Vec<AbsolutePathBuf>) -> Self {
++        self.sandbox_denied_paths = paths;
++        self
++    }
++
+     pub(crate) fn for_selection(&self, selection: &TurnEnvironmentSelection) -> EnvironmentConfig {
+         let mut config = self.common.clone();
+         config.workspace_roots = selection.workspace_roots.clone();
+@@ -170,7 +179,47 @@ impl Session {
              ensure_configs_stay_owner_provided(current_environments, &environments.environments)?;
          }
 
@@ -22804,7 +22889,7 @@ index 95301d6bc3575643fc1349c4f5813f3b9fd7b7b3..889bea5473815f1be9e261290982d2b2
 +    }
 +}
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0e041588b 100644
+index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..2f6163e5c40712ecc6f15b3ca75cd10cdf2b1e82 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -261,6 +261,7 @@ mod mcp_prewarm;
@@ -23027,7 +23112,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
              let mcp_inputs_changed = self.mcp_inputs_differ(&state.session_configuration, &updated);
              if mcp_inputs_changed {
                  self.mark_mcp_runtime_dirty();
-@@ -2130,6 +2307,24 @@ impl Session {
+@@ -2130,6 +2307,27 @@ impl Session {
          self.resume_config_snapshot().await.0
      }
 
@@ -23035,6 +23120,9 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
 +        &self,
 +        mut snapshot: ThreadConfigSnapshot,
 +    ) -> ThreadConfigSnapshot {
++        if snapshot.collaboration_mode.mode == codex_protocol::config_types::ModeKind::Default {
++            return snapshot;
++        }
 +        let disabled = self
 +            .services
 +            .extensions
@@ -23052,7 +23140,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
      pub(crate) async fn resume_config_snapshot(&self) -> (ThreadConfigSnapshot, Option<String>) {
          let configuration = self.state.lock().await.session_configuration.clone();
          let selected_service_tier = configuration.step_settings.service_tier.clone();
-@@ -3687,6 +3882,10 @@ impl Session {
+@@ -3687,6 +3885,10 @@ impl Session {
          let policy: codex_utils_output_truncation::TruncationPolicy =
              model_info.truncation_policy.into();
          for envelope in &mut items {
@@ -23063,7 +23151,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
              if matches!(
                  envelope.item,
                  ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
-@@ -3979,6 +4178,7 @@ impl Session {
+@@ -3979,6 +4181,7 @@ impl Session {
          let inherited_environments = inherited_environments.unwrap_or_else(|| environments.clone());
          // Keep both preparation futures off caller stacks while they are live together.
          let load_agents_md = Box::pin(async {
@@ -23071,7 +23159,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
              let (loaded_agents_md, warnings) = self
                  .services
                  .agents_md_manager
-@@ -3986,6 +4186,27 @@ impl Session {
+@@ -3986,6 +4189,27 @@ impl Session {
                  .or_cancel(cancellation_token)
                  .await?;
              self.emit_instruction_warnings(warnings).await;
@@ -23099,7 +23187,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
              loaded_agents_md
          });
          let prepare_tools = Box::pin(async {
-@@ -4306,10 +4527,19 @@ impl Session {
+@@ -4306,10 +4530,19 @@ impl Session {
                  ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
              )
          }) {
@@ -23123,7 +23211,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
          }
          // Wait for accepted updates to finish persisting, then keep later updates from
          // overtaking the current settings snapshot while its checkpoint is written.
-@@ -4525,6 +4755,10 @@ impl Session {
+@@ -4525,6 +4758,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
 
@@ -23134,7 +23222,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4534,6 +4768,7 @@ impl Session {
+@@ -4534,6 +4771,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23142,7 +23230,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
                  })
                  .await
              {
-@@ -4622,6 +4857,10 @@ impl Session {
+@@ -4622,6 +4860,10 @@ impl Session {
                  }
              }
          }
@@ -23153,7 +23241,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4631,6 +4870,7 @@ impl Session {
+@@ -4631,6 +4873,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -23161,7 +23249,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
                  })
                  .await
              {
-@@ -4826,7 +5066,7 @@ impl Session {
+@@ -4826,7 +5069,7 @@ impl Session {
      #[tracing::instrument(level = "trace", skip_all, fields(item_count = items.len()))]
      pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) -> bool {
          if let Some(live_thread) = self.live_thread()
@@ -23170,7 +23258,7 @@ index 96cfaa19707c13ed0bd5e7c7d3ab9f7c908226ca..627d7520352c9cbf9ca9ee03f53f1cb0
          {
              error!("failed to record rollout items: {e:#}");
              return false;
-@@ -4836,7 +5076,12 @@ impl Session {
+@@ -4836,7 +5079,12 @@ impl Session {
 
      pub(crate) async fn clone_history(&self) -> ContextManager {
          let state = self.state.lock().await;
@@ -23358,7 +23446,7 @@ index 86430a174fb2120f166b9afe721acbae395a339b..24db2a7488c77f7cd88f6d8bba29478d
              comp_hash: None,
              cyber_access_program: None,
 diff --git a/codex-rs/core/src/session/session.rs b/codex-rs/core/src/session/session.rs
-index e3bcb2befbc3a71f665096f75c1a169085eb9c95..a1f583a7edcc2751891cef8bb0c1cbf56f3866a2 100644
+index e3bcb2befbc3a71f665096f75c1a169085eb9c95..243b23c2281718ed7160431ebc6a96704a6f4dc2 100644
 --- a/codex-rs/core/src/session/session.rs
 +++ b/codex-rs/core/src/session/session.rs
 @@ -58,6 +58,9 @@ type McpToolApprovalMetadataMap =
@@ -23441,7 +23529,17 @@ index e3bcb2befbc3a71f665096f75c1a169085eb9c95..a1f583a7edcc2751891cef8bb0c1cbf5
          // Kick off independent async setup tasks in parallel to reduce startup latency.
          //
          // - initialize thread persistence with new or resumed session info
-@@ -1719,6 +1757,9 @@ impl Session {
+@@ -1498,7 +1536,8 @@ impl Session {
+                 ThreadEnvironmentDefaults::new(
+                     session_configuration.inferred_environment_config(),
+                     session_configuration.windows_sandbox_type,
+-                ),
++                )
++                .with_sandbox_denied_paths(config.permissions.sandbox_denied_paths.clone()),
+                 shell_snapshot,
+                 inherited_environments.clone(),
+                 config.features.enabled(Feature::DeferredExecutor),
+@@ -1719,6 +1758,9 @@ impl Session {
                  extension_metrics::from_session_telemetry(session_telemetry.clone());
              let workspace_routing =
                  thread_extension_data.get_or_init(|| config.workspace_routing_context());
@@ -23451,7 +23549,7 @@ index e3bcb2befbc3a71f665096f75c1a169085eb9c95..a1f583a7edcc2751891cef8bb0c1cbf5
              for contributor in extensions.thread_lifecycle_contributors() {
                  contributor
                      .on_thread_start(codex_extension_api::ThreadStartInput {
-@@ -1852,6 +1893,7 @@ impl Session {
+@@ -1852,6 +1894,7 @@ impl Session {
              };
              let (mcp_prewarm_tx, mcp_prewarm_rx) = async_channel::bounded(1);
              let sess = Arc::new(Session {
@@ -23459,7 +23557,7 @@ index e3bcb2befbc3a71f665096f75c1a169085eb9c95..a1f583a7edcc2751891cef8bb0c1cbf5
                  thread_id,
                  installation_id,
                  tx_event: tx_event.clone(),
-@@ -1889,6 +1931,7 @@ impl Session {
+@@ -1889,6 +1932,7 @@ impl Session {
                  history_initialization,
                  forked_from_ordinal_exclusive,
                  next_internal_sub_id: AtomicU64::new(0),
@@ -24482,8 +24580,45 @@ index 32fdf7bd27d02e3b04b26174034f5210fe94c9ce..c23dfbe69c11b8d1b7f0a2998c9e3d94
      flush_assistant_text_segments_all(
          &sess,
          &turn_context,
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index 1c2f97766a55849a403b963b419be6f4e494571f..6bd1cd6153427c083405821b8432a4cb7d59ee91 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -80,6 +80,8 @@ pub(crate) struct TurnEnvironment {
+     pub(crate) shell_snapshot_builder: Option<Box<ShellSnapshot>>,
+     pub(crate) shell_snapshot_cache: ShellSnapshotCache,
+     pub(crate) shell_snapshot_v2_supported: bool,
++    /// Host-added paths denied to sandboxed processes and filesystem operations.
++    pub(crate) sandbox_denied_paths: Vec<AbsolutePathBuf>,
+ }
+
+ impl TurnEnvironment {
+@@ -102,6 +104,7 @@ impl TurnEnvironment {
+             shell_snapshot_builder: None,
+             shell_snapshot_cache: Arc::default(),
+             shell_snapshot_v2_supported: false,
++            sandbox_denied_paths: Vec::new(),
+         }
+     }
+
+@@ -238,9 +241,12 @@ impl TurnEnvironment {
+         let config = self.config();
+         // Grant-adjusted permissions take precedence over the environment's baseline;
+         // paths and sandbox backend settings remain environment-owned.
+-        let permissions = effective_permission_profile(
+-            self.permission_profile(),
+-            additional_permissions.as_ref(),
++        let permissions = codex_sandboxing::permissions_with_denied_paths(
++            &effective_permission_profile(
++                self.permission_profile(),
++                additional_permissions.as_ref(),
++            ),
++            &self.sandbox_denied_paths,
+         );
+         FileSystemSandboxContext {
+             sandbox_override: SandboxOverride::NoOverride,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index 4d2f83bbe0109a659240f232fc1479d950dabd65..0671c6db670b24da224d104679f56c7430416f06 100644
+index 4d2f83bbe0109a659240f232fc1479d950dabd65..ce7ba8f4ab180909fe13cbcb5af0e62aa951ac0d 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -234,7 +234,8 @@ pub(super) async fn handle(
@@ -24496,7 +24631,7 @@ index 4d2f83bbe0109a659240f232fc1479d950dabd65..0671c6db670b24da224d104679f56c74
      let result = match mode {
          TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
          TurnInputMode::StartIfIdle => {
-@@ -290,6 +291,150 @@ pub(super) async fn handle(
+@@ -290,6 +291,145 @@ pub(super) async fn handle(
      result
  }
 
@@ -24522,13 +24657,8 @@ index 4d2f83bbe0109a659240f232fc1479d950dabd65..0671c6db670b24da224d104679f56c74
 +            Some(mode) => mode.clone(),
 +            None => session.collaboration_mode().await,
 +        };
-+        let name = serde_json::to_value(requested.mode)
-+            .ok()
-+            .and_then(|value| value.as_str().map(str::to_owned))
-+            .unwrap_or_default();
-+        if requested.mode != codex_protocol::config_types::ModeKind::Default
-+            && disabled.contains(&name)
-+        {
++        let name = requested.mode.display_name();
++        if crate::thread_manager::mode_is_disabled(&disabled, requested.mode) {
 +            request.thread_settings.collaboration_mode =
 +                Some(codex_protocol::config_types::CollaborationMode {
 +                    mode: codex_protocol::config_types::ModeKind::Default,
@@ -24727,6 +24857,30 @@ index 2dca0905370b5aeb46c27a7acf8cedabc601138a..350fe9a38d76c3f61bddade0d7a5d48f
 +        Some(requested(ModeKind::Default))
 +    );
 +}
+diff --git a/codex-rs/core/src/shell_snapshot_sandbox_tests.rs b/codex-rs/core/src/shell_snapshot_sandbox_tests.rs
+index 312b802b95ead65a52bfbe0255e4724d63f2cfbd..40b37d96137844d1b4d5b147ec4447bbe28d137b 100644
+--- a/codex-rs/core/src/shell_snapshot_sandbox_tests.rs
++++ b/codex-rs/core/src/shell_snapshot_sandbox_tests.rs
+@@ -40,6 +40,7 @@ async fn snapshot_failure_omits_credentials_and_stops_descendants(
+         sandbox_requested: false,
+         permissions: &permissions,
+         exec_server_permissions: &permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &cwd_uri,
+diff --git a/codex-rs/core/src/shell_snapshot_tests.rs b/codex-rs/core/src/shell_snapshot_tests.rs
+index fc191bf590cfc9d5fce2b7a674b407b8b58067ae..2a7a830d6aaec87438ff9bef2ac07640e72cf1b7 100644
+--- a/codex-rs/core/src/shell_snapshot_tests.rs
++++ b/codex-rs/core/src/shell_snapshot_tests.rs
+@@ -492,6 +492,7 @@ async fn inactive_profiles_keep_snapshots_but_active_brokers_require_sandbox() -
+         sandbox_requested: false,
+         permissions: &permissions,
+         exec_server_permissions: &permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &cwd_uri,
 diff --git a/codex-rs/core/src/skills.rs b/codex-rs/core/src/skills.rs
 index b68b3aab1928ea997ed34c38bb9f7c15353322ed..4d428918384311c46951df64e7c73933d476f809 100644
 --- a/codex-rs/core/src/skills.rs
@@ -24951,7 +25105,7 @@ index beeda10229c0cfee3eac4e0a811b88d3a47cdfb3..a52bf5ff3a4e487af6a7e13194fc40c3
 +        .await;
 +}
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae96a8df182 100644
+index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..b59705b8588df26ce34f61f0b8e5c39e35493d0b 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -74,6 +74,7 @@ use codex_models_manager::manager::RefreshStrategy;
@@ -25012,7 +25166,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
      pub(crate) fn with_models_provider_and_home_for_tests(
          auth: CodexAuth,
          provider: ModelProviderInfo,
-@@ -961,7 +977,29 @@ impl ThreadManager {
+@@ -961,7 +977,25 @@ impl ThreadManager {
      }
 
      pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
@@ -25029,10 +25183,6 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
 +            .collect()
 +    }
 +
-+    pub fn collaboration_mode_disabled(&self, mode: ModeKind) -> bool {
-+        mode_is_disabled(&self.disabled_collaboration_modes(), mode)
-+    }
-+
 +    fn disabled_collaboration_modes(&self) -> Vec<String> {
 +        self.state
 +            .extensions
@@ -25043,7 +25193,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
      }
 
      pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
-@@ -1185,6 +1223,26 @@ impl ThreadManager {
+@@ -1185,6 +1219,26 @@ impl ThreadManager {
          self.start_thread(options).await
      }
 
@@ -25070,7 +25220,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
      /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
      pub fn reserve_thread_id(&self) -> ThreadId {
          self.state.thread_id_generator.as_ref()()
-@@ -2148,6 +2206,7 @@ impl ThreadManagerState {
+@@ -2148,6 +2202,7 @@ impl ThreadManagerState {
              inherited_instructions,
              inherited_exec_policy,
              user_shell_override,
@@ -25078,7 +25228,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
          } = request;
          let history_initialization = if matches!(
              &options.initial_history,
-@@ -2184,6 +2243,7 @@ impl ThreadManagerState {
+@@ -2184,6 +2239,7 @@ impl ThreadManagerState {
              mut thread_extension_init,
              turn_extension_init,
              client_mcp_extensions,
@@ -25086,7 +25236,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
              mut reserved_thread_id,
              disabled_plugin_ids,
          } = options;
-@@ -2357,12 +2417,44 @@ impl ThreadManagerState {
+@@ -2357,12 +2413,44 @@ impl ThreadManagerState {
                      .await,
                  )
              };
@@ -25131,7 +25281,7 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
          let parent_rollout_thread_trace = self
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
-@@ -2847,6 +2939,14 @@ fn append_interrupted_boundary(
+@@ -2847,6 +2935,14 @@ fn append_interrupted_boundary(
      }
  }
 
@@ -25147,10 +25297,10 @@ index b2d22649a62334dd5dee40f4c0c9288e94dbcc5c..59df262bece377f84dbd8311ce69eae9
  #[path = "thread_manager_tests.rs"]
  mod tests;
 diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
-index 9578c924594942e396dfc6e585dc5134a6010a19..873ae8a471f7a2beb9eb85be70ee14bcd0caaae9 100644
+index 9578c924594942e396dfc6e585dc5134a6010a19..1bddc1399e4810b283fb467e87ccea1d9ea5bb6f 100644
 --- a/codex-rs/core/src/thread_manager_tests.rs
 +++ b/codex-rs/core/src/thread_manager_tests.rs
-@@ -76,6 +76,47 @@ impl codex_extension_api::ThreadInstructionsProvider for ParentInstructionsProvi
+@@ -76,6 +76,44 @@ impl codex_extension_api::ThreadInstructionsProvider for ParentInstructionsProvi
      }
  }
 
@@ -25187,18 +25337,15 @@ index 9578c924594942e396dfc6e585dc5134a6010a19..873ae8a471f7a2beb9eb85be70ee14bc
 +    };
 +
 +    assert_eq!(listed(&manager), vec![ModeKind::Default]);
-+    assert!(manager.collaboration_mode_disabled(ModeKind::Plan));
-+    assert!(!manager.collaboration_mode_disabled(ModeKind::Default));
 +
 +    disabled.store(false, std::sync::atomic::Ordering::SeqCst);
 +    assert_eq!(listed(&manager), vec![ModeKind::Plan, ModeKind::Default]);
-+    assert!(!manager.collaboration_mode_disabled(ModeKind::Plan));
 +}
 +
  #[tokio::test]
  async fn live_fork_keeps_instructions_when_source_is_unloaded_during_setup() {
      let temp_dir = tempdir().expect("tempdir");
-@@ -3555,3 +3596,68 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
+@@ -3555,3 +3593,68 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
          1,
      );
  }
@@ -27205,10 +27352,18 @@ index 8f4041420c80b33c7d947a017c64ada479e25a70..29362c1154dd5a9bebd413daf18951e5
  pub(crate) mod tool_dispatch_trace;
  mod tool_namespaces_info;
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index a1a88e445449e55f3f8038adef48e0457df9a534..0733ea9a5b7db2e9386aaf5dae5615cb68fed79d 100644
+index a1a88e445449e55f3f8038adef48e0457df9a534..c8983bce93a238a445dbe0f9c86cf0ae23b89e6b 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
-@@ -141,7 +141,17 @@ impl ToolOrchestrator {
+@@ -87,6 +87,7 @@ impl ToolOrchestrator {
+             sandbox_requested: attempt.sandbox_requested,
+             permissions: attempt.permissions,
+             exec_server_permissions: attempt.exec_server_permissions,
++            denied_paths: attempt.denied_paths,
+             enforce_managed_network: attempt.enforce_managed_network,
+             manager: attempt.manager,
+             sandbox_cwd: attempt.sandbox_cwd,
+@@ -141,7 +142,17 @@ impl ToolOrchestrator {
          let mut initial_approval_source = None;
 
          let environment = tool.turn_environment(req);
@@ -27227,7 +27382,7 @@ index a1a88e445449e55f3f8038adef48e0457df9a534..0733ea9a5b7db2e9386aaf5dae5615cb
          #[cfg(target_os = "macos")]
          let sandbox_manager = sandbox_manager.with_allowed_symlinked_codex_home(
              environment
-@@ -149,7 +159,6 @@ impl ToolOrchestrator {
+@@ -149,7 +160,6 @@ impl ToolOrchestrator {
                  .local_runtime_paths()
                  .and_then(|paths| paths.allowed_symlinked_codex_home.clone()),
          );
@@ -27235,7 +27390,7 @@ index a1a88e445449e55f3f8038adef48e0457df9a534..0733ea9a5b7db2e9386aaf5dae5615cb
          let owner_network_policy = sandbox_config.network_policy.is_some();
          let workspace_roots = environment.workspace_roots();
          let executor_managed_process_sandbox = tool.uses_executor_managed_process_sandbox(req);
-@@ -188,6 +197,14 @@ impl ToolOrchestrator {
+@@ -188,6 +198,14 @@ impl ToolOrchestrator {
                          .await;
                      approval.result?;
                      initial_approval_source = approval.source;
@@ -27250,7 +27405,7 @@ index a1a88e445449e55f3f8038adef48e0457df9a534..0733ea9a5b7db2e9386aaf5dae5615cb
                  } else {
                      otel.tool_decision(
                          &tool_ctx.tool_name,
-@@ -198,7 +215,14 @@ impl ToolOrchestrator {
+@@ -198,7 +216,14 @@ impl ToolOrchestrator {
                  }
              }
              ExecApprovalRequirement::Forbidden { reason } => {
@@ -27266,6 +27421,22 @@ index a1a88e445449e55f3f8038adef48e0457df9a534..0733ea9a5b7db2e9386aaf5dae5615cb
              }
              ExecApprovalRequirement::NeedsApproval { reason, .. } => {
                  let action = tool
+@@ -367,6 +392,7 @@ impl ToolOrchestrator {
+             sandbox_requested,
+             permissions: initial_permissions,
+             exec_server_permissions: escalated_profile.as_ref().unwrap_or(permission_profile),
++            denied_paths: &turn_ctx.config.permissions.sandbox_denied_paths,
+             enforce_managed_network: managed_network_active,
+             manager: &sandbox_manager,
+             sandbox_cwd: &sandbox_policy_cwd,
+@@ -563,6 +589,7 @@ impl ToolOrchestrator {
+                     exec_server_permissions: escalated_profile
+                         .as_ref()
+                         .unwrap_or(permission_profile),
++                    denied_paths: &turn_ctx.config.permissions.sandbox_denied_paths,
+                     enforce_managed_network: managed_network_active,
+                     manager: &sandbox_manager,
+                     sandbox_cwd: &sandbox_policy_cwd,
 diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
 index cc8beb4e3091eaaa0460eead9b05186af71f5513..29458f1ae592f2e224e304f48cb53740d167c1d6 100644
 --- a/codex-rs/core/src/tools/parallel.rs
@@ -28344,7 +28515,7 @@ index 3c01ab98187227561c3a4220ed8277b7317f21ce..eb35ae09f74a2158f484218ac93547bc
      }
  }
 diff --git a/codex-rs/core/src/tools/runtimes/apply_patch.rs b/codex-rs/core/src/tools/runtimes/apply_patch.rs
-index 981958b17a18c06a88a5f618e2d5fc685d539188..d4bbe5901ec412aae3135910992a5e2aa441b224 100644
+index 981958b17a18c06a88a5f618e2d5fc685d539188..73528ce18685c2becd23e6cbfc80b8ce4108624a 100644
 --- a/codex-rs/core/src/tools/runtimes/apply_patch.rs
 +++ b/codex-rs/core/src/tools/runtimes/apply_patch.rs
 @@ -73,7 +73,7 @@ impl ApplyPatchRuntime {
@@ -28356,6 +28527,125 @@ index 981958b17a18c06a88a5f618e2d5fc685d539188..d4bbe5901ec412aae3135910992a5e2a
          ApprovalAction::ApplyPatch {
              id: call_id.to_string(),
              environment_id: req.turn_environment.selection.environment_id.clone(),
+@@ -93,9 +93,12 @@ impl ApplyPatchRuntime {
+             return None;
+         }
+
+-        let permissions = effective_permission_profile(
+-            attempt.exec_server_permissions,
+-            req.additional_permissions.as_ref(),
++        let permissions = codex_sandboxing::permissions_with_denied_paths(
++            &effective_permission_profile(
++                attempt.exec_server_permissions,
++                req.additional_permissions.as_ref(),
++            ),
++            attempt.denied_paths,
+         );
+         Some(FileSystemSandboxContext {
+             sandbox_override: attempt.sandbox_override,
+diff --git a/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs b/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
+index 8dd60a07c8b8a1758568912b55b82597a1a02e28..d0b30570e99bd56cee20d522741f29677dc13b8d 100644
+--- a/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
++++ b/codex-rs/core/src/tools/runtimes/apply_patch_tests.rs
+@@ -6,6 +6,7 @@ use codex_protocol::config_types::WindowsSandboxLevel;
+ use codex_protocol::models::AdditionalPermissionProfile;
+ use codex_protocol::models::FileSystemPermissions;
+ use codex_protocol::models::PermissionProfile;
++use codex_protocol::permissions::FileSystemAccessMode;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
+ use codex_protocol::protocol::EnvironmentConfig;
+ use codex_protocol::protocol::EnvironmentConfigState;
+@@ -245,6 +246,7 @@ async fn file_system_sandbox_context_preserves_executor_workspace_permissions()
+         sandbox_requested: true,
+         permissions: &permissions,
+         exec_server_permissions: &exec_server_permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &sandbox_policy_cwd,
+@@ -313,6 +315,7 @@ async fn file_system_sandbox_context_respects_sandbox_request() {
+         sandbox_requested: false,
+         permissions: &permissions,
+         exec_server_permissions: &permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &sandbox_policy_cwd,
+@@ -358,3 +361,62 @@ async fn file_system_sandbox_context_respects_sandbox_request() {
+         })
+     );
+ }
++
++#[tokio::test]
++async fn file_system_sandbox_context_denies_host_paths() {
++    let path = std::env::temp_dir().join("apply-patch-denied.txt").abs();
++    let secret = std::env::temp_dir().join("apply-patch-secret").abs();
++    let req = ApplyPatchRequest {
++        turn_environment: test_turn_environment(codex_exec_server::LOCAL_ENVIRONMENT_ID),
++        action: ApplyPatchAction::new_add_for_test(
++            &PathUri::from_abs_path(&path),
++            "hello".to_string(),
++        ),
++        file_paths: vec![PathUri::from_abs_path(&path)],
++        changes: Arc::new(HashMap::new()),
++        exec_approval_requirement: ExecApprovalRequirement::Skip {
++            bypass_sandbox: false,
++            proposed_execpolicy_amendment: None,
++        },
++        additional_permissions: None,
++        permissions_preapproved: false,
++    };
++    let permissions = PermissionProfile::workspace_write();
++    let manager = SandboxManager::new();
++    let sandbox_policy_cwd = PathUri::from_abs_path(&path);
++    let denied_paths = [secret.clone()];
++    let attempt = SandboxAttempt {
++        sandbox_override: SandboxOverride::NoOverride,
++        sandbox: SandboxType::MacosSeatbelt,
++        sandbox_requested: true,
++        permissions: &permissions,
++        exec_server_permissions: &permissions,
++        denied_paths: &denied_paths,
++        enforce_managed_network: false,
++        manager: &manager,
++        sandbox_cwd: &sandbox_policy_cwd,
++        workspace_roots: std::slice::from_ref(&sandbox_policy_cwd),
++        sandbox_exe: None,
++        use_legacy_landlock: false,
++        windows_sandbox_type: SandboxType::None,
++        windows_sandbox_level: WindowsSandboxLevel::Disabled,
++        network_denial_cancellation_token: None,
++        network_proxy: None,
++    };
++
++    let sandbox = ApplyPatchRuntime::file_system_sandbox_context_for_attempt(&req, &attempt)
++        .expect("sandbox context");
++
++    assert_eq!(
++        sandbox.permissions,
++        codex_sandboxing::permissions_with_denied_paths(&permissions, &denied_paths)
++    );
++    assert!(
++        sandbox
++            .permissions
++            .file_system_sandbox_policy()
++            .entries
++            .iter()
++            .any(|entry| entry.access == FileSystemAccessMode::Deny)
++    );
++}
+diff --git a/codex-rs/core/src/tools/runtimes/mod_tests.rs b/codex-rs/core/src/tools/runtimes/mod_tests.rs
+index d5933281d818fced11215d7e92e4104ac509a24d..0201a758d2ff931936df7de88b28128d50db7fd4 100644
+--- a/codex-rs/core/src/tools/runtimes/mod_tests.rs
++++ b/codex-rs/core/src/tools/runtimes/mod_tests.rs
+@@ -125,6 +125,7 @@ async fn explicit_escalation_prepares_exec_without_managed_network() -> anyhow::
+         sandbox_requested: false,
+         permissions: &permissions,
+         exec_server_permissions: &permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &sandbox_policy_cwd,
 diff --git a/codex-rs/core/src/tools/runtimes/unified_exec.rs b/codex-rs/core/src/tools/runtimes/unified_exec.rs
 index 35c70df79d42912b80e71b0e5d98e03546abb360..30cfcf40a284f9cd39e30423ee9301456ce56493 100644
 --- a/codex-rs/core/src/tools/runtimes/unified_exec.rs
@@ -28406,6 +28696,78 @@ index 35c70df79d42912b80e71b0e5d98e03546abb360..30cfcf40a284f9cd39e30423ee930145
              tty: false,
              sandbox_permissions,
              additional_permissions: None,
+diff --git a/codex-rs/core/src/tools/sandboxing.rs b/codex-rs/core/src/tools/sandboxing.rs
+index d49273beb37fadf1dda778ef5ba8a047438dff69..a48cf7b34e5743b6a78c47c04499f4b8055aab83 100644
+--- a/codex-rs/core/src/tools/sandboxing.rs
++++ b/codex-rs/core/src/tools/sandboxing.rs
+@@ -30,6 +30,7 @@ use codex_sandboxing::SandboxType;
+ use codex_sandboxing::SandboxablePreference;
+ use codex_sandboxing::policy_transforms::effective_permission_profile;
+ use codex_tools::ToolName;
++use codex_utils_absolute_path::AbsolutePathBuf;
+ use codex_utils_path_uri::PathConvention;
+ use codex_utils_path_uri::PathUri;
+ use futures::Future;
+@@ -406,6 +407,8 @@ pub(crate) struct SandboxAttempt<'a> {
+     pub permissions: &'a codex_protocol::models::PermissionProfile,
+     /// Canonical permissions before this host materializes workspace roots.
+     pub exec_server_permissions: &'a codex_protocol::models::PermissionProfile,
++    /// Host-added paths denied whenever this attempt is sandboxed.
++    pub denied_paths: &'a [AbsolutePathBuf],
+     pub enforce_managed_network: bool,
+     pub(crate) manager: &'a SandboxManager,
+     pub(crate) sandbox_cwd: &'a PathUri,
+@@ -495,11 +498,14 @@ impl<'a> SandboxAttempt<'a> {
+         environment_id: Option<&str>,
+     ) -> Result<crate::sandboxing::ExecRequest, CodexErr> {
+         let network = self.network_proxy(network);
++        let permissions = (self.sandbox != SandboxType::None).then(|| {
++            codex_sandboxing::permissions_with_denied_paths(self.permissions, self.denied_paths)
++        });
+         let mut request = self
+             .manager
+             .transform(SandboxTransformRequest {
+                 command,
+-                permissions: self.permissions,
++                permissions: permissions.as_ref().unwrap_or(self.permissions),
+                 sandbox: self.sandbox,
+                 enforce_managed_network: self.enforce_managed_network,
+                 environment_id,
+@@ -530,6 +536,14 @@ impl<'a> SandboxAttempt<'a> {
+             self.exec_server_permissions,
+             command.additional_permissions.as_ref(),
+         );
++        let exec_server_permissions = if self.sandbox_requested {
++            codex_sandboxing::permissions_with_denied_paths(
++                &exec_server_permissions,
++                self.denied_paths,
++            )
++        } else {
++            exec_server_permissions
++        };
+         let mut request = self
+             .manager
+             .transform(SandboxTransformRequest {
+diff --git a/codex-rs/core/src/tools/sandboxing_tests.rs b/codex-rs/core/src/tools/sandboxing_tests.rs
+index a4839cfd33da520cb53b41107a038a9e60f7470c..9507e355484e3481da1b90ecd0d28fc9f6a72565 100644
+--- a/codex-rs/core/src/tools/sandboxing_tests.rs
++++ b/codex-rs/core/src/tools/sandboxing_tests.rs
+@@ -298,6 +298,7 @@ async fn windows_sandbox_env_preserves_denied_reads_or_rejects_unsupported_backe
+         sandbox_requested: true,
+         permissions: &permissions,
+         exec_server_permissions: &permissions,
++        denied_paths: &[],
+         enforce_managed_network: false,
+         manager: &manager,
+         sandbox_cwd: &cwd_uri,
+@@ -372,6 +373,7 @@ async fn exec_server_env_keeps_command_native_and_carries_sandbox_context() {
+         sandbox_requested: true,
+         permissions: &permissions,
+         exec_server_permissions: &exec_server_permissions,
++        denied_paths: &[],
+         enforce_managed_network: true,
+         manager: &manager,
+         sandbox_cwd: &cwd_uri,
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
 index 24b60f3ff2231a2e4a5e27dc7a93331a9aacd436..f3c380753df22232274d8b555ad36e0dffb586c1 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
@@ -29014,6 +29376,22 @@ index cc560d3cba42236bc123d62adbc4506dd2d97fdf..b94c0c37e27018eeed084bd80717cb09
          tty: true,
          sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
          additional_permissions: None,
+diff --git a/codex-rs/core/src/unified_exec/shell_snapshot.rs b/codex-rs/core/src/unified_exec/shell_snapshot.rs
+index 6606f6786df89f78ffae5f9e0bcecf31d040f25d..bcf73ab7df12190771910fb69ee64082cd832c1a 100644
+--- a/codex-rs/core/src/unified_exec/shell_snapshot.rs
++++ b/codex-rs/core/src/unified_exec/shell_snapshot.rs
+@@ -89,7 +89,10 @@ impl Session {
+                     )
+                     .then(|| FileSystemSandboxContext {
+                         sandbox_override: SandboxOverride::NoOverride,
+-                        permissions: environment.permission_profile().clone(),
++                        permissions: codex_sandboxing::permissions_with_denied_paths(
++                            environment.permission_profile(),
++                            &environment.sandbox_denied_paths,
++                        ),
+                         cwd: environment.cwd().clone(),
+                         workspace_roots: environment.workspace_roots().to_vec(),
+                         user_home_dir: None,
 diff --git a/codex-rs/core/tests/suite/client.rs b/codex-rs/core/tests/suite/client.rs
 index 7e24379417d86401ecd407e1b7ff88515b8a3fd0..70f33968728d910acfee8132d28551815dbc7aa7 100644
 --- a/codex-rs/core/tests/suite/client.rs
@@ -30486,7 +30864,7 @@ index 0d0bcf5b987d1167f15a058c783e3af8e5a54ecf..d986620a50fb01bd1d2eb8b63cd10df7
 
  impl FeatureConfig for CodeModeConfigToml {
 diff --git a/codex-rs/features/src/lib.rs b/codex-rs/features/src/lib.rs
-index c9d074ac3d275639e666efc7b910f92c946a7609..98ddd8297217a2b1283ff93d3491974488f4def3 100644
+index c9d074ac3d275639e666efc7b910f92c946a7609..9ef8a1338b378224c89747d3207f510c4123ce92 100644
 --- a/codex-rs/features/src/lib.rs
 +++ b/codex-rs/features/src/lib.rs
 @@ -20,6 +20,7 @@ mod runtime_auth;
@@ -30497,18 +30875,35 @@ index c9d074ac3d275639e666efc7b910f92c946a7609..98ddd8297217a2b1283ff93d34919744
  pub use feature_configs::ContextManagementConfigToml;
  pub use feature_configs::CurrentTimeReminderConfigToml;
  pub use feature_configs::CurrentTimeReminderDeliveryMode;
-@@ -581,6 +582,10 @@ impl Features {
+@@ -539,6 +540,7 @@ pub struct LegacyFeatureUsage {
+ pub struct Features {
+     enabled: BTreeSet<Feature>,
+     legacy_usages: BTreeSet<LegacyFeatureUsage>,
++    pinned: BTreeSet<Feature>,
+ }
+
+ #[derive(Debug, Clone, Default)]
+@@ -577,10 +579,19 @@ impl Features {
+         Self {
+             enabled: set,
+             legacy_usages: BTreeSet::new(),
++            pinned: BTreeSet::new(),
+         }
      }
 
      pub fn enabled(&self, f: Feature) -> bool {
-+        self.enabled.contains(&f) && !removed(f)
++        self.enabled.contains(&f) && (self.pinned.contains(&f) || !removed(f))
++    }
++
++    pub fn pin(&mut self, f: Feature) {
++        self.pinned.insert(f);
 +    }
 +
 +    pub fn configured(&self, f: Feature) -> bool {
          self.enabled.contains(&f)
      }
 
-@@ -780,7 +785,11 @@ impl Features {
+@@ -780,7 +791,11 @@ impl Features {
      }
 
      pub fn enabled_features(&self) -> Vec<Feature> {
@@ -30516,41 +30911,49 @@ index c9d074ac3d275639e666efc7b910f92c946a7609..98ddd8297217a2b1283ff93d34919744
 +        self.enabled
 +            .iter()
 +            .copied()
-+            .filter(|f| !removed(*f))
++            .filter(|f| self.pinned.contains(f) || !removed(*f))
 +            .collect()
      }
 
      pub fn normalize_dependencies(&mut self) {
-@@ -856,6 +865,27 @@ fn web_search_details() -> &'static str {
+@@ -856,6 +871,35 @@ fn web_search_details() -> &'static str {
      "Set `web_search` to `\"live\"`, `\"indexed\"`, `\"cached\"`, or `\"disabled\"` at the top level (or under a profile) in config.toml if you want to override it."
  }
 
-+static REMOVED: std::sync::RwLock<BTreeSet<Feature>> = std::sync::RwLock::new(BTreeSet::new());
++static REMOVED: std::sync::RwLock<BTreeMap<String, BTreeSet<Feature>>> =
++    std::sync::RwLock::new(BTreeMap::new());
++static ANY_REMOVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 +
-+pub fn set_removed(mut features: BTreeSet<Feature>) -> bool {
++/// Replaces the features `owner` removes; a feature is removed while any owner removes it.
++pub fn set_removed(owner: &str, mut features: BTreeSet<Feature>) {
 +    if features.contains(&Feature::CodeMode) {
 +        features.insert(Feature::CodeModeOnly);
 +    }
 +    let mut removed = REMOVED
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    let changed = *removed != features;
-+    *removed = features;
-+    changed
++    if features.is_empty() {
++        removed.remove(owner);
++    } else {
++        removed.insert(owner.to_owned(), features);
++    }
++    ANY_REMOVED.store(!removed.is_empty(), std::sync::atomic::Ordering::Release);
 +}
 +
 +pub fn removed(feature: Feature) -> bool {
-+    REMOVED
-+        .read()
-+        .unwrap_or_else(std::sync::PoisonError::into_inner)
-+        .contains(&feature)
++    ANY_REMOVED.load(std::sync::atomic::Ordering::Acquire)
++        && REMOVED
++            .read()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .values()
++            .any(|features| features.contains(&feature))
 +}
 +
  /// Keys accepted in `[features]` tables.
  pub fn feature_for_key(key: &str) -> Option<Feature> {
      for spec in FEATURES {
 diff --git a/codex-rs/features/src/tests.rs b/codex-rs/features/src/tests.rs
-index a0fd13decf5b672ca71392b74e8060eab149574b..fae6661435bca75c5550faa4fa2501e2b3babe6b 100644
+index a0fd13decf5b672ca71392b74e8060eab149574b..647d1125683e860a05970f7187e24131613c41c3 100644
 --- a/codex-rs/features/src/tests.rs
 +++ b/codex-rs/features/src/tests.rs
 @@ -6,11 +6,13 @@ use crate::Features;
@@ -30567,16 +30970,18 @@ index a0fd13decf5b672ca71392b74e8060eab149574b..fae6661435bca75c5550faa4fa2501e2
  use toml::Table;
  use toml::Value as TomlValue;
 
-@@ -942,3 +944,23 @@ fn retired_worktree_and_voice_config_overrides_are_ignored() {
+@@ -942,3 +944,22 @@ fn retired_worktree_and_voice_config_overrides_are_ignored() {
          assert_eq!(features, Features::with_defaults());
      }
  }
 +
 +#[test]
-+fn removed_features_read_as_off_until_restored() {
++fn removed_features_read_as_off_unless_pinned() {
 +    let mut features = Features::with_defaults();
 +    features.enable(Feature::PreventIdleSleep);
-+    assert!(set_removed(BTreeSet::from([Feature::PreventIdleSleep])));
++    let mut pinned = features.clone();
++    pinned.pin(Feature::PreventIdleSleep);
++    set_removed("features-test", BTreeSet::from([Feature::PreventIdleSleep]));
 +    assert!(!features.enabled(Feature::PreventIdleSleep));
 +    assert!(features.configured(Feature::PreventIdleSleep));
 +    assert!(
@@ -30584,12 +30989,9 @@ index a0fd13decf5b672ca71392b74e8060eab149574b..fae6661435bca75c5550faa4fa2501e2
 +            .enabled_features()
 +            .contains(&Feature::PreventIdleSleep)
 +    );
-+    assert!(set_removed(BTreeSet::new()));
++    assert!(pinned.enabled(Feature::PreventIdleSleep));
++    set_removed("features-test", BTreeSet::new());
 +    assert!(features.enabled(Feature::PreventIdleSleep));
-+    features.enable(Feature::CodeModeOnly);
-+    assert!(set_removed(BTreeSet::from([Feature::CodeMode])));
-+    assert!(!features.enabled(Feature::CodeModeOnly));
-+    assert!(set_removed(BTreeSet::new()));
 +}
 diff --git a/codex-rs/file-system/src/environment_accessor.rs b/codex-rs/file-system/src/environment_accessor.rs
 index 06f63ede9ee18b94f52d66b1e804f741552b3de4..352c6350735a68e0e11f25347a4effab33b4a6ab 100644
@@ -31168,6 +31570,116 @@ index d42a7c4ba7d126236868b43ec73861ae3f56113d..3db58f4e830a2be1abcad7ab7839e56d
                  }),
              },
          ))])
+diff --git a/codex-rs/sandboxing/src/lib.rs b/codex-rs/sandboxing/src/lib.rs
+index 5db90bba1ed508ca489297feebea342dc92254a0..76f1636eb04196318b7eb521618b5eb79cbfbf28 100644
+--- a/codex-rs/sandboxing/src/lib.rs
++++ b/codex-rs/sandboxing/src/lib.rs
+@@ -40,6 +40,7 @@ pub use manager::SandboxType;
+ pub use manager::SandboxablePreference;
+ pub use manager::compatibility_sandbox_policy_for_permission_profile;
+ pub use manager::get_platform_sandbox;
++pub use manager::permissions_with_denied_paths;
+ pub use manager::with_managed_mitm_ca_readable_root;
+ pub use sandbox_integrity::FileContentsChecker;
+ pub use sandbox_integrity::IntegrityFinding;
+diff --git a/codex-rs/sandboxing/src/manager.rs b/codex-rs/sandboxing/src/manager.rs
+index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..8a7f964cbc1f06ab785bfe6bd4e3871377e1ef0c 100644
+--- a/codex-rs/sandboxing/src/manager.rs
++++ b/codex-rs/sandboxing/src/manager.rs
+@@ -20,6 +20,10 @@ use codex_network_proxy::NetworkProxy;
+ use codex_protocol::config_types::WindowsSandboxLevel;
+ use codex_protocol::models::AdditionalPermissionProfile;
+ use codex_protocol::models::PermissionProfile;
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemPath;
++use codex_protocol::permissions::FileSystemSandboxEntry;
++use codex_protocol::permissions::FileSystemSandboxKind;
+ use codex_protocol::permissions::FileSystemSandboxPolicy;
+ use codex_protocol::permissions::NetworkSandboxPolicy;
+ use codex_protocol::protocol::SandboxPolicy;
+@@ -828,6 +832,34 @@ fn linux_sandbox_arg0_override(exe: &Path) -> String {
+     }
+ }
+
++/// Adds `denied` to a restricted profile; other profiles keep their access.
++pub fn permissions_with_denied_paths(
++    permissions: &PermissionProfile,
++    denied: &[AbsolutePathBuf],
++) -> PermissionProfile {
++    let mut file_system = permissions.file_system_sandbox_policy();
++    if denied.is_empty() || !matches!(file_system.kind, FileSystemSandboxKind::Restricted) {
++        return permissions.clone();
++    }
++    let denies = denied
++        .iter()
++        .map(|path| {
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path {
++                    path: path.clone().into(),
++                },
++                FileSystemAccessMode::Deny,
++            )
++        })
++        .collect();
++    file_system.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
++    PermissionProfile::from_runtime_permissions_with_enforcement(
++        permissions.enforcement(),
++        &file_system,
++        permissions.network_sandbox_policy(),
++    )
++}
++
+ #[cfg(test)]
+ #[path = "manager_tests.rs"]
+ mod tests;
+diff --git a/codex-rs/sandboxing/src/manager_tests.rs b/codex-rs/sandboxing/src/manager_tests.rs
+index 22dcf916328ac454b5d33fce277a8e1442ad1022..4d4c55f55dd010d39ccfbd891bbc03aab11e92dc 100644
+--- a/codex-rs/sandboxing/src/manager_tests.rs
++++ b/codex-rs/sandboxing/src/manager_tests.rs
+@@ -6,6 +6,7 @@ use super::SandboxTransformRequest;
+ use super::SandboxType;
+ use super::SandboxablePreference;
+ use super::get_platform_sandbox;
++use super::permissions_with_denied_paths;
+ use super::with_managed_mitm_ca_readable_root;
+ use codex_protocol::config_types::WindowsSandboxLevel;
+ use codex_protocol::models::AdditionalPermissionProfile;
+@@ -838,3 +839,35 @@ fn transform_for_direct_spawn_windows_materializes_inner_helper() {
+     );
+     assert!(materialized_helper.exists());
+ }
++
++#[test]
++fn denied_paths_apply_only_to_restricted_profiles() {
++    let temp_dir = TempDir::new().expect("create temp dir");
++    let root = canonicalize(temp_dir.path()).expect("canonicalize temp dir");
++    let secret = AbsolutePathBuf::from_absolute_path(root.join("secret")).expect("absolute");
++    let deny = FileSystemSandboxEntry::new(
++        FileSystemPath::Path {
++            path: PathUri::from_abs_path(&secret),
++        },
++        FileSystemAccessMode::Deny,
++    );
++    let restricted = PermissionProfile::workspace_write();
++    let denied = permissions_with_denied_paths(&restricted, std::slice::from_ref(&secret));
++    assert!(denied.file_system_sandbox_policy().entries.contains(&deny));
++    assert_eq!(
++        denied.network_sandbox_policy(),
++        restricted.network_sandbox_policy()
++    );
++    assert_eq!(permissions_with_denied_paths(&restricted, &[]), restricted);
++    for unrestricted in [
++        PermissionProfile::Disabled,
++        PermissionProfile::External {
++            network: NetworkSandboxPolicy::Restricted,
++        },
++    ] {
++        assert_eq!(
++            permissions_with_denied_paths(&unrestricted, std::slice::from_ref(&secret)),
++            unrestricted
++        );
++    }
++}
 diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
 index 31e16dd72a9523bbb1c9b3eea00dc5377037e2e2..8eaf6b7b109ac5e33c37f2746585c00c3ca4533a 100644
 --- a/codex-rs/thread-store/Cargo.toml
@@ -34387,7 +34899,7 @@ index 57a66255c5544dd62a6754eb857cec017a7a9a65..9edd1b8e6240f0811afb4793125faab5
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d0fde9a80 100644
+index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..4a9019cef797703c5049327636a4780cec82c3f3 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -390,6 +390,7 @@ mod draft_state;
@@ -34914,7 +35426,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
      fn file_completion_for_sigil_path_does_not_reopen_popup() {
          let (mut composer, _rx) = new_test_composer();
          complete_file(
-@@ -10518,6 +10754,138 @@ mod tests {
+@@ -10518,6 +10754,139 @@ mod tests {
          }
      }
 
@@ -34968,6 +35480,7 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..cf8e9132596cf880e29300fec5d6e46d
 +                id: "completion_fixture".into(),
 +                command: "fixture".into(),
 +            },
++            namespaced: false,
 +        };
 +        let _catalog = crate::mod_runtime::test_command_catalog(vec![command]);
 +        let _completions =
@@ -35314,7 +35827,7 @@ index bb14fbe533e5f4a4b0ed07c7ded099c3aa38c6aa..f33c7ca92a3d0a33838ea823ba4d1ab7
                      self.sparkle.draft.set(SparkleDraft::Untouched);
                      self.sparkle.command_input.borrow_mut().clear();
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb08e40a084 100644
+index f75d17f57d54fa8ee756daf970fe54310e319627..5e2520be9cc49f12c1ddd7383305cd9d67e57d41 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -30,6 +30,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -35333,7 +35846,30 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          })
          .collect();
          Self {
-@@ -230,8 +232,8 @@ impl CommandPopup {
+@@ -157,6 +159,22 @@ impl CommandPopup {
+     /// paired with optional highlight indices. Preserves the original
+     /// presentation order for built-ins and prompts.
+     fn filtered(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
++        let mut items = self.matches();
++        let listed = items
++            .iter()
++            .filter_map(|(item, _)| match item {
++                CommandItem::Mod(command) if !command.namespaced => Some(command.target.clone()),
++                _ => None,
++            })
++            .collect::<std::collections::HashSet<_>>();
++        items.retain(|(item, _)| match item {
++            CommandItem::Mod(command) => !command.namespaced || !listed.contains(&command.target),
++            CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => true,
++        });
++        items
++    }
++
++    fn matches(&self) -> Vec<(CommandItem, Option<Vec<usize>>)> {
+         let filter = self.command_filter.trim();
+         let mut out: Vec<(CommandItem, Option<Vec<usize>>)> = Vec::new();
+         if filter.is_empty() {
+@@ -230,8 +248,8 @@ impl CommandPopup {
                          .unwrap_or(item.description())
                  } else {
                      item.description()
@@ -35344,7 +35880,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
                  let unavailable = self.is_unavailable(&item);
                  GenericDisplayRow {
                      category_tag: None,
-@@ -294,7 +296,7 @@ impl CommandPopup {
+@@ -294,7 +312,7 @@ impl CommandPopup {
          self.side_conversation_active
              && match item {
                  CommandItem::Builtin(cmd) => !cmd.available_in_side_conversation(),
@@ -35353,7 +35889,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              }
      }
  }
-@@ -304,6 +306,7 @@ impl CommandItem {
+@@ -304,6 +322,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.command(),
              Self::ServiceTier(command) => &command.name,
@@ -35361,7 +35897,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
 
-@@ -311,6 +314,7 @@ impl CommandItem {
+@@ -311,6 +330,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.description(),
              Self::ServiceTier(command) => &command.description,
@@ -35369,7 +35905,82 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          }
      }
  }
-@@ -385,7 +389,7 @@ mod tests {
+@@ -373,6 +393,74 @@ mod tests {
+         assert!(popup.selected_item().is_some());
+     }
+
++    #[test]
++    fn mod_command_is_listed_once_and_namespaced_alias_only_when_typed() {
++        use crate::mod_runtime::ModSlashTarget;
++        use crate::mod_runtime::build;
++        use crate::mod_runtime::test_entry;
++        let target = |id: &str, command: &str| ModSlashTarget {
++            id: id.to_owned(),
++            command: command.to_owned(),
++        };
++        let mut commands = build(vec![
++            test_entry(
++                "counter:tally",
++                "tally",
++                "Tally",
++                target("counter", "tally"),
++            ),
++            test_entry(
++                "counter:model",
++                "model",
++                "Shadowed",
++                target("counter", "model"),
++            ),
++            test_entry(
++                "counter:review",
++                "review",
++                "Review",
++                target("counter", "review"),
++            ),
++            test_entry("viewer:show", "show", "Show", target("viewer", "show")),
++            test_entry("other:show", "show", "Show", target("other", "show")),
++        ]);
++        for (builtin, owner) in [("review", "counter:review"), ("diff", "viewer:show")] {
++            let mut replacement = commands
++                .iter()
++                .find(|command| command.invocation == owner)
++                .cloned()
++                .unwrap();
++            replacement.invocation = builtin.to_owned();
++            replacement.namespaced = false;
++            commands.push(replacement);
++        }
++        let _catalog = crate::mod_runtime::test_command_catalog(commands);
++        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
++        let mods = |popup: &CommandPopup| {
++            popup
++                .filtered_items()
++                .into_iter()
++                .filter_map(|item| match item {
++                    CommandItem::Mod(command) => Some(command.invocation),
++                    CommandItem::Builtin(_) | CommandItem::ServiceTier(_) => None,
++                })
++                .collect::<Vec<_>>()
++        };
++        popup.on_composer_text_change("/".to_string());
++        assert_eq!(
++            mods(&popup),
++            vec!["tally", "counter:model", "other:show", "review", "diff"]
++        );
++        popup.on_composer_text_change("/ta".to_string());
++        assert_eq!(mods(&popup), vec!["tally"]);
++        popup.on_composer_text_change("/counter:t".to_string());
++        assert_eq!(mods(&popup), vec!["counter:tally"]);
++        assert_eq!(
++            crate::mod_runtime::find("counter:tally").map(|command| command.target),
++            Some(target("counter", "tally"))
++        );
++    }
++
+     #[test]
+     fn filter_includes_init_when_typing_prefix() {
+         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+@@ -385,7 +473,7 @@ mod tests {
          let matches = popup.filtered_items();
          let has_init = matches.iter().any(|item| match item {
              CommandItem::Builtin(cmd) => cmd.command() == "init",
@@ -35378,7 +35989,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
          });
          assert!(
              has_init,
-@@ -406,6 +410,7 @@ mod tests {
+@@ -406,6 +494,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -35386,7 +35997,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected a selected command for exact match"),
          }
      }
-@@ -420,6 +425,7 @@ mod tests {
+@@ -420,6 +509,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected model command, got service tier {command:?}")
              }
@@ -35394,7 +36005,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              None => panic!("expected at least one match for '/mo'"),
          }
      }
-@@ -513,6 +519,7 @@ mod tests {
+@@ -513,6 +603,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35402,7 +36013,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert_eq!(
-@@ -581,6 +588,7 @@ mod tests {
+@@ -581,6 +672,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35410,7 +36021,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -656,6 +664,7 @@ mod tests {
+@@ -656,6 +748,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35418,7 +36029,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              })
              .collect();
          assert!(
-@@ -689,6 +698,7 @@ mod tests {
+@@ -689,6 +782,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected plan command, got service tier {command:?}")
              }
@@ -35426,7 +36037,7 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..d1ecfcb6c85c6d03d4b0c1da33cc6fb0
              other => panic!("expected plan to be selected for exact match, got {other:?}"),
          }
      }
-@@ -702,6 +712,7 @@ mod tests {
+@@ -702,6 +796,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -35552,10 +36163,18 @@ index f0b809ce50cd238a1e5208ccdd999695c1783658..6ca31803f6474287a816d074148b103c
      let key_hints = props.key_hints;
      // Passive footer context can come from the configurable status line, the
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view.rs b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e445057cb 100644
+index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..9f90cc4ad3bb6739c530466d4b7a1d53188d2115 100644
 --- a/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-@@ -39,6 +39,9 @@ use super::CancellationEvent;
+@@ -3,6 +3,7 @@
+ //! Controls and overflow indicators keep their own rows outside the result viewport.
+ //! Letter-labeled children are indented and do not consume numeric shortcuts.
+
++use codex_utils_fuzzy_match::fuzzy_match;
+ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyModifiers;
+@@ -39,6 +40,9 @@ use super::CancellationEvent;
  use super::bottom_pane_view::BottomPaneView;
  use super::bottom_pane_view::ViewCompletion;
  pub(crate) use super::picker_style::PickerSurface;
@@ -35565,7 +36184,23 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  use super::picker_style::render_scroll_indicators;
  use super::picker_style::selection_style;
  use super::popup_consts::MAX_POPUP_ROWS;
-@@ -280,6 +283,8 @@ pub(crate) struct SelectionViewParams {
+@@ -195,6 +199,7 @@ pub(crate) struct SelectionItem {
+     pub require_explicit_confirmation: bool,
+     pub dismiss_parent_on_child_accept: bool,
+     pub search_value: Option<String>,
++    pub selected_note: Option<String>,
+     pub disabled_reason: Option<String>,
+     /// Optional marker rendered in place of the number for a disabled row.
+     pub disabled_gutter_marker: Option<&'static str>,
+@@ -232,6 +237,7 @@ pub(crate) struct SelectionViewParams {
+     pub tabs: Vec<SelectionTab>,
+     pub initial_tab_id: Option<String>,
+     pub is_searchable: bool,
++    pub fuzzy_search: bool,
+     /// Optional non-text key that can toggle a row while printable keys edit the search query.
+     pub search_toggle_key: Option<KeyBinding>,
+     pub search_mode: SearchMode,
+@@ -280,6 +286,8 @@ pub(crate) struct SelectionViewParams {
 
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      pub on_cancel: OnCancelCallback,
@@ -35574,7 +36209,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  impl Default for SelectionViewParams {
-@@ -322,6 +327,7 @@ impl Default for SelectionViewParams {
+@@ -301,6 +309,7 @@ impl Default for SelectionViewParams {
+             tabs: Vec::new(),
+             initial_tab_id: None,
+             is_searchable: false,
++            fuzzy_search: false,
+             search_toggle_key: None,
+             search_mode: SearchMode::default(),
+             auto_number_shortcuts: true,
+@@ -322,6 +331,7 @@ impl Default for SelectionViewParams {
              on_selection_changed: None,
              allow_cancel: true,
              on_cancel: None,
@@ -35582,7 +36225,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          }
      }
  }
-@@ -390,6 +396,7 @@ pub(crate) struct ListSelectionView {
+@@ -358,6 +368,7 @@ pub(crate) struct ListSelectionView {
+     pub(super) dismiss_after_child_accept: bool,
+     pub(super) app_event_tx: AppEventSender,
+     is_searchable: bool,
++    fuzzy_search: bool,
+     search_toggle_key: Option<KeyBinding>,
+     search_mode: SearchMode,
+     search_active: bool,
+@@ -390,6 +401,7 @@ pub(crate) struct ListSelectionView {
      /// Called when the picker is dismissed via Esc/Ctrl+C without selecting.
      on_cancel: OnCancelCallback,
      keymap: ListKeymap,
@@ -35590,7 +36241,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
  }
 
  const SELECTION_TOGGLE_ON_PREFIX: &str = "[*] ";
-@@ -472,7 +479,12 @@ impl ListSelectionView {
+@@ -472,7 +484,12 @@ impl ListSelectionView {
          let mut header = params.header;
          if params.title.is_some() || params.subtitle.is_some() {
              let title = params.title.map(|title| Line::from(title.bold()));
@@ -35604,7 +36255,15 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
              header = Box::new(ColumnRenderable::with([
                  header,
                  Box::new(
-@@ -546,6 +558,7 @@ impl ListSelectionView {
+@@ -515,6 +532,7 @@ impl ListSelectionView {
+             dismiss_after_child_accept: false,
+             app_event_tx,
+             is_searchable: params.is_searchable,
++            fuzzy_search: params.fuzzy_search,
+             search_toggle_key: params.search_toggle_key,
+             search_mode: params.search_mode,
+             search_active,
+@@ -546,6 +564,7 @@ impl ListSelectionView {
              allow_cancel: params.allow_cancel,
              on_cancel: params.on_cancel,
              keymap,
@@ -35612,7 +36271,91 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          };
          s.apply_filter();
          if s.tabs_enabled() && !has_initial_selected_idx && s.state.selected_idx.is_none() {
-@@ -1540,6 +1553,36 @@ impl Renderable for ListSelectionView {
+@@ -686,7 +705,29 @@ impl ListSelectionView {
+                     .flatten()
+             });
+
+-        if self.is_searchable && !self.search_query.is_empty() {
++        if self.is_searchable && self.fuzzy_search && !self.search_query.is_empty() {
++            let query = self.search_query.as_str();
++            let query_lower = query.to_lowercase();
++            // Labels match fuzzily; longer fields only by substring, after every label match.
++            self.filtered_indices = self
++                .active_items()
++                .iter()
++                .enumerate()
++                .filter_map(|(idx, item)| {
++                    let value = item.search_value.as_deref()?;
++                    fuzzy_match(&item.name, query)
++                        .map(|(_, score)| (false, score, idx))
++                        .or_else(|| {
++                            value
++                                .to_lowercase()
++                                .contains(&query_lower)
++                                .then_some((true, 0, idx))
++                        })
++                })
++                .sorted()
++                .map(|(_, _, idx)| idx)
++                .collect();
++        } else if self.is_searchable && !self.search_query.is_empty() {
+             let query_lower = self.search_query.to_lowercase();
+             self.filtered_indices = self
+                 .active_items()
+@@ -1063,6 +1104,19 @@ impl ListSelectionView {
+         self.apply_filter();
+     }
+
++    pub(crate) fn select_actual_idx(&mut self, actual_idx: usize) {
++        if let Some(visible_idx) = self
++            .filtered_indices
++            .iter()
++            .position(|idx| *idx == actual_idx)
++        {
++            let len = self.visible_len();
++            self.state.selected_idx = Some(visible_idx);
++            self.state.ensure_visible(len, self.visible_rows(len));
++            self.fire_selection_changed();
++        }
++    }
++
+     pub(crate) fn take_last_selected_index(&mut self) -> Option<usize> {
+         self.last_selected_actual_idx.take()
+     }
+@@ -1110,7 +1164,14 @@ impl ListSelectionView {
+
+     fn footer_note_lines(&self, width: u16, show_selected_description: bool) -> Vec<Line<'static>> {
+         let wrap = |line| word_wrap_lines([line], usize::from(width.max(1)));
+-        let note = if show_selected_description {
++        let selected_note = self
++            .selected_actual_idx()
++            .and_then(|idx| self.active_items().get(idx))
++            .and_then(|item| item.selected_note.as_ref())
++            .map(|note| Line::from(note.clone()).dim());
++        let note = if selected_note.is_some() {
++            selected_note
++        } else if show_selected_description {
+             self.selected_actual_idx()
+                 .and_then(|idx| self.active_items().get(idx))
+                 .and_then(|item| item.description.as_ref())
+@@ -1133,6 +1194,16 @@ impl ListSelectionView {
+                 .unwrap_or(lines.len());
+             lines.resize(height.max(lines.len()), Line::default());
+         }
++        let note_height = self
++            .items
++            .iter()
++            .chain(self.search_items.iter())
++            .chain(self.tabs.iter().flat_map(|tab| tab.items.iter()))
++            .filter_map(|item| item.selected_note.as_deref())
++            .map(|note| wrap(Line::from(note).dim()).len())
++            .max()
++            .unwrap_or_default();
++        lines.resize(note_height.max(lines.len()), Line::default());
+         lines
+     }
+
+@@ -1540,6 +1611,36 @@ impl Renderable for ListSelectionView {
      }
 
      fn desired_height(&self, width: u16) -> u16 {
@@ -35649,7 +36392,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          // Inner content width after menu surface horizontal insets (2 per side).
          let inner_width = popup_content_width(width);
 
-@@ -1614,12 +1657,7 @@ impl Renderable for ListSelectionView {
+@@ -1614,12 +1715,7 @@ impl Renderable for ListSelectionView {
          height
      }
 
@@ -35663,7 +36406,7 @@ index 7a0fdf10d1019debe1e5bd6ae3a1186d0f944bcf..00147138fbd9474b553ff3d6aa92660e
          let search_field_visible = self.search_field_visible();
          let inner_width = popup_content_width(area.width);
          let side_w = self.side_layout_width(inner_width);
-@@ -1906,6 +1944,14 @@ impl Renderable for ListSelectionView {
+@@ -1906,6 +2002,14 @@ impl Renderable for ListSelectionView {
                  Paragraph::new(hint_lines).dim().render(hint_area, buf);
              }
          }
@@ -37571,10 +38314,10 @@ index 1cc51a16460fa849162bb5db99615b07fddfc95e..32f73b5503cd95dd738244e891e56a4c
 
  #[path = "tests/questions_tests.rs"]
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234fafb3d6e68f 100644
+index 7017aca6c14757840f69dfafed1a1edf816c5c4d..e23d69ac02bd32706c356f5f883cb9bac48182df 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-@@ -69,6 +69,37 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
+@@ -69,6 +69,38 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
      }
  }
 
@@ -37590,6 +38333,7 @@ index 7017aca6c14757840f69dfafed1a1edf816c5c4d..374cf5cabff5717d6b564aa489234faf
 +            id: "probe_fixture".to_string(),
 +            command: "probe".to_string(),
 +        },
++        namespaced: false,
 +    };
 +    chat.run_mod_command(command, String::new());
 +    assert_eq!(chat.held_mod_commands.len(), 1);
@@ -57093,10 +57837,10 @@ index 0000000000000000000000000000000000000000..e08580a2f529dc481aba70fd1a61b636
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491c35944cb
+index 0000000000000000000000000000000000000000..07fe3e11a50b9f67da065401c5ac99940d441945
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/config.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,266 @@
 +use crate::accounting::Rates;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -57208,8 +57952,10 @@ index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491
 +    }
 +}
 +
++pub(crate) const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
++
 +fn snapshot_bytes() -> usize {
-+    8 * 1024 * 1024
++    SNAPSHOT_BYTES
 +}
 +
 +fn max_request_bytes() -> usize {
@@ -57281,7 +58027,7 @@ index 0000000000000000000000000000000000000000..49e09a0ac15099a83295ca3dacf8c491
 +                .iter()
 +                .any(|arg| arg.is_empty() || arg.len() > 1024)
 +            || self.routes.len() > 32
-+            || self.snapshot_bytes == 0
++            || !(1..=SNAPSHOT_BYTES).contains(&self.snapshot_bytes)
 +            || self.max_request_bytes == 0
 +            || self.protected.len() > 32
 +            || self.approved_untracked.len() > 256
@@ -57390,10 +58136,10 @@ index 0000000000000000000000000000000000000000..77a9812a78e950d8a229b2d685f836f1
 +}
 diff --git a/codex-rs/ext/omd/src/contract.rs b/codex-rs/ext/omd/src/contract.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9e3254928e170c3e155e612a7a1e2e36a1d3eb24
+index 0000000000000000000000000000000000000000..3096e31d233d4cae150b3e2da8db3ed913f64883
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/contract.rs
-@@ -0,0 +1,921 @@
+@@ -0,0 +1,926 @@
 +use super::*;
 +use codex_omd::ContractDocument;
 +use codex_omd::Gate;
@@ -57833,9 +58579,14 @@ index 0000000000000000000000000000000000000000..9e3254928e170c3e155e612a7a1e2e36
 +
 +pub(crate) fn current_candidate(host: &Host) -> Result<String, String> {
 +    let approved = host.config.approved_untracked.iter().cloned().collect();
-+    codex_omd::capture_tracked(&host.repository, &approved, host.config.snapshot_bytes)
-+        .and_then(|snapshot| snapshot.hash())
-+        .map_err(|error| error.to_string())
++    codex_omd::hash_tracked(
++        &host.repository,
++        &approved,
++        host.config.snapshot_bytes,
++        |_| true,
++    )
++    .map(Option::unwrap_or_default)
++    .map_err(|error| error.to_string())
 +}
 +
 +#[cfg(test)]
@@ -63357,10 +64108,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f3ba05832
+index 0000000000000000000000000000000000000000..8719c7658bef076eba9ad3c9e05ec9daaba3ded7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2547 @@
+@@ -0,0 +1,2525 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -63400,12 +64151,6 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +use codex_omd::ModHostCall;
 +use codex_omd::ModTool;
 +use codex_protocol::models::PermissionProfile;
-+use codex_protocol::models::PermissionProfileSnapshot;
-+use codex_protocol::permissions::FileSystemAccessMode;
-+use codex_protocol::permissions::FileSystemPath;
-+use codex_protocol::permissions::FileSystemSandboxEntry;
-+use codex_protocol::permissions::FileSystemSandboxPolicy;
-+use codex_utils_absolute_path::AbsolutePathBuf;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -63941,7 +64686,10 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +    views.base(host, terminal, input, rendered_ms);
 +    let _ = host.persist_json("mod-status.json", &status);
 +    let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
-+    codex_features::set_removed(builtins.removed_features());
++    codex_features::set_removed(
++        &host.repository.to_string_lossy(),
++        builtins.removed_features(),
++    );
 +    let name = codex_omd::builtins_snapshot(&host.repository);
 +    // A missing snapshot reads as no controls, so a repository without any keeps no file.
 +    if builtins == codex_omd::BuiltinSnapshot::from_controls(&[]) {
@@ -64407,11 +65155,7 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +        thread: Option<&str>,
 +        forked_from: Option<&str>,
 +    ) -> Result<(), String> {
-+        let profile = config.permissions.effective_permission_profile();
-+        if matches!(profile, PermissionProfile::External { .. }) {
-+            return Err("mods_require_native_sandbox_for_host_owned_files".into());
-+        }
-+        let mut denies = Vec::new();
++        let mut denied = Vec::new();
 +        for path in self.host.protected_paths() {
 +            if path
 +                .canonicalize()
@@ -64421,13 +65165,12 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +            {
 +                return Err("protected_mod_path_must_be_canonical_and_external".into());
 +            }
-+            let path =
-+                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
-+            denies.push(FileSystemSandboxEntry::new(
-+                FileSystemPath::Path { path: path.into() },
-+                FileSystemAccessMode::Deny,
-+            ));
++            denied.push(
++                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
++                    .map_err(|_| "protected_path_unavailable")?,
++            );
 +        }
++        config.permissions.sandbox_denied_paths = denied;
 +        config.model_provider.supports_websockets = false;
 +        if self
 +            .codex_config
@@ -64436,24 +65179,6 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +        {
 +            config.update_plan_enabled = true;
 +        }
-+        let mut filesystem = profile.file_system_sandbox_policy();
-+        filesystem
-+            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
-+        let protected = PermissionProfile::from_runtime_permissions(
-+            &filesystem,
-+            profile.network_sandbox_policy(),
-+        );
-+        config
-+            .permissions
-+            .shell_environment_policy
-+            .r#set
-+            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
-+        config
-+            .permissions
-+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
-+                protected,
-+            ))
-+            .map_err(|e| e.to_string())?;
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
@@ -65443,6 +66168,10 @@ index 0000000000000000000000000000000000000000..5b67ba81dee5a1e8ba3f2b0fd94b2f2f
 +            self.environment.clear(Some(&lead.thread.to_string()), None);
 +            lead.session.processes.cleanup();
 +            lead.session.power.clear();
++            codex_features::set_removed(
++                &lead.host.repository.to_string_lossy(),
++                Default::default(),
++            );
 +            lead.session.access.cleanup();
 +            let _ = lead.session.persist_cost_capture();
 +        })
@@ -66728,7 +67457,7 @@ index 0000000000000000000000000000000000000000..7cb48ccd13ca7a2fa2c30a2ead87ee99
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0c4a1f3eb
+index 0000000000000000000000000000000000000000..a3d7fb30877da43e1e9bd73b82dda8bd1d88b20a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2580 @@
@@ -68051,7 +68780,7 @@ index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0
 +        if !active() {
 +            return Err("snapshot_cancelled".into());
 +        }
-+        let digest = snapshot.hash().map_err(|e| e.to_string())?;
++        let digest = snapshot.hash();
 +        if input
 +            .expected
 +            .as_ref()
@@ -68157,7 +68886,7 @@ index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0
 +        if changed.len() > 128 {
 +            return Err("isolated_worker_change_limit".into());
 +        }
-+        let candidate_sha256 = proposed.hash().map_err(|e| e.to_string())?;
++        let candidate_sha256 = proposed.hash();
 +        let outcome = operations::gate(
 +            core,
 +            lead,
@@ -68392,7 +69121,7 @@ index 0000000000000000000000000000000000000000..7930e15151ab71f82471dd6dbc53f6b0
 +                            let parent = parent_config(lead).await?;
 +                            let (_, proposed) = candidate(lead, &parent, &workspace.root).await?;
 +                            agent.candidate = Some((
-+                                proposed.hash().map_err(|e| e.to_string())?,
++                                proposed.hash(),
 +                                workspace
 +                                    .base
 +                                    .changed_paths(&proposed)
@@ -70084,10 +70813,10 @@ index 0000000000000000000000000000000000000000..eda428223c228b1320fe440307df0ee2
 +}
 diff --git a/codex-rs/ext/omd/src/mods/evidence.rs b/codex-rs/ext/omd/src/mods/evidence.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82e034befd4b72a2f1c0cfe36cdf3d59f736ce1b
+index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f44b5488ef
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/evidence.rs
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,241 @@
 +use super::*;
 +
 +pub(super) struct Cursor {
@@ -70257,10 +70986,7 @@ index 0000000000000000000000000000000000000000..82e034befd4b72a2f1c0cfe36cdf3d59
 +    .map_err(|e| e.to_string())?;
 +    packet = codex_omd::turn_evidence::combine(cursor.prefix.clone(), packet)
 +        .map_err(|error| error.to_string())?;
-+    let sha = crate::workspace_operations::workspace_snapshot(lead)
-+        .await?
-+        .hash()
-+        .map_err(|e| e.to_string())?;
++    let sha = crate::workspace_operations::workspace_identity(lead).await?;
 +    packet["workspace_sha256"] = json!(sha);
 +    packet["thread_id"] = json!(lead.thread.to_string());
 +    packet["outcome"] = json!(outcome);
@@ -73215,10 +73941,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709fbf20821c
+index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d69e6c1acc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4358 @@
+@@ -0,0 +1,4406 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -73575,8 +74301,11 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    let manager = attach_thread(&mut fixture).await;
 +    let repository = fixture.lead.host.repository.clone();
 +    let cwd = |info: Value| info["cwd"].as_str().map(std::path::PathBuf::from);
-+    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null).await;
-+    assert_eq!(cwd(info.unwrap()), Some(repository.clone()));
++    let info = control_call(&fixture, Origin::Event, "session.info", Value::Null)
++        .await
++        .unwrap();
++    assert_eq!(info["omd_version"], codex_omd::OMD_HOST_RELEASE);
++    assert_eq!(cwd(info), Some(repository.clone()));
 +    let sub = codex_utils_absolute_path::AbsolutePathBuf::try_from(repository.join("sub")).unwrap();
 +    std::fs::create_dir_all(&sub).unwrap();
 +    let uri = codex_utils_path_uri::PathUri::from_abs_path(&sub);
@@ -77577,6 +78306,51 @@ index 0000000000000000000000000000000000000000..a9f6e0ee38464957a539138f4659709f
 +    assert!(merge(json!({"success_per_call": "yes"})).is_err());
 +    assert!(merge(json!({"other": true})).is_err());
 +}
++
++#[tokio::test]
++async fn thread_config_keeps_the_users_sandbox() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            sandbox_mode: Some(codex_protocol::config_types::SandboxMode::WorkspaceWrite),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let profile = config.permissions.effective_permission_profile();
++    let environment = config.permissions.shell_environment_policy.r#set.clone();
++    codex_extension_api::ConfigContributor::prepare_thread_config(
++        &mods(&fixture.core),
++        &mut config,
++        None,
++        None,
++    )
++    .unwrap();
++    assert_eq!(config.permissions.effective_permission_profile(), profile);
++    assert_eq!(
++        config.permissions.shell_environment_policy.r#set,
++        environment
++    );
++    assert_eq!(
++        config.permissions.sandbox_denied_paths,
++        fixture
++            .lead
++            .host
++            .protected_paths()
++            .iter()
++            .map(
++                |path| codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(path)
++                    .unwrap()
++            )
++            .collect::<Vec<_>>()
++    );
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f3616bf60
@@ -78503,7 +79277,7 @@ index 0000000000000000000000000000000000000000..9618c70ab1722e3a0b8975a5650b619d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8d3dd837443f62995632c3ea6322806ed9910bf4
+index 0000000000000000000000000000000000000000..5fffc64a38017c18f7b262bd121f2098e46a77fa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,801 @@
@@ -79165,7 +79939,7 @@ index 0000000000000000000000000000000000000000..8d3dd837443f62995632c3ea6322806e
 +            Ok(
 +                json!({"thread_id": lead.thread.to_string(), "root": host.repository,
 +                "cwd": snapshot.cwd(), "codex_version": env!("CARGO_PKG_VERSION"),
-+                "model": snapshot.model,
++                "omd_version": codex_omd::OMD_HOST_RELEASE, "model": snapshot.model,
 +                "provider": account.as_ref().map_or(config.model_provider_id.clone(), |account| account.provider.clone()),
 +                "route": account.and_then(|account| account.route), "turns_started": turns,
 +                "process_id": crate::accounting::process_id()}),
@@ -80044,10 +80818,10 @@ index 0000000000000000000000000000000000000000..36f1dc61b510e861afbbed8d636ad300
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5f9f31ecb
+index 0000000000000000000000000000000000000000..39ec5eda3d3727f923c4c3065095216b85fcc7f5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,1071 @@
+@@ -0,0 +1,1073 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -80057,6 +80831,8 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +use std::collections::BTreeSet;
 +use std::path::Path;
 +use std::time::Duration;
++
++const SERVICE_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 +
 +#[derive(Clone, Deserialize)]
 +#[serde(deny_unknown_fields)]
@@ -80855,7 +81631,7 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +            return Err("service_argument_limit".into());
 +        }
 +        let task = lead.session.task.clone();
-+        let output_bytes = host.config.snapshot_bytes;
++        let output_bytes = SERVICE_OUTPUT_BYTES;
 +        let timeout = lead
 +            .session
 +            .task
@@ -81121,17 +81897,17 @@ index 0000000000000000000000000000000000000000..ea716d4795c133552ac315dc5bb164a5
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4945b07efad6652f288c7cf503f5519cf8b40e5d
+index 0000000000000000000000000000000000000000..767996955288fa40977e4a6fea50b664f7ededbe
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/snapshots.rs
-@@ -0,0 +1,669 @@
+@@ -0,0 +1,668 @@
 +use super::*;
++use crate::config::SNAPSHOT_BYTES;
 +use codex_omd::Snapshot;
 +use codex_omd::resource_data::ResourceRef;
 +use std::collections::BTreeSet;
 +
 +const SNAPSHOT_LIMIT: usize = 8;
-+const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 +const SNAPSHOT_TOTAL_LIMIT: usize = 32;
 +const SNAPSHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 +const EXECUTION_LIMIT: usize = 64;
@@ -81512,7 +82288,7 @@ index 0000000000000000000000000000000000000000..4945b07efad6652f288c7cf503f5519c
 +        thread: ThreadId,
 +        snapshot: Snapshot,
 +    ) -> Result<Value, String> {
-+        let digest = snapshot.hash().unwrap();
++        let digest = snapshot.hash();
 +        store.insert(caller, thread, snapshot, digest)
 +    }
 +
@@ -81670,11 +82446,10 @@ index 0000000000000000000000000000000000000000..4945b07efad6652f288c7cf503f5519c
 +        std::fs::write(root.join("source"), "after").unwrap();
 +        assert_eq!(captured.files["source"].bytes, b"before");
 +        assert_ne!(
-+            captured.hash().unwrap(),
++            captured.hash(),
 +            capture(&readable, &[], &paths, 128, &|| true)
 +                .unwrap()
 +                .hash()
-+                .unwrap()
 +        );
 +        assert!(capture(&readable, &[], &paths, 1, &|| true).is_err());
 +        assert!(capture(&readable, &[], &paths, 128, &|| false).is_err());
@@ -82253,10 +83028,10 @@ index 0000000000000000000000000000000000000000..d8f561fd4086b22febedcc8955c07359
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed6e8cf002
+index 0000000000000000000000000000000000000000..75293b4fe6fe6b1e7790966df06dca057be9a3f2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,812 @@
+@@ -0,0 +1,840 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -82295,7 +83070,7 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +    Ok(context)
 +}
 +
-+pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
++pub(super) async fn workspace_identity(lead: &crate::Lead) -> Result<Option<String>, String> {
 +    let authority = WorkspaceAuthority::for_lead(lead).await?;
 +    let approved = lead
 +        .host
@@ -82305,23 +83080,25 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +        .cloned()
 +        .collect();
 +    let limit = lead.host.config.snapshot_bytes;
-+    tokio::task::spawn_blocking(move || {
-+        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
-+            .map_err(|error| error.to_string())?;
-+        if snapshot
-+            .files
-+            .keys()
-+            .any(|path| !authority.readable(&authority.repository.join(path)))
-+        {
-+            return Err("workspace_snapshot_permission_denied".to_owned());
-+        }
-+        Ok(snapshot)
-+    })
-+    .await
-+    .map_err(|error| error.to_string())?
++    tokio::task::spawn_blocking(move || authority.identity(&approved, limit))
++        .await
++        .map_err(|error| error.to_string())?
 +}
 +
 +impl WorkspaceAuthority {
++    fn identity(
++        &self,
++        approved: &BTreeSet<String>,
++        limit: usize,
++    ) -> Result<Option<String>, String> {
++        match codex_omd::hash_tracked(&self.repository, approved, limit, |path| {
++            self.readable(&self.repository.join(path))
++        }) {
++            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
++            result => result.map_err(|error| error.to_string()),
++        }
++    }
++
 +    pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
 +        let environments = call
 +            .environments
@@ -83067,6 +83844,32 @@ index 0000000000000000000000000000000000000000..77cdc1366a4b51a60d25e674f78e26ed
 +            std::fs::read_to_string(root.join("index.ts")).unwrap(),
 +            "export * from './new';\n"
 +        );
++    }
++
++    #[test]
++    fn workspace_identity_is_absent_only_when_capture_exceeds_limit_or_permissions() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        assert!(
++            std::process::Command::new("git")
++                .args(["init", "--quiet"])
++                .current_dir(&root)
++                .status()
++                .unwrap()
++                .success()
++        );
++        std::fs::write(root.join("a.py"), "source\n").unwrap();
++        let mut approved = BTreeSet::from(["a.py".to_owned()]);
++        let readable = authority(root.clone(), FileSystemAccessMode::Read);
++        assert!(readable.identity(&approved, 1024).unwrap().is_some());
++        assert_eq!(readable.identity(&approved, 4), Ok(None));
++        assert_eq!(
++            authority(root.clone(), FileSystemAccessMode::Deny).identity(&approved, 1024),
++            Ok(None)
++        );
++        std::os::unix::fs::symlink("a.py", root.join("link")).unwrap();
++        approved.insert("link".to_owned());
++        assert!(readable.identity(&approved, 1024).is_err());
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_watch.rs b/codex-rs/ext/omd/src/workspace_watch.rs
@@ -103192,10 +103995,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..818759d3e976d82a2a2e7277b8d47aa4ec4f24ce
+index 0000000000000000000000000000000000000000..f760f7e621d5e7d7b482f7aa526a10db26d003c8
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,254 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -103289,6 +104092,7 @@ index 0000000000000000000000000000000000000000..818759d3e976d82a2a2e7277b8d47aa4
 +pub use workspace::change_baseline;
 +pub use workspace::cleanup_owned_directory;
 +pub use workspace::create_worktree;
++pub use workspace::hash_tracked;
 +pub use workspace::observe_workspace_changes;
 +pub use workspace::record_workspace_change;
 +pub use workspace::take_workspace_changes;
@@ -105086,10 +105890,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9d46e181ba59b19cbe73be22c41c7fa8e542b3d0
+index 0000000000000000000000000000000000000000..706c30488d9bd58511a88526a32ea5264e5b2a16
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6240 @@
+@@ -0,0 +1,6241 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105458,6 +106262,7 @@ index 0000000000000000000000000000000000000000..9d46e181ba59b19cbe73be22c41c7fa8
 +    "ui_composition_v1",
 +    "ui_controls_v1",
 +    "terminal_panel_v1",
++    "terminal_panel_navigation_v1",
 +    "reactive_state_v1",
 +    "session_ports_v1",
 +    "structured_access_v1",
@@ -105697,7 +106502,7 @@ index 0000000000000000000000000000000000000000..9d46e181ba59b19cbe73be22c41c7fa8
 +        "sessions" => "read session history",
 +        "sessions_tools" => "read tool arguments and outputs in session history",
 +        "contracts" => "set task completion rules",
-+        "builtins" => "run and hide built-in commands",
++        "builtins" => "run and hide built-in commands, modes and Codex features",
 +        "threads" => "start and manage threads",
 +        "config" => "read Codex settings",
 +        "config.write" => "change Codex settings",
@@ -106757,7 +107562,7 @@ index 0000000000000000000000000000000000000000..9d46e181ba59b19cbe73be22c41c7fa8
 +                .collect::<Vec<_>>()
 +                .join(", ");
 +            return Err(failure(format!(
-+                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/COMPATIBILITY.md.",
++                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/conformance/COMPATIBILITY.md.",
 +                self.id, self.api,
 +            )));
 +        }
@@ -111097,8 +111902,8 @@ index 0000000000000000000000000000000000000000..9d46e181ba59b19cbe73be22c41c7fa8
 +        mode: &str,
 +    ) -> Value {
 +        let install_profile = install_profile.map_or("unreported", self::install_profile);
-+        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-+            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
++        json!({"codex_version": codex_version, "omd_version": OMD_HOST_RELEASE, "install_profile": install_profile,
++            "mode": mode, "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
 +                "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
 +    }
 +
@@ -114854,7 +115659,7 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..796175e21fc30d729b3cc2df16e0254fd8c30505
+index 0000000000000000000000000000000000000000..22667f1670bee77f9e6c839d8efd4cd4e2db998e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
 @@ -0,0 +1,224 @@
@@ -114910,7 +115715,7 @@ index 0000000000000000000000000000000000000000..796175e21fc30d729b3cc2df16e0254f
 +    "agents.inventory": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"agents":{"type":"array","items":{"type":"object","properties":{"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"thread_id":{"type":"string"},"parent":{"type":"object","properties":{"thread_id":{"anyOf":[{"type":"null"},{"type":"string"}]},"agent_id":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["thread_id","agent_id"]},"origin":{"anyOf":[{"const":"native"},{"const":"model"},{"const":"mod"}]},"owner":{"anyOf":[{"type":"null"},{"type":"string"}]},"definition":{"anyOf":[{"type":"null"},{"type":"object","properties":{"name":{"type":"string"},"owner":{"type":"string"},"source_sha256":{"type":"string"}},"required":["name","owner","source_sha256"]}]},"role":{"anyOf":[{"type":"null"},{"type":"string"}]},"route":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"completed"},{"const":"running"},{"const":"cancelled"}]},"started_at_ms":{"type":"number"},"ended_at_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"duration_ms":{"anyOf":[{"type":"null"},{"type":"number"}]},"turns":{"type":"number"},"last_turn":{"anyOf":[{"type":"null"},{"type":"object","properties":{"turn_id":{"type":"string"},"outcome":{"anyOf":[{"const":"error"},{"const":"completed"},{"const":"aborted"}]},"at_ms":{"type":"number"},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"error":{"$ref":"#/$defs/52"}},"required":["turn_id","outcome","at_ms","answer","error"]}]},"answer":{"anyOf":[{"type":"null"},{"type":"string"}]},"usage":{"type":"object","properties":{"requests":{"anyOf":[{"type":"null"},{"type":"number"}]},"input_tokens":{"type":"number"},"output_tokens":{"type":"number"},"cached_tokens":{"type":"number"},"microusd":{"anyOf":[{"type":"null"},{"type":"number"}]},"basis":{"anyOf":[{"const":"unknown"},{"const":"settled"},{"const":"partial"}]},"source":{"anyOf":[{"type":"null"},{"const":"accounting"},{"const":"engine"}]}},"required":["requests","input_tokens","output_tokens","cached_tokens","microusd","basis","source"]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["agent_id","thread_id","parent","origin","owner","definition","role","status","started_at_ms","ended_at_ms","duration_ms","turns","last_turn","answer","usage","reason"]}}},"required":["agents"]}},
 +    "peers.list": {"arguments":{"anyOf":[{"type":"null"},{"type":"object","properties":{"package":{"type":"string"}},"required":[]}]},"result":{"type":"object","properties":{"session":{"type":"string"},"peers":{"type":"array","items":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"},"repository":{"type":"string"},"same_project":{"type":"boolean"}},"required":["session","package","repository","same_project"]}}},"required":["session","peers"]}},
 +    "peers.send": {"arguments":{"type":"object","properties":{"to":{"type":"string"},"package":{"type":"string"},"data":{},"correlation":{"type":"string"},"ttl_ms":{"type":"number"}},"required":["to","data"]},"result":{"type":"object","properties":{"id":{"type":"string"},"status":{"anyOf":[{"const":"failed"},{"const":"closed"},{"const":"expired"},{"const":"queued"},{"const":"delivered"},{"const":"refused"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"at_ms":{"type":"number"},"by":{"type":"object","properties":{"session":{"type":"string"},"package":{"anyOf":[{"type":"null"},{"type":"string"}]}},"required":["session","package"]},"correlation":{"anyOf":[{"type":"null"},{"type":"string"}]},"to":{"type":"object","properties":{"session":{"type":"string"},"package":{"type":"string"}},"required":["session","package"]}},"required":["id","status"]}},
-+    "power.hold": {"arguments":{"type":"object","properties":{"reason":{"type":"string"},"lid_closed":{"anyOf":[{"const":false},{"const":true}]},"max_duration_ms":{"type":"number"}},"required":["reason","max_duration_ms"]},"result":{"type":"object","properties":{"lease":{"type":"string"},"lid_closed":{"type":"boolean"}},"required":["lease","lid_closed"]}},
++    "power.hold": {"arguments":{"type":"object","properties":{"reason":{"type":"string"},"lid_closed":{"anyOf":[{"const":false},{"const":true}]},"max_duration_ms":{"type":"number"},"lease":{"type":"string"}},"required":["reason","max_duration_ms"]},"result":{"type":"object","properties":{"lease":{"type":"string"},"lid_closed":{"type":"boolean"}},"required":["lease","lid_closed"]}},
 +    "power.release": {"arguments":{"type":"object","properties":{"lease":{"type":"string"}},"required":["lease"]},"result":{"type":"object","properties":{"released":{"type":"boolean"}},"required":["released"]}},
 +    "turns.queue": {"arguments":{"type":"object","properties":{"prompt":{"type":"string"},"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"deadline_ms":{"type":"number"}},"required":["prompt","key"]},"result":{"type":"object","properties":{"key":{"type":"string"},"status":{"anyOf":[{"const":"queued"},{"const":"duplicate"}]},"paused":{"anyOf":[{"const":false},{"const":true}]}},"required":["key","status"]}},
 +    "turns.queued": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"paused":{"type":"boolean"},"started":{"type":"number"},"spent_microusd":{"type":"number"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"priority":{"anyOf":[{"const":"normal"},{"const":"high"},{"const":"low"}]},"event":{"type":"string"},"queued_at_ms":{"type":"number"},"deadline_ms":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["key","priority","event","queued_at_ms","deadline_ms"]}}},"required":["paused","started","spent_microusd","entries"]}},
@@ -114975,13 +115780,13 @@ index 0000000000000000000000000000000000000000..796175e21fc30d729b3cc2df16e0254f
 +    "terminal.prompt": {"arguments":{"anyOf":[{"type":"object","properties":{"kind":{"const":"confirm"},"title":{"type":"string"},"message":{"type":"string"}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"text"},"title":{"type":"string"},"message":{"type":"string"},"masked":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message"]},{"type":"object","properties":{"kind":{"const":"choice"},"title":{"type":"string"},"message":{"type":"string"},"options":{"$ref":"#/$defs/79"},"multiple":{"anyOf":[{"const":false},{"const":true}]},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind","title","message","options"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"type":"object","properties":{"status":{"const":"accepted"},"value":{"type":"string"},"values":{"type":"array","items":{"type":"string"}},"other":{"anyOf":[{"const":false},{"const":true}]}},"required":["status"]}]}},
 +    "terminal.pane": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"anyOf":[{"const":"open"},{"const":"close"},{"const":"focus"},{"const":"reveal"}]},"id":{"type":"string"}},"required":["action","id"]},{"type":"object","properties":{"action":{"const":"scroll"},"id":{"type":"string"},"offset":{"type":"number"}},"required":["action","id","offset"]}]},"result":{"type":"object","properties":{"applied":{"const":true}},"required":["applied"]}},
 +    "terminal.panes": {"arguments":{"type":"object","properties":{},"required":[],"additionalProperties":false},"result":{"type":"object","properties":{"panes":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"visible":{"type":"boolean"},"collapsed":{"type":"boolean"},"focused":{"type":"boolean"},"scroll":{"type":"number"}},"required":["id","visible","collapsed","focused","scroll"]}}},"required":["panes"]}},
-+    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
++    "terminal.panel": {"arguments":{"type":"object","properties":{"title":{"type":"string"},"subtitle":{"type":"string"},"tabs":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"items":{"type":"array","items":{"anyOf":[{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"toggle"},"value":{"anyOf":[{"const":false},{"const":true}]}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"choice"},"value":{"type":"string"},"options":{"$ref":"#/$defs/79"}},"required":["kind","options"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"text"},"value":{"type":"string"}},"required":["kind"]}]},{"allOf":[{"$ref":"#/$defs/80"},{"type":"object","properties":{"kind":{"const":"action"}},"required":["kind"]}]}]}},"search":{"anyOf":[{"const":false},{"const":true}]},"query":{"type":"string"},"selected":{"type":"string"},"close_args":{"type":"string"},"action":{"$ref":"#/$defs/67"}},"required":["title","items","action"]},"result":{"type":"object","properties":{"shown":{"const":true}},"required":["shown"]}},
 +    "terminal.notice": {"arguments":{"anyOf":[{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"ttl_ms":{"type":"number"},"id":{"type":"string"},"clear":{"const":false}},"required":["text"]},{"type":"object","properties":{"id":{"type":"string"},"placement":{"anyOf":[{"const":"status"},{"const":"toast"}]},"clear":{"const":true}},"required":["id","clear"]},{"type":"object","properties":{"text":{"type":"string"},"kind":{"anyOf":[{"const":"error"},{"const":"info"},{"const":"warning"}]},"placement":{"const":"transcript"},"audience":{"anyOf":[{"const":"user"},{"const":"model"}]},"tool_call_id":{"type":"string"}},"required":["text","placement"]}]},"result":{"anyOf":[{"type":"object","properties":{"shown":{"const":true},"model":{"anyOf":[{"const":false},{"const":true}]}},"required":["shown"]},{"type":"object","properties":{"cleared":{"type":"boolean"}},"required":["cleared"]}]}},
 +    "terminal.blit": {"arguments":{"anyOf":[{"type":"object","properties":{"key":{"type":"string"},"rect":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}},"required":["x","y","width","height"]},"cells":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"array","prefixItems":[{"type":"string"},{"$ref":"#/$defs/81"},{"$ref":"#/$defs/81"}],"minItems":3,"maxItems":3}]}}},"required":["key","rect","cells"]},{"type":"object","properties":{"key":{"type":"string"},"image":{"type":"object","properties":{"media_type":{"anyOf":[{"const":"image/png"},{"const":"image/jpeg"}]},"base64":{"type":"string"}},"required":["media_type","base64"]}},"required":["key","image"]},{"type":"object","properties":{"key":{"type":"string"},"pixels":{"type":"object","properties":{"source":{"type":"string"},"format":{"anyOf":[{"const":"rgb"},{"const":"rgba"}]},"width":{"type":"number"},"height":{"type":"number"},"sequence":{"type":"number"}},"required":["source","format","width","height","sequence"]}},"required":["key","pixels"]}]},"result":{"anyOf":[{"type":"object","properties":{"frame":{"type":"number"},"queued":{"type":"number"},"frame_ms":{"type":"number"}},"required":["frame","queued","frame_ms"]},{"type":"object","properties":{"status":{"const":"backpressure"},"retry_after_ms":{"type":"number"}},"required":["status","retry_after_ms"]}]}},
 +    "terminal.pty": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"start"},"session":{"type":"string"},"cwd":{"type":"string"},"program":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"sha256":{"type":"string"},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"const":"loopback"},"sandbox":{"const":"none"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"write"},"session":{"type":"string"},"text":{"type":"string"}},"required":["action","session","text"]},{"type":"object","properties":{"action":{"const":"read"},"session":{"type":"string"}},"required":["action","session"]},{"type":"object","properties":{"action":{"const":"stop"},"session":{"type":"string"}},"required":["action","session"]}]},"result":{"anyOf":[{"$ref":"#/$defs/34"},{"$ref":"#/$defs/57"},{"type":"object","properties":{"written":{"type":"number"}},"required":["written"]},{"type":"object","properties":{"text":{"type":"string"},"running":{"type":"boolean"},"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]}},"required":["text","running","exit_code"]},{"type":"object","properties":{"stopped":{"const":true}},"required":["stopped"]}]}},
 +    "model.complete": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"}},"required":["route"]}]},"result":{"$ref":"#/$defs/93"}},
 +    "model.fork": {"arguments":{"allOf":[{"$ref":"#/$defs/84"},{"type":"object","properties":{"route":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}},"required":[]}]},"result":{"$ref":"#/$defs/93"}},
-+    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
++    "session.info": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"root":{"type":"string"},"cwd":{"type":"string"},"codex_version":{"type":"string"},"omd_version":{"type":"string"},"model":{"type":"string"},"provider":{"type":"string"},"route":{"anyOf":[{"type":"null"},{"type":"string"}]},"turns_started":{"type":"number"},"process_id":{"type":"string"}},"required":["thread_id","root","cwd","codex_version","model","provider","route","turns_started","process_id"]}},
 +    "ledger.settle": {"arguments":{"type":"object","properties":{"request_id":{"type":"string"},"microusd":{"type":"number"},"source":{"type":"string"}},"required":["request_id","microusd","source"]},"result":{}},
 +    "time.sleep": {"arguments":{"type":"object","properties":{"ms":{"type":"number"}},"required":["ms"]},"result":{"type":"object","properties":{"slept_ms":{"type":"number"},"cancelled":{"type":"boolean"}},"required":["slept_ms","cancelled"]}}
 +  },
@@ -115066,7 +115871,7 @@ index 0000000000000000000000000000000000000000..796175e21fc30d729b3cc2df16e0254f
 +    "77": {"type":"object","properties":{"action":{"$ref":"#/$defs/71"},"id":{"type":"string"},"source":{"$ref":"#/$defs/76"},"reference":{"type":"string"},"version":{"type":"string"},"index":{"type":"string"},"scope":{"anyOf":[{"const":"user"},{"const":"project"}]}},"required":["action"]},
 +    "78": {"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"}},"required":["value","label"]},
 +    "79": {"type":"array","items":{"$ref":"#/$defs/78"}},
-+    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}},"required":["id","label"]},
++    "80": {"type":"object","properties":{"id":{"type":"string"},"tab":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"},"group":{"type":"string"},"keywords":{"type":"string"},"detail":{"type":"string"}},"required":["id","label"]},
 +    "81": {"anyOf":[{"type":"null"},{"type":"number"},{"type":"string","format":"hash-prefixed-string"}]},
 +    "82": {"anyOf":[{"const":"none"},{"const":"high"},{"const":"low"},{"const":"medium"},{"const":"minimal"},{"const":"xhigh"}]},
 +    "83": {"type":"object","properties":{"through":{"anyOf":[{"type":"number"},{"const":"system"}]}},"required":["through"]},
@@ -127222,10 +128027,10 @@ index 0000000000000000000000000000000000000000..f8b869378224741c22fa9ed735dab20e
 +}
 diff --git a/codex-rs/omd/src/power.rs b/codex-rs/omd/src/power.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..709890799a89ba4c905339a69abe089f19b28a22
+index 0000000000000000000000000000000000000000..4fad89a5d0d18c27187acfadee7baa73118accae
 --- /dev/null
 +++ b/codex-rs/omd/src/power.rs
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,418 @@
 +use crate::broker;
 +use serde_json::Value;
 +use serde_json::json;
@@ -127529,8 +128334,18 @@ index 0000000000000000000000000000000000000000..709890799a89ba4c905339a69abe089f
 +                .count()
 +                >= LEASES_PER_OWNER
 +        };
-+        if full(&*self.records.lock().map_err(|_| "power_state_poisoned")?) {
-+            return Err("power_lease_limit".into());
++        {
++            let records = self.records.lock().map_err(|_| "power_state_poisoned")?;
++            if let Some(current) = arguments["lease"].as_str()
++                && records.get(current).is_some_and(|lease| {
++                    lease.owner == owner && lease.broker.is_some() == lid_closed
++                })
++            {
++                return Ok(json!({"lease": current, "lid_closed": lid_closed}));
++            }
++            if full(&records) {
++                return Err("power_lease_limit".into());
++            }
 +        }
 +        let broker = if lid_closed {
 +            let socket = self
@@ -127636,10 +128451,10 @@ index 0000000000000000000000000000000000000000..709890799a89ba4c905339a69abe089f
 +mod tests;
 diff --git a/codex-rs/omd/src/power_tests.rs b/codex-rs/omd/src/power_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e95b06b755d5be5bc63c50e8791ab36a389aaa36
+index 0000000000000000000000000000000000000000..19d5ebfac0cc107751d8dcb5f46611b4e03aff66
 --- /dev/null
 +++ b/codex-rs/omd/src/power_tests.rs
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,259 @@
 +use super::*;
 +use std::os::unix::fs::PermissionsExt;
 +use std::time::Instant;
@@ -127806,18 +128621,6 @@ index 0000000000000000000000000000000000000000..e95b06b755d5be5bc63c50e8791ab36a
 +}
 +
 +#[test]
-+fn a_record_left_by_a_failed_restore_keeps_the_setting_from_before_the_first_hold() {
-+    let machine = Machine::new(true, Machine::uid());
-+    fs::write(machine.base.join("power.json"), r#"{"previous":false}"#).unwrap();
-+    let leases = machine.leases();
-+    let held = leases.hold("a", "s", &hold(true)).unwrap();
-+    leases
-+        .release("a", &json!({"lease": held["lease"]}))
-+        .unwrap();
-+    machine.settles("0");
-+}
-+
-+#[test]
 +fn a_lease_ends_when_its_broker_connection_drops() {
 +    let temp = tempfile::tempdir().unwrap();
 +    let socket = temp.path().join("broker.sock");
@@ -127885,6 +128688,10 @@ index 0000000000000000000000000000000000000000..e95b06b755d5be5bc63c50e8791ab36a
 +            .unwrap(),
 +        json!({"released": false})
 +    );
++    let mut renew = hold(false);
++    renew["lease"] = held["lease"].clone();
++    assert_eq!(leases.hold("a", "s1", &renew).unwrap(), held);
++    assert_ne!(leases.hold("b", "s1", &renew).unwrap(), held);
 +    for _ in 1..LEASES_PER_OWNER {
 +        leases.hold("a", "s1", &hold(false)).unwrap();
 +    }
@@ -131633,10 +132440,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8acd2673fc
+index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544b3575b3e
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1259 @@
+@@ -0,0 +1,1335 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -131761,6 +132568,10 @@ index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8a
 +
 +fn invalid(message: &str) -> io::Error {
 +    io::Error::other(message)
++}
++
++fn too_large() -> io::Error {
++    io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
 +}
 +
 +fn content_hash(bytes: &[u8]) -> String {
@@ -132337,79 +133148,112 @@ index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8a
 +        && after.nlink() == 1)
 +}
 +
++fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
++    digest.update((name.len() as u64).to_le_bytes());
++    digest.update(name.as_bytes());
++    digest.update([u8::from(executable)]);
++    digest.update(contents);
++}
++
++/// Reads each existing path once, within `max_bytes` of names and contents, and fails if any changes meanwhile.
++fn visit(
++    root: &Path,
++    paths: &BTreeSet<String>,
++    max_bytes: usize,
++    mut read: impl FnMut(&str, &mut dyn Read, bool) -> io::Result<usize>,
++) -> io::Result<()> {
++    let root = root.canonicalize()?;
++    let directory = open_directory(&root)?;
++    let mut observed = BTreeMap::new();
++    let mut remaining = max_bytes;
++    for name in paths {
++        let path = safe_path(&root, name)?;
++        let mut input = match open_source(&directory, name) {
++            Ok(input) => input,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => {
++                observed.insert(name.clone(), None);
++                continue;
++            }
++            Err(error) => return Err(error),
++        };
++        let metadata = input.metadata()?;
++        if !metadata.is_file() {
++            return Err(invalid("snapshot requires regular files"));
++        }
++        if metadata.nlink() != 1 {
++            return Err(invalid("snapshot hardlink rejected"));
++        }
++        let executable = metadata.permissions().mode() & 0o111 != 0;
++        let count = read(
++            name,
++            &mut (&mut input).take(remaining.saturating_add(1) as u64),
++            executable,
++        )?;
++        let cost = count
++            .checked_add(name.len())
++            .ok_or_else(|| invalid("snapshot size overflow"))?;
++        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
++        let after = fs::symlink_metadata(&path)?;
++        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
++            return Err(invalid("source changed during snapshot"));
++        }
++        observed.insert(name.clone(), Some(metadata));
++    }
++    for (name, before) in observed {
++        match (before, open_source(&directory, &name)) {
++            (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
++            (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
++            _ => return Err(invalid("source tree changed during snapshot")),
++        }
++    }
++    Ok(())
++}
++
 +impl Snapshot {
 +    pub fn capture(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<Self> {
-+        let root = root.canonicalize()?;
-+        let directory = open_directory(&root)?;
 +        let mut files = BTreeMap::new();
-+        let mut observed = BTreeMap::new();
-+        let mut remaining = max_bytes;
-+        for name in paths {
-+            let path = safe_path(&root, name)?;
-+            let mut input = match open_source(&directory, name) {
-+                Ok(input) => input,
-+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-+                    observed.insert(name.clone(), None);
-+                    continue;
-+                }
-+                Err(error) => return Err(error),
-+            };
-+            let metadata = input.metadata()?;
-+            if !metadata.is_file() {
-+                return Err(invalid("snapshot requires regular files"));
-+            }
-+            {
-+                use std::os::unix::fs::MetadataExt;
-+                if metadata.nlink() != 1 {
-+                    return Err(invalid("snapshot hardlink rejected"));
-+                }
-+            }
++        visit(root, paths, max_bytes, |name, input, executable| {
 +            let mut bytes = Vec::new();
-+            (&mut input)
-+                .take(remaining.saturating_add(1) as u64)
-+                .read_to_end(&mut bytes)?;
-+            let cost = bytes
-+                .len()
-+                .checked_add(name.len())
-+                .ok_or_else(|| invalid("snapshot size overflow"))?;
-+            remaining = remaining
-+                .checked_sub(cost)
-+                .ok_or_else(|| invalid("snapshot size limit"))?;
-+            let after = fs::symlink_metadata(&path)?;
-+            if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-+                return Err(invalid("source changed during snapshot"));
-+            }
-+            let executable = {
-+                use std::os::unix::fs::PermissionsExt;
-+                metadata.permissions().mode() & 0o111 != 0
-+            };
-+            files.insert(name.clone(), File { bytes, executable });
-+            observed.insert(name.clone(), Some(metadata));
-+        }
-+        for (name, before) in observed {
-+            match (before, open_source(&directory, &name)) {
-+                (None, Err(error)) if error.kind() == io::ErrorKind::NotFound => (),
-+                (Some(before), Ok(current)) if same_file(&before, &current.metadata()?)? => (),
-+                _ => return Err(invalid("source tree changed during snapshot")),
-+            }
-+        }
++            input.read_to_end(&mut bytes)?;
++            let read = bytes.len();
++            files.insert(name.to_owned(), File { bytes, executable });
++            Ok(read)
++        })?;
 +        Ok(Self { files })
 +    }
 +
-+    pub fn hash(&self) -> io::Result<String> {
-+        struct Hasher(Sha256);
-+        impl Write for Hasher {
-+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-+                self.0.update(bytes);
-+                Ok(bytes.len())
++    /// Same digest as `capture(...).hash()`, streamed without holding the contents.
++    pub fn digest(root: &Path, paths: &BTreeSet<String>, max_bytes: usize) -> io::Result<String> {
++        let mut digest = Sha256::new();
++        visit(root, paths, max_bytes, |name, input, executable| {
++            let mut contents = Sha256::new();
++            let mut buffer = [0; 64 * 1024];
++            let mut read = 0;
++            loop {
++                let count = input.read(&mut buffer)?;
++                if count == 0 {
++                    break;
++                }
++                contents.update(&buffer[..count]);
++                read += count;
 +            }
-+            fn flush(&mut self) -> io::Result<()> {
-+                Ok(())
-+            }
++            frame(&mut digest, name, executable, &contents.finalize());
++            Ok(read)
++        })?;
++        Ok(format!("{:x}", digest.finalize()))
++    }
++
++    pub fn hash(&self) -> String {
++        let mut digest = Sha256::new();
++        for (name, file) in &self.files {
++            frame(
++                &mut digest,
++                name,
++                file.executable,
++                &Sha256::digest(&file.bytes),
++            );
 +        }
-+        let mut hasher = Hasher(Sha256::new());
-+        serde_json::to_writer(&mut hasher, self)?;
-+        Ok(format!("{:x}", hasher.0.finalize()))
++        format!("{:x}", digest.finalize())
 +    }
 +
 +    pub fn write_new(&self, root: &Path, max_bytes: usize) -> io::Result<()> {
@@ -132421,7 +133265,7 @@ index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8a
 +                .and_then(|total| total.checked_add(file.bytes.len()))
 +                .ok_or_else(|| invalid("snapshot size overflow"))?;
 +            if total > max_bytes {
-+                return Err(invalid("snapshot size limit"));
++                return Err(too_large());
 +            }
 +            if Path::new(name)
 +                .ancestors()
@@ -132560,12 +133404,35 @@ index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8a
 +    approved_untracked: &BTreeSet<String>,
 +    max_bytes: usize,
 +) -> io::Result<Snapshot> {
++    tracked(root, approved_untracked, |paths| {
++        Snapshot::capture(root, paths, max_bytes)
++    })
++}
++
++/// The `capture_tracked` digest, or `None` when a tracked path is not `readable`.
++pub fn hash_tracked(
++    root: &Path,
++    approved_untracked: &BTreeSet<String>,
++    max_bytes: usize,
++    readable: impl Fn(&str) -> bool,
++) -> io::Result<Option<String>> {
++    tracked(root, approved_untracked, |paths| {
++        let digest = Snapshot::digest(root, paths, max_bytes)?;
++        Ok(paths.iter().all(|path| readable(path)).then_some(digest))
++    })
++}
++
++fn tracked<T>(
++    root: &Path,
++    approved_untracked: &BTreeSet<String>,
++    capture: impl FnOnce(&BTreeSet<String>) -> io::Result<T>,
++) -> io::Result<T> {
 +    let paths = tracked_paths(root, approved_untracked)?;
-+    let snapshot = Snapshot::capture(root, &paths, max_bytes)?;
++    let captured = capture(&paths)?;
 +    if tracked_paths(root, approved_untracked)? != paths {
 +        return Err(invalid("tracked path set changed during snapshot"));
 +    }
-+    Ok(snapshot)
++    Ok(captured)
 +}
 +
 +fn git(root: &Path) -> Command {
@@ -132676,6 +133543,22 @@ index 0000000000000000000000000000000000000000..59f7e9ad9597fee68640187dcf572c8a
 +        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
 +        assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
 +        assert_eq!(before.changed(&after).len(), 1);
++    }
++
++    #[test]
++    fn streamed_digest_matches_the_captured_snapshot_and_its_limit() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("a.txt"), "one\n").unwrap();
++        fs::write(root.join("b.sh"), "two\n").unwrap();
++        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o755)).unwrap();
++        let paths = BTreeSet::from(["a.txt".into(), "b.sh".into(), "gone".into()]);
++        let digest = Snapshot::digest(&root, &paths, 64).unwrap();
++        assert_eq!(digest, Snapshot::capture(&root, &paths, 64).unwrap().hash());
++        fs::set_permissions(root.join("b.sh"), fs::Permissions::from_mode(0o644)).unwrap();
++        assert_ne!(Snapshot::digest(&root, &paths, 64).unwrap(), digest);
++        let error = Snapshot::digest(&root, &paths, 16).unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
 +    }
 +
 +    #[test]
@@ -137204,10 +138087,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf1c9083e0
+index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4de3b96f4
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4795 @@
+@@ -0,0 +1,4796 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -140567,7 +141450,8 @@ index 0000000000000000000000000000000000000000..b52233ec3dca6ac2732665934af9adaf
 +    let identity = runtime.identity("0.163.0", Some("full"), "omd");
 +    assert_eq!(
 +        identity,
-+        json!({"codex_version":"0.163.0","install_profile":"full","mode":"omd",
++        json!({"codex_version":"0.163.0","omd_version":OMD_HOST_RELEASE,
++        "install_profile":"full","mode":"omd",
 +        "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
 +    );
 +    assert_eq!(
@@ -151391,10 +152275,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec61d49ce0f
+index 0000000000000000000000000000000000000000..6f904ca11fac83082949a1059c54605f4f103437
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,635 @@
+@@ -0,0 +1,892 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -151420,6 +152304,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyEventKind;
 +use crossterm::event::KeyModifiers;
++use itertools::Itertools as _;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
 +use ratatui::text::Line;
@@ -151458,6 +152343,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    label: String,
 +    #[serde(default)]
 +    description: Option<String>,
++    #[serde(default)]
++    group: Option<String>,
++    #[serde(default)]
++    keywords: Option<String>,
++    #[serde(default)]
++    detail: Option<String>,
 +    kind: PanelKind,
 +    #[serde(default)]
 +    value: Option<Value>,
@@ -151476,6 +152367,12 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    items: Vec<PanelItem>,
 +    #[serde(default)]
 +    search: bool,
++    #[serde(default)]
++    query: Option<String>,
++    #[serde(default)]
++    selected: Option<String>,
++    #[serde(default)]
++    close_args: Option<String>,
 +    action: ModCommandAction,
 +}
 +
@@ -151509,6 +152406,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            .filter(|command| codex_omd::mod_command_reference(command))
 +            .ok_or("terminal_panel_invalid: action must name one of the caller's commands")?;
 +        request.action.args = text(&request.action.args, 512, true)?;
++        request.query = request
++            .query
++            .map(|query| line(&query, 128, true))
++            .transpose()?;
++        request.selected = request
++            .selected
++            .map(|selected| text(&selected, 128, false))
++            .transpose()?;
++        request.close_args = request
++            .close_args
++            .map(|args| text(&args, 512, true))
++            .transpose()?;
 +        if request.tabs.len() > MAX_TABS || !(1..=MAX_ITEMS).contains(&request.items.len()) {
 +            return Err(format!(
 +                "terminal_panel_invalid: at most {MAX_TABS} tabs and 1-{MAX_ITEMS} items"
@@ -151546,6 +152455,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                .description
 +                .as_deref()
 +                .map(|description| line(description, 256, true))
++                .transpose()?;
++            item.group = item
++                .group
++                .as_deref()
++                .map(|group| line(group, 32, false))
++                .transpose()?;
++            item.keywords = item
++                .keywords
++                .as_deref()
++                .map(|keywords| line(keywords, 256, true))
++                .transpose()?;
++            item.detail = item
++                .detail
++                .as_deref()
++                .map(|detail| line(detail, 512, true))
 +                .transpose()?;
 +            item.value = Some(Self::value(item)?);
 +        }
@@ -151601,7 +152525,17 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +struct PanelState {
 +    tab: Option<String>,
 +    selected: Option<String>,
++    group: Option<String>,
 +    query: Option<String>,
++}
++
++enum Row<'a> {
++    Group {
++        name: &'a str,
++        count: usize,
++        collapsed: bool,
++    },
++    Item(&'a PanelItem),
 +}
 +
 +pub(crate) struct ModPanelView {
@@ -151609,6 +152543,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    request: ModPanelRequest,
 +    picker: ListSelectionView,
 +    tab: Option<String>,
++    collapsed: HashSet<String>,
++    last_query: Option<String>,
++    used_query: bool,
++    reported: bool,
 +    keymap: ListKeymap,
 +    app_event_tx: AppEventSender,
 +}
@@ -151620,17 +152558,28 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        app_event_tx: AppEventSender,
 +        keymap: ListKeymap,
 +    ) -> Self {
++        let state = PanelState {
++            selected: request.selected.clone(),
++            query: request.query.clone().filter(|query| !query.is_empty()),
++            ..PanelState::default()
++        };
++        let collapsed = HashSet::new();
 +        let picker = picker(
 +            &request,
-+            PanelState::default(),
++            state,
++            &collapsed,
 +            app_event_tx.clone(),
 +            keymap.clone(),
 +        );
 +        Self {
 +            caller,
++            last_query: request.query.clone().filter(|query| !query.is_empty()),
 +            request,
 +            picker,
 +            tab: None,
++            collapsed,
++            used_query: false,
++            reported: false,
 +            keymap,
 +            app_event_tx,
 +        }
@@ -151656,12 +152605,21 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn state(&self) -> PanelState {
++        let rows = self.rows();
++        let row = self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index));
 +        PanelState {
 +            tab: self.picker.active_tab_id().map(str::to_owned),
-+            selected: self
-+                .picker
-+                .selected_index()
-+                .and_then(|index| self.shown().get(index).map(|item| item.id.clone())),
++            selected: match row {
++                Some(Row::Item(item)) => Some(item.id.clone()),
++                _ => None,
++            },
++            group: match row {
++                Some(Row::Group { name, .. }) => Some((*name).to_owned()),
++                _ => None,
++            },
 +            query: self.picker.search_query().map(str::to_owned),
 +        }
 +    }
@@ -151670,23 +152628,121 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        self.picker = picker(
 +            &self.request,
 +            state,
++            &self.collapsed,
 +            self.app_event_tx.clone(),
 +            self.keymap.clone(),
 +        );
 +    }
 +
-+    fn shown(&self) -> Vec<&PanelItem> {
-+        shown(
++    fn rows(&self) -> Vec<Row<'_>> {
++        rows(
 +            &self.request,
 +            self.picker.active_tab_id(),
 +            self.picker.search_query(),
++            &self.collapsed,
 +        )
 +    }
 +
-+    fn activate(&mut self, index: usize) {
-+        let Some(id) = self.shown().get(index).map(|item| item.id.clone()) else {
++    fn jump(&self, key: KeyEvent) -> Option<usize> {
++        let KeyCode::Char(c) = key.code else {
++            return None;
++        };
++        if self.picker.search_query().is_some()
++            || !matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
++            || !c.is_alphabetic()
++            || self.keymap.action_for(key).is_some()
++        {
++            return None;
++        }
++        let rows = self.rows();
++        match c {
++            'g' => return (!rows.is_empty()).then_some(0),
++            'G' => return rows.len().checked_sub(1),
++            _ => {}
++        }
++        let initial = c.to_lowercase().to_string();
++        let start = self.picker.selected_index().map_or(0, |index| index + 1);
++        (0..rows.len())
++            .map(|offset| (start + offset) % rows.len())
++            .find(|index| {
++                matches!(rows[*index], Row::Item(item) if item.label.to_lowercase().starts_with(&initial))
++            })
++    }
++
++    fn searching<R>(&mut self, step: impl FnOnce(&mut ListSelectionView) -> R) -> R {
++        let searched = self
++            .picker
++            .search_query()
++            .map(|_| self.state().selected);
++        let result = step(&mut self.picker);
++        if let Some(selected) = searched.filter(|_| self.picker.search_query().is_none()) {
++            if !self.used_query {
++                self.last_query = None;
++            }
++            self.used_query = false;
++            if let Some(id) = selected
++                && let Some(index) = self
++                    .rows()
++                    .iter()
++                    .position(|row| matches!(row, Row::Item(item) if item.id == id))
++            {
++                self.picker.select_actual_idx(index);
++            }
++        }
++        result
++    }
++
++    fn report_close(&mut self) {
++        if self.reported || !self.picker.is_complete() {
++            return;
++        }
++        self.reported = true;
++        let Some(close_args) = self.request.close_args.clone() else {
 +            return;
 +        };
++        let rows = self.rows();
++        let selected = match self
++            .picker
++            .selected_index()
++            .and_then(|index| rows.get(index))
++        {
++            Some(Row::Item(item)) => item.id.clone(),
++            _ => "-".to_owned(),
++        };
++        let query = self.last_query.clone().unwrap_or_default();
++        self.app_event_tx.send(AppEvent::ModPanelCommand {
++            command: self.request.action.command.clone(),
++            args: arguments(&close_args, &selected, Some(&query)),
++        });
++    }
++
++    fn activate(&mut self, index: usize) {
++        let row = match self.rows().get(index) {
++            Some(Row::Group { name, .. }) => Err((*name).to_owned()),
++            Some(Row::Item(item)) => Ok(item.id.clone()),
++            None => return,
++        };
++        let id = match row {
++            Ok(id) => id,
++            Err(name) => {
++                if !self.collapsed.remove(&name) {
++                    self.collapsed.insert(name.clone());
++                }
++                let state = PanelState {
++                    selected: None,
++                    group: Some(name),
++                    ..self.state()
++                };
++                self.rebuild(state);
++                return;
++            }
++        };
++        self.last_query = self
++            .picker
++            .search_query()
++            .filter(|query| !query.is_empty())
++            .map(str::to_owned);
++        self.used_query = self.last_query.is_some();
 +        let Some(item) = self.request.items.iter_mut().find(|item| item.id == id) else {
 +            return;
 +        };
@@ -151745,6 +152801,43 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        .filter(|part| !part.is_empty())
 +        .collect::<Vec<_>>()
 +        .join(" ")
++}
++
++fn rows<'a>(
++    request: &'a ModPanelRequest,
++    tab: Option<&str>,
++    query: Option<&str>,
++    collapsed: &HashSet<String>,
++) -> Vec<Row<'a>> {
++    let shown = shown(request, tab, query);
++    if query.is_some_and(|query| !query.is_empty()) {
++        return shown.into_iter().map(Row::Item).collect();
++    }
++    let mut rows = shown
++        .iter()
++        .filter(|item| item.group.is_none())
++        .map(|item| Row::Item(item))
++        .collect::<Vec<_>>();
++    for name in shown
++        .iter()
++        .filter_map(|item| item.group.as_deref())
++        .unique()
++    {
++        let members = shown
++            .iter()
++            .filter(|item| item.group.as_deref() == Some(name))
++            .collect::<Vec<_>>();
++        let collapsed = collapsed.contains(name);
++        rows.push(Row::Group {
++            name,
++            count: members.len(),
++            collapsed,
++        });
++        if !collapsed {
++            rows.extend(members.into_iter().map(|item| Row::Item(item)));
++        }
++    }
++    rows
 +}
 +
 +fn shown<'a>(
@@ -151846,12 +152939,18 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        name: item.label.clone(),
 +        category_tag: value_label(item).map(|label| format!("{label:<20}")),
 +        search_value: Some(
-+            [Some(item.label.as_str()), tab, item.description.as_deref()]
-+                .into_iter()
-+                .flatten()
-+                .collect::<Vec<_>>()
-+                .join(" "),
++            [
++                Some(item.label.as_str()),
++                tab,
++                item.description.as_deref(),
++                item.keywords.as_deref(),
++            ]
++            .into_iter()
++            .flatten()
++            .collect::<Vec<_>>()
++            .join(" "),
 +        ),
++        selected_note: item.detail.clone(),
 +        description,
 +        footer_hint: Some(hint(
 +            keymap,
@@ -151864,44 +152963,74 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +}
 +
++fn group_item(
++    request: &ModPanelRequest,
++    name: &str,
++    count: usize,
++    collapsed: bool,
++    keymap: &ListKeymap,
++) -> SelectionItem {
++    SelectionItem {
++        name: format!("{} {name} ({count})", if collapsed { "▸" } else { "▾" }),
++        footer_hint: Some(hint(
++            keymap,
++            !request.tabs.is_empty(),
++            request.search,
++            Some(if collapsed { "expand" } else { "collapse" }),
++        )),
++        dismiss_on_select: false,
++        ..Default::default()
++    }
++}
++
 +fn picker(
 +    request: &ModPanelRequest,
 +    state: PanelState,
++    collapsed: &HashSet<String>,
 +    app_event_tx: AppEventSender,
 +    keymap: ListKeymap,
 +) -> ListSelectionView {
 +    let query = state.query.filter(|_| request.search);
 +    let tab = state
 +        .tab
++        .or_else(|| {
++            let selected = state.selected.as_deref()?;
++            request
++                .items
++                .iter()
++                .find(|item| item.id == selected)?
++                .tab
++                .clone()
++        })
 +        .filter(|tab| request.tabs.iter().any(|known| &known.id == tab));
-+    let selected = state.selected.and_then(|selected| {
-+        shown(request, tab.as_deref(), query.as_deref())
-+            .iter()
-+            .position(|item| item.id == selected)
-+    });
++    let selected = rows(request, tab.as_deref(), query.as_deref(), collapsed)
++        .iter()
++        .position(|row| match row {
++            Row::Item(item) => state.selected.as_deref() == Some(item.id.as_str()),
++            Row::Group { name, .. } => state.group.as_deref() == Some(*name),
++        });
++    let rows_in = |tab: Option<&str>, collapsed: &HashSet<String>| {
++        rows(request, tab, None, collapsed)
++            .into_iter()
++            .map(|row| match row {
++                Row::Item(candidate) => item(request, candidate, &keymap, false),
++                Row::Group {
++                    name,
++                    count,
++                    collapsed,
++                } => group_item(request, name, count, collapsed, &keymap),
++            })
++            .collect::<Vec<_>>()
++    };
 +    let rows = if request.tabs.is_empty() {
-+        request.items.len()
++        rows(request, None, None, &HashSet::new()).len()
 +    } else {
 +        request
 +            .tabs
 +            .iter()
-+            .map(|tab| {
-+                request
-+                    .items
-+                    .iter()
-+                    .filter(|item| item.tab.as_ref() == Some(&tab.id))
-+                    .count()
-+            })
++            .map(|tab| rows(request, Some(&tab.id), None, &HashSet::new()).len())
 +            .max()
 +            .unwrap_or_default()
-+    };
-+    let items = |filter: &dyn Fn(&PanelItem) -> bool, searching: bool| {
-+        request
-+            .items
-+            .iter()
-+            .filter(|candidate| filter(candidate))
-+            .map(|candidate| item(request, candidate, &keymap, searching))
-+            .collect::<Vec<_>>()
 +    };
 +    let tabbed = !request.tabs.is_empty();
 +    let params = SelectionViewParams {
@@ -151916,15 +153045,20 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        },
 +        footer_hint: Some(hint(&keymap, tabbed, request.search, None)),
 +        is_searchable: request.search,
++        fuzzy_search: true,
 +        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
 +        search_placeholder: Some("Type to search".to_owned()),
 +        items: if tabbed {
 +            Vec::new()
 +        } else {
-+            items(&|_| true, false)
++            rows_in(None, collapsed)
 +        },
-+        search_items: if tabbed && request.search {
-+            items(&|_| true, true)
++        search_items: if request.search {
++            request
++                .items
++                .iter()
++                .map(|candidate| item(request, candidate, &keymap, true))
++                .collect()
 +        } else {
 +            Vec::new()
 +        },
@@ -151935,7 +153069,7 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +                id: tab.id.clone(),
 +                label: tab.title.clone(),
 +                header: Box::new(()),
-+                items: items(&|item| item.tab.as_ref() == Some(&tab.id), false),
++                items: rows_in(Some(&tab.id), collapsed),
 +            })
 +            .collect(),
 +        initial_tab_id: tab,
@@ -151955,6 +153089,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +        if key.kind == KeyEventKind::Release {
 +            return;
 +        }
++        if let Some(index) = self.jump(key) {
++            self.picker.select_actual_idx(index);
++            return;
++        }
 +        let plain = key.modifiers == KeyModifiers::NONE;
 +        if self.picker.selected_index().is_none()
 +            && (self.keymap.accept.is_pressed(key) || plain && key.code == KeyCode::Enter)
@@ -151970,10 +153108,11 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +            }
 +            return;
 +        }
-+        self.picker.handle_key_event(key);
++        self.searching(|picker| picker.handle_key_event(key));
 +        if let Some(index) = self.picker.take_last_selected_index() {
 +            self.activate(index);
 +        }
++        self.report_close();
 +    }
 +
 +    fn handle_paste(&mut self, text: String) -> bool {
@@ -152005,7 +153144,9 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +    }
 +
 +    fn on_ctrl_c(&mut self) -> CancellationEvent {
-+        self.picker.on_ctrl_c()
++        let event = self.searching(ListSelectionView::on_ctrl_c);
++        self.report_close();
++        event
 +    }
 +
 +    fn mod_panel(&mut self) -> Option<&mut ModPanelView> {
@@ -152032,10 +153173,10 @@ index 0000000000000000000000000000000000000000..bf2c04ec4efd40ef6ec190eca5b7dec6
 +mod tests;
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b9246e57b91f
+index 0000000000000000000000000000000000000000..9c21c7319f9e2c2f1c51daebf0dceeb10b7cde07
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel_tests.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use crate::keymap::RuntimeKeymap;
 +use pretty_assertions::assert_eq;
@@ -152080,6 +153221,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +
 +fn press(view: &mut ModPanelView, code: KeyCode) {
 +    view.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE));
++}
++
++fn selected(view: &ModPanelView) -> String {
++    match view.rows().get(view.selected_index().unwrap()) {
++        Some(Row::Item(item)) => item.id.clone(),
++        Some(Row::Group { name, .. }) => format!("group {name}"),
++        None => String::new(),
++    }
 +}
 +
 +fn sent(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
@@ -152143,14 +153292,14 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    press(&mut view, KeyCode::Down);
 +    view.replace(request(true));
 +    assert_eq!(view.active_tab_id(), Some("more"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "reset");
++    assert_eq!(selected(&view), "reset");
 +    press(&mut view, KeyCode::Char('/'));
 +    for c in "mod".chars() {
 +        press(&mut view, KeyCode::Char(c));
 +    }
 +    view.replace(request(true));
 +    assert_eq!(view.search_query(), Some("mod"));
-+    assert_eq!(view.shown()[view.selected_index().unwrap()].id, "mode");
++    assert_eq!(selected(&view), "mode");
 +    press(&mut view, KeyCode::Char('z'));
 +    press(&mut view, KeyCode::Enter);
 +    assert!(!view.is_complete());
@@ -152165,6 +153314,113 @@ index 0000000000000000000000000000000000000000..79df6f77ba3f8a30ff21d8891623b924
 +    );
 +    view.replace(request(false));
 +    assert_eq!(view.active_tab_id(), Some("more"));
++}
++
++#[test]
++fn groups_collapse_letters_jump_keywords_match_and_close_reports_the_state() {
++    let arguments = json!({
++        "title": "Mods", "search": true, "selected": "lsp", "close_args": "closed",
++        "action": {"command": "panel", "args": "set"},
++        "items": [
++            {"id": "logo", "label": "Logo", "group": "On", "kind": "toggle", "value": true,
++                "description": "Shows a mark under the header"},
++            {"id": "lsp", "label": "LSP view", "group": "On", "kind": "toggle", "value": true,
++                "detail": "Language servers card"},
++            {"id": "mini", "label": "Mini", "group": "Off", "kind": "toggle", "keywords": "omd mini"},
++            {"id": "usage", "label": "Usage", "group": "Off", "kind": "toggle"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(selected(&view), "lsp");
++    let area = Rect::new(0, 0, 60, view.desired_height(60));
++    let screen = |view: &ModPanelView| {
++        let mut buf = Buffer::empty(area);
++        view.render(area, &mut buf);
++        (0..area.height)
++            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
++            .map(|position| buf[position].symbol().to_owned())
++            .collect::<String>()
++    };
++    let opened = screen(&view);
++    assert!(opened.contains("▾ On (2)") && opened.contains("Language servers card"));
++    press(&mut view, KeyCode::Char('u'));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('g'));
++    assert_eq!(selected(&view), "group On");
++    press(&mut view, KeyCode::Enter);
++    assert_eq!(view.rows().len(), 4);
++    view.handle_key_event(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
++    assert_eq!(selected(&view), "usage");
++    press(&mut view, KeyCode::Char('/'));
++    for c in "omd".chars() {
++        press(&mut view, KeyCode::Char(c));
++    }
++    assert_eq!(selected(&view), "mini");
++    assert!(!screen(&view).contains("Logo"));
++    press(&mut view, KeyCode::Enter);
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert!(view.is_complete());
++    assert_eq!(
++        sent(&mut rx),
++        ["demo:panel set mini true", "demo:panel closed mini omd"]
++    );
++    let mut arguments = arguments;
++    arguments["query"] = json!("omd");
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("omd"));
++    press(&mut view, KeyCode::Esc);
++    press(&mut view, KeyCode::Esc);
++    assert_eq!(sent(&mut rx), ["demo:panel closed mini"]);
++}
++
++#[test]
++fn reopening_shows_the_selected_items_tab_and_ctrl_c_ends_a_search_like_esc() {
++    let mut arguments = json!({
++        "title": "Demo", "search": true, "selected": "reset", "query": "na", "close_args": "closed",
++        "tabs": [{"id": "main", "title": "Main"}, {"id": "more", "title": "More"}],
++        "action": {"command": "panel"},
++        "items": [
++            {"id": "alpha", "tab": "main", "label": "Alpha", "kind": "action"},
++            {"id": "name", "tab": "more", "label": "Name", "kind": "action"},
++            {"id": "reset", "tab": "more", "label": "Reset", "kind": "action"},
++        ],
++    });
++    let (tx, mut rx) = unbounded_channel();
++    let mut view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.search_query(), Some("na"));
++    assert_eq!(view.on_ctrl_c(), CancellationEvent::Handled);
++    assert_eq!(view.search_query(), None);
++    view.on_ctrl_c();
++    assert!(view.is_complete());
++    assert_eq!(sent(&mut rx), ["demo:panel closed name"]);
++    arguments.as_object_mut().unwrap().remove("query");
++    let (tx, _rx) = unbounded_channel();
++    let view = ModPanelView::new(
++        "demo".into(),
++        ModPanelRequest::parse("demo", &arguments).expect("valid panel"),
++        AppEventSender::new(tx),
++        RuntimeKeymap::defaults().list,
++    );
++    assert_eq!(view.active_tab_id(), Some("more"));
++    assert_eq!(selected(&view), "reset");
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs b/codex-rs/tui/src/bottom_pane/secret_prompt_view.rs
 new file mode 100644
@@ -153088,15 +154344,18 @@ index 0000000000000000000000000000000000000000..e6099079cab5e8a3d78dbc9d0d5ef982
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1fe097eb18
+index 0000000000000000000000000000000000000000..ca69813ad6ed79feef849f32dde0a74bb0af7dc9
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,307 @@
 +use super::*;
 +use crate::app_event::AppEvent;
++use crate::bottom_pane::SearchMode;
 +use crate::bottom_pane::SelectionItem;
 +use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::picker_hint_line_for_keymap;
 +use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use crate::keymap::ListKeymap;
 +use codex_omd::ModStore;
 +use ratatui::text::Line;
 +use ratatui::widgets::Paragraph;
@@ -153119,6 +154378,39 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +        .chars()
 +        .take(120)
 +        .collect()
++}
++
++fn searchable(
++    view_id: &'static str,
++    title: &str,
++    header: Vec<Line<'static>>,
++    mut items: Vec<SelectionItem>,
++    keymap: &ListKeymap,
++) -> SelectionViewParams {
++    for item in &mut items {
++        item.search_value = Some(format!(
++            "{} {}",
++            item.name,
++            item.description.as_deref().unwrap_or_default()
++        ));
++    }
++    let mut footer = picker_hint_line_for_keymap(keymap);
++    footer
++        .spans
++        .extend([" · ".into(), "/".into(), " to search".into()]);
++    SelectionViewParams {
++        view_id: Some(view_id),
++        title: Some(title.to_string()),
++        header: Box::new(Paragraph::new(header)),
++        header_gap: 1,
++        footer_hint: Some(footer),
++        items,
++        is_searchable: true,
++        fuzzy_search: true,
++        search_mode: SearchMode::OnDemand(crate::key_hint::plain(KeyCode::Char('/'))),
++        search_placeholder: Some("Type to search".to_string()),
++        ..Default::default()
++    }
 +}
 +
 +fn mod_entries(root: PathBuf) -> Result<Vec<ModEntry>, String> {
@@ -153337,15 +154629,13 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +            ),
 +            Err(error) => (Vec::new(), format!("Mods are unavailable: {error}")),
 +        };
-+        self.bottom_pane.show_selection_view(SelectionViewParams {
-+            view_id: Some("omd-all-mods"),
-+            title: Some("All mods".to_string()),
-+            header: Box::new(Paragraph::new(vec![Line::from(header)])),
-+            header_gap: 1,
-+            footer_hint: Some(standard_popup_hint_line()),
++        self.bottom_pane.show_selection_view(searchable(
++            "omd-all-mods",
++            "All mods",
++            vec![Line::from(header)],
 +            items,
-+            ..Default::default()
-+        });
++            &self.bottom_pane.list_keymap(),
++        ));
 +        self.request_redraw();
 +    }
 +
@@ -153367,10 +154657,10 @@ index 0000000000000000000000000000000000000000..1b7e45d437b88c6a7be9cf9e35836f1f
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f22a85dde
+index 0000000000000000000000000000000000000000..73b902b4c0a364c19f3c48fc0fa47f0c6e501d3c
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,85 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -153440,6 +154730,21 @@ index 0000000000000000000000000000000000000000..358cd263feab691369f17ea3c7c7d18f
 +        !std::iter::from_fn(|| rx.try_recv().ok())
 +            .any(|event| matches!(event, AppEvent::OmdModToggle { .. }))
 +    );
++}
++
++#[test]
++fn all_mods_footer_follows_the_list_keymap() {
++    let mut keymap = crate::keymap::RuntimeKeymap::defaults().list;
++    keymap.cancel = vec![crate::key_hint::plain(KeyCode::Char('q'))];
++    let footer = searchable("view", "Title", Vec::new(), Vec::new(), &keymap)
++        .footer_hint
++        .expect("footer");
++    let text = footer
++        .spans
++        .iter()
++        .map(|span| span.content.as_ref())
++        .collect::<String>();
++    assert!(text.contains("q back") && text.ends_with("/ to search"), "{text}");
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
@@ -159047,10 +160352,10 @@ index 0000000000000000000000000000000000000000..d64019e63e8d4988ce9d32bf7fbbe500
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9bf938bc6
+index 0000000000000000000000000000000000000000..0d3ed49ff09ab167cee2ec6fd9dda6d23dbb4507
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,1622 @@
+@@ -0,0 +1,1635 @@
 +use crate::omd::LockExt;
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
@@ -159083,6 +160388,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +    pub(crate) args_hint: Option<String>,
 +    pub(crate) immediate: bool,
 +    pub(crate) target: ModSlashTarget,
++    pub(crate) namespaced: bool,
 +}
 +
 +#[derive(Debug)]
@@ -159224,14 +160530,20 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +static HOST: Mutex<Option<Arc<Mutex<ModHost>>>> = Mutex::new(None);
 +
 +#[cfg(test)]
++thread_local! {
++    static TEST_CATALOG: std::cell::RefCell<Option<Vec<ModSlashCommand>>> =
++        const { std::cell::RefCell::new(None) };
++}
++
++#[cfg(test)]
 +pub(crate) fn test_command_catalog(commands: Vec<ModSlashCommand>) -> impl Drop {
-+    struct Restore(Option<(Instant, Vec<ModSlashCommand>)>);
++    struct Restore(Option<Vec<ModSlashCommand>>);
 +    impl Drop for Restore {
 +        fn drop(&mut self) {
-+            *CATALOG.lock().unwrap() = self.0.take();
++            TEST_CATALOG.set(self.0.take());
 +        }
 +    }
-+    Restore(CATALOG.lock().unwrap().replace((Instant::now(), commands)))
++    Restore(TEST_CATALOG.replace(Some(commands)))
 +}
 +
 +/// Lets a test open the shared host from its own store, restoring the previous one after.
@@ -159435,6 +160747,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +            args_hint: entry.args_hint.clone(),
 +            immediate: entry.immediate,
 +            target: entry.target.clone(),
++            namespaced: true,
 +        });
 +        if conflict.is_none() && seen.insert(entry.bare.clone()) {
 +            commands.push(ModSlashCommand {
@@ -159443,6 +160756,7 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +                args_hint: entry.args_hint.clone(),
 +                immediate: entry.immediate,
 +                target: entry.target.clone(),
++                namespaced: false,
 +            });
 +        }
 +    }
@@ -159450,6 +160764,10 @@ index 0000000000000000000000000000000000000000..04d046cfa5c623285b917dd8ab29b4b9
 +}
 +
 +pub(crate) fn slash_commands() -> Vec<ModSlashCommand> {
++    #[cfg(test)]
++    if let Some(commands) = TEST_CATALOG.with_borrow(Clone::clone) {
++        return commands;
++    }
 +    let mut cache = CATALOG.locked();
 +    if let Some((loaded, commands)) = cache.as_ref()
 +        && loaded.elapsed() < CATALOG_TTL
@@ -170725,10 +172043,10 @@ index 0000000000000000000000000000000000000000..32cc507259823594a76703cb33669b8e
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82d05507cd4c124dbe233be224c0c5944785af0d
+index 0000000000000000000000000000000000000000..14ad596346970194c19f020e57d042852bea07d1
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,765 @@
+@@ -0,0 +1,766 @@
 +use codex_omd::FileStamp;
 +use serde_json::Value;
 +use std::borrow::Cow;
@@ -171049,6 +172367,7 @@ index 0000000000000000000000000000000000000000..82d05507cd4c124dbe233be224c0c594
 +            id,
 +            command: target,
 +        },
++        namespaced: false,
 +    })
 +}
 +
@@ -171065,7 +172384,7 @@ index 0000000000000000000000000000000000000000..82d05507cd4c124dbe233be224c0c594
 +}
 +
 +pub fn apply_removed_features() {
-+    codex_features::set_removed(builtins().removed_features());
++    codex_features::set_removed("tui", builtins().removed_features());
 +}
 +
 +pub(crate) fn removed_features_changed() -> Vec<codex_features::Feature> {
@@ -171075,7 +172394,7 @@ index 0000000000000000000000000000000000000000..82d05507cd4c124dbe233be224c0c594
 +    let mut last = LAST.locked();
 +    let changed: Vec<_> = last.symmetric_difference(&current).copied().collect();
 +    if !changed.is_empty() {
-+        codex_features::set_removed(current.clone());
++        codex_features::set_removed("tui", current.clone());
 +    }
 +    *last = current;
 +    changed

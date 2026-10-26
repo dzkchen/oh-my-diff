@@ -14,10 +14,11 @@ turn off.
 
 ## Turn it on
 
-It is off by default in OMD+. Turn it on in `/mods`, or run:
+Experimental: OMD+ doesn't install it. Install it from Browse in `/mods`, or run:
 
 ```sh
-omd-package mod enable omd_awake
+omd install omd_awake
+omd mods enable omd_awake
 ```
 
 It asks for the `power` grant (keep the Mac awake) and the `os` grant (check the network and rejoin Wi-Fi with
@@ -53,12 +54,7 @@ only while the lid is open.
 | `max_hours` | `4` | Stop after this many hours of continuous work (1 to 24) |
 | `hotspot_ssid` | empty | Personal Hotspot network to join when Wi-Fi drops with the lid closed |
 
-Change settings in `/mods`, or from a shell (this replaces the mod's saved settings):
-
-```sh
-STORE=~/.local/share/oh-my-diff/stores/full
-omd-mod settings "$STORE" "$STORE/sources/omd_awake" '{"hotspot_ssid": "My iPhone", "battery_floor": 30}'
-```
+Change them in `/mods` or with the `/awake` commands above.
 
 ## Safeguards
 

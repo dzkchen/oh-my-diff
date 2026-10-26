@@ -367,13 +367,12 @@ that session, including threads in its worktrees.
 - `features: {remove: ['prevent_idle_sleep']}` (`builtins_features_v1`) takes Codex features out of the session:
   they read as off everywhere, whatever `config.toml` or `-c` sets, and they leave `/experimental`, the app-server's
   experimental feature list, `codex features list` and tips. Removing `code_mode` also removes `code_mode_only`.
-  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. Keys must be
-  Codex feature keys (`invalid_builtins` otherwise).
+  Nothing is written to `config.toml`; disabling the mod brings back the rows and the saved values. A feature that
+  managed requirements pin on stays on. Keys must be Codex feature keys (`invalid_builtins` otherwise).
 - `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed.
-- A disabled mode is absent from `collaborationMode/list`, and `thread/settings/update` and `turn/start` refuse a
-  request for it with an error. A resumed thread that still holds a disabled mode is reported in the default mode
-  and runs its next turn there with that mode's instructions cleared and a warning (a `warning` notification for app-server clients),
-  including the turn at whose boundary the mod loads.
+- A disabled mode is absent from `collaborationMode/list`. A thread that requests or still holds one is reported in
+  the default mode and runs its next turn there with that mode's instructions cleared and a warning (a `warning`
+  notification for app-server clients), including the turn at whose boundary the mod loads.
 - Tools limited to collaboration modes lose the disabled ones and are not offered when none remain.
 
 ## One-shot model calls and forks (`model_complete_v2`)
@@ -451,11 +450,12 @@ The runner adds small helpers to `api`; each calls the host operations named her
 none starts paid work implicitly.
 
 - `api.package` is `{id, version, sha256}` of the running source.
-- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, model, provider,
-  route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
+- `api.session()` calls `session.info` (`inventory`): `{thread_id, root, cwd, codex_version, omd_version, model,
+  provider, route, turns_started, process_id}` for the session thread, also from terminal commands in the same process.
   `cwd` and `model` are the thread's current working directory and model (a settings change shows at once), and
   `turns_started` counts turns this process started in the thread. `process_id` is an opaque ID of the OMD process, the same for every thread and mod in it; key per-process
-  records in shared state, such as watch IDs, by it.
+  records in shared state, such as watch IDs, by it. `omd_version` (experimental) is the OMD release, as in the
+  terminal `identity`.
 - `api.fs.exists(path)`, `api.fs.canonical(path)` (`{path, kind, sha256}`) and `api.fs.ancestors(name, from?)`
   (nearest first, up to the workspace root from `from`, else from the session's cwd with `inventory` or the root)
   normalize workspace-relative paths and read through `workspace.stat` (`fs.read`); symlinked components and paths

@@ -301,8 +301,18 @@ impl Leases {
                 .count()
                 >= LEASES_PER_OWNER
         };
-        if full(&*self.records.lock().map_err(|_| "power_state_poisoned")?) {
-            return Err("power_lease_limit".into());
+        {
+            let records = self.records.lock().map_err(|_| "power_state_poisoned")?;
+            if let Some(current) = arguments["lease"].as_str()
+                && records.get(current).is_some_and(|lease| {
+                    lease.owner == owner && lease.broker.is_some() == lid_closed
+                })
+            {
+                return Ok(json!({"lease": current, "lid_closed": lid_closed}));
+            }
+            if full(&records) {
+                return Err("power_lease_limit".into());
+            }
         }
         let broker = if lid_closed {
             let socket = self

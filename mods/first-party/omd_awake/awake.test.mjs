@@ -11,7 +11,7 @@ const BATTERY = (percent, power = 'Battery Power') => `Now drawing from '${power
 const PORTS = 'Hardware Port: Ethernet\nDevice: en1\n\nHardware Port: Wi-Fi\nDevice: en0\nEthernet Address: 00\n';
 
 function machine({ battery = BATTERY(80), thermal = 0, lowPower = 0, agents = [], online = true, broker = true, saved = ['Home', 'Phone'], lid = 'No' } = {}) {
-  return { battery, thermal, lowPower, agents, online, broker, saved, lid, leases: 0 };
+  return { battery, thermal, lowPower, agents, online, broker, saved, lid, leases: 0, live: {} };
 }
 
 function run(event, payload, state, mac, { settings = {}, now = NOW, name = '' } = {}) {
@@ -34,11 +34,13 @@ function run(event, payload, state, mac, { settings = {}, now = NOW, name = '' }
     if (call.operation === 'exec.run') return exec(args);
     if (call.operation === 'agents.inventory') return { agents: mac.agents.map(status => ({ status })) };
     if (call.operation === 'power.hold') {
+      if (mac.live[args.lease] === args.lid_closed) return { lease: args.lease, lid_closed: args.lid_closed };
       if (args.lid_closed && !mac.broker) throw new Error('power_unavailable: the authority broker is not deployed');
       mac.leases += 1;
+      mac.live[`power-${mac.leases}`] = args.lid_closed;
       return { lease: `power-${mac.leases}`, lid_closed: args.lid_closed };
     }
-    if (call.operation === 'power.release') return { released: true };
+    if (call.operation === 'power.release') return { released: delete mac.live[args.lease] };
     if (call.operation === 'terminal.notice') return { shown: true };
     if (call.operation === 'terminal.notify') return { delivered: true, method: 'osc9' };
     if (call.operation === 'events.schedule') return args;
@@ -54,7 +56,7 @@ function run(event, payload, state, mac, { settings = {}, now = NOW, name = '' }
     calls: calls.filter(call => !['exec.run', 'agents.inventory'].includes(call.operation)).map(({ operation, arguments: args }) => [operation, args]) };
 }
 
-const hold = (lid_closed, max = 4 * 60 * MINUTE) => ['power.hold', { reason: 'Oh My Diff agents are working', lid_closed, max_duration_ms: max }];
+const hold = (lid_closed, max = 4 * 60 * MINUTE, lease) => ['power.hold', { reason: 'Oh My Diff agents are working', lid_closed, max_duration_ms: max, ...(lease ? { lease } : {}) }];
 const ops = calls => calls.map(([operation]) => operation);
 const check = delay_ms => ['events.schedule', { key: 'check', delay_ms }];
 
@@ -64,13 +66,13 @@ test('holds lid-closed while a turn runs, winds down through the grace period an
   assert.deepEqual(started.calls, [hold(true), check(15_000)]);
   assert.deepEqual(started.status, ['awake · lid can close']);
   const again = run('timer', { key: 'check' }, started.state, mac, { now: NOW + MINUTE });
-  assert.deepEqual(again.calls, [hold(true, 4 * 60 * MINUTE - MINUTE), ['power.release', { lease: 'power-1' }], check(15_000)]);
+  assert.deepEqual(again.calls, [hold(true, 4 * 60 * MINUTE - MINUTE, 'power-1'), check(15_000)]);
   const ended = run('turn_end', { turn_id: 't1', outcome: 'completed' }, again.state, mac, { now: NOW + 2 * MINUTE });
   assert.deepEqual(ended.calls, [check(15_000)]);
   assert.deepEqual(ended.status, ['awake: winding down']);
   assert.deepEqual(run('timer', { key: 'check' }, ended.state, mac, { now: NOW + 3 * MINUTE + 50_000 }).calls, [check(10_000)]);
   const slept = run('timer', { key: 'check' }, ended.state, mac, { now: NOW + 4 * MINUTE });
-  assert.deepEqual(slept.calls, [['power.release', { lease: 'power-2' }]]);
+  assert.deepEqual(slept.calls, [['power.release', { lease: 'power-1' }]]);
   assert.equal(slept.status, null);
 });
 
@@ -79,7 +81,7 @@ test('a running subagent keeps the hold after the turn ends', () => {
   const ended = run('turn_end', { turn_id: 't1', outcome: 'completed' }, run('turn_start', { turn_id: 't1' }, null, mac).state, mac);
   mac.agents = ['running', 'completed'];
   const later = run('timer', { key: 'check' }, ended.state, mac, { now: NOW + 5 * MINUTE });
-  assert.deepEqual(ops(later.calls), ['power.hold', 'power.release', 'events.schedule']);
+  assert.deepEqual(ops(later.calls), ['power.hold', 'events.schedule']);
   assert.equal(later.state.idle_since, 0);
   mac.agents = ['completed'];
   const idle = run('timer', { key: 'check' }, later.state, mac, { now: NOW + 6 * MINUTE });
@@ -94,7 +96,8 @@ test('without a working broker it warns once and holds idle sleep only, and reco
   assert.deepEqual(started.status, ['awake']);
   assert.deepEqual(started.calls.at(-1), check(MINUTE));
   const quiet = run('timer', { key: 'check' }, started.state, mac, { now: NOW + MINUTE });
-  assert.deepEqual(ops(quiet.calls), ['power.hold', 'power.hold', 'power.release', 'events.schedule']);
+  assert.deepEqual(ops(quiet.calls), ['power.hold', 'power.hold', 'events.schedule']);
+  assert.equal(quiet.state.lease, started.state.lease);
   mac.broker = true;
   const back = run('timer', { key: 'check' }, quiet.state, mac, { now: NOW + 2 * MINUTE });
   assert.deepEqual(back.status, ['awake · lid can close']);
@@ -103,7 +106,7 @@ test('without a working broker it warns once and holds idle sleep only, and reco
   assert.deepEqual(ops(lidOff.calls), ['power.hold', 'power.release', 'events.schedule']);
   assert.equal(lidOff.calls[0][1].lid_closed, false);
   assert.deepEqual(lidOff.status, ['awake']);
-  assert.deepEqual(ops(run('timer', { key: 'check' }, lidOff.state, mac, { settings: { lid_closed: false }, now: NOW + 4 * MINUTE }).calls), ['events.schedule']);
+  assert.deepEqual(ops(run('timer', { key: 'check' }, lidOff.state, mac, { settings: { lid_closed: false }, now: NOW + 4 * MINUTE }).calls), ['power.hold', 'events.schedule']);
   assert.deepEqual(run('turn_start', { turn_id: 't1' }, null, machine(), { settings: { lid_closed: false } }).calls[0], hold(false));
 });
 

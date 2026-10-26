@@ -171,7 +171,7 @@ def package_digest(base):
 
 
 def validate_manifest(manifest, identifier):
-    supported = {row["version"] for row in json.loads((ROOT / "mods/compatibility.json").read_text())["apis"]}
+    supported = {row["version"] for row in json.loads((ROOT / "mods/conformance/compatibility.json").read_text())["apis"]}
     if manifest["id"] != identifier or manifest["api"] not in supported:
         raise ValueError(f"{identifier} has an incompatible package identity or mod API")
 

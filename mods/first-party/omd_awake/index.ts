@@ -17,7 +17,7 @@ const USAGE = '/awake on|off · lid on|off · hotspot <network>|off · grace <se
 export default function activate(api: ModAPI) {
   api.builtins({ features: { remove: ['prevent_idle_sleep'] } });
   const enabled = api.settings.enabled !== false;
-  const graceMs = Math.max(0, Number(api.settings.grace_seconds ?? 120)) * 1000;
+  const graceMs = Math.round(Math.max(0, Number(api.settings.grace_seconds ?? 120)) * 1000);
   const floor = Number(api.settings.battery_floor ?? 20);
   const hours = Math.min(24, Math.max(1, Number(api.settings.max_hours ?? 4)));
   const lidClosed = api.settings.lid_closed !== false;
@@ -58,8 +58,9 @@ export default function activate(api: ModAPI) {
   };
 
   const acquire = (state: State) => {
-    const remaining = Math.max(MIN_HOLD_MS, state.since + hours * 3_600_000 - Date.now());
-    const hold = (lid_closed: boolean) => api.host.tryCall('power.hold', { reason: 'Oh My Diff agents are working', lid_closed, max_duration_ms: remaining });
+    const remaining = Math.floor(Math.max(MIN_HOLD_MS, state.since + hours * 3_600_000 - Date.now()));
+    const hold = (lid_closed: boolean) => api.host.tryCall('power.hold', { reason: 'Oh My Diff agents are working', lid_closed, max_duration_ms: remaining,
+      ...(state.lease ? { lease: state.lease } : {}) });
     let held = hold(lidClosed);
     if (!held.ok && lidClosed) {
       if (!state.warned) tell(`Lid-closed wake is off (${held.error.replace(/^power_unavailable: /, '')}); the Mac stays awake only while the lid is open`, 'info');
@@ -76,7 +77,7 @@ export default function activate(api: ModAPI) {
     const previous = state.lease;
     Object.assign(state, { lease: held.value.lease, lid_closed: held.value.lid_closed, failed: false });
     api.state.set(state);
-    if (previous) api.host.tryCall('power.release', { lease: previous });
+    if (previous && previous !== state.lease) api.host.tryCall('power.release', { lease: previous });
     if (state.lid_closed && hotspot && state.hotspot_checked !== hotspot) {
       state.hotspot_checked = hotspot;
       const device = wifi();
@@ -124,7 +125,7 @@ export default function activate(api: ModAPI) {
         state.paused = reason;
         tell(`Stopped keeping the Mac awake: ${reason}. It sleeps normally until the agents finish.`);
       } else if (!state.paused) {
-        if (!state.lease || lidClosed || state.lid_closed) acquire(state);
+        acquire(state);
         if (state.lease && state.lid_closed) rejoin(state);
       }
     }

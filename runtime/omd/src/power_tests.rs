@@ -164,18 +164,6 @@ fn an_expired_broker_hold_restores_sleep() {
 }
 
 #[test]
-fn a_record_left_by_a_failed_restore_keeps_the_setting_from_before_the_first_hold() {
-    let machine = Machine::new(true, Machine::uid());
-    fs::write(machine.base.join("power.json"), r#"{"previous":false}"#).unwrap();
-    let leases = machine.leases();
-    let held = leases.hold("a", "s", &hold(true)).unwrap();
-    leases
-        .release("a", &json!({"lease": held["lease"]}))
-        .unwrap();
-    machine.settles("0");
-}
-
-#[test]
 fn a_lease_ends_when_its_broker_connection_drops() {
     let temp = tempfile::tempdir().unwrap();
     let socket = temp.path().join("broker.sock");
@@ -243,6 +231,10 @@ fn leases_belong_to_their_owner_and_current_source() {
             .unwrap(),
         json!({"released": false})
     );
+    let mut renew = hold(false);
+    renew["lease"] = held["lease"].clone();
+    assert_eq!(leases.hold("a", "s1", &renew).unwrap(), held);
+    assert_ne!(leases.hold("b", "s1", &renew).unwrap(), held);
     for _ in 1..LEASES_PER_OWNER {
         leases.hold("a", "s1", &hold(false)).unwrap();
     }

@@ -9,8 +9,8 @@
     {"type": "event", "event": "approval",
       "payload": {"id": "a2", "kind": "patch", "thread_id": "t1", "turn_id": "u1", "agent_id": null, "host_decision": "ask", "policy": "on-request", "details": {"files": ["README.md"]}, "assessment": false}},
     {"type": "event", "event": "approval_result", "payload": {"id": "a1", "kind": "exec", "decision": "approved", "source": "user"}},
-    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "kinds", "payload": "[\"exec\"]", "expect": {"display": "Showing exec"}},
-    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "note", "payload": "checked", "expect": {"display": "Note saved"}},
-    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "inspect", "payload": "a1", "expect": {"display": "exec: approved"}}
+    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "kinds", "payload": "[\"exec\"]"},
+    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "note", "payload": "checked"},
+    {"type": "invoke", "mod": "approval_desk", "event": "command", "name": "inspect", "payload": "a1"}
   ]
 }

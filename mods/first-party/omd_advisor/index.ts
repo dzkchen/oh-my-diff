@@ -201,7 +201,8 @@ export default function activate(api: ModAPI) {
     if (!loaded.ok) { receipt.reason = safe(loaded.error); return save(receipt); }
     let parsed: unknown;
     try { parsed = JSON.parse(loaded.text); } catch { receipt.reason = 'malformed_evidence'; return save(receipt); }
-    if (!object(parsed) || parsed.turn_id !== event.turn_id || !bounded(parsed.thread_id, 128) || !bounded(parsed.workspace_sha256, 64)) throw new Error('advisor_evidence_identity_invalid');
+    if (!object(parsed) || parsed.turn_id !== event.turn_id || !bounded(parsed.thread_id, 128) || (parsed.workspace_sha256 !== null && !bounded(parsed.workspace_sha256, 64))) throw new Error('advisor_evidence_identity_invalid');
+    if (parsed.workspace_sha256 === null) { receipt.status = 'unavailable'; receipt.reason = 'workspace_snapshot_unavailable'; return save(receipt); }
     receipt.thread = parsed.thread_id;
     receipt.candidate = parsed.workspace_sha256;
     receipt.brief = brief(parsed);
@@ -267,14 +268,14 @@ export default function activate(api: ModAPI) {
     const loaded = evidence();
     let parsed: unknown = null;
     if (loaded.ok) try { parsed = JSON.parse(loaded.text); } catch { parsed = null; }
-    if (!object(parsed) || parsed.turn_id !== event.turn_id || !bounded(parsed.workspace_sha256, 64)) return keep({ ...settled, status: 'unreviewed', reason: safe(loaded.ok ? 'malformed_evidence' : loaded.error) });
+    if (!object(parsed) || parsed.turn_id !== event.turn_id || (parsed.workspace_sha256 !== null && !bounded(parsed.workspace_sha256, 64))) return keep({ ...settled, status: 'unreviewed', reason: safe(loaded.ok ? 'malformed_evidence' : loaded.error) });
     const excerpt = JSON.parse(brief(parsed)) as { records: Record<string, unknown>[] };
     excerpt.records = excerpt.records.map(record => typeof record.text === 'string' ? { ...record, text: redact(record.text) } : record);
     const text = JSON.stringify(excerpt);
-    if (spoken(text).reduce((total, record) => total + record.text.length, 0) < 200) return keep({ ...settled, status: 'quiet', reason: 'too little visible output to observe', candidate: parsed.workspace_sha256 });
+    if (spoken(text).reduce((total, record) => total + record.text.length, 0) < 200) return keep({ ...settled, status: 'quiet', reason: 'too little visible output to observe', candidate: parsed.workspace_sha256 ?? '' });
     const request = api.host.tryCall('agents.spawn', { role: 'advisor', route, evidence: event.evidence, workspace: 'read_only', tools: [], prompt: `${OBSERVE}\nExcerpt of turn ${event.turn_id}:\n${text}` });
     if (!request.ok) return keep({ ...settled, status: 'unavailable', reason: safe(request.error) });
-    keep({ ...settled, status: 'observing', reason: '', handle: request.value.handle, candidate: parsed.workspace_sha256, excerpt: text });
+    keep({ ...settled, status: 'observing', reason: '', handle: request.value.handle, candidate: parsed.workspace_sha256 ?? '', excerpt: text });
   };
   const observed = async (event: AgentEnd) => {
     const watch = watching();

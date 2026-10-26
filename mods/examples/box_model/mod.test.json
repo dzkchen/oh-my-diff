@@ -20,7 +20,7 @@
     {"type": "terminal_interact", "mod": "box_model", "payload": {"event": "idle", "ledger": null}, "component": "box_model_status",
       "pointer": {"column": 2, "row": 0, "half": null, "action": "enter", "button": null},
       "expect": {"event": {"component": "box_model_status", "kind": "pointer", "pointer": {"column": 2, "row": 0, "half": null, "action": "enter", "button": null}, "origin": "user"}, "result": null}},
-    {"type": "invoke", "mod": "box_model", "event": "command", "name": "box", "payload": "split", "expect": null},
+    {"type": "invoke", "mod": "box_model", "event": "command", "name": "box", "payload": "split"},
     {"type": "terminal_mount", "mod": "box_model", "payload": {"event": "idle", "ledger": null},
       "expect": {"layout": {"split": "horizontal", "ratio": [2, 1], "gap": 1, "children": [
         {"split": "vertical", "ratio": [4, 1], "children": [{"content": "transcript"}, {"content": "composer"}]},

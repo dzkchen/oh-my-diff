@@ -51,7 +51,7 @@ export type FinalRequestPage = {
 };
 export type CostBasis = 'settled' | 'unsettled' | 'provider_reported' | 'included_subscription' | 'unpriced' | 'synthetic';
 /** `turns_started` counts turns this process started in the thread; `process_id` identifies the OMD process. */
-export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
+export type SessionInfo = { thread_id: string; root: string; cwd: string; codex_version: string; omd_version?: string; model: string; provider: string; route: string | null; turns_started: number; process_id: string };
 export type Timer = { start(): { key: string; delay_ms: number }; cancel(): { cancelled: boolean } };
 export type UsageSummary = {
   request_id: string | null; route: string | null; provider: string | null; credential: string | null; requested_model: string | null; served_model: string | null;
@@ -140,12 +140,12 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
-export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string } & (
+export type TerminalPanelItem = { id: string; tab?: string; label: string; description?: string; group?: string; keywords?: string; detail?: string } & (
   | { kind: 'toggle'; value?: boolean }
   | { kind: 'choice'; value?: string; options: TerminalSelectOption[] }
   | { kind: 'text'; value?: string }
   | { kind: 'action' });
-export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; action: TerminalCommandAction };
+export type TerminalPanel = { title: string; subtitle?: string; tabs?: { id: string; title: string }[]; items: TerminalPanelItem[]; search?: boolean; query?: string; selected?: string; close_args?: string; action: TerminalCommandAction };
 export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor; link?: string };
 export type TerminalStyle = { tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
@@ -222,7 +222,7 @@ export type ClientEntry = {
   viewport: { width: number; height: number; unit: string } | null; focused: boolean; attached_ms: number;
 };
 export type TerminalCell = string | [glyph: string, fg: ThemeColor | null, bg: ThemeColor | null];
-export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
+export type TerminalIdentity = { codex_version: string; omd_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; sidebar_style?: TerminalFrameStyle; panels?: Panel[]; header?: Panel; footer?: Panel;
@@ -400,7 +400,7 @@ export interface HostOperations {
   'peers.list': { arguments: { package?: string } | null; result: { session: string; peers: { session: string; package: string; repository: string; same_project: boolean }[] } };
   'peers.send': { arguments: { to: string; package?: string; data: Json; correlation?: string; ttl_ms?: number }; result: PeerReceipt };
   /** Requires power_hold_v1 and the `power` grant: keeps the Mac awake until released, expired, the mod changes or OMD exits. */
-  'power.hold': { arguments: { reason: string; lid_closed?: boolean; max_duration_ms: number }; result: { lease: string; lid_closed: boolean } };
+  'power.hold': { arguments: { reason: string; lid_closed?: boolean; max_duration_ms: number; lease?: string }; result: { lease: string; lid_closed: boolean } };
   'power.release': { arguments: { lease: string }; result: { released: boolean } };
   'turns.queue': { arguments: { prompt: string; key: string; priority?: 'high' | 'normal' | 'low'; deadline_ms?: number }; result: { key: string; status: 'queued' | 'duplicate'; paused?: boolean } };
   'turns.queued': { arguments: null; result: { paused: boolean; started: number; spent_microusd: number; entries: TurnQueueEntry[] } };

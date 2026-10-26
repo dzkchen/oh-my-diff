@@ -120,6 +120,7 @@
       "ui_composition_v1",
       "ui_controls_v1",
       "terminal_panel_v1",
+      "terminal_panel_navigation_v1",
       "reactive_state_v1",
       "session_ports_v1",
       "structured_access_v1",

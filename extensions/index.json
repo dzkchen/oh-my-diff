@@ -120,7 +120,7 @@
         "OMD 1.2.0 pre-release (offline checks)",
         "mod API 1.0.0"
       ],
-      "support_status": "reviewed_candidate"
+      "support_status": "experimental"
     },
     {
       "id": "omd_continue",

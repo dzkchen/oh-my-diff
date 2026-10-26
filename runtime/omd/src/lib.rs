@@ -91,6 +91,7 @@ pub use workspace::capture_tracked;
 pub use workspace::change_baseline;
 pub use workspace::cleanup_owned_directory;
 pub use workspace::create_worktree;
+pub use workspace::hash_tracked;
 pub use workspace::observe_workspace_changes;
 pub use workspace::record_workspace_change;
 pub use workspace::take_workspace_changes;
