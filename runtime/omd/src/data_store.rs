@@ -302,6 +302,7 @@ impl DataStore<'_> {
                 return Err(failure("store_quota"));
             }
             let temporary = directory.join(format!(".store.json.{}", std::process::id()));
+            let _ = fs::remove_file(&temporary);
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

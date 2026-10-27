@@ -129,6 +129,9 @@ test('checkpoint survives a new invocation, is compare-and-set, cannot rewrite a
   assert.ok(largest.calls.find(call => call.operation === 'agents.spawn').arguments.prompt.length <= 8192);
   const bulky = fixture();
   assert.throws(() => invoke('begin', { objective: '\u20ac'.repeat(1700), acceptance_criteria: [criterion] }, bulky.host), /task_too_large_for_review/);
+  const damaged = fixture();
+  damaged.state.set('task', { value: { schema: 2 }, revision: 3, provenance: {} });
+  assert.equal(begin(damaged.host).value.status, 'active');
 });
 
 test('no-progress policy pauses repeated complete results and resumes only after checkpoint progress', () => {
@@ -166,6 +169,12 @@ test('no-progress policy pauses repeated complete results and resumes only after
   assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), executed);
   event('tool_result', result);
   assert.equal(run.state.get('task').value.calls[result.call_sha256].unchanged_calls, 1);
+  modState = invoke('delegate', { brief: 'Implement the change' }, run.host, { settings, state: modState }).state;
+  event('tool_result', result);
+  event('tool_result', result);
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'paused' }), { deny: 'workflow_paused_no_progress' });
+  modState = invoke('cancel', {}, run.host, { settings, state: modState }).state;
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'cancelled' }), executed);
 });
 
 test('checks bind execution to unchanged input and refuse stale or failed results', () => {
@@ -287,6 +296,7 @@ test('equivalent transport outages allow one fresh retry and one configured fall
   let waits = 0;
   const run = fixture({ 'agents.wait': ({ arguments: args }) => ++waits <= 2 ? outage : { status: 'completed', text: JSON.stringify(verdict), candidate_sha256: candidate, evidence: { reference: `native-thread:${args.handle}`, sha256: digest(verdict) } } });
   begin(run.host);
+  assert.throws(() => invoke('delegate', { brief: 'Implement the request', outage_action: 'opposite_lead' }, run.host, { ...recoveryOptions, settings: { check: recoveryOptions.settings.check } }), /explicit_opposite_lead_same_billing_required/);
   invoke('delegate', { brief: 'Implement the request', outage_action: 'opposite_lead' }, run.host, recoveryOptions);
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.recovery, 'same_route_retry');
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.recovery, 'opposite_lead_fallback');

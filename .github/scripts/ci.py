@@ -200,7 +200,7 @@ def cargo_tests(suite):
         if suite == "core-integration":
             isolated = [*args[:args.index("--")], "--", "--test-threads=1", "--exact", *ISOLATED]
             failed |= build.cargo_run(work, log.with_suffix(".isolated.log"), isolated) != 0
-        for line in log.read_text().splitlines():
+        for line in log.read_text(errors="replace").splitlines():
             try:
                 item = json.loads(line)
             except ValueError:

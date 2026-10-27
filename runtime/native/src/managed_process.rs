@@ -245,6 +245,7 @@ struct ManagedProcess {
     unrestricted: bool,
     sender: mpsc::SyncSender<WriteRequest>,
     receiver: mpsc::Receiver<io::Result<Value>>,
+    queued: Arc<std::sync::atomic::AtomicUsize>,
     /// Received past one exchange's limit or after its output; the next exchange returns it first.
     pending: Option<io::Result<Value>>,
     /// When an exchange first saw the leader exited; its readers get one second from then to finish.
@@ -292,7 +293,8 @@ fn wait_for_exit(pid: u32) -> io::Result<()> {
 }
 
 fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
-    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
+    let reaped = reaped.lock().unwrap_or_else(PoisonError::into_inner);
+    if !*reaped {
         let _ = kill_process_group(group);
     }
 }
@@ -450,6 +452,7 @@ fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value>
 /// Small enough that a chunk of control bytes, six bytes each once escaped, fits one exchange.
 const RAW_READ_BYTES: usize = 8_000;
 const EXCHANGE_BYTES: usize = 48 * 1024;
+const QUEUED_BYTES: usize = 32 * 1024 * 1024;
 
 type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;
 
@@ -1052,6 +1055,7 @@ impl ManagedProcesses {
                         });
                     }
                     let (sender, receiver) = mpsc::sync_channel(128);
+                    let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
                     let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
                     let group = child.id();
                     let reaped = Arc::new(Mutex::new(false));
@@ -1149,6 +1153,7 @@ impl ManagedProcesses {
                         let (notifier, owner, session) =
                             (notifier.clone(), owner.clone(), session.clone());
                         let reader_reaped = Arc::clone(&reaped);
+                        let queued = Arc::clone(&queued);
                         std::thread::spawn(move || {
                             loop {
                                 let result = next();
@@ -1169,12 +1174,20 @@ impl ManagedProcesses {
                                 {
                                     break;
                                 }
-                                let bytes = match (&result, notify_output) {
-                                    (Ok(message), true) => {
-                                        serde_json::to_vec(message).ok().map(|bytes| bytes.len())
-                                    }
-                                    _ => None,
-                                };
+                                let size = result.as_ref().map_or(0, |message| {
+                                    serde_json::to_vec(message).map_or(0, |bytes| bytes.len())
+                                });
+                                while queued.load(std::sync::atomic::Ordering::Acquire) != 0
+                                    && queued.load(std::sync::atomic::Ordering::Acquire) + size
+                                        > QUEUED_BYTES
+                                    && !*reader_reaped
+                                        .lock()
+                                        .unwrap_or_else(PoisonError::into_inner)
+                                {
+                                    std::thread::sleep(Duration::from_millis(5));
+                                }
+                                queued.fetch_add(size, std::sync::atomic::Ordering::AcqRel);
+                                let bytes = (result.is_ok() && notify_output).then_some(size);
                                 if sender.send(result).is_err() || terminal {
                                     alive.store(false, std::sync::atomic::Ordering::Release);
                                     if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -1208,6 +1221,7 @@ impl ManagedProcesses {
                         unrestricted: unrestricted.is_some(),
                         sender: writer_sender,
                         receiver,
+                        queued,
                         pending: None,
                         exited_at: None,
                         stdin: input.stdin.is_none(),
@@ -1350,6 +1364,9 @@ impl ManagedProcesses {
                                 break;
                             }
                             bytes += size + 1;
+                            process
+                                .queued
+                                .fetch_sub(size, std::sync::atomic::Ordering::AcqRel);
                             messages.push(message);
                         }
                         Ok(Err(error)) if !messages.is_empty() => {
@@ -2478,6 +2495,7 @@ print(json.dumps({'shm_fd':fd,'errno':error,'denied':error in (errno.EPERM,errno
             unrestricted: false,
             sender: mpsc::sync_channel(1).0,
             receiver: mpsc::sync_channel(1).1,
+            queued: Default::default(),
             pending: None,
             exited_at: None,
             stdin: true,

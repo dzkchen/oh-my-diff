@@ -70,7 +70,7 @@ jobs:
       - name: Install pinned Rust toolchain
         run: |
           OMD_RUST_TOOLCHAIN=$(python3 -c 'import json; print(json.load(open("upstream.lock.json"))["rust_toolchain"])')
-          rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component rust-src
+          rustup toolchain install "$OMD_RUST_TOOLCHAIN" --profile minimal --component rustfmt,rust-src
           rustup default "$OMD_RUST_TOOLCHAIN"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -86,6 +86,8 @@ jobs:
           python3 .github/scripts/build.py sync pr
           git add --intent-to-add -- runtime upstream.lock.json
           git diff --exit-code -- runtime upstream.lock.json
+      - name: Rustfmt
+        run: python3 .github/scripts/build.py cargo pr /private/tmp/omd-bpr/logs/fmt.log fmt -p codex-omd -p codex-omd-runner -p codex-omd-extension -p codex-tui -p codex-core-plugins -p codex-git-utils -p codex-core -- --check
       - name: Compile native code and tests
         run: |
           python3 .github/scripts/build.py v8 pr

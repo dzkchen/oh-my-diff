@@ -408,3 +408,18 @@ fn symlinked_broker_directories_are_refused() {
         "authority_directory_invalid"
     );
 }
+
+#[test]
+fn concurrent_private_writes_to_one_path_all_succeed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = Arc::new(directory.path().join("owner.json"));
+    let writers: Vec<_> = (0..8)
+        .map(|writer| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                (0..50).all(|_| write_private(&path, &json!(writer)).is_ok())
+            })
+        })
+        .collect();
+    assert!(writers.into_iter().all(|writer| writer.join().unwrap()));
+}

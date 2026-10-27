@@ -2115,14 +2115,14 @@ impl ModStore {
             }
             return Err(failure("lifecycle_script_not_trusted"));
         }
-        let inspected = store::package(&package.path);
+        let inspected = store::package_lifecycle(&package.path, event);
         if event == "uninstall" {
             match &inspected {
-                Ok((_, _, integrity)) if integrity == &package.integrity => {}
+                Ok((_, integrity, _)) if integrity == &package.integrity => {}
                 _ => return Ok(()),
             }
         }
-        let (manifest, _, integrity) = inspected?;
+        let (manifest, integrity, source) = inspected?;
         if integrity != package.integrity {
             return Err(failure("package_integrity_failure"));
         }
@@ -2130,12 +2130,8 @@ impl ModStore {
             .lifecycle
             .get(event)
             .ok_or_else(|| failure("lifecycle_script_missing"))?;
-        let source = String::from_utf8(store::package_read(
-            &package.path,
-            script,
-            store::PACKAGE_FILE_LIMIT,
-        )?)
-        .map_err(failure)?;
+        let source = String::from_utf8(source.ok_or_else(|| failure("lifecycle_script_missing"))?)
+            .map_err(failure)?;
         self.verified_runner()?;
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,

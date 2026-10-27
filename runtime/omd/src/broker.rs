@@ -327,7 +327,10 @@ pub struct Broker {
 }
 
 pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
+    let _ = fs::remove_file(&temporary);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -485,6 +488,10 @@ impl Broker {
                 "{field}-{}.json",
                 sha256(path.as_os_str().as_encoded_bytes())
             ));
+            let _state = self
+                .state
+                .lock()
+                .map_err(|_| failure("authority_state_poisoned"))?;
             match read_json(&record, Value::Null)? {
                 Value::Null => write_private(&record, &json!(uid))?,
                 owner if owner != json!(uid) => return Err(failure(refused)),

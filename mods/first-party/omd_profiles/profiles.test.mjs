@@ -425,6 +425,11 @@ test('/profile add opens one picker; accounts sign in through their own mods and
   setup = [new Error('exec_program_unavailable')];
   assert.match(invoke(state, 'command', 'add api_key key2', 'profile').value.display, /brew install node/);
   assert.equal(answers.length, 0);
+  answers.push('gpt-6.1-sol', '1.25:10', '5', 'accepted');
+  setup = [catalogued, { exit_code: 0, stdout: 'not json', stderr: '' }];
+  assert.match(invoke(state, 'command', 'add api_key key3', 'profile').value.display, /unreadable output/);
+  state.accounts = Array.from({ length: 16 }, (_, index) => ({ name: `p${index}`, provider: 'omd_profiles', model: `p${index}`, effort: 'high', billing: 'included_subscription', available: true, profile: profileData(`p${index}`) }));
+  assert.match(invoke(state, 'command', 'add api_key key4', 'profile').value.display, /At most 16/);
 });
 
 test('a profile URL matches the origin its credential was enrolled for however it is written', () => {
@@ -484,7 +489,10 @@ test('profile switches stay on the thread, ask before paid routes and report ref
   selected = 'route_unavailable_for_thread: work';
   state = invoke({ ...state, pending: 'work' }, 'turn_start', { turn_id: 't2' }).state;
   assert.match(meter(state), /route_unavailable_for_thread/);
-  assert.deepEqual(invoke(state, 'intercept', { surface: 'model_request', input: {}, original: {}, origin: { caller: 'model' } }, '0').value.result, { deny: 'work: route_unavailable_for_thread: work' });
+  const gate = (current, scope = { kind: 'main', agent_id: null }) => invoke(current, 'intercept', { surface: 'model_request', input: { scope }, original: {}, origin: { caller: 'model' } }, '0').value?.result;
+  assert.deepEqual(gate(state), { deny: 'work: route_unavailable_for_thread: work' });
+  assert.equal(gate(state, { kind: 'main', agent_id: 'worker-1' })?.deny, undefined);
+  assert.equal(gate({ ...state, notice: null, pending: 'paid' })?.deny, undefined);
 });
 
 test('the switcher meters the active account, cycles with Alt+s and adds or removes accounts in the session', () => {
@@ -594,6 +602,8 @@ test('Claude and Cursor accounts from their own mods are listed, metered from th
   state = invoke(state, 'app_notification', limits('codex')).state;
   assert.equal(kv.quota, undefined);
   state = invoke(state, 'app_notification', limits('claude')).state;
+  assert.deepEqual(Object.keys(kv.quota.value), ['claude-work']);
+  invoke({ ...state, accounts: [{ ...state.accounts[0], profile: profileData('key', true) }], current: 'work', seen: null }, 'app_notification', limits('codex'));
   assert.deepEqual(Object.keys(kv.quota.value), ['claude-work']);
   const meter = state => invoke(state, 'terminal', { event: 'redraw', ledger: null }).value.sites.above_composer.components[1].spans.map(span => span.text).join('');
   assert.match(meter(state), /42%.*13%/);

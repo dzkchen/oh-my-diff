@@ -116,4 +116,5 @@ The maintainer cuts releases; the process is in [.github/WORKFLOWS.md](.github/W
 ## License
 
 Your contributions are under the [MIT License](LICENSE). Changes under `runtime/patches`, `runtime/omd` and
-`runtime/native` are Apache-2.0, like the Codex code they patch ([NOTICE](NOTICE)).
+`runtime/native` are Apache-2.0, like the Codex code they patch, and so are changes to the `token_weather` and
+`blast_radius` ports in `mods/ports` ([NOTICE](NOTICE)).

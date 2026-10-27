@@ -1161,6 +1161,7 @@ impl Task {
             .ok_or_else(|| denied("unknown request"))?;
         if attempt.status == "unknown"
             || attempt.settled_microusd.is_some()
+            || attempt.provider_billed
             || !raw_usage.is_object()
         {
             return Err(denied("request settled or invalid raw usage"));

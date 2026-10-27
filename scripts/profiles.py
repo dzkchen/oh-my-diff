@@ -707,7 +707,7 @@ def install(args):
                                 "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
                     enabled.append(target)
-        (store / "package-index.json").write_text(json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
+        support.atomic_text(store / "package-index.json", json.dumps({"schema": 1, "packages": catalog}, indent=2) + "\n")
         granted = {Path(item["path"]).resolve(): item.get("capabilities")
                    for item in invoke(installed_manager, "selection-status", store)["selections"]}
         # Revoking keeps the selection with no capabilities; a mod the user disabled keeps its grant and stays off.
@@ -809,9 +809,9 @@ def install(args):
         for launcher in made_launchers:
             if launcher.is_file() and not launcher.is_symlink():
                 launcher.unlink()
-        shutil.rmtree(prefix)
+        shutil.rmtree(prefix, ignore_errors=True)
         if made_store:
-            shutil.rmtree(store)
+            shutil.rmtree(store, ignore_errors=True)
         if attached is not None:
             (store / "mods.json").write_bytes(attached)
         raise
