@@ -276,8 +276,9 @@ Leaving the component:
 - Ctrl+] leaves the component (terminals without the kitty keyboard protocol send it as Ctrl+5, which also leaves).
 - Ctrl+C leaves it and keeps its native meaning (interrupt or quit).
 - Esc goes to the mod and leaves the component or closes the dialog.
-- `keys: 'all'` (`terminal_focus_v1`, also on `module`) forwards Esc and Ctrl+C too, so only Ctrl+] (or Ctrl+5)
-  leaves. Key contexts of the component's site owner that name its site get each key first.
+- `keys: 'all'` (`terminal_focus_v1`, also on `module`) also forwards Esc, Ctrl+C and the other Ctrl and Alt keys
+  (Ctrl+Z still suspends), so only Ctrl+] (or Ctrl+5) leaves.
+- Key contexts of the component's site owner that name its site get each key before the component does.
 
 Input callbacks run in the terminal process with read-only workspace access, and the view redraws as soon as one
 changes the mod's state. A key that must write (a save) publishes an `events.publish` hop whose `channel` callback
@@ -341,11 +342,11 @@ composed):
 
 | `when` field | Holds when |
 | --- | --- |
-| `focus` | One name or a list: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
+| `focus` | One name or a list of up to 8 different names: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
 | `composer` | `empty` or `draft`, by the composer's text. |
 
-- A context that cannot hold in the chat may also bind unmodified keys: named keys, Shift+Tab and single printable
-  characters (`h`, `1`, `[`, `?`, `G`). A context that can hold there takes `keybindings` key names, and there a key
+- A context that cannot hold in the chat may also bind unmodified keys: named keys other than Esc, Shift+Tab and
+  single printable characters (`h`, `1`, `[`, `?`, `G`; letters match case exactly). A context that can hold there takes `keybindings` key names, and there a key
   that collides with a native binding is ignored as in `keybindings`.
 - A binding is a key action or `{action, label}`; `label` (at most 64 bytes) names it in the help overlay.
 - Contexts of the focused site's owner (the `owner` of `owner/site`) match first, then the others in composition

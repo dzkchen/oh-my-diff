@@ -921,7 +921,7 @@ pub enum ModRegion {
     Name(String),
 }
 
-pub const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
+const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(untagged)]
@@ -943,42 +943,32 @@ pub enum ModComposerWhen {
     Draft,
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModKeyWhen {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "one_or_many",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub focus: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer: Option<ModComposerWhen>,
 }
 
-impl<'de> Deserialize<'de> for ModKeyWhen {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Focus {
-            One(String),
-            Many(Vec<String>),
-        }
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Raw {
-            #[serde(default)]
-            focus: Option<Focus>,
-            #[serde(default)]
-            composer: Option<ModComposerWhen>,
-        }
-        let raw = Raw::deserialize(deserializer)?;
-        Ok(Self {
-            focus: match raw.focus {
-                None => Vec::new(),
-                Some(Focus::One(focus)) => vec![focus],
-                Some(Focus::Many(focus)) => focus,
-            },
-            composer: raw.composer,
-        })
+fn one_or_many<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Focus {
+        One(String),
+        Many(Vec<String>),
     }
+    Ok(match Focus::deserialize(deserializer)? {
+        Focus::One(focus) => vec![focus],
+        Focus::Many(focus) => focus,
+    })
 }
 
 impl ModKeyWhen {
@@ -1907,10 +1897,10 @@ fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>, limit: usize) -> bo
             .all(|(key, action)| mod_key_name(key) && valid_action(action))
 }
 
-pub fn context_key_name(key: &str) -> bool {
+fn context_key_name(key: &str) -> bool {
     mod_key_name(key)
         || key == "Shift+Tab"
-        || MOD_NAMED_KEYS.contains(&key)
+        || key != "Esc" && MOD_NAMED_KEYS.contains(&key)
         || key.len() == 1 && key.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
@@ -2320,7 +2310,9 @@ impl ModViewPatch {
                 field: "key_contexts".into(),
                 owner: target
                     .key_contexts
-                    .first()
+                    .iter()
+                    .rev()
+                    .find(|context| context.owner != id)
                     .map(|context| context.owner.clone())
                     .unwrap_or_default(),
                 rejected: id.to_owned(),

@@ -11,7 +11,7 @@ transcript                         ╭──────────────
 › prompt                           ╰──────────────────────────╯
 ```
 
-On a narrow terminal (below `portrait` columns) the dock becomes a band below the prompt, tabs across its top:
+On a narrow terminal (below `narrow_below` columns) the dock becomes a band below the prompt, tabs across its top:
 
 ```text
 ─ Chat ──────────────────────────────
@@ -36,18 +36,18 @@ Without it nothing changes. `/workspace off` hides the workspace and `/workspace
 
 ## Keys
 
-Focus moves natively, so these keys work while the dock has focus. From the prompt, Ctrl+] enters the dock; Esc or Ctrl+] in the dock returns to the chat.
+These keys work while the dock has focus, and Tab moves between its controls. From the prompt, Ctrl+] enters the dock; Esc or Ctrl+] in the dock returns to the chat.
 
 | Key | Does |
 | --- | --- |
-| `1`-`9` | Show that tab (focus stays in the dock) |
+| `1`-`6` | Show that tab (focus stays in the dock) |
 | `[` / `]` | Previous / next tab |
 | `{` / `}` | Previous / next tab inside a panel that has its own tabs |
 | `=` / `-` | Grow / shrink the dock (dragging its border works too) |
 | `+` / `_` | Next / previous screen mode of the dock: normal, half, full |
 | `0` | Main view (the chat) |
 | `h`, `Left` / `l`, `Right` | Region on the left / right |
-| `Tab` | Next region |
+| `k`, `Up` / `j`, `Down` | Region above / below (Up and Down move inside a focused list first) |
 | `?` | List the keys that apply here |
 | `Enter` | In the Shell tab, type in the running shell (Ctrl+] leaves it) |
 
@@ -55,13 +55,13 @@ Screen modes also work for the chat: `/workspace mode next chat` shrinks the doc
 
 ### Stack mode
 
-With `mode: stack` the panels are split panels instead of tabs, each titled `N Title`: `1`-`9` focus that panel, `[` / `]` switch the tabs of a panel that has them, and `+` / `_` change the focused panel's screen mode. Below `portrait` columns the panels sit in a row below the chat.
+With `layout: stack` the panels are split panels instead of tabs, each titled `N Title`: `1`-`4` focus that panel, `{` / `}` switch the tabs of a panel that has them, and `+` / `_` change the focused panel's screen mode. Below `narrow_below` columns the panels sit in a row below the chat.
 
 ## Panels
 
 - **Changes:** `git status` of the current directory, refreshed when a turn ends, when the list gets focus and on `/workspace refresh`. Select a file for its diff against `HEAD` (an untracked file shows as all added).
-- **Shell:** focusing the tab focuses its `Start shell` button; Enter (or a click) starts the shell after you confirm. It runs in the session sandbox without network.
-- **Other mods:** `omd.workspace` 1.0.0 lets a mod `register {id, title, site, tabs?, order?}` (any id but a built-in one, `chat` or `dock`), `unregister {id}` and list `panels`. Titles are at most 30 bytes (tab titles 32) without control characters and sites must be `<mod>/<name>`; the workspace only places them, the registering mod draws them. Built-in panels come first, then registrations by `order`. A panel with `tabs` (up to 4) becomes a tab of the dock holding its own tab bar.
+- **Shell:** focusing the tab focuses its `Start shell` button; Enter (or a click) starts the shell after you confirm. If the shell has ended, for example after `exit` or a restart, Enter brings the button back. It runs in the session sandbox without network.
+- **Other mods:** `omd.workspace` 1.0.0 lets a mod `register {id, title, site, tabs?, order?}` (any id but a built-in one, `chat` or `dock`), `unregister {id}` and list `panels`. A registration persists until `unregister`, so a mod can register again on every start. Titles are at most 30 bytes (tab titles 32) without control characters and sites must be `<mod>/<name>`; the workspace only places them, the registering mod draws them. Built-in panels come first, then registrations by `order`. A panel with `tabs` (up to 4) becomes a tab of the dock holding its own tab bar.
 
 ## Commands
 
@@ -92,11 +92,11 @@ Every setting is its own row in `/mods` (open the workspace's settings there): c
 | --- | --- | --- |
 | `border` | `rounded` | Frame of the panels: `rounded`, `plain`, `double` or `thick` |
 | `side` | `right` | Side of the chat the panels sit on: `right` or `left` |
-| `mode` | `tabs` | `tabs` (one dock) or `stack` (split panels) |
+| `layout` | `tabs` | `tabs` (one dock) or `stack` (split panels) |
 | `dock_size` | `33` | Percent of the width the panels take, 15 to 85; resizing overrides it until `/workspace reset` |
-| `portrait` | `84` | Columns below which the panels move below the chat (above it with `side: left`) |
-| `panels` | empty | Panel ids in order, separated by commas (`changes, terminal`); empty shows built-ins, then registrations |
-| `key_ACTION` | see Keys | One per action: `key_panel_1` to `key_panel_9`, `key_main`, `key_left`, `key_left_alt`, `key_right`, `key_right_alt`, `key_next`, `key_help`, `key_mode_next`, `key_mode_previous`, `key_tab_previous`, `key_tab_next`, `key_panel_tab_previous`, `key_panel_tab_next`, `key_grow`, `key_shrink`, `key_focus_shell`. A key is a single character, a named key such as `Left` or `Tab`, F2–F12, or `Ctrl+x` / `Alt+x` with a lowercase letter or digit (not Ctrl+c, d, h, i, j, m or z); `<disabled>` turns it off. Invalid keys keep the default and show in `/workspace config`. |
+| `narrow_below` | `84` | Columns below which the panels move below the chat (above it with `side: left`) |
+| `panels` | empty | Panel ids in order, separated by commas (`changes, terminal`); panels you leave out are hidden, and unknown ids are listed under `Ignored:` in `/workspace config`; empty shows built-ins, then registrations |
+| `key_ACTION` | see Keys | One per action: `key_panel_1` to `key_panel_6`, `key_main`, `key_left`, `key_left_alt`, `key_right`, `key_right_alt`, `key_up`, `key_up_alt`, `key_down`, `key_down_alt`, `key_help`, `key_mode_next`, `key_mode_previous`, `key_tab_previous`, `key_tab_next`, `key_panel_tab_previous`, `key_panel_tab_next`, `key_grow`, `key_shrink`, `key_focus_shell`. A key is a single character, a named key such as `Left` or `Home`, F2–F12, or `Ctrl+x` / `Alt+x` with a lowercase letter or digit (not Ctrl+c, d, h, i, j, m or z); `<disabled>` turns it off. Invalid keys keep the default and show in `/workspace config`. |
 
 ## Needs and limits
 
@@ -104,6 +104,6 @@ Every setting is its own row in `/mods` (open the workspace's settings there): c
 - At most 6 tabs (4 panels in stack mode) and 10 panel sites, counting each tab of a panel that has tabs; extra panels are left out. The first 50 changed files are listed, and a diff is cut at about 30 KB or 1,000 lines.
 - Below 60 columns or 12 rows the host drops the layout and shows its own.
 - The narrow band sits below the prompt, not between the transcript and the prompt: the host draws the transcript and the prompt as one chat area.
-- The dock size is shared between the wide and the narrow layout (default a third, from `dock_size`) and stays between 15% and 85%.
+- The dock size is shared between the wide and the narrow layout (default a third, from `dock_size`) and `=` / `-` keep it between 15% and 85%; a drag can go further and is kept as dragged.
 - Tab titles that don't fit the dock's width are cut off; those tabs are still reachable by number or `[` / `]`.
 - In stack mode, `dock` is not a screen-mode target; a mode whose panel is gone acts on all panels.

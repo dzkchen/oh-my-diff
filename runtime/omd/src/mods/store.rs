@@ -1009,11 +1009,14 @@ impl ModStore {
                         .chain(file_settings.keys())
                         .chain(defaults)
                     {
-                        let origin = match selection.settings.contains_key(key) {
-                            _ if file_settings.contains_key(key) => "file",
-                            false => "default",
-                            true if administered => "managed",
-                            true => "user",
+                        let origin = if file_settings.contains_key(key) {
+                            "file"
+                        } else if !selection.settings.contains_key(key) {
+                            "default"
+                        } else if administered {
+                            "managed"
+                        } else {
+                            "user"
                         };
                         settings_origin.insert(key.clone(), origin);
                     }

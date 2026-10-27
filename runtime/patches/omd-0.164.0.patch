@@ -32006,7 +32006,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..671a18ccae389ffaea6ccd49808ed79622a9adf4 100644
+index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..c265c00a80957a4a3f8b2fb8acc06234a4556a0a 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32091,7 +32091,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..671a18ccae389ffaea6ccd49808ed796
              tui.clipboard.advance(tui.frame_requester());
          }
          Ok(AppRunControl::Continue)
-@@ -1228,7 +1259,93 @@ impl App {
+@@ -1228,7 +1259,94 @@ impl App {
          Ok(())
      }
 
@@ -32160,6 +32160,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..671a18ccae389ffaea6ccd49808ed796
 +        let mut snapshot = crate::mod_ui::snapshot();
 +        if !self.mod_overlays_allowed() {
 +            snapshot.view.sites.remove("dialog");
++            crate::mod_ui::close_help();
 +        }
 +        snapshot
 +    }
@@ -32185,7 +32186,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..671a18ccae389ffaea6ccd49808ed796
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
          if tui.is_owned_screen() {
-@@ -1247,33 +1364,48 @@ impl App {
+@@ -1247,33 +1365,48 @@ impl App {
              &mut self.agents_overview.rendered_full_screen,
              dashboard_visible,
          );
@@ -32241,7 +32242,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..671a18ccae389ffaea6ccd49808ed796
              Ok(rendered_area)
          })
      }
-@@ -1283,6 +1415,7 @@ impl App {
+@@ -1283,6 +1416,7 @@ impl App {
          width: u16,
          render: impl FnOnce(u16, &dyn Renderable) -> T,
      ) -> T {
@@ -32414,7 +32415,7 @@ index ef5b9127853b37cd9f46fb14ba5cd7c283a7fc0e..5b46ca83f3e4fac8fa053817947287a2
 
          configured_effort
 diff --git a/codex-rs/tui/src/app/empty_state_animation_tests.rs b/codex-rs/tui/src/app/empty_state_animation_tests.rs
-index a1a9a66c1cc653cd7227110b5866dada70f8110a..bf0a5bf46b4a7f63364d751d08fd80fa5d99db28 100644
+index a1a9a66c1cc653cd7227110b5866dada70f8110a..cb27699ceec95c9601e59460bccd5c0dc2ba3551 100644
 --- a/codex-rs/tui/src/app/empty_state_animation_tests.rs
 +++ b/codex-rs/tui/src/app/empty_state_animation_tests.rs
 @@ -37,6 +37,160 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
@@ -32637,6 +32638,23 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..bf0a5bf46b4a7f63364d751d08fd80fa
  async fn empty_state_animation_survives_plain_transcript_clicks() -> Result<()> {
      use crossterm::event::MouseButton;
      use crossterm::event::MouseEvent;
+@@ -339,3 +500,16 @@ async fn empty_state_animation_survives_plain_transcript_clicks() -> Result<()>
+     tui.set_owned_screen(/*owned*/ false)?;
+     Ok(())
+ }
++
++#[tokio::test]
++#[serial_test::serial]
++async fn mod_help_closes_when_a_native_popup_opens() {
++    let mut app = crate::app::test_support::make_test_app().await;
++    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    crate::mod_ui::open_help(true);
++    app.mod_render_snapshot();
++    assert!(crate::mod_ui::holds_keys());
++    app.chat_widget.apply_external_edit("/".into());
++    app.mod_render_snapshot();
++    assert!(!crate::mod_ui::holds_keys());
++}
 diff --git a/codex-rs/tui/src/app/empty_state_policy.rs b/codex-rs/tui/src/app/empty_state_policy.rs
 index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc8235874d813767 100644
 --- a/codex-rs/tui/src/app/empty_state_policy.rs
@@ -104012,10 +104030,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..96f13301b3cc1dde710a989451f7b8aabeb3ca58
+index 0000000000000000000000000000000000000000..5107d9e5b02e2a98f9aeee0328b07209384b15b3
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,258 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -104173,14 +104191,10 @@ index 0000000000000000000000000000000000000000..96f13301b3cc1dde710a989451f7b8aa
 +pub use mods::ModInstallRequest;
 +pub use mods::ModInterceptor;
 +pub use mods::ModComposerWhen;
-+pub use mods::ModContextKey;
 +pub use mods::ModKeyAction;
 +pub use mods::ModKeyContext;
-+pub use mods::ModKeyWhen;
 +pub use mods::ModKeys;
 +pub use mods::ModRegion;
-+pub use mods::MOD_REGION_MOVES;
-+pub use mods::context_key_name;
 +pub use mods::ModLayout;
 +pub use mods::ModLayoutLeaf;
 +pub use mods::ModLayoutSplit;
@@ -105915,10 +105929,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e34fe28ea6
+index 0000000000000000000000000000000000000000..e389ec7fcbdce6d3093217db98f6faedce3e4907
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6303 @@
+@@ -0,0 +1,6302 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -105960,15 +105974,13 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +pub use view::ModCommandAction;
 +pub use view::ModComponent;
 +pub use view::ModComponentAction;
++pub use view::ModComposerWhen;
 +pub use view::ModDensity;
 +pub use view::ModDirection;
 +pub use view::ModFind;
 +pub use view::ModIcons;
-+pub use view::ModComposerWhen;
-+pub use view::ModContextKey;
 +pub use view::ModKeyAction;
 +pub use view::ModKeyContext;
-+pub use view::ModKeyWhen;
 +pub use view::ModKeys;
 +pub use view::ModLayout;
 +pub use view::ModLayoutLeaf;
@@ -105981,6 +105993,7 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +pub use view::ModPaint;
 +pub use view::ModPanel;
 +pub use view::ModRange;
++pub use view::ModRegion;
 +pub use view::ModRenderSite;
 +pub use view::ModScreenAnchor;
 +pub use view::ModSelectOption;
@@ -106003,9 +106016,6 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +pub use view::invalid_render_tree;
 +pub use view::mod_command_reference;
 +pub use view::mod_component_id;
-+pub use view::MOD_REGION_MOVES;
-+pub use view::ModRegion;
-+pub use view::context_key_name;
 +pub use view::mod_key_name;
 +pub use view::owned_command;
 +pub use view::valid_glyphs;
@@ -108208,7 +108218,10 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +    {
 +        return Err(failure(format!("setting_set_by_file: {name}")));
 +    }
-+    let settings = store.merge_settings(&path, values)?;
++    let mut settings = store.merge_settings(&path, values)?;
++    if let Some(file) = selection["file_settings"].as_object() {
++        settings.extend(file.clone());
++    }
 +    let (package, _, _) = store::package(&path)?;
 +    Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 +}
@@ -108623,7 +108636,6 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +    Some((configuration_stamp(&root.join("mods.json"))?, settings))
 +}
 +
-+/// The returned stamp is `None` if a file changed during the read.
 +fn read_configuration(
 +    root: &Path,
 +    stamp: Option<ConfigurationStamp>,
@@ -108631,8 +108643,9 @@ index 0000000000000000000000000000000000000000..428dbc9a9d987099333d698f6ea881e3
 +    let bytes = store::read(&root.join("mods.json"), 65_536);
 +    let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
 +    for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
-+        hashed.extend(name.as_encoded_bytes());
-+        hashed.extend(store::read(&root.join("settings").join(name), 65_536).unwrap_or_default());
++        let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
++        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
++        hashed.extend(digest(&content).as_bytes());
 +    }
 +    (
 +        stamp
@@ -119194,10 +119207,10 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf16e381ee3662a572f235d1ec026fe773d427e1
+index 0000000000000000000000000000000000000000..a64703ca52fda65cc568ad0812944344e1ca2be5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,396 @@
 +use super::*;
 +
 +pub const SETTINGS_FILE_EXTENSIONS: [&str; 3] = ["json", "yaml", "yml"];
@@ -119231,7 +119244,11 @@ index 0000000000000000000000000000000000000000..bf16e381ee3662a572f235d1ec026fe7
 +            status: "missing",
 +            error: None,
 +        };
-+        if present.is_empty() || selection.scope == MANAGED_SCOPE {
++        if present.is_empty() {
++            return (file, BTreeMap::new());
++        }
++        if selection.scope == MANAGED_SCOPE {
++            file.status = "ignored";
 +            return (file, BTreeMap::new());
 +        }
 +        let values = (|| {
@@ -122027,10 +122044,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aaa1a6ed36124208427f7dcd85d0fdb53a30ee82
+index 0000000000000000000000000000000000000000..4c8cc1c33d0205e32ff6cdccbc9d19077fdd7c39
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1588 @@
+@@ -0,0 +1,1591 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -123042,11 +123059,14 @@ index 0000000000000000000000000000000000000000..aaa1a6ed36124208427f7dcd85d0fdb5
 +                        .chain(file_settings.keys())
 +                        .chain(defaults)
 +                    {
-+                        let origin = match selection.settings.contains_key(key) {
-+                            _ if file_settings.contains_key(key) => "file",
-+                            false => "default",
-+                            true if administered => "managed",
-+                            true => "user",
++                        let origin = if file_settings.contains_key(key) {
++                            "file"
++                        } else if !selection.settings.contains_key(key) {
++                            "default"
++                        } else if administered {
++                            "managed"
++                        } else {
++                            "user"
 +                        };
 +                        settings_origin.insert(key.clone(), origin);
 +                    }
@@ -123621,10 +123641,10 @@ index 0000000000000000000000000000000000000000..aaa1a6ed36124208427f7dcd85d0fdb5
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c446fe67cf
+index 0000000000000000000000000000000000000000..9c8d830238c6a35baa2f7cee831afc0caca095ac
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,2477 @@
+@@ -0,0 +1,2469 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -124548,7 +124568,7 @@ index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c4
 +    Name(String),
 +}
 +
-+pub const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
++const MOD_REGION_MOVES: [&str; 7] = ["left", "right", "up", "down", "next", "previous", "chat"];
 +
 +#[derive(Clone, Debug, Serialize, PartialEq)]
 +#[serde(untagged)]
@@ -124570,42 +124590,32 @@ index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c4
 +    Draft,
 +}
 +
-+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
 +pub struct ModKeyWhen {
-+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    #[serde(
++        default,
++        deserialize_with = "one_or_many",
++        skip_serializing_if = "Vec::is_empty"
++    )]
 +    pub focus: Vec<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub composer: Option<ModComposerWhen>,
 +}
 +
-+impl<'de> Deserialize<'de> for ModKeyWhen {
-+    fn deserialize<D: serde::Deserializer<'de>>(
-+        deserializer: D,
-+    ) -> std::result::Result<Self, D::Error> {
-+        #[derive(Deserialize)]
-+        #[serde(untagged)]
-+        enum Focus {
-+            One(String),
-+            Many(Vec<String>),
-+        }
-+        #[derive(Deserialize)]
-+        #[serde(deny_unknown_fields)]
-+        struct Raw {
-+            #[serde(default)]
-+            focus: Option<Focus>,
-+            #[serde(default)]
-+            composer: Option<ModComposerWhen>,
-+        }
-+        let raw = Raw::deserialize(deserializer)?;
-+        Ok(Self {
-+            focus: match raw.focus {
-+                None => Vec::new(),
-+                Some(Focus::One(focus)) => vec![focus],
-+                Some(Focus::Many(focus)) => focus,
-+            },
-+            composer: raw.composer,
-+        })
++fn one_or_many<'de, D: serde::Deserializer<'de>>(
++    deserializer: D,
++) -> std::result::Result<Vec<String>, D::Error> {
++    #[derive(Deserialize)]
++    #[serde(untagged)]
++    enum Focus {
++        One(String),
++        Many(Vec<String>),
 +    }
++    Ok(match Focus::deserialize(deserializer)? {
++        Focus::One(focus) => vec![focus],
++        Focus::Many(focus) => focus,
++    })
 +}
 +
 +impl ModKeyWhen {
@@ -125534,10 +125544,10 @@ index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c4
 +            .all(|(key, action)| mod_key_name(key) && valid_action(action))
 +}
 +
-+pub fn context_key_name(key: &str) -> bool {
++fn context_key_name(key: &str) -> bool {
 +    mod_key_name(key)
 +        || key == "Shift+Tab"
-+        || MOD_NAMED_KEYS.contains(&key)
++        || key != "Esc" && MOD_NAMED_KEYS.contains(&key)
 +        || key.len() == 1 && key.bytes().all(|byte| byte.is_ascii_graphic())
 +}
 +
@@ -125947,7 +125957,9 @@ index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c4
 +                field: "key_contexts".into(),
 +                owner: target
 +                    .key_contexts
-+                    .first()
++                    .iter()
++                    .rev()
++                    .find(|context| context.owner != id)
 +                    .map(|context| context.owner.clone())
 +                    .unwrap_or_default(),
 +                rejected: id.to_owned(),
@@ -126104,10 +126116,10 @@ index 0000000000000000000000000000000000000000..a4c75d7d42ac32351bb9e8dee58ee0c4
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ce16cb62a684a01ce421b6f185ab3c1c614e472
+index 0000000000000000000000000000000000000000..f06f03ed1c710028e06fa095ed3756d6a3a2ce4a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,319 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -126401,6 +126413,7 @@ index 0000000000000000000000000000000000000000..0ce16cb62a684a01ce421b6f185ab3c1
 +        context(json!({"h": {"help": false}})),
 +        context(json!({"h": {"action": {"help": true}, "label": ""}})),
 +        context(json!({"Ctrl+c": {"help": true}})),
++        context(json!({"Esc": {"help": true}})),
 +        context(json!({"hh": {"help": true}})),
 +        json!({"key_contexts": [{"when": {"focus": "site"}, "owner": "a", "keys": {"h": {"help": true}}}]}),
 +        json!({"key_contexts": vec![chat.clone(); 9]}),
@@ -137705,10 +137718,10 @@ index 0000000000000000000000000000000000000000..d394c9b78a0d08dbaa73fa580f47e7f3
 +}
 diff --git a/codex-rs/omd/tests/managed.rs b/codex-rs/omd/tests/managed.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae0f0127e8
+index 0000000000000000000000000000000000000000..a28b244f07d84aedf698c73daba2bb84886b0e05
 --- /dev/null
 +++ b/codex-rs/omd/tests/managed.rs
-@@ -0,0 +1,953 @@
+@@ -0,0 +1,963 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
@@ -137983,6 +137996,12 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +    let base = json!({"schema": 1, "deny": ["denied"], "capabilities": ["interception"], "packages": [
 +        entry("guard", &guard, &guard_sha, json!({"settings": {"mode": "strict"}}))]});
 +    admin.administer(base.clone(), "alice");
++    std::fs::create_dir_all(store.root().join("settings")).unwrap();
++    std::fs::write(
++        store.root().join("settings/guard.json"),
++        r#"{"mode":"open"}"#,
++    )
++    .unwrap();
 +    let host = admin.host("alice");
 +    assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
 +    assert!(
@@ -138006,6 +138025,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +    assert_eq!(
 +        row("guard", "managed")["settings_origin"],
 +        json!({"mode": "managed"})
++    );
++    assert_eq!(
++        row("guard", "managed")["settings_file"]["status"],
++        "ignored"
 +    );
 +    assert_eq!(
 +        row("plain", "user")["settings_origin"],
@@ -138664,10 +138687,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7181b7678eef7136a237c71930e24515ac6073b2
+index 0000000000000000000000000000000000000000..a2ac486bfd53c2fb70091b621840dc85add5815e
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4868 @@
+@@ -0,0 +1,4873 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -142059,6 +142082,11 @@ index 0000000000000000000000000000000000000000..7181b7678eef7136a237c71930e24515
 +            .unwrap_err()
 +            .to_string()
 +            .starts_with("setting_set_by_file")
++    );
++    std::fs::write(file("yaml"), "count: 3\n").unwrap();
++    assert_eq!(
++        codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap()["settings"],
++        json!({"mode":"b","count":3})
 +    );
 +    std::fs::write(file("json"), "{}").unwrap();
 +    let invalid = read(&mut runtime);
@@ -165432,10 +165460,10 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969a22e371f
+index 0000000000000000000000000000000000000000..7dc7f3cd30ab192c5a040e9955993e2ed1dff56c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,5606 @@
+@@ -0,0 +1,5618 @@
 +use crate::omd::LockExt;
 +use crate::terminal_hyperlinks::HyperlinkLine;
 +use crate::terminal_hyperlinks::TerminalHyperlink;
@@ -165606,7 +165634,6 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +    last_region: Option<String>,
 +    region_focus: BTreeMap<String, String>,
 +    component_region: BTreeMap<String, String>,
-+    /// The outermost `tabs` node path of each drawn site region, so focus stays there when its tab changes.
 +    region_tabs: Vec<(String, String)>,
 +    follow_tab: bool,
 +    region_keys: bool,
@@ -169467,10 +169494,17 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +}
 +
 +fn context_key_matches(binding: &str, key: KeyEvent) -> bool {
-+    key_name(key).as_deref() == Some(binding)
-+        || matches!(key.code, KeyCode::Char(character)
-+            if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-+                && binding.chars().eq([character]))
++    match key.code {
++        KeyCode::Char(character)
++            if character != ' '
++                && !key
++                    .modifiers
++                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
++        {
++            binding.chars().eq([character])
++        }
++        _ => key_name(key).as_deref() == Some(binding),
++    }
 +}
 +
 +fn ordered_contexts<'a>(view: &'a ModView, region: Option<&str>) -> Vec<&'a ModKeyContext> {
@@ -169557,11 +169591,14 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +    match action {
 +        ModKeyAction::Draft(_) | ModKeyAction::Insert { .. } => "Insert text".into(),
 +        ModKeyAction::Submit { .. } => "Send text".into(),
-+        ModKeyAction::Command { command, args } => {
-+            format!("/{} {args}", command.rsplit(':').next().unwrap_or(command))
-+                .trim_end()
-+                .to_owned()
-+        }
++        ModKeyAction::Command { command, args } => format!(
++            "/{} {args}",
++            command
++                .rsplit_once(':')
++                .map_or(command.as_str(), |(_, name)| name)
++        )
++        .trim_end()
++        .to_owned(),
 +        ModKeyAction::Focus { focus } => format!("Focus {focus}"),
 +        ModKeyAction::Copy { label, .. } => format!("Copy {label}"),
 +        ModKeyAction::Region {
@@ -169628,6 +169665,10 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +                .any(|text| text.to_lowercase().contains(&query))
 +    });
 +    rows
++}
++
++pub(crate) fn close_help() {
++    INTERACTION.locked().help = None;
 +}
 +
 +fn help_input(interaction: &mut Interaction, key: KeyEvent) -> ModInput {
@@ -170282,10 +170323,9 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +    let interaction = INTERACTION.locked();
 +    interaction.focus_region.is_some()
 +        || interaction.help.is_some()
-+        || interaction
-+            .focused
-+            .as_ref()
-+            .is_some_and(|focused| interaction.targets.contains_key(focused))
++        || interaction.focused.as_ref().is_some_and(|focused| {
++            interaction.targets.contains_key(focused) || interaction.key_panes.contains(focused)
++        })
 +        || (interaction.dialog.is_some() && interaction.dialog != interaction.dismissed)
 +}
 +
@@ -170620,8 +170660,7 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +    }
 +    let Some(hit) = hit else {
 +        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
-+            interaction.focused = None;
-+            if let Some(region) = interaction
++            match interaction
 +                .focus_areas
 +                .iter()
 +                .find(|(_, area)| contains(*area, event.column, event.row))
@@ -170629,9 +170668,9 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +                .filter(|region| {
 +                    interaction.focus_region.is_some()
 +                        || interaction.region_keys && region != "chat"
-+                })
-+            {
-+                enter_region(&mut interaction, &region);
++                }) {
++                Some(region) => enter_region(&mut interaction, &region),
++                None => interaction.focused = None,
 +            }
 +            if interaction
 +                .dialog_area
@@ -170655,8 +170694,9 @@ index 0000000000000000000000000000000000000000..91a586daecccfe96c0baa59e3744b969
 +                            .any(|(name, _)| name == *region)
 +                })
 +                .cloned()
++                .filter(|region| interaction.focus_region.as_ref() != Some(region))
 +            {
-+                interaction.focus_region = Some(region);
++                enter_region(&mut interaction, &region);
 +            }
 +            interaction.focused = Some(hit.id);
 +            Some(ModPointer::Consumed)
@@ -171294,10 +171334,10 @@ index 0000000000000000000000000000000000000000..54057bbbfcee4d892e7b709e56c8b056
 +}
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3da1b5b6efb9a33c9b393a255d7720edcc4d51d7
+index 0000000000000000000000000000000000000000..2c1b620d6b9310e2d97e113d58512736f0dfc447
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,2266 @@
+@@ -0,0 +1,2285 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -173404,6 +173444,8 @@ index 0000000000000000000000000000000000000000..3da1b5b6efb9a33c9b393a255d7720ed
 +        buffer[(0, 0)].fg,
 +        crate::style::accent_style().fg.unwrap_or(Color::Reset)
 +    );
++    press(KeyCode::Char('J'), KeyModifiers::NONE);
++    assert_eq!(region().as_deref(), Some("demo/files"));
 +    press(KeyCode::Char('j'), KeyModifiers::NONE);
 +    assert_eq!((region().as_deref(), focused()), (Some("demo/git"), None));
 +    assert!(matches!(
@@ -173562,6 +173604,23 @@ index 0000000000000000000000000000000000000000..3da1b5b6efb9a33c9b393a255d7720ed
 +    assert!(focus("editor"));
 +    press(KeyCode::Char(']'), KeyModifiers::CONTROL);
 +    assert_eq!(focused(), None);
++    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn a_focused_keys_module_holds_keys_outside_a_region() {
++    preview(ModViewSnapshot::default());
++    let snapshot = snapshot(serde_json::json!({
++        "sidebar_width": 30,
++        "sites": {"demo/side": {"components": [{"type": "module", "id": "clock", "label": "Clock", "module": "clock", "keys": true}]}}
++    }));
++    preview(snapshot.clone());
++    let area = Rect::new(0, 0, 100, 24);
++    render(area, area, &mut Buffer::empty(area), &snapshot);
++    assert!(!holds_keys());
++    assert!(focus("clock"));
++    assert!(holds_keys());
 +    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs

@@ -34,7 +34,8 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 - `api.settingsFile` and the settings file (`settings_file_v1`).
-- Focus regions, `key_contexts`, the `region` and `help` key actions and `keys: 'all'` (`terminal_focus_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
+  (`terminal_focus_v1`).
 - Layout leaf `title` (`terminal_layout_title_v1`).
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 
@@ -3530,8 +3531,9 @@ Leaving the component:
 - Ctrl+] leaves the component (terminals without the kitty keyboard protocol send it as Ctrl+5, which also leaves).
 - Ctrl+C leaves it and keeps its native meaning (interrupt or quit).
 - Esc goes to the mod and leaves the component or closes the dialog.
-- `keys: 'all'` (`terminal_focus_v1`, also on `module`) forwards Esc and Ctrl+C too, so only Ctrl+] (or Ctrl+5)
-  leaves. Key contexts of the component's site owner that name its site get each key first.
+- `keys: 'all'` (`terminal_focus_v1`, also on `module`) also forwards Esc, Ctrl+C and the other Ctrl and Alt keys
+  (Ctrl+Z still suspends), so only Ctrl+] (or Ctrl+5) leaves.
+- Key contexts of the component's site owner that name its site get each key before the component does.
 
 Input callbacks run in the terminal process with read-only workspace access, and the view redraws as soon as one
 changes the mod's state. A key that must write (a save) publishes an `events.publish` hop whose `channel` callback
@@ -3595,11 +3597,11 @@ composed):
 
 | `when` field | Holds when |
 | --- | --- |
-| `focus` | One name or a list: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
+| `focus` | One name or a list of up to 8 different names: `chat`, `site` (any site region or a control in any site) or a site name. Omitted, anywhere. |
 | `composer` | `empty` or `draft`, by the composer's text. |
 
-- A context that cannot hold in the chat may also bind unmodified keys: named keys, Shift+Tab and single printable
-  characters (`h`, `1`, `[`, `?`, `G`). A context that can hold there takes `keybindings` key names, and there a key
+- A context that cannot hold in the chat may also bind unmodified keys: named keys other than Esc, Shift+Tab and
+  single printable characters (`h`, `1`, `[`, `?`, `G`; letters match case exactly). A context that can hold there takes `keybindings` key names, and there a key
   that collides with a native binding is ignored as in `keybindings`.
 - A binding is a key action or `{action, label}`; `label` (at most 64 bytes) names it in the help overlay.
 - Contexts of the focused site's owner (the `owner` of `owner/site`) match first, then the others in composition
@@ -4507,11 +4509,13 @@ Experimental. A user can set a mod's settings in a file instead of through `sett
 - Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
   digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
   a wrongly typed value and a missing `required` setting are invalid.
-- Administrator-managed selections ignore the file.
+- Administrator-managed selections ignore the file (status `ignored`).
+- The saved settings must be valid on their own, so a `required` setting without a `default` is saved through
+  `settings.write` or `/omd`; the file then overrides it.
 - An unreadable, oversize, unparsable or invalid file is skipped whole: the saved settings apply, the mod stays on and
   its view diagnostics carry `settings_file_invalid: <reason>`.
 - Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
-- `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid', error: string | null}`. `path` is the
+- `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid' | 'ignored', error: string | null}`. `path` is the
   absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
 - `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
   such keys with origin `file` and the file under `settings_file`.

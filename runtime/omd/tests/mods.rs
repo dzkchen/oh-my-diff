@@ -3390,6 +3390,11 @@ fn settings_file_overrides_saved_settings_and_an_invalid_file_is_skipped_whole()
             .to_string()
             .starts_with("setting_set_by_file")
     );
+    std::fs::write(file("yaml"), "count: 3\n").unwrap();
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"b"})).unwrap()["settings"],
+        json!({"mode":"b","count":3})
+    );
     std::fs::write(file("json"), "{}").unwrap();
     let invalid = read(&mut runtime);
     assert_eq!(invalid[0], json!({"mode":"b"}));

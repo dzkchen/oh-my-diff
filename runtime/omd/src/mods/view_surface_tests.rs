@@ -291,6 +291,7 @@ fn key_contexts_are_bounded_and_compose_with_their_owner() {
         context(json!({"h": {"help": false}})),
         context(json!({"h": {"action": {"help": true}, "label": ""}})),
         context(json!({"Ctrl+c": {"help": true}})),
+        context(json!({"Esc": {"help": true}})),
         context(json!({"hh": {"help": true}})),
         json!({"key_contexts": [{"when": {"focus": "site"}, "owner": "a", "keys": {"h": {"help": true}}}]}),
         json!({"key_contexts": vec![chat.clone(); 9]}),

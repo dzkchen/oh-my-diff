@@ -657,11 +657,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "95bcc8851a48e31ef805c761c26c2fdf6d1681bdde0d0fbb636838094e0fe10f",
-        "mod.json": "25e894e0b3186b195b5f22c15a40535071c5b2531d53d6c2a45f73d83d0b0abb"
+        "index.ts": "9f26fa01671348be1dd9ada930996a2d7ab95d6d2a44df9ebda75d747c3fcc64",
+        "mod.json": "d3fbfcb8a23bd9b0a573e78ef9ce27c5ec16a33e1a786a4b234c1ecb93e0c8fe"
       },
       "id": "omd_workspace",
-      "package_sha256": "d6e76cfe8e89c6de38a2bc790dab0d57183c00009517f4bfcdde856a48b3840b",
+      "package_sha256": "c0e62f89669c31b7a0ad41203334a0bb8eca091ec698b6fd5243f71a07797f7a",
       "source": "mods/first-party/omd_workspace",
       "version": "1.0.0"
     }

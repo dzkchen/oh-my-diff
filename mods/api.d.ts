@@ -621,7 +621,7 @@ export interface ModAPI {
   readonly version: '1.0.0';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
-  readonly settingsFile: Readonly<{ path: string; status: 'missing' | 'loaded' | 'invalid'; error: string | null }>;
+  readonly settingsFile: Readonly<{ path: string; status: 'missing' | 'loaded' | 'invalid' | 'ignored'; error: string | null }>;
   readonly host: {
     call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'];
     tryCall<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): { ok: true; value: HostOperations[K]['result'] } | { ok: false; error: string };

@@ -39,15 +39,13 @@ pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
+pub use view::ModComposerWhen;
 pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
-pub use view::ModComposerWhen;
-pub use view::ModContextKey;
 pub use view::ModKeyAction;
 pub use view::ModKeyContext;
-pub use view::ModKeyWhen;
 pub use view::ModKeys;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
@@ -60,6 +58,7 @@ pub use view::ModOverlayClip;
 pub use view::ModPaint;
 pub use view::ModPanel;
 pub use view::ModRange;
+pub use view::ModRegion;
 pub use view::ModRenderSite;
 pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
@@ -82,9 +81,6 @@ pub use view::component_ids_of;
 pub use view::invalid_render_tree;
 pub use view::mod_command_reference;
 pub use view::mod_component_id;
-pub use view::MOD_REGION_MOVES;
-pub use view::ModRegion;
-pub use view::context_key_name;
 pub use view::mod_key_name;
 pub use view::owned_command;
 pub use view::valid_glyphs;
@@ -2287,7 +2283,10 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
     {
         return Err(failure(format!("setting_set_by_file: {name}")));
     }
-    let settings = store.merge_settings(&path, values)?;
+    let mut settings = store.merge_settings(&path, values)?;
+    if let Some(file) = selection["file_settings"].as_object() {
+        settings.extend(file.clone());
+    }
     let (package, _, _) = store::package(&path)?;
     Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 }
@@ -2702,7 +2701,6 @@ fn configuration_stamps(root: &Path) -> Option<ConfigurationStamp> {
     Some((configuration_stamp(&root.join("mods.json"))?, settings))
 }
 
-/// The returned stamp is `None` if a file changed during the read.
 fn read_configuration(
     root: &Path,
     stamp: Option<ConfigurationStamp>,
@@ -2710,8 +2708,9 @@ fn read_configuration(
     let bytes = store::read(&root.join("mods.json"), 65_536);
     let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
     for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
-        hashed.extend(name.as_encoded_bytes());
-        hashed.extend(store::read(&root.join("settings").join(name), 65_536).unwrap_or_default());
+        let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
+        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
+        hashed.extend(digest(&content).as_bytes());
     }
     (
         stamp

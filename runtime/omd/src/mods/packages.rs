@@ -31,7 +31,11 @@ impl ModStore {
             status: "missing",
             error: None,
         };
-        if present.is_empty() || selection.scope == MANAGED_SCOPE {
+        if present.is_empty() {
+            return (file, BTreeMap::new());
+        }
+        if selection.scope == MANAGED_SCOPE {
+            file.status = "ignored";
             return (file, BTreeMap::new());
         }
         let values = (|| {

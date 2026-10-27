@@ -527,7 +527,7 @@
       "source": "mods/first-party/omd_workspace",
       "license": "MIT",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.164.0; OMD 1.2.0; mod API 1.0.0; terminal_focus_v1, terminal_layout_title_v1, settings_file_v1, terminal_tabs_v1, terminal_pty_v1, service_dispatch_v1, exec_v1",
+      "compatibility": "Codex 0.164.0; OMD 1.2.0; mod API 1.0.0; store_v1, exec_v1, terminal_surface_v1, terminal_lists_v1, terminal_tabs_v1, terminal_pty_v1, terminal_focus_v1, terminal_layout_title_v1, settings_file_v1, service_dispatch_v1, lifecycle_events_v1",
       "tested_versions": [
         "Codex 0.164.0",
         "OMD 1.2.0 pre-release (offline checks)",
