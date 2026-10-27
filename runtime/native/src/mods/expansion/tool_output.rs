@@ -144,7 +144,8 @@ impl ToolOutputContributor for Mods {
                 "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
             if let Some(value) = input.value
                 && serde_json::to_vec(value).is_ok_and(|bytes| {
-                    bytes.len() <= 32_768 && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
+                    bytes.len() <= 32_768
+                        && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
                 })
             {
                 executed["value"] = value.clone();

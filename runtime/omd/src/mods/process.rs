@@ -256,7 +256,10 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
         let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = Vec::new();
-            match (&mut stdout).take(RESULT_LINE_BYTES as u64 + 1).read_until(b'\n', &mut line) {
+            match (&mut stdout)
+                .take(RESULT_LINE_BYTES as u64 + 1)
+                .read_until(b'\n', &mut line)
+            {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if sender.send(line).is_err() {

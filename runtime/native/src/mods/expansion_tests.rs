@@ -1433,7 +1433,9 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     drop(scope);
     assert_eq!(paged, complete);
     assert_eq!(pages, complete.len().div_ceil(65_536));
-    mods.intercept_tool(start("call-early", &EARLY)).await.unwrap();
+    mods.intercept_tool(start("call-early", &EARLY))
+        .await
+        .unwrap();
     let early = mods
         .replace_tool_output(output("call-early", &EARLY, "native"))
         .await
@@ -1448,7 +1450,10 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     else {
         panic!("the answered call must respond");
     };
-    assert!(answered.starts_with("tool_original_unavailable"), "{answered}");
+    assert!(
+        answered.starts_with("tool_original_unavailable"),
+        "{answered}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -73530,10 +73530,10 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9315a4d798652bf09a54d925fb9c531f754a45bc
+index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af91c941c7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,308 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
@@ -73680,7 +73680,8 @@ index 0000000000000000000000000000000000000000..9315a4d798652bf09a54d925fb9c531f
 +                "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
 +            if let Some(value) = input.value
 +                && serde_json::to_vec(value).is_ok_and(|bytes| {
-+                    bytes.len() <= 32_768 && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
++                    bytes.len() <= 32_768
++                        && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
 +                })
 +            {
 +                executed["value"] = value.clone();
@@ -74055,10 +74056,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5d86fa423f2a6789967d6d442c334b3716618fd
+index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430eaf58eea0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4688 @@
+@@ -0,0 +1,4693 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -75494,7 +75495,9 @@ index 0000000000000000000000000000000000000000..f5d86fa423f2a6789967d6d442c334b3
 +    drop(scope);
 +    assert_eq!(paged, complete);
 +    assert_eq!(pages, complete.len().div_ceil(65_536));
-+    mods.intercept_tool(start("call-early", &EARLY)).await.unwrap();
++    mods.intercept_tool(start("call-early", &EARLY))
++        .await
++        .unwrap();
 +    let early = mods
 +        .replace_tool_output(output("call-early", &EARLY, "native"))
 +        .await
@@ -75509,7 +75512,10 @@ index 0000000000000000000000000000000000000000..f5d86fa423f2a6789967d6d442c334b3
 +    else {
 +        panic!("the answered call must respond");
 +    };
-+    assert!(answered.starts_with("tool_original_unavailable"), "{answered}");
++    assert!(
++        answered.starts_with("tool_original_unavailable"),
++        "{answered}"
++    );
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -104508,7 +104514,7 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5654b45aa88c7b4ae70c7b71a0cea6524b7933b9
+index 0000000000000000000000000000000000000000..5dfb1c3be5ced26f19d8dc1b87bfaa01b92bbe14
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,256 @@
@@ -104719,9 +104725,9 @@ index 0000000000000000000000000000000000000000..5654b45aa88c7b4ae70c7b71a0cea652
 +pub use mods::PersistedRewrite;
 +pub use mods::RAISED_TOOL_OUTPUT_TOKENS;
 +pub use mods::SUPPORTED_MOD_APIS;
-+pub use mods::TOOL_OUTPUT_BYTES;
 +pub use mods::SendPolicy;
 +pub use mods::StateThread;
++pub use mods::TOOL_OUTPUT_BYTES;
 +pub use mods::Trust;
 +pub use mods::access_receipt;
 +pub use mods::activation_failures;
@@ -120654,10 +120660,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3ad92351f09ec105bda4b87b9192f1c52b40fc81
+index 0000000000000000000000000000000000000000..c2c146ac02c6a8e9728768e4df323d55bf2fa351
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,743 @@
+@@ -0,0 +1,746 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -120916,7 +120922,10 @@ index 0000000000000000000000000000000000000000..3ad92351f09ec105bda4b87b9192f1c5
 +        let mut stdout = BufReader::new(stdout);
 +        loop {
 +            let mut line = Vec::new();
-+            match (&mut stdout).take(RESULT_LINE_BYTES as u64 + 1).read_until(b'\n', &mut line) {
++            match (&mut stdout)
++                .take(RESULT_LINE_BYTES as u64 + 1)
++                .read_until(b'\n', &mut line)
++            {
 +                Ok(0) | Err(_) => break,
 +                Ok(_) => {
 +                    if sender.send(line).is_err() {
