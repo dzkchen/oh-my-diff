@@ -1058,12 +1058,18 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         }
         config.permissions.sandbox_denied_paths = denied;
         config.model_provider.supports_websockets = false;
-        if self
-            .codex_config
-            .lock()
-            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
-        {
-            config.update_plan_enabled = true;
+        if let Ok(keys) = self.codex_config.lock() {
+            if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
+                config.update_plan_enabled = true;
+            }
+            if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
+                config.tool_output_token_limit = Some(
+                    config
+                        .tool_output_token_limit
+                        .unwrap_or_default()
+                        .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
+                );
+            }
         }
         let mut runtime = match self.runtime.try_lock() {
             Ok(runtime) => runtime,

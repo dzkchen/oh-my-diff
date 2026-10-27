@@ -12,7 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub const KEY_BYTES: usize = 256;
-pub const VALUE_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
+pub const VALUE_BYTES: usize = 65_536;
 pub const SCOPE_BYTES: usize = 16 * 1024 * 1024;
 pub const KEY_LIMIT: usize = 4096;
 const LIST_LIMIT: usize = 256;

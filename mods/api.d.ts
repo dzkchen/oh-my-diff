@@ -408,7 +408,7 @@ export interface HostOperations {
   'process.which': { arguments: { names: string[]; sandbox?: 'none' }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
-  /** One call returns messages until the next would push their encoded size past 48 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
+  /** One call returns messages until the next would push their encoded size past 256 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -437,6 +437,8 @@ export interface HostOperations {
   'tools.list': { arguments: null; result: ToolInventory };
   'tools.invoke': { arguments: ToolCall; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
   'tools.check': { arguments: ToolCall; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
+  /** Requires tool_original_v1: stores the complete original output of a call in a `tool` interceptor chain as the mod's evidence; call it after `await next(e)` (`tool_original_unavailable` otherwise). */
+  'tools.original': { arguments: { call_id: string }; result: { reference: ResourceRef; sha256: string; bytes: number } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -566,7 +568,7 @@ export type AdmissionPackage = { id: string; version: string; sha256: string; so
 export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; bytes?: number; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };

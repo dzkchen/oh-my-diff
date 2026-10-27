@@ -232,8 +232,8 @@ def static_problems(path):
         report = SOURCE_REPORTS[str(source.resolve())]
         found += [f"{source.name}: {error}" for error in report["errors"]]
         found += [f"{source.name}: key {key} belongs to the native keymap" for key in sorted(set(report["keys"]))]
-        if (size := len(text.encode())) > 131_072:
-            found.append(f"{source.name}: {size} bytes exceeds the 131072-byte package file limit")
+        if (size := len(text.encode())) > 524_288:
+            found.append(f"{source.name}: {size} bytes exceeds the 524288-byte package file limit")
         commands += report["commands"]
         tools += report["tools"]
         if report["imports"]:
@@ -244,7 +244,7 @@ def static_problems(path):
     found += [f"assets, relative imports and api.component need required feature {feature}" for feature in sorted(needed - required)]
     if path.parent.name == "first-party":
         found += [f"/{name} conflicts with a built-in command" for name in sorted(set(commands) & BUILTIN_SLASH)]
-    found += [f"{count} {kind} exceed the limit of 16" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 16]
+    found += [f"{count} {kind} exceed the limit of 32" for kind, count in (("commands", len(commands)), ("tools", tools)) if count > 32]
     return found
 
 

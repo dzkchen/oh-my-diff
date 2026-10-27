@@ -113,8 +113,8 @@ export function runnerSync(request) {
   }
 }
 
-const HOST_RECEIPT_BYTES = 131_072;
-const MAX_HOST_CALLS = 128;
+const HOST_RECEIPT_BYTES = 1_048_576;
+const MAX_HOST_CALLS = 512;
 
 export function callback(request, host, receipts = [], { capture = error => !error.crash && !(error instanceof AssertionError) } = {}) {
   const worker = take(request);

@@ -164,7 +164,7 @@ Where to look things up:
 Rules that trip agents up:
 
 - Import only types from `@oh-my-diff/mod-api` and files declared in `mod.json` `assets` by relative path
-  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 128 KiB per file, 256 KiB of entrypoint plus assets.
+  (`./x.ts`, `./x.mjs`, `./x.json`). At most 16 assets, 512 KiB per file, 1 MiB of entrypoint plus assets.
 - Don't write `process.` outside a string, or `window.` or `document.` anywhere. Node and browser globals aren't
   there. The host scans the source when it loads the mod (`pnpm test`, `pnpm run`, activation in `codex`) and refuses
   it with `undeclared_environment_use: process`; `omd mods update` and install don't scan.

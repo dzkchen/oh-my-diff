@@ -34,9 +34,17 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- `tools.original` (`tool_original_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+### Migration notes
+
+- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
+  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
+  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
+  registrations per mod) only admit more than before.
 
 ## Contents
 

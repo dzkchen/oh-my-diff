@@ -74,7 +74,7 @@ impl ModHostCall {
             "terminal.pty" => Ok("pty"),
             "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
-            "tools.invoke" | "tools.check" => Ok("interception"),
+            "tools.invoke" | "tools.check" | "tools.original" => Ok("interception"),
             "composer.read" | "composer.write" | "composer.suggest" => Ok("composer"),
             "prompts.consent" | "prompts.submit" | "prompts.status" | "prompts.revoke" => {
                 Ok("composer")

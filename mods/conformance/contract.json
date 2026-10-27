@@ -131,7 +131,7 @@
     "intercepts:peer_send": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "intercepts:render": {"status":"frozen","consumer":{"path":"mods/examples/reactive_dashboard/index.ts","snippet":"api.intercept('render'"},"decision":"terminal.rendering"},
     "intercepts:response_stream": {"status":"frozen","consumer":{"path":"mods/examples/kernel/index.ts","snippet":"api.intercept('response_stream'"},"decision":"kernel.request_stream_middleware"},
-    "intercepts:tool": {"status":"frozen","experimental_fields":["value"],"reason":"Code-mode `value` (code_mode_values_v1) was added after 1.0.0.","consumer":{"path":"mods/examples/interception/index.ts","snippet":"api.intercept('tool'"},"decision":"tool.interception"},
+    "intercepts:tool": {"status":"frozen","experimental_fields":["value","bytes"],"reason":"Code-mode `value` (code_mode_values_v1) and the result `bytes` (tool_original_v1) were added after 1.0.0.","consumer":{"path":"mods/examples/interception/index.ts","snippet":"api.intercept('tool'"},"decision":"tool.interception"},
     "intercepts:tool_specs": {"status":"frozen","consumer":{"path":"mods/examples/tool_guide/index.ts","snippet":"api.intercept('tool_specs'"},"decision":"tool.specs"},
     "intercepts:turn_stop": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:agents.cancel": {"status":"frozen","consumer":{"path":"mods/examples/coordination/index.ts","snippet":"api.host.tryCall('agents.cancel'"},"decision":"coordination.agents"},
@@ -240,6 +240,7 @@
     "operations:tools.define": {"status":"frozen","consumer":{"path":"mods/examples/status_tools/index.ts","snippet":"api.host.call('tools.define'"},"decision":"tool.dynamic"},
     "operations:tools.invoke": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:tools.list": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
+    "operations:tools.original": {"status":"experimental","reason":"Added after 1.0.0 to keep a tool interceptor's complete original output; experimental."},
     "operations:tools.undefine": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "operations:turns.abort": {"status":"frozen","consumer":{"path":"mods/examples/status_tools/index.ts","snippet":"api.host.call('turns.abort'"},"decision":"context.turn_activity"},
     "operations:turns.activity": {"status":"frozen","consumer":{"path":"mods/examples/turn_recap/index.ts","snippet":"api.host.call('turns.activity'"},"decision":"context.turn_activity"},
@@ -687,7 +688,7 @@
       "replace": null,
       "timing": "any callback; `migrate` on a state-version change",
       "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
-      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 192 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
+      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads; `api.state` 512 KiB in every scope, compare-and-swap writes retried at most twice by replaying recorded host results; general callbacks reactivate in fresh VM contexts even when sandboxed processes and bounded compilation caches are reused; module globals do not persist between general callbacks",
       "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
@@ -743,7 +744,7 @@
       "replace": null,
       "timing": "registered at activation; ordinary tools are callable for the whole generation",
       "ownership": "host: the executor, permissions, deadlines, accounting and the tool lifecycle",
-      "limits": "16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry",
+      "limits": "32 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry",
       "native": "native plugins add tools only through MCP servers, as a separate process with its own transport",
       "covers": {
         "capabilities": [
@@ -783,7 +784,7 @@
       "group": "tool",
       "decision": "Tool call continuation: transform, retarget, deny, answer, hold, retry or invoke",
       "observe": "`intercept('tool')` with the tool, arguments, call, thread, agent, schema and batch position; `next` resolves to the executed result",
-      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, answer without running the tool, call `next` again to retry, or run and assess other tools with `tools.invoke` and `tools.check`",
+      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, answer without running the tool, call `next` again to retry, or run and assess other tools with `tools.invoke` and `tools.check`, or keep the complete output as evidence with `tools.original` (`tool_original_v1`)",
       "replace": null,
       "timing": "before native hooks and permission checks; the result returns after the handler and before upstream truncation",
       "ownership": "host: permissions, the executor and completion evidence",
@@ -800,7 +801,8 @@
         ],
         "operations": [
           "tools.invoke",
-          "tools.check"
+          "tools.check",
+          "tools.original"
         ]
       },
       "replace_note": "composed interceptors, no exclusive owner"
@@ -1394,7 +1396,7 @@
       "replace": null,
       "timing": "after the handler returns, before upstream truncation and history recording",
       "ownership": "mod: appended feedback; host: call id, status, the retrievable original and the ledger hashes",
-      "limits": "handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers",
+      "limits": "handlers see the first 256 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers",
       "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original",
       "covers": {
         "capabilities": [
@@ -2165,7 +2167,7 @@
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 128 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 192 KiB state in every scope."
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 32 tools and 32 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 512 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including its host-call waits (every host call, `next` and `time.sleep` included, is answered live; replay happens only in offline runners and in the state-conflict retry), and 512 KiB state in every scope."
     },
     {
       "id": "first_party_parity",

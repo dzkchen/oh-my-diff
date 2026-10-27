@@ -180,7 +180,7 @@ executor. Only the listed fields may change:
 
 | Surface | Replaceable | `next` resolves to | A handler may return |
 | --- | --- | --- | --- |
-| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 64 KiB, an answer without calling `next`, or `{deny}` |
+| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 256 KiB (the model sees at most 64 KiB, or the original's length if larger, plus 16 KiB; a longer replacement is dropped with a diagnostic and the original stands), an answer without calling `next`, or `{deny}` |
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route` (one of `routes`), `effort`, `sections` | `{route, effort, cache}` | what `next` returned, `{deny}`, or a synthetic `{response}` without calling `next` |
@@ -207,9 +207,10 @@ shape.
 
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
-- Output beyond 48 KiB arrives truncated with `truncated: true`.
+- Output beyond 256 KiB arrives truncated with `truncated: true`; `next` also resolves with the output's complete `bytes`, and
+  [`tools.original`](#toolsoriginal-tool_original_v1) keeps the complete text as evidence.
 - For a code-mode call, `next` also resolves with `value` when a mod intercepting `tool` requires `code_mode_values_v1`, the structured result the cell receives (omitted above
-  32 KiB or when it and `output` together exceed 48 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  32 KiB or when it and `output` together exceed 256 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
   `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
   ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
@@ -296,6 +297,19 @@ interceptors, tool and output callbacks, timers and channel events that run mean
 A tool interceptor can hold a call for a person with `terminal.prompt`. The wait does not count against its budget;
 cancelling the call stops the wait, and a later answer is discarded.
 
+### `tools.original` (`tool_original_v1`)
+
+`tools.original {call_id}` keeps the complete output of a call whose result is passing through a `tool` interceptor
+chain as the mod's own evidence, up to 16 MiB (`blob_too_large` beyond), and returns `{reference, sha256, bytes}`. `reference` is a
+`ResourceRef` to read with `evidence.read` in pages of at most 64 KiB, `sha256` hashes the complete text and `bytes` is its length.
+Call it after `await next(e)` in the same callback with the input's `call_id`: the `output` a handler sees is cut at 256 KiB,
+and `next` resolves with the complete length as `bytes` so the handler can tell. It needs `interception`.
+
+It fails with `tool_original_unavailable` when the call's result is not in a chain, such as before `next` has
+resolved, after the callback ended, for a call an interceptor answered without running it, or for an unknown call.
+A retried call (`:retryN`) still yields the first execution's original. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
+The evidence is the mod's rotating evidence (the newest 1,024 records per mod are kept, older ones are dropped down to 768, and the oldest go first while the directory's blobs exceed 256 MiB).
+
 ### Handler failures and skipped interceptors
 
 A handler that throws, times out or returns an invalid result before calling `next` is skipped and the chain
@@ -333,7 +347,7 @@ chain against queued engine results (`{"error":...}` rejects) and returns it wit
 `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at most 4 KiB, 16 KiB per call in total,
 added after any interceptor result at any output size.
 
-- Handlers receive the first 48 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
+- Handlers receive the first 256 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
   `bytes`.
 - Image and audio items appear as `[image]` and `[audio]` markers.
 - Tool-output callbacks may call every host operation their grants allow in lifecycle events, such as

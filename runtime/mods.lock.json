@@ -159,11 +159,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "0d0cc6f1f67e405f9ddef48d0be0a355514492f4ccc09996004cc64f93a20639",
+        "index.ts": "7a6652cfdde700063b37937ec301a1b6a38f68a66997c19ba4486c90d8638504",
         "mod.json": "d0b62d15001d43dacabcdc92d3a53fa526c707225dc40da36baa19f23c26621c"
       },
       "id": "omd_frecency",
-      "package_sha256": "689c48bea5dfe8af29f6361799b5c85c2dacf8bdc873fc5160906e9dd328081b",
+      "package_sha256": "a0d020a08a5923149e3278afe42966fe8bf68a211014d9d3566e33e31ce5c424",
       "source": "mods/first-party/omd_frecency",
       "version": "1.0.0"
     },
@@ -330,6 +330,34 @@
       "id": "omd_mods",
       "package_sha256": "e55a4b2fefe2bf62dbfcb3607579548749d0fa463cf0c07781709ceffe9b9962",
       "source": "mods/first-party/omd_mods",
+      "version": "1.0.0"
+    },
+    "omd_monitor": {
+      "api": "1.0.0",
+      "capabilities": [
+        "tools",
+        "commands",
+        "store",
+        "events",
+        "lifecycle",
+        "terminal",
+        "inventory",
+        "threads",
+        "sessions",
+        "fs.read",
+        "exec",
+        "os",
+        "autonomous"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "github.mjs": "ccb81420d0c4358effc70018c07c84207bb5de89cf995f2d67dbbd516b3b9bd9",
+        "index.ts": "c4a328f0c2594f2157b69c660cb96edb92dda42747f54302aacf46005ba4ddea",
+        "mod.json": "dfc65f1c0a652000d42f6af4fef2d43efc84a001bf532b212a8a0a3854222fd1"
+      },
+      "id": "omd_monitor",
+      "package_sha256": "8afbb7f2ed25666d17649dada1c35aefa1b6f1f41b7ddfe27d1bc91b52773d3a",
+      "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },
     "omd_plan_panel": {

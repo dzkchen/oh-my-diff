@@ -211,7 +211,7 @@ fn runner() -> Result<Child> {
     warm.map_or_else(spawn, Ok)
 }
 
-pub(super) const INPUT_LIMIT: usize = 1_048_576;
+pub(super) const INPUT_LIMIT: usize = 4_194_304;
 
 fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(request)?;
@@ -255,7 +255,7 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
         let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = Vec::new();
-            match (&mut stdout).take(262_145).read_until(b'\n', &mut line) {
+            match (&mut stdout).take(1_048_577).read_until(b'\n', &mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if sender.send(line).is_err() {
@@ -290,7 +290,7 @@ fn converse(
             Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
         };
-        if line.len() > 262_144 {
+        if line.len() > 1_048_576 {
             break Err(failure("output_limit"));
         }
         let frame = match serde_json::from_slice::<Value>(&line) {

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "omd_monitor",
+  "version": "1.0.0",
+  "api": "1.0.0",
+  "state_version": 1,
+  "state_scope": "thread",
+  "description": "Event-driven monitors: subscribe once to a background command, file change or GitHub run, get one bounded message. Experimental",
+  "license": "MIT",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_monitor"},
+  "capabilities": ["tools", "commands", "store", "events", "lifecycle", "terminal", "inventory", "threads", "sessions", "fs.read", "exec", "os", "autonomous"],
+  "os_access": {"programs": ["node"], "network": true},
+  "autonomy": {"max_queued": 4, "max_turns": 50},
+  "assets": ["github.mjs"],
+  "subscriptions": {"channels": ["omd_monitor/*"], "app": ["item/completed"]},
+  "compatibility": {"required_features": ["app_v1", "autonomous_turns_v1", "events_v1", "framed_process_v1", "lifecycle_events_v1", "package_text_assets_v1", "sdk_helpers_v1", "state_scopes_v1", "store_thread_v1", "store_v1", "timers_v1", "turn_activity_v1", "unrestricted_process_v1", "workspace_watch_key_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "poll_seconds": {"type": "number", "default": 30, "title": "GitHub poll interval", "description": "Seconds between GitHub status reads by the adapter, 15 to 3600; only GitHub monitors poll"},
+      "max_monitors": {"type": "number", "default": 6, "title": "Active monitors", "description": "Most monitors active at once in a thread, 1 to 12; each holds one timer, and files or GitHub ones a watch or a process"}
+    },
+    "additionalProperties": false
+  }
+}

@@ -442,7 +442,7 @@ fn inspect_package(
     for asset in &package.assets {
         let content = read_file(asset)?;
         text += std::str::from_utf8(&content).map_or(0, str::len);
-        if text > 256 * 1024 {
+        if text > 1024 * 1024 {
             return Err(failure(format!("package_text_input_limit: {}", package.id)));
         }
         hash.update([0]);
@@ -469,8 +469,8 @@ pub struct ModStore {
     user: Option<String>,
 }
 
-pub(super) const STATE_LIMIT: usize = 196_608;
-pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
+pub(super) const STATE_LIMIT: usize = 524_288;
+pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 

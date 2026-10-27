@@ -271,7 +271,7 @@ test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   const looping = 'const e = { toString() { for (;;) {} } }; Object.defineProperty(e, "stack", { get() { for (;;) {} } }); throw e;';
   assert.match(run(`export default () => { ${looping} }`, { hook_budget_ms: 300 }).error, /timed out after 300ms/);
-  assert.match(run('export default api => api.command("large", () => "x".repeat(270000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
+  assert.match(run('export default api => api.command("large", () => "x".repeat(1100000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
 });
 test('lifecycle events and interceptors require their capabilities', () => {
   const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];

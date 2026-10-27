@@ -56,6 +56,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "tools.undefine",
     "tools.invoke",
     "tools.check",
+    "tools.original",
     "events.schedule",
     "events.cancel",
 ];
@@ -95,6 +96,7 @@ pub(super) struct State {
     core: std::sync::OnceLock<std::sync::Weak<Core>>,
     pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
     pub(super) invoked: Mutex<BTreeMap<String, String>>,
+    pub(super) originals: Mutex<BTreeMap<(String, String), Arc<str>>>,
     pub(super) invocations: AtomicU64,
     pub(super) definitions: Mutex<Vec<codex_omd::ModAgentDefinition>>,
     pub(super) agent_offers: Mutex<Option<bool>>,
@@ -417,9 +419,11 @@ tokio::task_local! {
     static SERIALIZED: bool;
     /// Set while running work an attached client caused; its surface calls carry `remote`.
     pub(crate) static REMOTE: bool;
+    /// Set while serving host calls of a tool call's interceptor chain, to that call id.
+    pub(super) static CHAIN_CALL: String;
 }
 
-pub(super) const TOOL_RESULT_BYTES: usize = 48 * 1024;
+pub(super) const TOOL_RESULT_BYTES: usize = 256 * 1024;
 
 pub(super) fn bounded_output(mut output: String) -> (String, bool) {
     if output.len() <= TOOL_RESULT_BYTES {
@@ -514,6 +518,7 @@ pub(super) async fn dispatch(
         "routes.select" => select_route(lead, caller.id, request.arguments),
         "tools.list" => tool_specs::list(core, lead),
         "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
+        "tools.original" => tool_output::stored(core, lead, caller, request.arguments).await,
         "tools.define" | "tools.undefine" => {
             let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
             if request.operation == "tools.define" {

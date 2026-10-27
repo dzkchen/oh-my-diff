@@ -56,6 +56,26 @@ fn text_evidence_repairs_a_truncated_rotating_blob() {
 }
 
 #[test]
+fn rotating_evidence_is_bounded_by_total_bytes() {
+    with_store(|store| {
+        let directory = store.rotating_directory().unwrap();
+        let references = ["a", "b", "c"].map(|letter| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            store
+                .text_evidence("log", &letter.repeat(10))
+                .unwrap()
+                .reference
+        });
+        prune_rotating(&directory, 25).unwrap();
+        let kept =
+            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
+        assert!(!kept("a").exists() && kept("b").exists() && kept("c").exists());
+        assert!(!directory.join(format!("{}.json", references[0])).exists());
+        assert!(directory.join(format!("{}.json", references[2])).exists());
+    });
+}
+
+#[test]
 fn svg_evidence_is_gated() {
     with_store(|store| {
         let record = |svg: &str| {

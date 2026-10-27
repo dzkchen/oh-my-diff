@@ -1211,7 +1211,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         })
         .await;
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
-    let long = "y".repeat(48 * 1024 - 8);
+    let long = "y".repeat(256 * 1024 - 8);
     assert_eq!(
         mods.intercept_tool(start("call-coded-long", &CODED))
             .await
@@ -1235,7 +1235,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     assert_eq!(
         omitted.as_deref(),
         Some("null"),
-        "a value that would push one result past 48 KiB is left out"
+        "a value that would push one result past 256 KiB is left out"
     );
     assert_eq!(
         invoker.0.lock().unwrap().clone(),
@@ -1314,6 +1314,257 @@ async fn tool_output_without_owner_is_not_offered() {
         return;
     };
     assert!(!fixture.core.expansion.tool_output_active());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
+    let Some(fixture) = fixture(&[Package {
+        id: "keeper",
+        capabilities: &["interception", "store"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    const result = await next(e);\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...result, output: JSON.stringify({ seen: result.output.length, truncated: result.truncated, bytes: result.bytes, original }) };\n  });\n  api.intercept('tool', { match: { tool: 'early' } }, async (e, next) => {\n    const before = api.host.tryCall('tools.original', { call_id: e.call_id });\n    const result = await next(e);\n    return { ...result, output: before.error };\n  });\n  api.intercept('tool', { match: { tool: 'answered' } }, e => ({ output: api.host.tryCall('tools.original', { call_id: e.call_id }).error, success: true }));\n}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: r#"{"path":"a.txt"}"#.to_owned(),
+    };
+    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        root_turn_id: None,
+        call_id,
+        originating_item_id: None,
+        tool_name: tool,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    };
+    static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
+    static EARLY: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("early"));
+    static ANSWERED: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("answered"));
+    let output = |call_id: &'static str, tool: &'static ToolName, text: &'static str| {
+        codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id,
+            tool_name: tool,
+            arguments: Some(r#"{"path":"a.txt"}"#),
+            success: true,
+            text,
+            value: None,
+        }
+    };
+    let complete: String = (0..30_000).map(|row| format!("row {row:05}\n")).collect();
+    let complete: &'static str = Box::leak(complete.into_boxed_str());
+    assert!(complete.len() > expansion::TOOL_RESULT_BYTES);
+    assert_eq!(
+        mods.intercept_tool(start("call-big", &BIG)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    let replaced = mods
+        .replace_tool_output(output("call-big", &BIG, complete))
+        .await
+        .expect("the interceptor replaces the output");
+    let report: Value = serde_json::from_str(&replaced).unwrap();
+    assert_eq!(report["seen"], expansion::TOOL_RESULT_BYTES);
+    assert_eq!(report["truncated"], true);
+    assert_eq!(report["bytes"], complete.len());
+    assert_eq!(report["original"]["bytes"], complete.len());
+    assert_eq!(
+        report["original"]["sha256"],
+        codex_omd::resource_data::hash(complete.as_bytes())
+    );
+    assert!(
+        fixture.core.expansion.originals.lock().unwrap().is_empty(),
+        "the stash ends with the chain"
+    );
+    let source = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("keeper")
+        .unwrap()
+        .source_sha256;
+    let mut scope = fixture.lead.session.data.0.lock().unwrap();
+    let hosts = scope.as_mut().unwrap();
+    let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
+    loop {
+        let page = hosts
+            .call(
+                "keeper",
+                &source,
+                "evidence.read",
+                json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
+                || true,
+            )
+            .unwrap();
+        let text = page["text"].as_str().unwrap();
+        assert!(text.len() <= 65_536);
+        paged.push_str(text);
+        pages += 1;
+        match page["cursor"].as_u64() {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
+    drop(scope);
+    assert_eq!(paged, complete);
+    assert_eq!(pages, complete.len().div_ceil(65_536));
+    for (call_id, tool, label) in [
+        ("call-early", &EARLY, "before next"),
+        ("call-answered", &ANSWERED, "answered"),
+    ] {
+        let seen = match label {
+            "answered" => match mods.intercept_tool(start(call_id, tool)).await.unwrap() {
+                ToolInterception::Respond { output, .. } => output,
+                other => panic!("the answered call must respond: {other:?}"),
+            },
+            _ => {
+                mods.intercept_tool(start(call_id, tool)).await.unwrap();
+                mods.replace_tool_output(output(call_id, tool, "native"))
+                    .await
+                    .expect("the interceptor reports the error")
+            }
+        };
+        assert!(
+            seen.starts_with("tool_original_unavailable"),
+            "{label}: {seen}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tools_original_is_readable_only_from_the_calls_own_chain() {
+    let Some(fixture) = fixture(&[Package {
+        id: "keeper",
+        capabilities: &["interception", "store"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    let thread = lead.thread.to_string();
+    core.expansion
+        .originals
+        .lock()
+        .unwrap()
+        .insert((thread.clone(), "victim".into()), Arc::from("secret"));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let read = |asked: &'static str| {
+        let (caller, cancelled) = (caller(core, "keeper"), cancelled.clone());
+        let request = ModHostCall {
+            operation: "tools.original".into(),
+            arguments: json!({"call_id": asked}),
+        };
+        async move { dispatch(core, lead, &caller, request, &cancelled).await }
+    };
+    assert!(
+        read("victim")
+            .await
+            .unwrap_err()
+            .starts_with("tool_original_unavailable"),
+        "an event outside any chain reads nothing"
+    );
+    assert!(
+        CHAIN_CALL
+            .scope("other".into(), read("victim"))
+            .await
+            .unwrap_err()
+            .starts_with("tool_original_unavailable"),
+        "another call's chain reads nothing"
+    );
+    let guard = tool_output::Stash::new(
+        &core.expansion.originals,
+        (thread.clone(), "victim".into()),
+        Arc::from("again"),
+    );
+    drop(guard);
+    assert!(core.expansion.originals.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
+    let Some(fixture) = fixture(&[Package {
+        id: "huge",
+        capabilities: &["interception"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(100000), success: true };\n  });\n}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: "{}".to_owned(),
+    };
+    static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
+    mods.intercept_tool(ToolStartInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        root_turn_id: None,
+        call_id: "call-huge",
+        originating_item_id: None,
+        tool_name: &BIG,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    })
+    .await
+    .unwrap();
+    let replaced = mods
+        .replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "call-huge",
+            tool_name: &BIG,
+            arguments: Some("{}"),
+            success: true,
+            text: "native",
+            value: None,
+        })
+        .await;
+    assert_eq!(replaced, None);
+    assert!(
+        mods.views
+            .published()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|line| line.contains("huge") && line.contains("limit dropped"))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -4403,4 +4654,43 @@ async fn thread_config_keeps_the_users_sandbox() {
             )
             .collect::<Vec<_>>()
     );
+}
+
+#[tokio::test]
+async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let mut config = codex_core::config::ConfigBuilder::default()
+        .codex_home(fixture._dir.path().join("codex"))
+        .harness_overrides(codex_core::config::ConfigOverrides {
+            cwd: Some(fixture.lead.host.repository.clone()),
+            ..Default::default()
+        })
+        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
+        .build()
+        .await
+        .unwrap();
+    let mods = mods(&fixture.core);
+    let prepare = |config: &mut codex_core::config::Config| {
+        codex_extension_api::ConfigContributor::prepare_thread_config(&mods, config, None, None)
+            .unwrap();
+    };
+    config.tool_output_token_limit = Some(777);
+    prepare(&mut config);
+    assert_eq!(config.tool_output_token_limit, Some(777));
+    fixture
+        .core
+        .codex_config
+        .lock()
+        .unwrap()
+        .insert(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE.to_owned());
+    prepare(&mut config);
+    assert_eq!(
+        config.tool_output_token_limit,
+        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
+    );
+    config.tool_output_token_limit = Some(200_000);
+    prepare(&mut config);
+    assert_eq!(config.tool_output_token_limit, Some(200_000));
 }

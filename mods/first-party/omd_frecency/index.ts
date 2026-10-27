@@ -7,7 +7,7 @@ const KEPT = 512;
 const HALF_LIFE = 64;
 const STAT_BATCH = 64;
 const STAT_BATCHES = 4;
-// A ranking's history read and rewrite, Git status and stats share one callback's 128 KiB receipt budget, less call envelopes.
+// A ranking's history read and rewrite, Git status and stats share one callback's 1 MiB receipt budget, less call envelopes.
 const BUDGET = 122_880;
 const STORED = 32_000;
 const STATUS_BYTES = 16_000;
