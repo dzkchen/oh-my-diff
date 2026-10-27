@@ -235,7 +235,7 @@ export default function activate(api: ModAPI) {
       first.set(key, call.call_id);
       const run = api.host.tryCall('tools.invoke', { tool: call.tool, arguments: call.arguments });
       if (run.ok) {
-        const output = run.value.truncated ? `${run.value.output}\n[omd_tool_absorb: this output was cut at 48 KiB to fit the merged result. Call it again on its own or read a narrower range to see the rest.]` : run.value.output;
+        const output = run.value.truncated ? `${run.value.output}\n[omd_tool_absorb: this output was cut at 256 KiB to fit the merged result. Call it again on its own or read a narrower range to see the rest.]` : run.value.output;
         out[call.call_id] = { output, success: run.value.success };
         invoked[call.call_id] = run.value.call_id;
       } else if (run.error.startsWith('host_result_limit')) {

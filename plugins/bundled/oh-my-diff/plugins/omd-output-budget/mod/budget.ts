@@ -76,12 +76,14 @@ export function limitFor(delivered: number, budget: { result_bytes: number; turn
   return left <= budget.floor_bytes ? budget.floor_bytes : Math.min(budget.result_bytes, left);
 }
 
-export function excerpt(output: string, limit: number, id: string, total: number, note = ''): string {
+const rows = (text: string) => (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+
+export function excerpt(output: string, limit: number, id: string, total: number, { note = '', failed = true, end }: { note?: string; failed?: boolean; end?: string } = {}): string {
   const { header, body } = split(output);
-  const lines = body.endsWith('\n') ? body.slice(0, -1).split('\n') : body.split('\n');
-  const partial = total > size(output);
+  const lines = rows(body);
+  const ending = end === undefined ? null : rows(end.slice(end.indexOf('\n') + 1));
   const base = lineCount(header);
-  const footer = `\n[omd_output_budget: showed part of ${total} bytes${partial ? '' : ` (${lines.length} lines)`}; full output ${id}.${note ? ` ${note}.` : ''} `
+  const footer = `\n[omd_output_budget: showed part of ${total} bytes${total > size(output) ? '' : ` (${lines.length} lines)`}; full output ${id}.${note ? ` ${note}.` : ''} `
     + `Page it with mod_omd_output_budget_read {"id":"${id}","line":N}; find lines with mod_omd_output_budget_search {"query":"…","id":"${id}"}]`;
   const room = Math.max(512, limit - size(header) - size(footer) - 240);
   let used = 0;
@@ -92,37 +94,41 @@ export function excerpt(output: string, limit: number, id: string, total: number
     return true;
   };
   const head: string[] = [];
-  for (const text of lines) {
-    if (!take(line(text), room * 0.25)) break;
-    head.push(line(text));
+  for (const raw of lines) {
+    const text = line(raw);
+    if (!take(text, room * 0.25)) break;
+    head.push(text);
   }
+  const source = ending ?? lines;
+  const floor = ending ? 0 : head.length;
   const tail: string[] = [];
-  for (let index = lines.length - 1; index >= head.length; index -= 1) {
-    if (!take(line(lines[index]), room * 0.7)) break;
-    tail.unshift(line(lines[index]));
-  }
-  const first = head.length;
-  const last = lines.length - tail.length;
-  const evidence: string[] = [];
-  for (const pattern of [STRONG, WEAK]) {
-    for (let index = first; index < last && evidence.length < EVIDENCE_LINES; index += 1) {
-      if (!pattern.test(lines[index]) || evidence.some(entry => entry.startsWith(`L${index + 1 + base}:`))) continue;
+  const extend = (cap: number) => {
+    for (let index = source.length - tail.length - 1; index >= floor; index -= 1) {
+      const text = line(source[index]);
+      if (!take(text, cap)) break;
+      tail.unshift(text);
+    }
+  };
+  extend(room * 0.7);
+  const middle = ending ? lines.length : lines.length - tail.length;
+  const evidence = new Map<number, string>();
+  for (const pattern of failed ? [STRONG, WEAK] : []) {
+    for (let index = head.length; index < middle && evidence.size < EVIDENCE_LINES; index += 1) {
+      if (evidence.has(index) || !pattern.test(lines[index])) continue;
       const entry = `L${index + 1 + base}: ${line(lines[index])}`;
       if (!take(entry, room)) break;
-      evidence.push(entry);
+      evidence.set(index, entry);
     }
   }
-  evidence.sort((a, b) => Number(a.slice(1, a.indexOf(':'))) - Number(b.slice(1, b.indexOf(':'))));
-  for (let index = last - 1; index >= first && evidence.length === 0; index -= 1) {
-    if (!take(line(lines[index]), room)) break;
-    tail.unshift(line(lines[index]));
-  }
-  const gapStart = head.length + 1 + base;
-  const gapEnd = lines.length - tail.length + base;
-  const gap = gapEnd >= gapStart
-    ? [`[omd_output_budget: lines ${gapStart}-${gapEnd} omitted${evidence.length ? `; ${evidence.length} matching error/warning lines follow` : ''}]`, ...evidence, ...(evidence.length ? ['[omd_output_budget: end of matching lines]'] : [])]
+  if (!evidence.size) extend(room);
+  const from = head.length + 1 + base;
+  const to = lines.length - tail.length + base;
+  const found = [...evidence].sort((a, b) => a[0] - b[0]).map(([, entry]) => entry);
+  const omitted = ending ? `lines from ${from} up to the last ${tail.length} omitted` : `lines ${from}-${to} omitted`;
+  const gap = ending || to >= from
+    ? [`[omd_output_budget: ${omitted}${found.length ? `; ${found.length} matching error/warning lines follow` : ''}]`, ...found, ...(found.length ? ['[omd_output_budget: end of matching lines]'] : [])]
     : [];
-  return clip(`${header}${[...head, ...gap, ...tail].join('\n')}${footer}`, Math.max(limit, size(header) + size(footer) + 512));
+  return `${header}${clip([...head, ...gap, ...tail].join('\n'), Math.max(limit - size(header) - size(footer), room + 240))}${footer}`;
 }
 
 export function terms(text: string, keep: number): { terms: Terms; length: number } {
@@ -141,17 +147,19 @@ export function query(text: string): string[] {
   return [...new Set([...text.toLowerCase().matchAll(WORD)].map(match => match[0]).filter(word => !STOP.has(word)))].slice(0, 16);
 }
 
+export const count = (terms: Terms, word: string) => Object.hasOwn(terms, word) ? terms[word] : 0;
+
 export function rank(words: string[], documents: Indexed[]): { id: string; score: number }[] {
   const average = documents.reduce((sum, doc) => sum + doc.length, 0) / Math.max(1, documents.length) || 1;
   const idf = (word: string) => {
-    const df = documents.filter(doc => doc.terms[word]).length;
+    const df = documents.filter(doc => count(doc.terms, word)).length;
     return Math.log(1 + (documents.length - df + 0.5) / (df + 0.5));
   };
   const weights = new Map(words.map(word => [word, idf(word)]));
   return documents.map(doc => ({
     id: doc.id,
     score: words.reduce((sum, word) => {
-      const tf = doc.terms[word] ?? 0;
+      const tf = count(doc.terms, word);
       return sum + (weights.get(word) ?? 0) * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * doc.length / average));
     }, 0),
   })).filter(hit => hit.score > 0).sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
@@ -181,9 +189,12 @@ function decode(_: string, entity: string): string {
 
 export function htmlText(html: string): { title: string; text: string } {
   const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? '').replace(ENTITY, decode).trim();
+  const code: string[] = [];
   const text = html
+    .replaceAll('\0', '')
     .replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (_, block: string) => `\n\0${code.push(block.replace(/<[^>]+>/g, '').replace(ENTITY, decode).replace(/\r/g, '').replace(/^\n+|\s+$/g, '')) - 1}\0\n`)
     .replace(/<h([1-6])\b[^>]*>/gi, (_, level) => `\n${'#'.repeat(Number(level))} `)
     .replace(/<\/li>\s*<li\b[^>]*>/gi, '\n- ').replace(/<li\b[^>]*>/gi, '\n- ')
     .replace(/<(br|\/p|\/div|\/h[1-6]|\/li|\/tr|\/pre|\/section|\/article|\/table)\b[^>]*>/gi, '\n')
@@ -192,6 +203,18 @@ export function htmlText(html: string): { title: string; text: string } {
     .replace(/[ \t\f\v\r]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/\0(\d+)\0/g, (_, index: string) => `\`\`\`\n${code[Number(index)]}\n\`\`\``)
     .trim();
   return { title, text };
+}
+
+export function outline(text: string): string[] {
+  let fenced = false;
+  const headings: string[] = [];
+  for (const row of text.split('\n')) {
+    if (row.startsWith('```')) fenced = !fenced;
+    else if (!fenced && /^#{1,3} /.test(row)) headings.push(clip(row, 120));
+    if (headings.length === 20) break;
+  }
+  return headings;
 }

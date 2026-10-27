@@ -2265,9 +2265,16 @@ impl ToolLifecycleContributor for Mods {
                         invoked.remove(&call_id);
                     }
                     let outcome = outcome.map_err(std::io::Error::other)?;
+                    let bytes = outcome.output.len();
+                    if let Ok(mut originals) = core.expansion.originals.lock()
+                        && let Some(text) =
+                            originals.get_mut(&(thread_id.to_string(), base_call.clone()))
+                    {
+                        *text = Arc::from(outcome.output.as_str());
+                    }
                     let (output, truncated) = expansion::bounded_output(outcome.output);
                     return Ok(
-                        json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),
+                        json!({"output": output, "success": outcome.success, "truncated": truncated, "bytes": bytes, "call_id": call_id}),
                     );
                 };
                 first

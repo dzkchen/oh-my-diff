@@ -18,7 +18,7 @@
     "type": "object",
     "properties": {
       "poll_seconds": {"type": "number", "default": 30, "title": "GitHub poll interval", "description": "Seconds between GitHub status reads by the adapter, 15 to 3600; only GitHub monitors poll"},
-      "max_monitors": {"type": "number", "default": 6, "title": "Active monitors", "description": "Most monitors active at once in a thread, 1 to 12; each holds one timer, and files or GitHub ones a watch or a process"}
+      "max_monitors": {"type": "number", "default": 6, "title": "Active monitors", "description": "Most monitors active at once in a thread, 1 to 12; files monitors hold a watch and GitHub ones a background process"}
     },
     "additionalProperties": false
   }

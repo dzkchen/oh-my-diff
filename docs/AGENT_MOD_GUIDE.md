@@ -338,7 +338,7 @@ with `notes` in place of `my_mod`. Publishing is public: ask the user first.
 ## What is supported
 
 - **Installed and on:** the default OMD+ mods in [the collection](collection.md).
-- **Installed, off until turned on:** the opt-in OMD+ mods and the three plugins.
+- **Installed, off until turned on:** the opt-in OMD+ mods and the four plugins.
 - **Frozen or experimental:** API `1.0.0` is stable. Entries that
   [`contract.json`](../mods/conformance/contract.json) marks frozen keep their shape; experimental ones may change,
   including raster and `terminal.blit` frames, `omd/*` external-client methods and the `experimental_fields` of

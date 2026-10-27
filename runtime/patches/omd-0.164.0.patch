@@ -64127,10 +64127,10 @@ index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd713
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..804cb92d6aae31799eac6b6684f1b9b227952a14
+index 0000000000000000000000000000000000000000..fdd69ea69d493ac08e119726da6c474dc243936c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2531 @@
+@@ -0,0 +1,2538 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -66398,9 +66398,16 @@ index 0000000000000000000000000000000000000000..804cb92d6aae31799eac6b6684f1b9b2
 +                        invoked.remove(&call_id);
 +                    }
 +                    let outcome = outcome.map_err(std::io::Error::other)?;
++                    let bytes = outcome.output.len();
++                    if let Ok(mut originals) = core.expansion.originals.lock()
++                        && let Some(text) =
++                            originals.get_mut(&(thread_id.to_string(), base_call.clone()))
++                    {
++                        *text = Arc::from(outcome.output.as_str());
++                    }
 +                    let (output, truncated) = expansion::bounded_output(outcome.output);
 +                    return Ok(
-+                        json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),
++                        json!({"output": output, "success": outcome.success, "truncated": truncated, "bytes": bytes, "call_id": call_id}),
 +                    );
 +                };
 +                first
@@ -71085,10 +71092,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a95bf948669311ac51ca94563d2ab542202ae73
+index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd9d9081ce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,842 @@
+@@ -0,0 +1,840 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -71514,13 +71521,11 @@ index 0000000000000000000000000000000000000000..4a95bf948669311ac51ca94563d2ab54
 +    pub(super) static CHAIN_CALL: String;
 +}
 +
-+pub(super) const TOOL_RESULT_BYTES: usize = 256 * 1024;
-+
 +pub(super) fn bounded_output(mut output: String) -> (String, bool) {
-+    if output.len() <= TOOL_RESULT_BYTES {
++    if output.len() <= codex_omd::TOOL_OUTPUT_BYTES {
 +        return (output, false);
 +    }
-+    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
++    output.truncate(output.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES));
 +    (output, true)
 +}
 +
@@ -73525,22 +73530,21 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8cd561b2f9a4c14b314302508029c1021cf88172
+index 0000000000000000000000000000000000000000..9315a4d798652bf09a54d925fb9c531f754a45bc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,307 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
 +
 +use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 +
-+const HEAD_BYTES: usize = 256 * 1024;
 +const TAIL_BYTES: usize = 16 * 1024;
 +const APPEND_BYTES: usize = 4096;
 +
 +fn bounded(text: &str) -> &str {
-+    &text[..text.floor_char_boundary(HEAD_BYTES)]
++    &text[..text.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES)]
 +}
 +
 +async fn original(
@@ -73673,10 +73677,10 @@ index 0000000000000000000000000000000000000000..8cd561b2f9a4c14b314302508029c102
 +            };
 +            let head = bounded(input.text);
 +            let mut executed = json!({"output": head, "success": input.success,
-+                "truncated": input.text.len() > HEAD_BYTES, "bytes": input.text.len()});
++                "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
 +            if let Some(value) = input.value
 +                && serde_json::to_vec(value).is_ok_and(|bytes| {
-+                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
++                    bytes.len() <= 32_768 && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
 +                })
 +            {
 +                executed["value"] = value.clone();
@@ -73718,7 +73722,7 @@ index 0000000000000000000000000000000000000000..8cd561b2f9a4c14b314302508029c102
 +                }
 +                _ => {}
 +            }
-+            let limit = codex_extension_api::tool_output_limit(input.text.len());
++            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(input.text.len());
 +            if text.as_ref().is_some_and(|text| text.len() > limit) {
 +                diagnostic(format!(
 +                    "{replaced_by}: replacement over the {limit}-byte limit dropped"
@@ -73786,7 +73790,7 @@ index 0000000000000000000000000000000000000000..8cd561b2f9a4c14b314302508029c102
 +                json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
 +                    "arguments": arguments, "success": input.success,
 +                    "text": bounded(text),
-+                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
++                    "tail": (text.len() > codex_omd::TOOL_OUTPUT_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
 +                    "bytes": text.len()})
 +            };
 +            let mut appended = String::new();
@@ -74051,10 +74055,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba60713ba0
+index 0000000000000000000000000000000000000000..f5d86fa423f2a6789967d6d442c334b3716618fd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4696 @@
+@@ -0,0 +1,4688 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -75173,9 +75177,9 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +    let Some(fixture) = fixture(&[
 +        Package {
 +            id: "retry",
-+            capabilities: &["interception"],
++            capabilities: &["interception", "store"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
 +        },
 +        Package {
 +            id: "probe",
@@ -75243,7 +75247,11 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +            value: None,
 +        })
 +        .await;
-+    assert_eq!(replaced.as_deref(), Some("second attempt"));
++    assert_eq!(
++        replaced.as_deref(),
++        Some("second attempt 14 14"),
++        "a retry reports its own complete length and original"
++    );
 +    static CODED: std::sync::LazyLock<ToolName> =
 +        std::sync::LazyLock::new(|| ToolName::plain("coded"));
 +    assert_eq!(
@@ -75268,7 +75276,7 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +        })
 +        .await;
 +    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
-+    let long = "y".repeat(256 * 1024 - 8);
++    let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
 +    assert_eq!(
 +        mods.intercept_tool(start("call-coded-long", &CODED))
 +            .await
@@ -75431,7 +75439,7 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +    };
 +    let complete: String = (0..30_000).map(|row| format!("row {row:05}\n")).collect();
 +    let complete: &'static str = Box::leak(complete.into_boxed_str());
-+    assert!(complete.len() > expansion::TOOL_RESULT_BYTES);
++    assert!(complete.len() > codex_omd::TOOL_OUTPUT_BYTES);
 +    assert_eq!(
 +        mods.intercept_tool(start("call-big", &BIG)).await.unwrap(),
 +        ToolInterception::Continue(None)
@@ -75441,7 +75449,7 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +        .await
 +        .expect("the interceptor replaces the output");
 +    let report: Value = serde_json::from_str(&replaced).unwrap();
-+    assert_eq!(report["seen"], expansion::TOOL_RESULT_BYTES);
++    assert_eq!(report["seen"], codex_omd::TOOL_OUTPUT_BYTES);
 +    assert_eq!(report["truncated"], true);
 +    assert_eq!(report["bytes"], complete.len());
 +    assert_eq!(report["original"]["bytes"], complete.len());
@@ -75486,27 +75494,22 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +    drop(scope);
 +    assert_eq!(paged, complete);
 +    assert_eq!(pages, complete.len().div_ceil(65_536));
-+    for (call_id, tool, label) in [
-+        ("call-early", &EARLY, "before next"),
-+        ("call-answered", &ANSWERED, "answered"),
-+    ] {
-+        let seen = match label {
-+            "answered" => match mods.intercept_tool(start(call_id, tool)).await.unwrap() {
-+                ToolInterception::Respond { output, .. } => output,
-+                other => panic!("the answered call must respond: {other:?}"),
-+            },
-+            _ => {
-+                mods.intercept_tool(start(call_id, tool)).await.unwrap();
-+                mods.replace_tool_output(output(call_id, tool, "native"))
-+                    .await
-+                    .expect("the interceptor reports the error")
-+            }
-+        };
-+        assert!(
-+            seen.starts_with("tool_original_unavailable"),
-+            "{label}: {seen}"
-+        );
-+    }
++    mods.intercept_tool(start("call-early", &EARLY)).await.unwrap();
++    let early = mods
++        .replace_tool_output(output("call-early", &EARLY, "native"))
++        .await
++        .expect("the interceptor reports the error");
++    assert!(early.starts_with("tool_original_unavailable"), "{early}");
++    let ToolInterception::Respond {
++        output: answered, ..
++    } = mods
++        .intercept_tool(start("call-answered", &ANSWERED))
++        .await
++        .unwrap()
++    else {
++        panic!("the answered call must respond");
++    };
++    assert!(answered.starts_with("tool_original_unavailable"), "{answered}");
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -75525,7 +75528,7 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +        .originals
 +        .lock()
 +        .unwrap()
-+        .insert((thread.clone(), "victim".into()), Arc::from("secret"));
++        .insert((thread, "victim".into()), Arc::from("secret"));
 +    let cancelled = Arc::new(AtomicBool::new(false));
 +    let read = |asked: &'static str| {
 +        let (caller, cancelled) = (caller(core, "keeper"), cancelled.clone());
@@ -75550,13 +75553,6 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +            .starts_with("tool_original_unavailable"),
 +        "another call's chain reads nothing"
 +    );
-+    let guard = tool_output::Stash::new(
-+        &core.expansion.originals,
-+        (thread.clone(), "victim".into()),
-+        Arc::from("again"),
-+    );
-+    drop(guard);
-+    assert!(core.expansion.originals.lock().unwrap().is_empty());
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -75565,7 +75561,7 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +        id: "huge",
 +        capabilities: &["interception"],
 +        manifest: Value::Null,
-+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(100000), success: true };\n  });\n}\n",
++        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(70000), success: true };\n  });\n}\n",
 +    }]) else {
 +        return;
 +    };
@@ -78753,10 +78749,10 @@ index 0000000000000000000000000000000000000000..179850773a56144d5006f854eb9ad2ba
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..08e5027733246fb1e7250a26559842cb85d0daac
+index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3ade5b7fb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,266 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -78781,7 +78777,9 @@ index 0000000000000000000000000000000000000000..08e5027733246fb1e7250a26559842cb
 +    };
 +    let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
 +    let (flag, thread) = (cancelled.clone(), lead.thread.to_string());
-+    let call_id = origin["call_id"].as_str().map(str::to_owned);
++    let call_id = (surface == "tool")
++        .then(|| origin["call_id"].as_str().map(str::to_owned))
++        .flatten();
 +    let handle = tokio::task::spawn_blocking(move || {
 +        let _thread = codex_omd::StateThread::enter(Some(thread));
 +        let active = || !flag.load(Ordering::Acquire);
@@ -94624,10 +94622,10 @@ index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7d811761ee94f9bf753aea6437e85c8cb9673368
+index 0000000000000000000000000000000000000000..20d7d695d359af7ad43af6e0701694a2a8e309bd
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store.rs
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,432 @@
 +use crate::resource_data::{ResourceStore, hash};
 +use base64::Engine;
 +use base64::engine::general_purpose::STANDARD;
@@ -94644,6 +94642,7 @@ index 0000000000000000000000000000000000000000..7d811761ee94f9bf753aea6437e85c8c
 +pub const BLOB_ENTRIES: usize = 4096;
 +pub const ROTATING_RECORDS: usize = 1024;
 +const ROTATING_KEEP: usize = 768;
++const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 +
 +fn svg(bytes: &[u8]) -> Result<(), &'static str> {
 +    use quick_xml::events::Event;
@@ -94819,12 +94818,15 @@ index 0000000000000000000000000000000000000000..7d811761ee94f9bf753aea6437e85c8c
 +}
 +
 +fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
-+    let (mut records, mut total) = (Vec::new(), 0u64);
++    let (mut records, mut bins, mut total) = (Vec::new(), Vec::new(), 0u64);
 +    for entry in fs::read_dir(directory)?.filter_map(Result::ok) {
 +        let metadata = entry.metadata()?;
 +        match entry.path().extension().and_then(|e| e.to_str()) {
 +            Some("json") => records.push((metadata.modified()?, entry.path())),
-+            Some("bin") => total += metadata.len(),
++            Some("bin") => {
++                total += metadata.len();
++                bins.push((metadata.modified()?, entry.path(), metadata.len()));
++            }
 +            _ => {}
 +        }
 +    }
@@ -94845,8 +94847,24 @@ index 0000000000000000000000000000000000000000..7d811761ee94f9bf753aea6437e85c8c
 +    for digest in blobs.iter().flatten() {
 +        *live.entry(digest).or_default() += 1;
 +    }
-+    let by_count =
-+        records.len().saturating_sub(ROTATING_KEEP) * usize::from(records.len() > ROTATING_RECORDS);
++    if let Some((newest, _)) = records.last() {
++        let settled = std::time::SystemTime::now() - ORPHAN_GRACE;
++        for (modified, path, size) in bins {
++            let digest = path.file_stem().and_then(|stem| stem.to_str());
++            if modified < *newest
++                && modified < settled
++                && digest.is_none_or(|digest| !live.contains_key(digest))
++                && fs::remove_file(&path).is_ok()
++            {
++                total -= size;
++            }
++        }
++    }
++    let by_count = if records.len() > ROTATING_RECORDS {
++        records.len() - ROTATING_KEEP
++    } else {
++        0
++    };
 +    for (index, (_, path)) in records.iter().enumerate().take(records.len() - 1) {
 +        if index >= by_count && total <= limit {
 +            break;
@@ -95042,10 +95060,10 @@ index 0000000000000000000000000000000000000000..7d811761ee94f9bf753aea6437e85c8c
 +mod tests;
 diff --git a/codex-rs/omd/src/blob_store_tests.rs b/codex-rs/omd/src/blob_store_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..806a303b3a6e14a3e75db844aebdcdfab0e6bc26
+index 0000000000000000000000000000000000000000..5835dad988f96e08767ec07efeec86562294bb46
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store_tests.rs
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use crate::resource_data::ResourceBinding;
 +
@@ -95107,17 +95125,28 @@ index 0000000000000000000000000000000000000000..806a303b3a6e14a3e75db844aebdcdfa
 +fn rotating_evidence_is_bounded_by_total_bytes() {
 +    with_store(|store| {
 +        let directory = store.rotating_directory().unwrap();
-+        let references = ["a", "b", "c"].map(|letter| {
++        let orphan = directory.join(format!("{}.bin", "d".repeat(64)));
++        fs::write(&orphan, [0; 30]).unwrap();
++        fs::File::options()
++            .write(true)
++            .open(&orphan)
++            .unwrap()
++            .set_modified(std::time::SystemTime::now() - 2 * ORPHAN_GRACE)
++            .unwrap();
++        let fresh = directory.join(format!("{}.bin", "e".repeat(64)));
++        fs::write(&fresh, [0; 1]).unwrap();
++        let references = [("1", "b"), ("2", "a"), ("3", "b"), ("4", "c")].map(|(label, letter)| {
 +            std::thread::sleep(std::time::Duration::from_millis(20));
 +            store
-+                .text_evidence("log", &letter.repeat(10))
++                .text_evidence(label, &letter.repeat(10))
 +                .unwrap()
 +                .reference
 +        });
-+        prune_rotating(&directory, 25).unwrap();
++        prune_rotating(&directory, 26).unwrap();
 +        let kept =
 +            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
-+        assert!(!kept("a").exists() && kept("b").exists() && kept("c").exists());
++        assert!(!orphan.exists() && fresh.exists() && !kept("a").exists());
++        assert!(kept("b").exists() && kept("c").exists());
 +        assert!(!directory.join(format!("{}.json", references[0])).exists());
 +        assert!(directory.join(format!("{}.json", references[2])).exists());
 +    });
@@ -104479,10 +104508,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dc9b8186da05ae479f3f904b4141cdc31064624c
+index 0000000000000000000000000000000000000000..5654b45aa88c7b4ae70c7b71a0cea6524b7933b9
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,256 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -104690,6 +104719,7 @@ index 0000000000000000000000000000000000000000..dc9b8186da05ae479f3f904b4141cdc3
 +pub use mods::PersistedRewrite;
 +pub use mods::RAISED_TOOL_OUTPUT_TOKENS;
 +pub use mods::SUPPORTED_MOD_APIS;
++pub use mods::TOOL_OUTPUT_BYTES;
 +pub use mods::SendPolicy;
 +pub use mods::StateThread;
 +pub use mods::Trust;
@@ -106375,10 +106405,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d9f9730aeb3420115683435484d7721ef51339b
+index 0000000000000000000000000000000000000000..3ab5d0d51b8f4f7e4f7edfe275d6a773e485b816
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6245 @@
+@@ -0,0 +1,6246 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -107785,6 +107815,7 @@ index 0000000000000000000000000000000000000000..6d9f9730aeb3420115683435484d7721
 +pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
 +const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
 +pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
++pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -114175,10 +114206,10 @@ index 0000000000000000000000000000000000000000..a5fcdfcd06681babe1bd32a913c90868
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e2e246b17a9bf8c2b9cf642f092a4d7a0011ba32
+index 0000000000000000000000000000000000000000..8225e582ccfd2a51439392c4b698f14e1cdd413a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1976 @@
+@@ -0,0 +1,1975 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -114186,7 +114217,6 @@ index 0000000000000000000000000000000000000000..e2e246b17a9bf8c2b9cf642f092a4d7a
 +const ATTEMPT_LIMIT: usize = 3;
 +const TRACE_LIMIT: usize = 64;
 +const RESULT_BYTES: usize = 65_536;
-+const TOOL_OUTPUT_BYTES: usize = 262_144;
 +const CHAIN_LOG: usize = 16;
 +pub(super) const REQUIRED_WAIT: Duration = Duration::from_secs(5);
 +const OPTIONAL_WAIT: Duration = Duration::from_secs(2);
@@ -114792,7 +114822,7 @@ index 0000000000000000000000000000000000000000..e2e246b17a9bf8c2b9cf642f092a4d7a
 +            deny || object.is_some_and(|object| {
 +                result["output"]
 +                    .as_str()
-+                    .is_some_and(|output| output.len() <= TOOL_OUTPUT_BYTES)
++                    .is_some_and(|output| output.len() <= crate::TOOL_OUTPUT_BYTES)
 +                    && result["success"].is_boolean()
 +                    && object.keys().all(|key| {
 +                        [
@@ -120624,10 +120654,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..00541ac57d6c908cd924f17f1fb5ef8ef30cd650
+index 0000000000000000000000000000000000000000..3ad92351f09ec105bda4b87b9192f1c52b40fc81
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,742 @@
+@@ -0,0 +1,743 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -120685,6 +120715,7 @@ index 0000000000000000000000000000000000000000..00541ac57d6c908cd924f17f1fb5ef8e
 +type Spares = (Vec<Child>, Option<Instant>);
 +
 +static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
++const RESULT_LINE_BYTES: usize = 1_048_576;
 +const BUSY_RUNNERS: usize = 3;
 +const IDLE_AFTER: Duration = Duration::from_secs(5);
 +
@@ -120885,7 +120916,7 @@ index 0000000000000000000000000000000000000000..00541ac57d6c908cd924f17f1fb5ef8e
 +        let mut stdout = BufReader::new(stdout);
 +        loop {
 +            let mut line = Vec::new();
-+            match (&mut stdout).take(1_048_577).read_until(b'\n', &mut line) {
++            match (&mut stdout).take(RESULT_LINE_BYTES as u64 + 1).read_until(b'\n', &mut line) {
 +                Ok(0) | Err(_) => break,
 +                Ok(_) => {
 +                    if sender.send(line).is_err() {
@@ -120920,7 +120951,7 @@ index 0000000000000000000000000000000000000000..00541ac57d6c908cd924f17f1fb5ef8e
 +            Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
 +            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
 +        };
-+        if line.len() > 1_048_576 {
++        if line.len() > RESULT_LINE_BYTES {
 +            break Err(failure("output_limit"));
 +        }
 +        let frame = match serde_json::from_slice::<Value>(&line) {

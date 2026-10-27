@@ -1,8 +1,7 @@
 import type { Json, ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
-import { base64, clip, excerpt, fallback, htmlText, limitFor, lineCount, matches, query, rank, size, split, terms } from './budget.ts';
+import { base64, clip, count, excerpt, fallback, htmlText, limitFor, lineCount, matches, outline, query, rank, size, split, terms } from './budget.ts';
 
-type Entry = { id: string; sha256: string; reference: ResourceRef; bytes: number; lines: number | null; kind: 'tool' | 'doc'; label: string; call_id: string; at: number; terms: Record<string, number>; length: number };
-type Turn = { turn_id: string; delivered: number };
+type Entry = { id: string; reference: ResourceRef; bytes: number; kind: 'tool' | 'doc'; label: string; terms: Record<string, number>; length: number };
 type Value = Exclude<Json, null>;
 
 const SCOPE = 'thread';
@@ -13,7 +12,6 @@ const NATIVE_BYTES = 40_000;
 const PAGE = 65_536;
 const SCAN_BYTES = 640 * 1024;
 const DOC_BYTES = 240 * 1024;
-const OWN = 'mod-omd_output_budget-';
 const WIDEN = /^(?:exec_command|write_stdin)$/;
 const CODEX_CUT = /^Warning: truncated output \(original token count: \d+\)/m;
 
@@ -26,11 +24,14 @@ async function sha256(text: string): Promise<string> {
 }
 
 export default function activate(api: ModAPI) {
-  const budget = () => ({
-    result_bytes: number(api.settings.result_bytes, 6144, 1024, 262_144),
-    turn_bytes: number(api.settings.turn_bytes, 49_152, 4096, 1_048_576),
-    floor_bytes: number(api.settings.floor_bytes, 2048, 1024, 65_536),
-  });
+  const budget = () => {
+    const result_bytes = number(api.settings.result_bytes, 16_384, 1024, 262_144);
+    return {
+      result_bytes,
+      turn_bytes: number(api.settings.turn_bytes, 131_072, 4096, 1_048_576),
+      floor_bytes: Math.min(result_bytes, number(api.settings.floor_bytes, 4096, 1024, 65_536)),
+    };
+  };
 
   const get = <T>(key: string) => {
     const found = api.host.tryCall('store.get', { key, scope: SCOPE });
@@ -46,21 +47,21 @@ export default function activate(api: ModAPI) {
     return null;
   };
 
-  const deliver = (bytes: number) => update<Turn>('turn', turn => ({ turn_id: turn?.turn_id ?? '', delivered: (turn?.delivered ?? 0) + bytes }));
+  const deliver = (bytes: number) => update<number>('turn', delivered => (delivered ?? 0) + bytes);
 
   const remember = (entry: Entry) => {
-    if (update<Entry>(`out/${entry.id}`, () => entry) === null) return false;
     let evicted: string[] = [];
-    update<string[]>('outs', ids => {
+    const listed = update<string[]>('outs', ids => {
       const kept = [entry.id, ...(ids ?? []).filter(id => id !== entry.id)];
       evicted = kept.slice(KEEP);
       return kept.slice(0, KEEP);
     });
+    if (listed === null) return false;
     for (const id of evicted) {
       const old = get<Entry>(`out/${id}`);
       if (old) api.host.tryCall('store.delete', { key: `out/${id}`, expected_revision: old.revision, scope: SCOPE });
     }
-    return true;
+    return update<Entry>(`out/${entry.id}`, () => entry) !== null;
   };
 
   const entry = (id: string) => get<Entry>(`out/${id}`)?.value ?? null;
@@ -70,41 +71,52 @@ export default function activate(api: ModAPI) {
     return read.ok ? read.value : null;
   };
 
-  api.on('turn_start', ({ turn_id }) => {
-    update<Turn>('turn', () => ({ turn_id, delivered: 0 }));
+  const ending = (reference: ResourceRef, bytes: number) => {
+    for (let back = 0; back < 4; back += 1) {
+      const read = page(reference, Math.max(0, bytes - PAGE + back));
+      if (read) return read.text as string;
+    }
+    return undefined;
+  };
+
+  api.on('turn_start', () => {
+    update<number>('turn', () => 0);
   });
 
-  api.intercept('tool', { match: { tool: /^(?:exec_command|write_stdin|shell|shell_command|exec|mcp__.+)$/ } }, async (e, next) => {
-    if (e.call_id.startsWith(OWN)) return next(e);
+  api.intercept('tool', { match: { tool: /^(?!mod_omd_output_budget_)/ } }, async (e, next) => {
+    if (next.origin?.caller === 'code_mode' || (e.batch && e.call_id.startsWith(`${e.batch.id}-merge-`))) return next(e);
     const args = e.arguments && typeof e.arguments === 'object' && !Array.isArray(e.arguments) ? e.arguments as Record<string, Json> : null;
-    const widen = WIDEN.test(e.tool) && args !== null && args.max_output_tokens == null && next.origin?.caller !== 'code_mode';
+    const widen = WIDEN.test(e.tool) && args !== null && args.max_output_tokens == null;
     const result = await next(widen ? { ...e, arguments: { ...args, max_output_tokens: CAPTURE_TOKENS } } : e);
     const visible = size(result.output);
     const total = typeof result.bytes === 'number' ? result.bytes : visible;
-    const limit = limitFor(get<Turn>('turn')?.value?.delivered ?? 0, budget());
+    const limit = limitFor(get<number>('turn')?.value ?? 0, budget());
     if (!result.truncated && total <= limit) {
       deliver(visible);
       return result;
     }
-    const safe = (reason: string) => {
-      const output = fallback(result.output, Math.max(limit, NATIVE_BYTES), reason);
+    const send = (output: string) => {
       deliver(size(output));
       return { output, success: result.success };
     };
+    const unkept = (reason: string) => send(fallback(result.output, Math.max(limit, NATIVE_BYTES), reason));
     const original = api.host.tryCall('tools.original', { call_id: e.call_id });
-    if (!original.ok) return safe(original.error);
+    if (!original.ok) return unkept(original.error);
     const id = `out_${original.value.sha256.slice(0, 12)}`;
     const counted = terms(result.output, TERMS);
     const kept = remember({
-      id, sha256: original.value.sha256, reference: original.value.reference, bytes: original.value.bytes,
-      lines: total > visible ? null : lineCount(split(result.output).body), kind: 'tool', call_id: e.call_id, at: Date.now(),
+      id, reference: original.value.reference, bytes: original.value.bytes, kind: 'tool',
       label: clip(typeof args?.cmd === 'string' ? args.cmd : `${e.tool} ${JSON.stringify(e.arguments)}`, 160),
       terms: counted.terms, length: counted.length,
     });
-    if (!kept) return safe('the output index is busy');
-    const output = excerpt(result.output, limit, id, original.value.bytes, CODEX_CUT.test(split(result.output).body.slice(0, 200)) ? 'Codex had already cut its middle' : '');
-    deliver(size(output));
-    return { output, success: result.success };
+    if (!kept) return unkept('the output index is busy');
+    const { header, body } = split(result.output);
+    const code = /Process exited with code (\d+)|Exit code: (\d+)/.exec(header);
+    return send(excerpt(result.output, limit, id, original.value.bytes, {
+      note: CODEX_CUT.test(body.slice(0, 200)) ? 'Codex had already cut its middle' : '',
+      failed: code ? (code[1] ?? code[2]) !== '0' : !result.success,
+      end: original.value.bytes > visible ? ending(original.value.reference, original.value.bytes) : undefined,
+    }));
   });
 
   api.tool({
@@ -116,7 +128,7 @@ export default function activate(api: ModAPI) {
         id: { type: 'string', description: 'Output id such as out_1a2b3c4d5e6f' },
         line: { type: 'number', description: 'First line to return, 1-based (default 1)' },
         lines: { type: 'number', description: 'Number of lines (default 200, at most 2000)' },
-        cursor: { type: 'number', description: 'next_cursor from the previous read, together with its next_line, to continue without rescanning' },
+        cursor: { type: 'number', description: 'next_cursor from the previous read, passed with its next_line as line, to continue without rescanning' },
         max_bytes: { type: 'number', description: 'Byte cap for the returned text (default 16384, at most 49152)' },
       },
       required: ['id'],
@@ -126,23 +138,28 @@ export default function activate(api: ModAPI) {
     const request = value as { id?: string; line?: number; lines?: number; cursor?: number; max_bytes?: number };
     const kept = entry(String(request.id ?? ''));
     if (!kept) return { error: `unknown output id ${request.id}; search lists kept ids` };
+    const resume = typeof request.cursor === 'number' && request.cursor >= 0;
+    if (resume && typeof request.line !== 'number') return { error: 'pass next_line as line together with next_cursor' };
     const from = number(request.line, 1, 1, Number.MAX_SAFE_INTEGER);
     const count = number(request.lines, 200, 1, 2000);
     const cap = number(request.max_bytes, 16_384, 1024, 49_152);
-    const resume = typeof request.cursor === 'number' && request.cursor >= 0;
     const out: string[] = [];
     let current = resume ? from : 1;
     let offset = resume ? request.cursor as number : 0;
     let cursor: number | null = offset;
     let carry = '';
     let bytes = 0;
+    let scanned = 0;
     let stopped: number | null = null;
     while (cursor !== null && stopped === null) {
+      if (scanned >= SCAN_BYTES && current < from) return { error: `line ${from} is past the ${SCAN_BYTES} bytes one read scans; search this id for a line near it` };
       const read = page(kept.reference, cursor);
       if (!read) return { error: 'the kept output is no longer readable' };
+      scanned += size(JSON.stringify(read.text));
       cursor = read.cursor;
       const parts = (carry + read.text).split('\n');
       carry = cursor === null ? '' : parts.pop() ?? '';
+      if (cursor === null && parts.at(-1) === '') parts.pop();
       for (const text of parts) {
         if (current >= from) {
           if (out.length >= count) { stopped = offset; break; }
@@ -191,10 +208,12 @@ export default function activate(api: ModAPI) {
     const ids = request.id ? [request.id] : get<string[]>('outs')?.value ?? [];
     const kept = ids.map(entry).filter((found): found is Entry => found !== null);
     if (request.id && !kept.length) return { error: `unknown output id ${request.id}; search without id lists kept ids` };
-    const ranked = rank(words, kept.map(found => ({ id: found.id, terms: found.terms, length: found.length })));
-    const scan = request.id ? kept : ranked.length ? ranked.slice(0, 4).map(hit => kept.find(found => found.id === hit.id) as Entry) : kept.slice(0, 4);
+    const byId = new Map(kept.map(found => [found.id, found]));
+    const ranked = rank(words, kept);
+    const unindexed = words.some(word => !kept.some(found => count(found.terms, word)));
+    const scan = request.id ? kept : [...new Set([...ranked.slice(0, 4).map(hit => hit.id), ...(unindexed ? ids : [])])].flatMap(id => byId.get(id) ?? []);
     const hits: { id: string; label: string; line: number; text: string; score: number }[] = [];
-    let left = SCAN_BYTES;
+    let left = SCAN_BYTES - size(JSON.stringify(kept));
     let scanned = 0;
     let partial = false;
     for (const found of scan) {
@@ -205,7 +224,7 @@ export default function activate(api: ModAPI) {
         if (left < PAGE * 2) { partial = true; break; }
         const read = page(found.reference, cursor);
         if (!read) { partial = true; break; }
-        left -= JSON.stringify(read.text).length;
+        left -= size(JSON.stringify(read.text));
         cursor = read.cursor;
         const text: string = carry + read.text;
         const cut = cursor === null ? text.length : text.lastIndexOf('\n') + 1;
@@ -220,7 +239,7 @@ export default function activate(api: ModAPI) {
     return {
       matches: best.map(({ id, label, line, text }) => ({ id, label, line, text })),
       outputs: ranked.slice(0, 10).map(({ id, score }) => {
-        const found = kept.find(candidate => candidate.id === id) as Entry;
+        const found = byId.get(id) as Entry;
         return { id, label: found.label, kind: found.kind, bytes: found.bytes, score: Math.round(score * 100) / 100 };
       }),
       kept: kept.length, scanned, partial,
@@ -239,11 +258,12 @@ export default function activate(api: ModAPI) {
   }, async (value): Promise<Json> => {
     const url = String((value as { url?: string }).url ?? '');
     if (!/^https?:\/\/[^\s'"\\`$]+$/.test(url) || url.length > 2048) return { error: 'url must be http(s) without spaces, quotes, backslashes, backticks or $' };
-    const cmd = `curl -fsSL --proto '=http,https' --proto-redir '=http,https' --max-time 30 --max-filesize 2000000 -A omd-output-budget -- '${url}'`;
+    const cmd = `curl -fsSL --proto '=http,https' --proto-redir '=http,https' --max-time 25 --max-filesize 2000000 -A omd-output-budget -- '${url}'`;
     const run = api.host.tryCall('tools.invoke', { tool: 'exec_command', arguments: { cmd, max_output_tokens: CAPTURE_TOKENS, yield_time_ms: 30_000 } });
     if (!run.ok) return { error: run.error };
     const { header, body } = split(run.value.output);
     const exit = /Process exited with code (\d+)/.exec(header)?.[1] ?? /Exit code: (\d+)/.exec(header)?.[1] ?? null;
+    if (exit === '63') return { error: 'the page is larger than 2 MB' };
     if (exit !== '0' || /Process running with session ID/.test(header)) return { error: `curl did not finish cleanly (exit ${exit ?? 'unknown'})`, output: clip(run.value.output, 2048) };
     const cut = run.value.truncated || CODEX_CUT.test(body.slice(0, 200));
     const html = /^\s*(?:Warning: truncated output[^\n]*\n(?:Total output lines[^\n]*\n)?\s*)?<(?:!doctype html|html|head|body)\b/i.test(body);
@@ -255,10 +275,9 @@ export default function activate(api: ModAPI) {
     const written = api.host.tryCall('evidence.write', { media_type: 'application/octet-stream', base64: base64(text), label: clip(`docs ${url}`, 128) });
     if (!written.ok) return { error: `the page text could not be kept: ${written.error}` };
     const counted = terms(text, TERMS);
-    if (!remember({ id, sha256: sha, reference: written.value, bytes: size(text), lines: lineCount(text), kind: 'doc', label: clip(url, 160), call_id: run.value.call_id ?? '', at: Date.now(), terms: counted.terms, length: counted.length })) {
+    if (!remember({ id, reference: written.value, bytes: size(text), kind: 'doc', label: clip(url, 160), terms: counted.terms, length: counted.length })) {
       return { error: 'the output index is busy; fetch again' };
     }
-    const headings = text.split('\n').filter(line => /^#{1,3} /.test(line)).slice(0, 20).map(line => clip(line, 120));
-    return { id, url, title: clip(parsed.title, 200), bytes: size(text), lines: lineCount(text), truncated: cut || size(parsed.text) > DOC_BYTES, headings, next: `search with {"query":"…","id":"${id}"} or read by line` };
+    return { id, url, title: clip(parsed.title, 200), bytes: size(text), lines: lineCount(text), truncated: cut || size(parsed.text) > DOC_BYTES, headings: outline(text), next: `search with {"query":"…","id":"${id}"} or read by line` };
   });
 }

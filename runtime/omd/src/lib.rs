@@ -205,6 +205,7 @@ pub use mods::PERSIST_WITHHELD;
 pub use mods::PersistedRewrite;
 pub use mods::RAISED_TOOL_OUTPUT_TOKENS;
 pub use mods::SUPPORTED_MOD_APIS;
+pub use mods::TOOL_OUTPUT_BYTES;
 pub use mods::SendPolicy;
 pub use mods::StateThread;
 pub use mods::Trust;

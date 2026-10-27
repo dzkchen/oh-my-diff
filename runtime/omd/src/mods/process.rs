@@ -55,6 +55,7 @@ fn sandboxed(program: &Path) -> Result<Command> {
 type Spares = (Vec<Child>, Option<Instant>);
 
 static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
+const RESULT_LINE_BYTES: usize = 1_048_576;
 const BUSY_RUNNERS: usize = 3;
 const IDLE_AFTER: Duration = Duration::from_secs(5);
 
@@ -255,7 +256,7 @@ fn lines(stdout: ChildStdout) -> (mpsc::Receiver<Vec<u8>>, std::thread::JoinHand
         let mut stdout = BufReader::new(stdout);
         loop {
             let mut line = Vec::new();
-            match (&mut stdout).take(1_048_577).read_until(b'\n', &mut line) {
+            match (&mut stdout).take(RESULT_LINE_BYTES as u64 + 1).read_until(b'\n', &mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if sender.send(line).is_err() {
@@ -290,7 +291,7 @@ fn converse(
             Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
         };
-        if line.len() > 1_048_576 {
+        if line.len() > RESULT_LINE_BYTES {
             break Err(failure("output_limit"));
         }
         let frame = match serde_json::from_slice::<Value>(&line) {

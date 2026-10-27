@@ -44,7 +44,10 @@ rich children inside buttons (a button uses its typed `text`), audio, telemetry 
 - Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
   counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
   `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
-  registrations per mod) only admit more than before.
+  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
+  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
+  longer than the original) is dropped with a diagnostic after the chain instead of being refused inside it. Either
+  way the original output stands.
 
 ## Contents
 

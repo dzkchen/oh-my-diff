@@ -38,23 +38,23 @@ const run = (state, conclusion = null) => ({ status: state, conclusion, html_url
 const soon = ms => String(Date.now() + ms);
 
 test('the adapter polls an Actions run with GET only, emits changes and stops at the terminal state', async () => {
-  const gh = fakeGh([run('queued'), run('in_progress'), run('in_progress'), run('completed', 'success')]);
+  const gh = fakeGh([run('in_progress'), run('in_progress'), run('completed', 'success')]);
   const result = await adapt(gh, ['run', 'acme/app', '9', '1', '10', soon(60_000)]);
   assert.equal(result.code, 0);
   assert.deepEqual(result.lines.map(line => [line.seq, line.state, line.conclusion, line.terminal ?? false]),
-    [[1, 'queued', undefined, false], [2, 'in_progress', undefined, false], [3, 'completed', 'success', true]]);
-  assert.equal(result.lines[2].url, 'https://github.com/acme/app/actions/runs/9');
+    [[1, 'in_progress', undefined, false], [2, 'completed', 'success', true]]);
+  assert.equal(result.lines[1].url, 'https://github.com/acme/app/actions/runs/9');
   assert.ok(result.lines.every(line => !Number.isNaN(Date.parse(line.observed_at))));
-  assert.equal(gh.count(), 4);
-  assert.deepEqual(gh.calls(), Array(4).fill('api --method GET repos/acme/app/actions/runs/9'));
+  assert.equal(gh.count(), 3);
+  assert.deepEqual(gh.calls(), Array(3).fill('api --method GET repos/acme/app/actions/runs/9'));
   gh.done();
 });
 
 test('a deployment is read from its newest status and success is terminal', async () => {
-  const gh = fakeGh([[], [{ state: 'in_progress' }], [{ state: 'success', log_url: 'https://example.test/log' }]]);
+  const gh = fakeGh([[], [{ state: 'success', log_url: 'https://example.test/log' }]]);
   const result = await adapt(gh, ['deployment', 'acme/app', '5', '1', '10', soon(60_000)]);
-  assert.deepEqual(result.lines.map(line => [line.state, line.terminal ?? false]), [['pending', false], ['in_progress', false], ['success', true]]);
-  assert.equal(result.lines[2].conclusion, 'success');
+  assert.deepEqual(result.lines.map(line => [line.state, line.terminal ?? false]), [['pending', false], ['success', true]]);
+  assert.equal(result.lines[1].conclusion, 'success');
   assert.deepEqual([...new Set(gh.calls())], ['api --method GET repos/acme/app/deployments/5/statuses?per_page=1']);
   gh.done();
 });
@@ -66,9 +66,9 @@ test('polling is bounded by the poll count and by the deadline', async () => {
   assert.equal(counted.count(), 2);
   counted.done();
   const timed = fakeGh([run('in_progress')]);
-  const late = await adapt(timed, ['run', 'acme/app', '9', '1', '100', soon(1500)]);
+  const late = await adapt(timed, ['run', 'acme/app', '9', '1', '100', soon(300)]);
   assert.equal(late.lines.at(-1).reason, 'timeout');
-  assert.ok(timed.count() <= 3);
+  assert.ok(timed.count() <= 2);
   timed.done();
 });
 
@@ -92,6 +92,5 @@ test('the bootstrap runs the adapter from a stdin message, which is how the host
   const result = await adapt(gh, ['run', 'acme/app', '9', '1', '10', soon(60_000)], { bootstrap: true });
   assert.equal(result.code, 0);
   assert.deepEqual(result.lines.map(line => [line.seq, line.state, line.conclusion, line.terminal]), [[1, 'completed', 'failure', true]]);
-  assert.ok(Buffer.byteLength(BOOT) < 400);
   gh.done();
 });

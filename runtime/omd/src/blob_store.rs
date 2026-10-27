@@ -14,6 +14,7 @@ pub const BLOB_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 pub const BLOB_ENTRIES: usize = 4096;
 pub const ROTATING_RECORDS: usize = 1024;
 const ROTATING_KEEP: usize = 768;
+const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn svg(bytes: &[u8]) -> Result<(), &'static str> {
     use quick_xml::events::Event;
@@ -189,12 +190,15 @@ fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
-    let (mut records, mut total) = (Vec::new(), 0u64);
+    let (mut records, mut bins, mut total) = (Vec::new(), Vec::new(), 0u64);
     for entry in fs::read_dir(directory)?.filter_map(Result::ok) {
         let metadata = entry.metadata()?;
         match entry.path().extension().and_then(|e| e.to_str()) {
             Some("json") => records.push((metadata.modified()?, entry.path())),
-            Some("bin") => total += metadata.len(),
+            Some("bin") => {
+                total += metadata.len();
+                bins.push((metadata.modified()?, entry.path(), metadata.len()));
+            }
             _ => {}
         }
     }
@@ -215,8 +219,24 @@ fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
     for digest in blobs.iter().flatten() {
         *live.entry(digest).or_default() += 1;
     }
-    let by_count =
-        records.len().saturating_sub(ROTATING_KEEP) * usize::from(records.len() > ROTATING_RECORDS);
+    if let Some((newest, _)) = records.last() {
+        let settled = std::time::SystemTime::now() - ORPHAN_GRACE;
+        for (modified, path, size) in bins {
+            let digest = path.file_stem().and_then(|stem| stem.to_str());
+            if modified < *newest
+                && modified < settled
+                && digest.is_none_or(|digest| !live.contains_key(digest))
+                && fs::remove_file(&path).is_ok()
+            {
+                total -= size;
+            }
+        }
+    }
+    let by_count = if records.len() > ROTATING_RECORDS {
+        records.len() - ROTATING_KEEP
+    } else {
+        0
+    };
     for (index, (_, path)) in records.iter().enumerate().take(records.len() - 1) {
         if index >= by_count && total <= limit {
             break;

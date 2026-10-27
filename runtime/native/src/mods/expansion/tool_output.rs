@@ -4,12 +4,11 @@ use codex_extension_api::ToolOutputInput;
 
 use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 
-const HEAD_BYTES: usize = 256 * 1024;
 const TAIL_BYTES: usize = 16 * 1024;
 const APPEND_BYTES: usize = 4096;
 
 fn bounded(text: &str) -> &str {
-    &text[..text.floor_char_boundary(HEAD_BYTES)]
+    &text[..text.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES)]
 }
 
 async fn original(
@@ -142,10 +141,10 @@ impl ToolOutputContributor for Mods {
             };
             let head = bounded(input.text);
             let mut executed = json!({"output": head, "success": input.success,
-                "truncated": input.text.len() > HEAD_BYTES, "bytes": input.text.len()});
+                "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
             if let Some(value) = input.value
                 && serde_json::to_vec(value).is_ok_and(|bytes| {
-                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
+                    bytes.len() <= 32_768 && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
                 })
             {
                 executed["value"] = value.clone();
@@ -187,7 +186,7 @@ impl ToolOutputContributor for Mods {
                 }
                 _ => {}
             }
-            let limit = codex_extension_api::tool_output_limit(input.text.len());
+            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(input.text.len());
             if text.as_ref().is_some_and(|text| text.len() > limit) {
                 diagnostic(format!(
                     "{replaced_by}: replacement over the {limit}-byte limit dropped"
@@ -255,7 +254,7 @@ impl ToolOutputContributor for Mods {
                 json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
                     "arguments": arguments, "success": input.success,
                     "text": bounded(text),
-                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
+                    "tail": (text.len() > codex_omd::TOOL_OUTPUT_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
                     "bytes": text.len()})
             };
             let mut appended = String::new();

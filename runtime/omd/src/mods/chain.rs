@@ -5,7 +5,6 @@ const INTERCEPTOR_LIMIT: usize = 16;
 const ATTEMPT_LIMIT: usize = 3;
 const TRACE_LIMIT: usize = 64;
 const RESULT_BYTES: usize = 65_536;
-const TOOL_OUTPUT_BYTES: usize = 262_144;
 const CHAIN_LOG: usize = 16;
 pub(super) const REQUIRED_WAIT: Duration = Duration::from_secs(5);
 const OPTIONAL_WAIT: Duration = Duration::from_secs(2);
@@ -611,7 +610,7 @@ fn validate_result(
             deny || object.is_some_and(|object| {
                 result["output"]
                     .as_str()
-                    .is_some_and(|output| output.len() <= TOOL_OUTPUT_BYTES)
+                    .is_some_and(|output| output.len() <= crate::TOOL_OUTPUT_BYTES)
                     && result["success"].is_boolean()
                     && object.keys().all(|key| {
                         [

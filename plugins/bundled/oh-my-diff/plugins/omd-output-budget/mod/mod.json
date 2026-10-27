@@ -16,9 +16,9 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "result_bytes": {"type": "number", "default": 6144, "title": "Per-result budget", "description": "Bytes of one tool result delivered to the model before it is cut to an excerpt (1024-262144)"},
-      "turn_bytes": {"type": "number", "default": 49152, "title": "Per-turn budget", "description": "Bytes of tool results delivered in one turn before every further result is cut to the floor (4096-1048576)"},
-      "floor_bytes": {"type": "number", "default": 2048, "title": "Excerpt floor", "description": "Excerpt size once the per-turn budget is spent (1024-65536)"}
+      "result_bytes": {"type": "number", "default": 16384, "title": "Per-result budget", "description": "Bytes of one tool result delivered to the model before it is cut to an excerpt (1024-262144)"},
+      "turn_bytes": {"type": "number", "default": 131072, "title": "Per-turn budget", "description": "Bytes of tool results delivered in one turn before every further result is cut to the floor (4096-1048576)"},
+      "floor_bytes": {"type": "number", "default": 4096, "title": "Excerpt floor", "description": "Excerpt size once the per-turn budget is spent, at most the per-result budget (1024-65536)"}
     },
     "additionalProperties": false
   }

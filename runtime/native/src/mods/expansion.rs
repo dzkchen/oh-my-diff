@@ -423,13 +423,11 @@ tokio::task_local! {
     pub(super) static CHAIN_CALL: String;
 }
 
-pub(super) const TOOL_RESULT_BYTES: usize = 256 * 1024;
-
 pub(super) fn bounded_output(mut output: String) -> (String, bool) {
-    if output.len() <= TOOL_RESULT_BYTES {
+    if output.len() <= codex_omd::TOOL_OUTPUT_BYTES {
         return (output, false);
     }
-    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
+    output.truncate(output.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES));
     (output, true)
 }
 

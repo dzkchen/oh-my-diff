@@ -180,7 +180,7 @@ executor. Only the listed fields may change:
 
 | Surface | Replaceable | `next` resolves to | A handler may return |
 | --- | --- | --- | --- |
-| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 256 KiB (the model sees at most 64 KiB, or the original's length if larger, plus 16 KiB; a longer replacement is dropped with a diagnostic and the original stands), an answer without calling `next`, or `{deny}` |
+| `tool` | `tool`, `arguments` | `{output, success, truncated, bytes}` | that result, a changed `{output, success}` of at most 256 KiB (the model sees at most 64 KiB, or the original's length if larger; a longer replacement is dropped with a diagnostic and the original stands), an answer without calling `next`, or `{deny}` |
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route` (one of `routes`), `effort`, `sections` | `{route, effort, cache}` | what `next` returned, `{deny}`, or a synthetic `{response}` without calling `next` |
@@ -307,8 +307,8 @@ and `next` resolves with the complete length as `bytes` so the handler can tell.
 
 It fails with `tool_original_unavailable` when the call's result is not in a chain, such as before `next` has
 resolved, after the callback ended, for a call an interceptor answered without running it, or for an unknown call.
-A retried call (`:retryN`) still yields the first execution's original. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
-The evidence is the mod's rotating evidence (the newest 1,024 records per mod are kept, older ones are dropped down to 768, and the oldest go first while the directory's blobs exceed 256 MiB).
+A retried call (`:retryN`) yields its latest attempt's original, and that `next` also resolves with `bytes`. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
+The evidence is the mod's rotating evidence (the newest 1,024 records per mod and repository are kept, older ones are dropped down to 768, and the oldest go first while the directory's blobs exceed 256 MiB).
 
 ### Handler failures and skipped interceptors
 
@@ -359,7 +359,8 @@ added after any interceptor result at any output size.
 mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id: the
 merged tool returns an object keyed by call id whose values are the output text. A merge with
 `success_per_call: true` (`tool_batch_success_v1`) instead reads each value that is exactly `{output, success}` as
-that call's output and own success flag; any other value stays text.
+that call's output and own success flag; any other value stays text. `tool` interceptors see the merged call with
+call ID `<batch id>-merge-<index>` and that `batch` position.
 
 ### `intercept('tool_specs')`
 

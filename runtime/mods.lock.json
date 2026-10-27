@@ -352,11 +352,11 @@
       "extension_type": "mod",
       "files": {
         "github.mjs": "ccb81420d0c4358effc70018c07c84207bb5de89cf995f2d67dbbd516b3b9bd9",
-        "index.ts": "c4a328f0c2594f2157b69c660cb96edb92dda42747f54302aacf46005ba4ddea",
-        "mod.json": "dfc65f1c0a652000d42f6af4fef2d43efc84a001bf532b212a8a0a3854222fd1"
+        "index.ts": "a31aca57277904ffd763681438b744b8e3fd6c857afbfb998e1ecc691cf70439",
+        "mod.json": "e4a645008e0a14bc765389ea1d336f6dc1fa06e79b59475e9734c2bbfaa67ba5"
       },
       "id": "omd_monitor",
-      "package_sha256": "8afbb7f2ed25666d17649dada1c35aefa1b6f1f41b7ddfe27d1bc91b52773d3a",
+      "package_sha256": "354aeaf434c6b668bc82aaaa12dca8025e6c00e2f0220b14afd0c7ad83e704e8",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },
@@ -409,14 +409,14 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "479c508cf8ae6d91f6330789826fd1cad602f57f91fd03e66249c0d1d9bcc992",
+        "index.ts": "7c7e68b9ec0823341717f4df90e3c145fac7ee62e79e22a22682bfe038f2e1fb",
         "mermaid.ts": "9bb9c854b9f442bf653aaf4c611921180627b69e14623661bcd2f03d35563436",
         "mod.json": "c569311fc3f148410b504faa3020f7b2c5840ad4f3bbd28a379c2e4b77f62f63",
         "render.mjs": "35016ca57c4723ffca511ee71b92dc5c3b37ea2edceee8760d1d8e38eb182a0e",
         "text.ts": "52427287bf0aae0ff12a25efd10e42887fae8e438f4ba74a8aee340435c474ee"
       },
       "id": "omd_preview",
-      "package_sha256": "7ec0bc98464db7390b2e53337ffc705cf8e0f4da7eef5a99fb6111b4750fffea",
+      "package_sha256": "9c072a3bad7534357e0d288fa0061b6e9989fc60a5cb085127ee3f05e60cbeb7",
       "source": "mods/first-party/omd_preview",
       "version": "1.1.0"
     },
@@ -557,11 +557,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "40c08d35043c6e0bddd98ba31ec9710976ab6b9a81ec09630b2adf860e8c3eeb",
+        "index.ts": "af291c8579682b722f38a549389554db2a5e78dd5b7b30a81513aaa223bcce7c",
         "mod.json": "d07c8a8a558b3c44eaf674f17866cc7858b2cfc3a2f583e67150ec2c0e6d5574"
       },
       "id": "omd_tool_absorb",
-      "package_sha256": "6ed3a9511ec6a3a221bba906de895df7b04e0886bcff5d703848c802328fd10d",
+      "package_sha256": "8ba77b7e4d1204c9b49bad1d60d50011dead162a891018213524b0fd1e3c2756",
       "source": "mods/first-party/omd_tool_absorb",
       "version": "1.0.0"
     },

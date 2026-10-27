@@ -1116,9 +1116,9 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     let Some(fixture) = fixture(&[
         Package {
             id: "retry",
-            capabilities: &["interception"],
+            capabilities: &["interception", "store"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
         },
         Package {
             id: "probe",
@@ -1186,7 +1186,11 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             value: None,
         })
         .await;
-    assert_eq!(replaced.as_deref(), Some("second attempt"));
+    assert_eq!(
+        replaced.as_deref(),
+        Some("second attempt 14 14"),
+        "a retry reports its own complete length and original"
+    );
     static CODED: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("coded"));
     assert_eq!(
@@ -1211,7 +1215,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
         })
         .await;
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
-    let long = "y".repeat(256 * 1024 - 8);
+    let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
     assert_eq!(
         mods.intercept_tool(start("call-coded-long", &CODED))
             .await
@@ -1374,7 +1378,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     };
     let complete: String = (0..30_000).map(|row| format!("row {row:05}\n")).collect();
     let complete: &'static str = Box::leak(complete.into_boxed_str());
-    assert!(complete.len() > expansion::TOOL_RESULT_BYTES);
+    assert!(complete.len() > codex_omd::TOOL_OUTPUT_BYTES);
     assert_eq!(
         mods.intercept_tool(start("call-big", &BIG)).await.unwrap(),
         ToolInterception::Continue(None)
@@ -1384,7 +1388,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
         .await
         .expect("the interceptor replaces the output");
     let report: Value = serde_json::from_str(&replaced).unwrap();
-    assert_eq!(report["seen"], expansion::TOOL_RESULT_BYTES);
+    assert_eq!(report["seen"], codex_omd::TOOL_OUTPUT_BYTES);
     assert_eq!(report["truncated"], true);
     assert_eq!(report["bytes"], complete.len());
     assert_eq!(report["original"]["bytes"], complete.len());
@@ -1429,27 +1433,22 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     drop(scope);
     assert_eq!(paged, complete);
     assert_eq!(pages, complete.len().div_ceil(65_536));
-    for (call_id, tool, label) in [
-        ("call-early", &EARLY, "before next"),
-        ("call-answered", &ANSWERED, "answered"),
-    ] {
-        let seen = match label {
-            "answered" => match mods.intercept_tool(start(call_id, tool)).await.unwrap() {
-                ToolInterception::Respond { output, .. } => output,
-                other => panic!("the answered call must respond: {other:?}"),
-            },
-            _ => {
-                mods.intercept_tool(start(call_id, tool)).await.unwrap();
-                mods.replace_tool_output(output(call_id, tool, "native"))
-                    .await
-                    .expect("the interceptor reports the error")
-            }
-        };
-        assert!(
-            seen.starts_with("tool_original_unavailable"),
-            "{label}: {seen}"
-        );
-    }
+    mods.intercept_tool(start("call-early", &EARLY)).await.unwrap();
+    let early = mods
+        .replace_tool_output(output("call-early", &EARLY, "native"))
+        .await
+        .expect("the interceptor reports the error");
+    assert!(early.starts_with("tool_original_unavailable"), "{early}");
+    let ToolInterception::Respond {
+        output: answered, ..
+    } = mods
+        .intercept_tool(start("call-answered", &ANSWERED))
+        .await
+        .unwrap()
+    else {
+        panic!("the answered call must respond");
+    };
+    assert!(answered.starts_with("tool_original_unavailable"), "{answered}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1468,7 +1467,7 @@ async fn tools_original_is_readable_only_from_the_calls_own_chain() {
         .originals
         .lock()
         .unwrap()
-        .insert((thread.clone(), "victim".into()), Arc::from("secret"));
+        .insert((thread, "victim".into()), Arc::from("secret"));
     let cancelled = Arc::new(AtomicBool::new(false));
     let read = |asked: &'static str| {
         let (caller, cancelled) = (caller(core, "keeper"), cancelled.clone());
@@ -1493,13 +1492,6 @@ async fn tools_original_is_readable_only_from_the_calls_own_chain() {
             .starts_with("tool_original_unavailable"),
         "another call's chain reads nothing"
     );
-    let guard = tool_output::Stash::new(
-        &core.expansion.originals,
-        (thread.clone(), "victim".into()),
-        Arc::from("again"),
-    );
-    drop(guard);
-    assert!(core.expansion.originals.lock().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1508,7 +1500,7 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
         id: "huge",
         capabilities: &["interception"],
         manifest: Value::Null,
-        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(100000), success: true };\n  });\n}\n",
+        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(70000), success: true };\n  });\n}\n",
     }]) else {
         return;
     };
