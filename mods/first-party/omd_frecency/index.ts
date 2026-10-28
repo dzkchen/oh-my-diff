@@ -1,19 +1,31 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
 type Files = { tick: number; files: Record<string, [number, number]> };
+type Status = { at: number; prefix?: string; head?: string; boosts: [string, number, number?][]; recent?: [string, number][] };
 
 const LIMIT = 50;
 const KEPT = 512;
 const HALF_LIFE = 64;
 const STAT_BATCH = 64;
 const STAT_BATCHES = 4;
-// A ranking's history read and rewrite, Git status and stats share one callback's 128 KiB receipt budget, less call envelopes.
+// A ranking's history read and rewrite, Git status, log, cached entry and stats share one callback's 128 KiB receipt budget, less call envelopes.
 const BUDGET = 122_880;
 const STORED = 32_000;
-const STATUS_BYTES = 16_000;
+const STATUS_BYTES = 12_000;
+const LOG_BYTES = 6_000;
+const ENTRY_BYTES = 8_000;
 const STATUS_TTL_MS = 30_000;
+const DIRTY_STATS = 64;
+const RECENT_COMMITS = 10;
+const HUGE_COMMIT = 50;
+const MODIFIED = [[120_000, 16], [900_000, 8], [3_600_000, 4], [86_400_000, 2], [604_800_000, 1]];
+const DEFAULT_BRANCHES = ['remotes/origin/HEA[D]', 'remotes/origin/mai[n]', 'remotes/origin/maste[r]', 'heads/mai[n]', 'heads/maste[r]'].map(ref => `--glob=refs/${ref}`);
 
 const serializedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+const fit = <T,>(items: T[], room: number) => {
+  let bytes = 2;
+  return items.filter(item => (bytes += serializedBytes(item) + 1) <= room);
+};
 
 function common(query: string, path: string): number {
   let row = new Array<number>(path.length + 1).fill(0);
@@ -25,12 +37,13 @@ function common(query: string, path: string): number {
   return row[path.length];
 }
 
-// Smart case; tiers: name prefix, name substring, path substring, subsequence, then up to one typo per four query characters.
+// Smart case; tiers: exact name with or without extension, name prefix, name substring, path substring, subsequence, then up to one typo per four query characters.
 function fuzzy(query: string, path: string): number | null {
   if (!query) return 0;
   const exact = query !== query.toLowerCase();
   const [q, p] = exact ? [query, path] : [query.toLowerCase(), path.toLowerCase()];
   const name = p.slice(p.lastIndexOf('/') + 1);
+  if (name === q || name.replace(/\.[^.]*$/, '') === q) return 110;
   if (name.startsWith(q)) return 100;
   if (name.includes(q)) return 90;
   if (p.includes(q)) return 80;
@@ -55,39 +68,78 @@ export default function activate(api: ModAPI) {
     return entry ? Math.min(30, 10 * Math.log2(1 + entry[0])) * 0.5 ** ((files.tick - entry[1]) / HALF_LIFE) : 0;
   };
 
-  // Git status walks the worktree, so one result serves every query typed within STATUS_TTL_MS.
-  const git = (): [Map<string, number>, number] => {
+  // Git status walks the worktree, so one result serves every query typed within STATUS_TTL_MS; the commit log reruns only when HEAD moves.
+  const git = (): [Status, number] => {
     const cached = api.host.tryCall('store.get', { key: 'status', scope: 'repository' });
-    const entry = cached.ok && cached.value ? cached.value.value as unknown as { at: number; boosts: [string, number][] } : null;
+    const entry = cached.ok && cached.value ? cached.value.value as unknown as Status : null;
     let spent = entry ? serializedBytes(entry) : 0;
     const age = entry ? Date.now() - entry.at : -1;
-    if (entry && age >= 0 && age < STATUS_TTL_MS) return [new Map(entry.boosts), spent];
-    const boosts = new Map<string, number>();
-    const run = api.host.tryCall('exec.run', { program: 'git', argv: ['-c', 'core.quotePath=false', 'status', '--short', '--untracked-files=all'], timeout_ms: 3000, max_output_bytes: STATUS_BYTES });
-    spent += run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
-    if (!run.ok || run.value.exit_code !== 0) return [boosts, spent];
-    const lines = run.value.stdout.split('\n');
-    if (run.value.stdout_truncated) lines.pop();
-    for (const line of lines) {
-      const raw = line.slice(3).split(' -> ').pop() ?? '';
-      const path = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(.)/g, '$1') : raw;
-      if (path && !line.slice(0, 2).includes('D') && !path.startsWith('../')) boosts.set(path, line.startsWith('??') ? 10 : 20);
+    if (entry && age >= 0 && age < STATUS_TTL_MS) return [entry, spent];
+    const exec = (argv: string[], max: number, timeout_ms = 3000) => {
+      const run = api.host.tryCall('exec.run', { program: 'git', argv, timeout_ms, max_output_bytes: max });
+      spent += run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
+      return run.ok && run.value.exit_code === 0 ? run.value : null;
+    };
+    const status = exec(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], STATUS_BYTES);
+    if (!status) return [{ at: 0, boosts: [] }, spent];
+    const prefix = entry?.prefix ?? exec(['rev-parse', '--show-prefix'], 4096)?.stdout.replace(/\n$/, '');
+    const records = status.stdout.split('\0');
+    if (status.stdout_truncated) records.pop();
+    const header = (key: string) => records.find(record => record.startsWith(`# branch.${key} `))?.slice(key.length + 10);
+    const dirty: [string, number][] = [];
+    for (let index = 0; index < records.length; index++) {
+      const fields = records[index].split(' ');
+      const at = ({ '1': 8, '2': 9, u: 10, '?': 1 } as Record<string, number>)[fields[0]];
+      const path = at ? fields.slice(at).join(' ') : '';
+      if (fields[0] === '2') index++;
+      if (prefix !== undefined && path.startsWith(prefix) && path !== prefix && !(at > 1 && fields[1].includes('D'))) dirty.push([path.slice(prefix.length), at === 1 ? 10 : 20]);
     }
-    const value = { at: Date.now(), boosts: [...boosts] };
-    api.host.tryCall('store.put', { key: 'status', value, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
-    return [boosts, spent + serializedBytes(value)];
+    dirty.sort((a, b) => b[1] - a[1]);
+    const head = header('oid');
+    let recent = entry?.head === head ? entry?.recent : head === '(initial)' ? [] : undefined;
+    if (!recent) {
+      const history = (range: string[], skip = 0): string[][] | undefined => {
+        const log = exec(['log', '-z', '--no-merges', `--skip=${skip}`, '-n', '64', '--relative', '--name-only', '--format=format:/', 'HEAD', ...range], LOG_BYTES, 1000);
+        if (!log) return undefined;
+        // Each commit starts with a "/" record (a path never does); its first name follows the newline and the rest are NUL-separated.
+        const commits: string[][] = [];
+        for (const record of log.stdout.split('\0')) if (record.startsWith('/')) commits.push(record.slice(2) ? [record.slice(2)] : []); else if (record) commits.at(-1)?.push(record);
+        const seen = commits.length;
+        if (log.stdout_truncated) commits.pop();
+        const kept = commits.filter(files => files.length && files.length <= HUGE_COMMIT);
+        return log.stdout_truncated && !skip && kept.length < RECENT_COMMITS ? [...kept, ...history(range, seen) ?? []] : kept;
+      };
+      let commits = ['main', 'master'].includes(header('head') ?? '') ? undefined : history(['--not', ...DEFAULT_BRANCHES]);
+      if (!commits?.length) commits = history([]);
+      const counts = new Map<string, number>();
+      for (const files of commits?.slice(0, RECENT_COMMITS) ?? []) files.forEach(path => counts.set(path, (counts.get(path) ?? 0) + 1));
+      recent = commits && [...counts];
+    }
+    const paths = fit(dirty.map(([path]) => path), 2_000).slice(0, DIRTY_STATS);
+    const stat = paths.length ? api.host.tryCall('workspace.stat', { paths }) : null;
+    spent += stat ? serializedBytes(paths) + (stat.ok ? serializedBytes(stat.value) : 0) : 0;
+    const boosts = dirty.map(([path, boost]): [string, number, number?] => {
+      const time = stat?.ok ? stat.value.files[path]?.mtime_ms : undefined;
+      return time ? [path, boost, time] : [path, boost];
+    });
+    const value: Status = { at: Date.now(), prefix, head: recent ? head : undefined, boosts: fit(boosts, ENTRY_BYTES * 3 / 4), recent: [] };
+    value.recent = fit(recent ?? [], ENTRY_BYTES - serializedBytes(value));
+    api.host.tryCall('store.put', { key: 'status', value: value as unknown as Exclude<Json, null>, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
+    return [value, spent + serializedBytes(value)];
   };
 
   const rank = (query: string, upstream: string[]) => {
     const { files, revision } = load();
-    const [boosts, status] = git();
-    let room = BUDGET - 2 * serializedBytes(files) - status;
+    const [status, spent] = git();
+    let room = BUDGET - 2 * serializedBytes(files) - spent;
+    const boosts = new Map(status.boosts.map(([path, boost, time]) => [path, boost + (MODIFIED.find(([age]) => Date.now() - (time ?? -Infinity) <= age)?.[1] ?? 0)]));
+    const recent = new Map(status.recent ?? []);
     const known = new Set([...upstream, ...boosts.keys()]);
     const order = new Map(upstream.map((path, index) => [path, index]));
     const scored = [...new Set([...known, ...Object.keys(files.files)])]
       .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
-      .map(item => ({ path: item.path, score: item.score + weight(files, item.path) + (boosts.get(item.path) ?? 0) }))
+      .map(item => ({ path: item.path, score: item.score + Math.min(50, weight(files, item.path) + (boosts.get(item.path) ?? 0) + Math.min(12, 4 * (recent.get(item.path) ?? 0))) }))
       .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity))
       .map(item => item.path);
     const ranked: string[] = [];
