@@ -131,10 +131,21 @@ export default function activate(api: ModAPI) {
   const exited = (m: Mon, code: number | null, detail: string, fires: Mon[], excerpt = '', status = '') =>
     finish(m, verdict(m, code === 0), `${code === null ? `ended without an exit code${status ? ` (status ${status})` : ''}` : `exited with code ${code}`}${detail}`, fires, excerpt);
 
+  const terminals = (thread: string) => {
+    const listed = api.host.tryCall('app.request', { method: 'thread/backgroundTerminals/list', params: { threadId: thread, limit: 100 } });
+    return listed.ok ? (listed.value as Row).data as Row[] : null;
+  };
+
   const reconcile = (mons: Mon[], restarted: boolean, fires: Mon[]) => {
     const procs = only(mons, 'process').filter(m => m.status === 'active');
     const found = procs.length ? activity() : null;
+    let live: Row[] | null | undefined;
     for (const m of procs) {
+      if (found && !restarted && !found.has(m.proc)) {
+        if (live === undefined) live = terminals(m.thread);
+        if (live?.some(t => t.processId === m.proc || t.itemId === m.proc)) found.set(m.proc, { running: true });
+        else if (live) finish(m, 'source lost', `no background session ${m.proc} is running: it already exited (exec_command reported its exit code) or the ID is wrong`, fires);
+      }
       const p = found?.get(m.proc);
       if (p && p.running === false) exited(m, p.exit_code, ' (from turn activity)', fires);
       else if (restarted && found) finish(m, 'source lost', 'the session is gone (OMD restarted or it was closed) and no exit was seen', fires);

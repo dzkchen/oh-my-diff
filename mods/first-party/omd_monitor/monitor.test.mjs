@@ -10,7 +10,7 @@ const NOW = 1_800_000_000_000;
 
 function world(init = {}) {
   return { timers: new Map(), watches: new Map(), procs: new Map(), outbox: new Map(), sent: [], steers: [], queued: [], published: [], repos: [], fs: {},
-    turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [] }], declineSteer: false, startError: null, steerError: null, thread: 't1', ...init };
+    turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [] }], terminals: null, declineSteer: false, startError: null, steerError: null, thread: 't1', ...init };
 }
 
 function answer(w, { operation: op, arguments: args }) {
@@ -18,6 +18,10 @@ function answer(w, { operation: op, arguments: args }) {
     case 'session.info': return { thread_id: w.thread };
     case 'turns.activity': return { turns: w.turns, recording: true };
     case 'app.request':
+      if (args.method === 'thread/backgroundTerminals/list') {
+        if (!w.terminals) throw new Error('app_route_denied');
+        return { data: w.terminals, nextCursor: null };
+      }
       w.steers.push(args);
       if (w.steerError) throw new Error(w.steerError);
       return w.declineSteer ? { status: 'declined' } : { turn_id: args.params.expectedTurnId };
@@ -77,11 +81,11 @@ const monitor = (state, id = 'm1') => state.mons.find(entry => entry.id === id);
 const bytes = text => new TextEncoder().encode(text).length;
 
 test('a process monitor subscribes without polling and one pushed exit becomes one bounded steer into the running turn', () => {
-  const w = world();
+  const w = world({ terminals: [{ itemId: 'call-1', processId: '4242' }] });
   const armed = watch(w, { source: 'process', session_id: '4242' });
-  assert.deepEqual(armed.ops, ['session.info', 'turns.activity', 'events.schedule']);
+  assert.deepEqual(armed.ops, ['session.info', 'turns.activity', 'app.request', 'events.schedule']);
   assert.equal(armed.value.status, 'watching');
-  assert.match(armed.value.note, /not found in recent turn activity/);
+  assert.match(armed.value.note, /Keep working/);
   assert.equal(w.timers.get('t1/deadline'), 600_000);
   assert.deepEqual([w.watches.size, w.procs.size], [0, 0]);
 
@@ -130,13 +134,23 @@ test('an idle thread gets one queued turn keyed by the monitor id, also when a s
 });
 
 test('an exit that happened before the subscription is reported in the tool result without a message', () => {
-  const w = world({ turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [{ id: '4242', kind: 'exec', command: 'make', running: false, exit_code: 2 }] }] });
-  const result = watch(w, { source: 'process', session_id: '4242', until: 'success' });
+  const w = world({ turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [{ id: 'call-1', kind: 'exec', command: 'make', running: false, exit_code: 2 }] }] });
+  const result = watch(w, { source: 'process', session_id: 'call-1', until: 'success' });
   assert.deepEqual(result.value, { id: 'm1', status: 'done', outcome: 'failure', detail: 'exited with code 2 (from turn activity)' });
   assert.deepEqual([w.steers.length, w.queued.length, w.timers.size], [0, 0, 0]);
   assert.deepEqual(result.ops, ['session.info', 'turns.activity']);
-  const running = world({ turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [{ id: '4242', kind: 'exec', command: 'make', running: true, exit_code: null }] }] });
-  assert.match(watch(running, { source: 'process', session_id: '4242' }).value.note, /Keep working/);
+  const running = world({ turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [{ id: 'call-1', kind: 'exec', command: 'make', running: true, exit_code: null }] }] });
+  assert.match(watch(running, { source: 'process', session_id: 'call-1' }).value.note, /Keep working/);
+});
+
+test('a session ID that no background terminal runs anymore ends at once instead of at the timeout', () => {
+  const w = world({ terminals: [{ itemId: 'call-2', processId: '7' }], turns: [{ turn_id: 'turn-1', outcome: 'running', processes: [{ id: 'call-1', kind: 'exec', command: 'make', running: false, exit_code: 0 }] }] });
+  const ended = watch(w, { source: 'process', session_id: '4242' });
+  assert.deepEqual([ended.value.status, ended.value.outcome], ['done', 'source lost']);
+  assert.match(ended.value.detail, /no background session 4242 is running/);
+  assert.equal(w.timers.size, 0);
+  assert.match(watch(w, { source: 'process', session_id: 'call-2' }, ended.state).value.note, /Keep working/);
+  assert.match(watch(world(), { source: 'process', session_id: '4242' }).value.note, /not found in recent turn activity/);
 });
 
 test('dropped notifications trigger one re-check of turn activity that finds the missed exit', () => {

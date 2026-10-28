@@ -159,6 +159,12 @@ test('a registered panel with tabs nests in the dock and every key and layout li
   assert.ok(cells(six.layout) <= 12 && depth(six.layout) <= 4);
   assert.ok(six.key_contexts.length <= 8 && keysOf(six.key_contexts) <= 32);
   assert.deepEqual(six.key_contexts[0].keys['{'].action, { command: 'workspace', args: 'tab previous a' });
+  state = register(state, 'f', 1);
+  for (const [panels, columns, region] of [['a, b, c, d, e, f', 120, 'Left'], ['a, b, c, d, e, f', 60, 'Up'], ['a, b, c, d, e, terminal', 120, 'Right']]) {
+    const tabbed = draw({ ...state, threads: { t1: { shell: true } } }, { columns, settings: { panels } }).key_contexts;
+    assert.ok(tabbed.length <= 8 && keysOf(tabbed) <= 32, `${panels} at ${columns} columns`);
+    assert.deepEqual(tabbed.at(-1).keys[region].action, { region: region.toLowerCase() });
+  }
 
   for (const id of ['x', 'y', 'z']) state = register(state, id, 4);
   state = register(state, 'w');

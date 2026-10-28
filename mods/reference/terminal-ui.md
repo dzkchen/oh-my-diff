@@ -482,8 +482,8 @@ rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
   under `NO_COLOR` every cell draws in the default colors.
 - A cell takes 16 bytes of base64, about half a colored JSON cell, and the host decodes it without a JSON tree. The
   runner has no `btoa`, so encode with a small helper such as the one in the `raster_wave` example.
-- A callback's host calls share its 128 KiB receipt budget, so one callback blits about 8,000 packed cells (160 × 48)
-  or 4,500 colored JSON cells. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
+- A callback's host calls, arguments included, share its 1 MiB receipt budget: a packed cell takes 16 bytes of it and
+  a colored JSON cell about 29. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
   change.
 - External clients receive `packed` updates as `cells`.
 

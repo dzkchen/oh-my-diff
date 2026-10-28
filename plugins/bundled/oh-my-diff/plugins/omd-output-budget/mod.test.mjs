@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { callback } from '../../../../../tests/mod_runner.mjs';
-import { excerpt, size } from './mod/budget.ts';
+import { excerpt, size, terms } from './mod/budget.ts';
 
 const mod = new URL('./mod/', import.meta.url);
 const read = name => readFileSync(new URL(name, mod), 'utf8');
@@ -227,6 +227,23 @@ test('search without an id still finds a word too rare for any output\'s index',
   assert.equal(found.matches[0].line, 2506);
   assert.equal(found.matches[0].label, 'step 1');
   assert.ok(tool(world, 'search', { query: 'constructor' }).scanned > 0, 'an inherited object key is no indexed word');
+});
+
+test('a full index of hash-heavy outputs stays small and leaves search its whole scan budget', () => {
+  const world = host();
+  const hashes = seed => Array.from({ length: 400 }, (_, index) => createHash('sha1').update(`${seed}-${index}`).digest('hex')).join('\n');
+  intercept(world, exec('git log'), { output: shell(hashes('log')), success: true });
+  const [id] = world.entries.get('outs').value;
+  assert.ok(Buffer.byteLength(JSON.stringify(world.entries.get(`out/${id}`).value.terms)) <= 2048);
+  const ids = Array.from({ length: 120 }, (_, index) => `out_${String(index).padStart(12, '0')}`);
+  ids.forEach((out, index) => {
+    world.evidence.set(out, index === 6 ? `${'x'.repeat(65_000)}\nEHOSTUNREACH\n` : 'y'.repeat(65_500));
+    world.entries.set(`out/${out}`, { value: { id: out, reference: { reference: out, sha256: '0'.repeat(64) }, bytes: 65_500, kind: 'tool', label: out, terms: terms(hashes(out), 2048).terms, length: 400 }, revision: 1, provenance: {} });
+  });
+  world.entries.set('outs', { value: ids, revision: 1, provenance: {} });
+  const found = tool(world, 'search', { query: 'EHOSTUNREACH' });
+  assert.equal(found.matches[0]?.id, ids[6]);
+  assert.ok(found.scanned >= 7, String(found.scanned));
 });
 
 test('a long single line keeps a window around its first error, as code-mode cells print one JSON line per call', () => {

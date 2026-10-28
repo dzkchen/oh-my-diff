@@ -76,7 +76,7 @@ test('ranking a full history beside a large Git status keeps every host call ins
     pruned[name] = 70 - Object.keys(writes.at(-1).files).filter(path => path.startsWith('old/')).length;
   }
   assert.equal(pruned.cached, 70);
-  assert.ok(pruned.cold > 0 && pruned.cold < 70, 'a refresh spends receipts on Git, so it checks only part of the history');
+  assert.equal(pruned.cold, 70);
 });
 
 test('mention queries typed within the cache window reuse one Git status', () => {
@@ -175,16 +175,16 @@ test('status records parse by kind: renames skip their original, conflicts keep 
   ]) assert.deepEqual(mention(repository(null, branch() + records).host, '', []), expected);
 });
 
-test('recent commits skip empty ones and a cut last commit, and a truncated log reads past it once', () => {
+test('recent commits skip empty ones and huge ones, and a commit cut by a truncated log is read whole from one more page', () => {
   const paged = list => argv => commits(...list.slice(Number(argv.find(arg => arg.startsWith('--skip=')).slice(7))));
   const pad = Array.from({ length: 40 }, (_, index) => `pad/${'p'.repeat(125)}${index}.ts`);
-  for (const list of [
-    [Array.from({ length: 200 }, (_, index) => `bulk/${'b'.repeat(40)}${index}.ts`), ['src/feature.ts']],
-    [pad, ['cut.ts', 'z'.repeat(1000)], ['src/feature.ts']],
-    [...Array.from({ length: 10 }, () => []), ['src/feature.ts']],
+  for (const [list, expected] of [
+    [[Array.from({ length: 200 }, (_, index) => `bulk/${'b'.repeat(40)}${index}.ts`), ['src/feature.ts']], ['src/feature.ts', 'src/other.ts', 'cut.ts']],
+    [[pad, ['cut.ts', 'z'.repeat(1000)], ['src/feature.ts']], ['cut.ts', 'src/feature.ts', 'src/other.ts']],
+    [[...Array.from({ length: 10 }, () => []), ['src/feature.ts']], ['src/feature.ts', 'src/other.ts', 'cut.ts']],
   ]) {
     const { host, logs } = repository(null, branch(), { log: paged(list) });
-    assert.deepEqual(mention(host, '', ['src/other.ts', 'cut.ts', 'src/feature.ts']), ['src/feature.ts', 'src/other.ts', 'cut.ts']);
+    assert.deepEqual(mention(host, '', ['src/other.ts', 'cut.ts', 'src/feature.ts']), expected);
     assert.ok(logs.length <= 2);
   }
 });

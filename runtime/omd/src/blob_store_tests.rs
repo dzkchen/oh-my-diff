@@ -87,6 +87,37 @@ fn rotating_evidence_is_bounded_by_total_bytes() {
 }
 
 #[test]
+fn unsettled_orphans_never_evict_records() {
+    with_store(|store| {
+        let directory = store.rotating_directory().unwrap();
+        let references = ["a", "b", "c"].map(|letter| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            store
+                .text_evidence(letter, &letter.repeat(10))
+                .unwrap()
+                .reference
+        });
+        fs::write(directory.join(format!("{}.bin", "f".repeat(64))), [0; 100]).unwrap();
+        prune_rotating(&directory, 40).unwrap();
+        for reference in references {
+            assert!(directory.join(format!("{reference}.json")).exists());
+        }
+    });
+}
+
+#[test]
+fn a_process_sweeps_a_directory_first_then_every_sixteen_writes_or_large_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let due = |bytes| prune_due(directory.path(), bytes);
+    assert!(due(1));
+    assert_eq!(
+        (0..16).map(|_| due(1)).collect::<Vec<_>>(),
+        [vec![false; 15], vec![true]].concat()
+    );
+    assert!(due(BLOB_TOTAL_BYTES as usize / 16));
+}
+
+#[test]
 fn svg_evidence_is_gated() {
     with_store(|store| {
         let record = |svg: &str| {

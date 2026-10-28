@@ -59,7 +59,7 @@ interceptor sees ends its excerpt with the kept output's real last lines. It nev
 
 - Outputs and documents are kept per thread. The newest 120 stay searchable; older ones are dropped.
 - The per-turn count is kept per thread; tool calls that run in parallel can be counted in either order.
-- Search ranks outputs by their 160 most frequent words and reads the best four in full (or the one you name). A
+- Search ranks outputs by their most frequent words (about 2 KB of them per output) and reads the best four in full (or the one you name). A
   query word no output's index holds makes it read the newest outputs too. It reads about 640 KB per search at most;
   `partial` says when it stopped early.
 - One `read` scans about 640 KB from the start of an output; `next_cursor` continues from where the last one ended.

@@ -308,7 +308,7 @@ and `next` resolves with the complete length as `bytes` so the handler can tell.
 It fails with `tool_original_unavailable` when the call's result is not in a chain, such as before `next` has
 resolved, after the callback ended, for a call an interceptor answered without running it, or for an unknown call.
 A retried call (`:retryN`) yields its latest attempt's original, and that `next` also resolves with `bytes`. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
-The evidence is the mod's rotating evidence (the newest 1,024 records per mod and repository are kept, older ones are dropped down to 768, and the oldest go first while the directory's blobs exceed 256 MiB).
+The evidence is the mod's rotating evidence (the newest 1,024 records per mod and repository are kept, older ones are dropped down to 768, and the oldest go first while the blobs those records hold exceed 256 MiB; a process checks on its first write and then every 16 writes or 16 MiB).
 
 ### Handler failures and skipped interceptors
 

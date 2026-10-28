@@ -8,8 +8,6 @@ const KEPT = 512;
 const HALF_LIFE = 64;
 const STAT_BATCH = 64;
 const STAT_BATCHES = 4;
-// A ranking's history read and rewrite, Git status, log, cached entry and stats share one callback's 1 MiB receipt budget, less call envelopes.
-const BUDGET = 122_880;
 const STORED = 32_000;
 const STATUS_BYTES = 12_000;
 const LOG_BYTES = 6_000;
@@ -69,19 +67,17 @@ export default function activate(api: ModAPI) {
   };
 
   // Git status walks the worktree, so one result serves every query typed within STATUS_TTL_MS; the commit log reruns only when HEAD moves.
-  const git = (): [Status, number] => {
+  const git = (): Status => {
     const cached = api.host.tryCall('store.get', { key: 'status', scope: 'repository' });
     const entry = cached.ok && cached.value ? cached.value.value as unknown as Status : null;
-    let spent = entry ? serializedBytes(entry) : 0;
     const age = entry ? Date.now() - entry.at : -1;
-    if (entry && age >= 0 && age < STATUS_TTL_MS) return [entry, spent];
+    if (entry && age >= 0 && age < STATUS_TTL_MS) return entry;
     const exec = (argv: string[], max: number, timeout_ms = 3000) => {
       const run = api.host.tryCall('exec.run', { program: 'git', argv, timeout_ms, max_output_bytes: max });
-      spent += run.ok ? serializedBytes([run.value.stdout, run.value.stderr]) : 0;
       return run.ok && run.value.exit_code === 0 ? run.value : null;
     };
     const status = exec(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], STATUS_BYTES);
-    if (!status) return [{ at: 0, boosts: [] }, spent];
+    if (!status) return { at: 0, boosts: [] };
     const prefix = entry?.prefix ?? exec(['rev-parse', '--show-prefix'], 4096)?.stdout.replace(/\n$/, '');
     const records = status.stdout.split('\0');
     if (status.stdout_truncated) records.pop();
@@ -104,10 +100,9 @@ export default function activate(api: ModAPI) {
         // Each commit starts with a "/" record (a path never does); its first name follows the newline and the rest are NUL-separated.
         const commits: string[][] = [];
         for (const record of log.stdout.split('\0')) if (record.startsWith('/')) commits.push(record.slice(2) ? [record.slice(2)] : []); else if (record) commits.at(-1)?.push(record);
-        const seen = commits.length;
         if (log.stdout_truncated) commits.pop();
         const kept = commits.filter(files => files.length && files.length <= HUGE_COMMIT);
-        return log.stdout_truncated && !skip && kept.length < RECENT_COMMITS ? [...kept, ...history(range, seen) ?? []] : kept;
+        return log.stdout_truncated && !skip && kept.length < RECENT_COMMITS ? [...kept, ...history(range, Math.max(1, commits.length)) ?? []] : kept;
       };
       let commits = ['main', 'master'].includes(header('head') ?? '') ? undefined : history(['--not', ...DEFAULT_BRANCHES]);
       if (!commits?.length) commits = history([]);
@@ -117,7 +112,6 @@ export default function activate(api: ModAPI) {
     }
     const paths = fit(dirty.map(([path]) => path), 2_000).slice(0, DIRTY_STATS);
     const stat = paths.length ? api.host.tryCall('workspace.stat', { paths }) : null;
-    spent += stat ? serializedBytes(paths) + (stat.ok ? serializedBytes(stat.value) : 0) : 0;
     const boosts = dirty.map(([path, boost]): [string, number, number?] => {
       const time = stat?.ok ? stat.value.files[path]?.mtime_ms : undefined;
       return time ? [path, boost, time] : [path, boost];
@@ -125,13 +119,12 @@ export default function activate(api: ModAPI) {
     const value: Status = { at: Date.now(), prefix, head: recent ? head : undefined, boosts: fit(boosts, ENTRY_BYTES * 3 / 4), recent: [] };
     value.recent = fit(recent ?? [], ENTRY_BYTES - serializedBytes(value));
     api.host.tryCall('store.put', { key: 'status', value: value as unknown as Exclude<Json, null>, expected_revision: cached.ok && cached.value ? cached.value.revision : null, scope: 'repository' });
-    return [value, spent + serializedBytes(value)];
+    return value;
   };
 
   const rank = (query: string, upstream: string[]) => {
     const { files, revision } = load();
-    const [status, spent] = git();
-    let room = BUDGET - 2 * serializedBytes(files) - spent;
+    const status = git();
     const boosts = new Map(status.boosts.map(([path, boost, time]) => [path, boost + (MODIFIED.find(([age]) => Date.now() - (time ?? -Infinity) <= age)?.[1] ?? 0)]));
     const recent = new Map(status.recent ?? []);
     const known = new Set([...upstream, ...boosts.keys()]);
@@ -149,8 +142,7 @@ export default function activate(api: ModAPI) {
       const page = scored.slice(at, at + Math.min(STAT_BATCH, LIMIT - ranked.length));
       at += page.length;
       const unknown = page.filter(path => !known.has(path));
-      const cost = 2 * serializedBytes(unknown) + 64 * unknown.length;
-      const stat = unknown.length && checks < STAT_BATCHES && cost <= room ? (checks++, room -= cost, api.host.tryCall('workspace.stat', { paths: unknown })) : null;
+      const stat = unknown.length && checks < STAT_BATCHES ? (checks++, api.host.tryCall('workspace.stat', { paths: unknown })) : null;
       const present = new Set(!stat ? [] : stat.ok ? unknown.filter(path => stat.value.files[path]?.kind === 'file') : unknown);
       if (stat && stat.ok) missing.push(...unknown.filter(path => !present.has(path)));
       ranked.push(...page.filter(path => known.has(path) || present.has(path)));

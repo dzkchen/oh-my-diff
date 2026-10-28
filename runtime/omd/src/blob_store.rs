@@ -14,6 +14,7 @@ pub const BLOB_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 pub const BLOB_ENTRIES: usize = 4096;
 pub const ROTATING_RECORDS: usize = 1024;
 const ROTATING_KEEP: usize = 768;
+const PRUNE_WRITES: u32 = 16;
 const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn svg(bytes: &[u8]) -> Result<(), &'static str> {
@@ -219,16 +220,16 @@ fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
     for digest in blobs.iter().flatten() {
         *live.entry(digest).or_default() += 1;
     }
+    // Only blobs that records hold count against the limit: evicting records cannot free the rest, which go once settled.
+    let mut held = 0u64;
     if let Some((newest, _)) = records.last() {
         let settled = std::time::SystemTime::now() - ORPHAN_GRACE;
         for (modified, path, size) in bins {
             let digest = path.file_stem().and_then(|stem| stem.to_str());
-            if modified < *newest
-                && modified < settled
-                && digest.is_none_or(|digest| !live.contains_key(digest))
-                && fs::remove_file(&path).is_ok()
-            {
-                total -= size;
+            if digest.is_some_and(|digest| live.contains_key(digest)) {
+                held += size;
+            } else if modified < *newest && modified < settled {
+                let _ = fs::remove_file(&path);
             }
         }
     }
@@ -238,7 +239,7 @@ fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
         0
     };
     for (index, (_, path)) in records.iter().enumerate().take(records.len() - 1) {
-        if index >= by_count && total <= limit {
+        if index >= by_count && held <= limit {
             break;
         }
         if let Some(digest) = &blobs[index]
@@ -249,13 +250,32 @@ fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
                 let blob = directory.join(format!("{digest}.bin"));
                 let size = fs::metadata(&blob).map_or(0, |metadata| metadata.len());
                 if fs::remove_file(&blob).is_ok() {
-                    total -= size;
+                    held = held.saturating_sub(size);
                 }
             }
         }
         let _ = fs::remove_file(path);
     }
     Ok(())
+}
+
+// A sweep stats every file in the directory, so a process sweeps on its first write to one and then every PRUNE_WRITES writes or 1/16 of the byte limit.
+fn prune_due(directory: &std::path::Path, bytes: usize) -> bool {
+    static SINCE: std::sync::Mutex<std::collections::BTreeMap<PathBuf, (u32, u64)>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let mut since = SINCE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (writes, written) = since
+        .entry(directory.to_owned())
+        .or_insert((PRUNE_WRITES - 1, 0));
+    *writes += 1;
+    *written += bytes as u64;
+    let due = *writes >= PRUNE_WRITES || *written >= BLOB_TOTAL_BYTES / 16;
+    if due {
+        (*writes, *written) = (0, 0);
+    }
+    due
 }
 
 impl ResourceStore<'_> {
@@ -419,7 +439,9 @@ impl ResourceStore<'_> {
         )?;
         let sha256 = hash(&record);
         write_new(&directory.join(format!("{sha256}.json")), &record)?;
-        prune_rotating(&directory, BLOB_TOTAL_BYTES)?;
+        if prune_due(&directory, text.len()) {
+            prune_rotating(&directory, BLOB_TOTAL_BYTES)?;
+        }
         Ok(crate::resource_data::ResourceRef {
             reference: sha256.clone(),
             sha256,

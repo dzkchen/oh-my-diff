@@ -6,11 +6,12 @@ type Value = Exclude<Json, null>;
 
 const SCOPE = 'thread';
 const KEEP = 120;
-const TERMS = 160;
+const INDEX_BYTES = 2048;
 const CAPTURE_TOKENS = 65_536;
 const NATIVE_BYTES = 40_000;
 const PAGE = 65_536;
 const SCAN_BYTES = 640 * 1024;
+const RECEIPT_ROOM = 960 * 1024;
 const DOC_BYTES = 240 * 1024;
 const WIDEN = /^(?:exec_command|write_stdin)$/;
 const CODEX_CUT = /^Warning: truncated output \(original token count: \d+\)/m;
@@ -103,7 +104,7 @@ export default function activate(api: ModAPI) {
     const original = api.host.tryCall('tools.original', { call_id: e.call_id });
     if (!original.ok) return unkept(original.error);
     const id = `out_${original.value.sha256.slice(0, 12)}`;
-    const counted = terms(result.output, TERMS);
+    const counted = terms(result.output, INDEX_BYTES);
     const kept = remember({
       id, reference: original.value.reference, bytes: original.value.bytes, kind: 'tool',
       label: clip(typeof args?.cmd === 'string' ? args.cmd : `${e.tool} ${JSON.stringify(e.arguments)}`, 160),
@@ -213,7 +214,7 @@ export default function activate(api: ModAPI) {
     const unindexed = words.some(word => !kept.some(found => count(found.terms, word)));
     const scan = request.id ? kept : [...new Set([...ranked.slice(0, 4).map(hit => hit.id), ...(unindexed ? ids : [])])].flatMap(id => byId.get(id) ?? []);
     const hits: { id: string; label: string; line: number; text: string; score: number }[] = [];
-    let left = SCAN_BYTES - size(JSON.stringify(kept));
+    let left = Math.min(SCAN_BYTES, RECEIPT_ROOM - size(JSON.stringify(kept)));
     let scanned = 0;
     let partial = false;
     for (const found of scan) {
@@ -274,7 +275,7 @@ export default function activate(api: ModAPI) {
     const id = `out_${sha.slice(0, 12)}`;
     const written = api.host.tryCall('evidence.write', { media_type: 'application/octet-stream', base64: base64(text), label: clip(`docs ${url}`, 128) });
     if (!written.ok) return { error: `the page text could not be kept: ${written.error}` };
-    const counted = terms(text, TERMS);
+    const counted = terms(text, INDEX_BYTES);
     if (!remember({ id, reference: written.value, bytes: size(text), kind: 'doc', label: clip(url, 160), terms: counted.terms, length: counted.length })) {
       return { error: 'the output index is busy; fetch again' };
     }

@@ -131,7 +131,7 @@ export function excerpt(output: string, limit: number, id: string, total: number
   return `${header}${clip([...head, ...gap, ...tail].join('\n'), Math.max(limit - size(header) - size(footer), room + 240))}${footer}`;
 }
 
-export function terms(text: string, keep: number): { terms: Terms; length: number } {
+export function terms(text: string, bytes: number): { terms: Terms; length: number } {
   const counts = new Map<string, number>();
   let length = 0;
   for (const match of text.toLowerCase().matchAll(WORD)) {
@@ -139,7 +139,8 @@ export function terms(text: string, keep: number): { terms: Terms; length: numbe
     length += 1;
     counts.set(match[0], (counts.get(match[0]) ?? 0) + 1);
   }
-  const top = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, keep);
+  let used = 2;
+  const top = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).filter(([word, count]) => (used += size(word) + String(count).length + 4) <= bytes);
   return { terms: Object.fromEntries(top), length };
 }
 

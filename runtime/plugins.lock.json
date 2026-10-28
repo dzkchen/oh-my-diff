@@ -61,11 +61,11 @@
     "plugins/omd-code-execution/kernels/bun.mjs": "2dd608e4d3274ef6e50cc6d130d7576be0b47ad6431d3229e52153d665f28b39",
     "plugins/omd-code-execution/kernels/python.py": "7e1d638bf3da282fe9b6870f15c9ee61e172dd3edd4caae146290becf0084bc2",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "b77bb900ba2977c99bd2d9c7a7ac8c26c2d67925322d4f81102e4d180b7c407a",
-    "plugins/omd-output-budget/.codex-plugin/omd.json": "f1dad2fe8b53221d7fc226b81278d2f58796ce99272fa3b4251e870a88bfdabe",
+    "plugins/omd-output-budget/.codex-plugin/omd.json": "eddf441fd817a5243738928318dfbfea1ef3ba232b5cfe1a2bbf8d187d53e613",
     "plugins/omd-output-budget/.codex-plugin/plugin.json": "20d4254569b8a1f74b34e71ab803bbfdf5a4be56401d8907a4ac7c0fafb2fbec",
-    "plugins/omd-output-budget/README.md": "c7696ac4ca57ca108a494b335e19fb0d91facc184b5fa3aca806673fee2c85f7",
-    "plugins/omd-output-budget/mod/budget.ts": "69335a65d3225069b64caa0d071b91ba6ff4bf7d20ffee2e7b0c99fee510ec59",
-    "plugins/omd-output-budget/mod/index.ts": "2d636be1e9eb214d68aa9af0c654f3cf7b1933cb3eac11ede941cd9bb4689206",
+    "plugins/omd-output-budget/README.md": "7673858e0a38708166733e9502e8a60dbc7a3cb673ea9f77b7cc5792b100ef15",
+    "plugins/omd-output-budget/mod/budget.ts": "a29962d517662769cd9ea6f7fd74b42c2d80d61580caab71a5f808bfb0463ab3",
+    "plugins/omd-output-budget/mod/index.ts": "4a1c6d865a05f87d9094e05e24b157f86197abc084b5f201030e417451743418",
     "plugins/omd-output-budget/mod/mod.json": "46b2d6661d6b88e2c5c2bec21c4a30dc20dae8ad8ebf76ac46258f7604ee8f1b",
     "plugins/omd-output-budget/skills/omd-output-budget/SKILL.md": "b39704bfa570f8d30e0c2d4d2bbdecaee35f86eb3c0c1708cb4faf8bb7ef3e1c"
   }

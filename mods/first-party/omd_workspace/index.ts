@@ -17,6 +17,7 @@ const BUILTIN: Panel[] = [
   { id: 'terminal', title: 'Shell', site: 'omd_workspace/terminal' },
 ];
 const LEVELS: Level[] = ['normal', 'half', 'full'];
+const REGIONS = [['left', 'Panel on the left'], ['right', 'Panel on the right'], ['up', 'Panel above'], ['down', 'Panel below']] as const;
 const TABS = 6;
 const KEYS: Record<string, string> = {
   ...Object.fromEntries(Array.from({ length: TABS }, (_, index) => [`panel_${index + 1}`, String(index + 1)])),
@@ -154,7 +155,7 @@ export default function activate(api: ModAPI) {
     };
   };
 
-  const contexts = (list: Panel[], shell?: boolean): KeyContext[] => {
+  const contexts = (list: Panel[], vertical: boolean, shell?: boolean): KeyContext[] => {
     const bind = (into: KeyContext['keys'], action: string, run: KeyAction, label: string) => {
       const key = keys[action];
       if (key) into[key] = { action: run, label };
@@ -163,10 +164,10 @@ export default function activate(api: ModAPI) {
     const general: KeyContext['keys'] = {};
     list.forEach((panel, index) => bind(general, `panel_${index + 1}`, stacked ? { region: index + 1 } : run(`tab ${index + 1}`), `${stacked ? 'Focus' : 'Show'} ${panel.title}`));
     bind(general, 'main', { region: 'chat' }, 'Main view');
-    for (const action of ['left', 'left_alt']) bind(general, action, { region: 'left' }, 'Panel on the left');
-    for (const action of ['right', 'right_alt']) bind(general, action, { region: 'right' }, 'Panel on the right');
-    for (const action of ['up', 'up_alt']) bind(general, action, { region: 'up' }, 'Panel above');
-    for (const action of ['down', 'down_alt']) bind(general, action, { region: 'down' }, 'Panel below');
+    // A tabbed dock shares one split with the chat, so only keys along it move focus; this keeps six tabbed panels within 32 keys.
+    for (const [region, label] of stacked ? REGIONS : REGIONS.slice(vertical ? 2 : 0, vertical ? 4 : 2)) {
+      for (const action of [region, `${region}_alt`]) bind(general, action, { region }, label);
+    }
     bind(general, 'help', { help: true }, 'Show keys');
     if (!stacked) {
       bind(general, 'tab_previous', run('tab previous'), 'Previous tab');
@@ -268,7 +269,8 @@ export default function activate(api: ModAPI) {
     const sites: NonNullable<TerminalPatch['sites']> = {};
     if (list.some(panel => panel.id === 'terminal')) sites['omd_workspace/terminal'] = { components: terminalSite(thread) };
     if (list.some(panel => panel.id === 'changes')) sites['omd_workspace/changes'] = { components: changesSite(thread?.changes) };
-    return { layout: arrange(state, list, client?.columns ?? 120, client?.rows ?? 40), sites, ...(list.length ? { key_contexts: contexts(list, thread?.shell) } : {}) };
+    const columns = client?.columns ?? 120;
+    return { layout: arrange(state, list, columns, client?.rows ?? 40), sites, ...(list.length ? { key_contexts: contexts(list, full(state) || columns < narrowBelow, thread?.shell) } : {}) };
   });
 
   api.on('component_event', event => {
