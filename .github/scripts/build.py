@@ -19,7 +19,7 @@ SCRATCH = Path(os.environ.get("OMD_SCRATCH_REPO", TMP / "omd-cache/codex"))
 V8 = Path(os.environ.get("OMD_V8_DIR", TMP / "omd-cache/v8"))
 BUILD = ["build", "--locked", "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
          "-p", "codex-omd-extension", "-p", "codex-omd-runner", "--bins"]
-SUMMARY = re.compile(r"^test result|^error|FAILED|panicked|^warning: unused")
+SUMMARY = re.compile(r"^test result|^\s+Summary \[|^\s+(FAIL|TIMEOUT) \[|^error|FAILED|panicked|^warning: unused")
 MIRRORS = (("codex-rs/omd", "runtime/omd"), ("codex-rs/ext/omd", "runtime/native"))
 OBSERVER = "codex-rs/codex-api/src/request_observer.rs"
 GENERATORS = ("plugin_lock", "mods_lock")
@@ -110,7 +110,7 @@ def cargo_env(work):
 
 def test_runner(work, cargo_args, env, output):
     """Mod hosts start the runner beside their executable; test binaries run from the target's deps directory."""
-    if not cargo_args or cargo_args[0] != "test":
+    if not cargo_args or cargo_args[0] not in ("test", "nextest"):
         return 0
     release = "--release" in cargo_args or "-r" in cargo_args
     profile = "release" if release else "debug"

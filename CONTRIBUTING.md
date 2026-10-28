@@ -73,7 +73,7 @@ python3 .github/scripts/build.py locks                                       # r
   changing `mods/first-party/` or `plugins/` and commit the result.
 - **V8:** `omd-runner` and `codex-cli` link a V8 prebuilt: fetch it once with `python3 .github/scripts/build.py v8 NAME`.
   A host started from the target finds `omd-runner` beside itself, so build both (`-p codex-cli -p codex-omd-runner`).
-- **Check:** the regression test for your fix, the crate's tests (`-- --test-threads=1`),
+- **Check:** the regression test for your fix, the crate's tests (`cargo NAME LOG nextest run --locked -p CRATE`),
   `cargo NAME LOG clippy --locked -p CRATE --tests`, `rustfmt` on the files you changed and `mise run native:ownership`.
   `sync` must report `"tree_parity": true`; `setup` and `sync` on a fresh `NAME` must leave `git diff` unchanged.
   `runtime/release.lock.json` is rebuilt from signed binaries at release time, so a native change leaves it as is.
