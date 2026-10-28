@@ -1,4 +1,6 @@
-//! Compiled package modules kept across runner processes, by module source and runner build.
+//! V8 bytecode of package modules kept across runner processes, by module source and runner build.
+//!
+//! Entries hold bytecode only: the runner always compiles the request's trusted source, so the cache can't supply code.
 
 use super::Result;
 use serde_json::Map;
@@ -7,12 +9,15 @@ use serde_json::json;
 use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeSet;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 const LIMIT: u64 = 32 << 20;
+/// Bytes written to a cache root between prunes.
+const PRUNE_EVERY: u64 = LIMIT / 8;
 
 /// The runner's key for a module: the hex SHA-256 of `"{typescript}:{source}"`.
 fn key(typescript: bool, source: &str) -> String {
@@ -49,14 +54,29 @@ where
         .collect()
 }
 
+/// A mod's cache root and, once computed, the modules its requests may compile.
+pub(super) struct CacheRoot {
+    root: PathBuf,
+    expected: OnceLock<BTreeSet<String>>,
+}
+
+impl CacheRoot {
+    pub(super) fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            expected: OnceLock::new(),
+        }
+    }
+}
+
 pub(super) struct CodeCache {
     directory: PathBuf,
     expected: BTreeSet<String>,
 }
 
 impl CodeCache {
-    /// The cache for `request` under `root`, keyed by the runner's file stamp; `None` without a runner.
-    pub(super) fn open<R>(root: &Path, request: &R) -> Option<Self>
+    /// The cache for `request` under `cache`, keyed by the runner's file stamp; `None` without a runner.
+    pub(super) fn open<R>(cache: &CacheRoot, request: &R) -> Option<Self>
     where
         R: for<'a> std::ops::Index<&'a str, Output = Value>,
     {
@@ -64,38 +84,38 @@ impl CodeCache {
         let stamp = super::file_stamp(&std::fs::metadata(runner).ok()?);
         let name = format!("{:x}", Sha256::digest(format!("{stamp:?}")));
         Some(Self {
-            directory: root.join(&name[..16]),
-            expected: keys(request),
+            directory: cache.root.join(&name[..16]),
+            expected: cache.expected.get_or_init(|| keys(request)).clone(),
         })
     }
 
-    /// The line offering a fresh runner the intact cached modules within `budget` bytes; even an empty offer asks it to report what it compiles.
+    /// The line offering a fresh runner the intact cached bytecode within `budget` bytes. It lists every expected
+    /// module (`null` where none is cached), so the runner reports exactly those it compiles fresh.
     pub(super) fn line(&self, budget: usize) -> Option<Vec<u8>> {
         let mut entries = Map::new();
+        // `{"code_cache":{}}` plus a newline, then per entry its quoted name, colon and comma.
         let mut size = 20;
         for name in &self.expected {
-            let Ok(bytes) = std::fs::read(self.directory.join(name)) else {
-                continue;
-            };
-            let Some((sum, body)) = bytes.split_at_checked(32) else {
-                continue;
-            };
-            let Ok(entry) = serde_json::from_slice::<Value>(body) else {
-                continue;
-            };
-            if Sha256::digest(body).as_slice() != sum || size + body.len() + name.len() + 4 > budget
-            {
-                continue;
-            }
-            size += body.len() + name.len() + 4;
-            entries.insert(name.clone(), entry);
+            let cached = self
+                .read(name)
+                .filter(|entry| size + entry.to_string().len() + name.len() + 4 <= budget);
+            size += cached.as_ref().map_or(4, |entry| entry.to_string().len()) + name.len() + 4;
+            entries.insert(name.clone(), cached.unwrap_or(Value::Null));
         }
         let mut line = serde_json::to_vec(&json!({"code_cache": entries})).ok()?;
         line.push(b'\n');
         Some(line)
     }
 
-    /// Keeps a module the runner compiled for this request; anything else it reports is ignored.
+    /// An intact entry: its SHA-256 then a JSON body holding the bytecode.
+    fn read(&self, name: &str) -> Option<Value> {
+        let bytes = std::fs::read(self.directory.join(name)).ok()?;
+        let (sum, body) = bytes.split_at_checked(32)?;
+        let entry = serde_json::from_slice::<Value>(body).ok()?;
+        (Sha256::digest(body).as_slice() == sum && entry["data"].is_string()).then_some(entry)
+    }
+
+    /// Keeps bytecode the runner compiled for this request; anything else it reports is ignored.
     pub(super) fn keep(&self, reported: &Value) {
         let Some(name) = reported["key"]
             .as_str()
@@ -103,27 +123,52 @@ impl CodeCache {
         else {
             return;
         };
-        let (Some(code), Some(data)) = (reported["code"].as_str(), reported["data"].as_str())
-        else {
+        let Some(data) = reported["data"].as_str() else {
             return;
         };
-        let _ = self.write(name, &json!({"code": code, "data": data}));
+        let _ = self.write(name, &json!({"data": data}));
     }
 
     fn write(&self, name: &str, entry: &Value) -> Result<()> {
-        std::fs::create_dir_all(&self.directory)?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.directory)?;
         let body = serde_json::to_vec(entry)?;
         let mut bytes = Sha256::digest(&body).to_vec();
         bytes.extend_from_slice(&body);
-        let temporary = self.directory.join(format!(
-            ".{name}.{}.{:?}.tmp",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::write(&temporary, &bytes)?;
-        std::fs::rename(&temporary, self.directory.join(name))?;
-        static PRUNED: AtomicBool = AtomicBool::new(false);
-        if !PRUNED.swap(true, Ordering::Relaxed) {
+        crate::fsio::write_bytes(
+            &self.directory.join(name),
+            &bytes,
+            crate::fsio::Durability::Volatile,
+        )?;
+        static WRITTEN: Mutex<Vec<(PathBuf, u64)>> = Mutex::new(Vec::new());
+        let due = {
+            let mut written = WRITTEN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let root = self
+                .directory
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            let index = match written.iter().position(|(seen, _)| *seen == root) {
+                Some(index) => index,
+                // A process prunes a root at its first write there, then every `PRUNE_EVERY` bytes.
+                None => {
+                    written.push((root, PRUNE_EVERY));
+                    written.len() - 1
+                }
+            };
+            let since = &mut written[index].1;
+            *since += bytes.len() as u64;
+            let due = *since >= PRUNE_EVERY;
+            if due {
+                *since = 0;
+            }
+            due
+        };
+        if due {
             self.prune();
         }
         Ok(())
@@ -180,6 +225,10 @@ mod tests {
         for name in ["a", "b"] {
             cache.keep(&json!({"key": name, "code": "c", "data": "d"}));
         }
+        assert_eq!(
+            std::fs::read(cache.directory.join("a")).unwrap()[32..],
+            *br#"{"data":"d"}"#
+        );
         let path = cache.directory.join("b");
         let bytes = std::fs::read(&path).unwrap();
         let at = bytes.len() - 3;
@@ -188,9 +237,6 @@ mod tests {
         corrupt[at] = b'e';
         std::fs::write(&path, corrupt).unwrap();
         let line: Value = serde_json::from_slice(&cache.line(1 << 20).unwrap()).unwrap();
-        assert_eq!(
-            line,
-            json!({"code_cache": {"a": {"code": "c", "data": "d"}}})
-        );
+        assert_eq!(line, json!({"code_cache": {"a": {"data": "d"}, "b": null}}));
     }
 }

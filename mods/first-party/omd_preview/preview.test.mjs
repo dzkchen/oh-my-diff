@@ -299,7 +299,7 @@ test('inline file previews read a bounded prefix and refuse a file with no print
     const big = command('big.txt --inline');
     assert.equal(big.state.inline.text, 'x'.repeat(4_000));
     const quotes = command('quotes.diff --inline');
-    assert.ok(quotes.state.inline.text.length > 25_000 && JSON.stringify(quotes.state.inline.text).length <= 60_000);
+    assert.equal(quotes.state.inline.text.length, 29_999);
     assert.match(quotes.value.display, /^Showing only the start inline/);
     writeFileSync(join(repository, 'lock.diff'), Array.from({ length: 12_000 }, (_, index) => `+${index}`).join('\n'));
     const lock = command('lock.diff --inline');

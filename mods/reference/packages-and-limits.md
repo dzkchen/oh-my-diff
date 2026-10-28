@@ -105,6 +105,29 @@ Callbacks receive explicit settings over the schema's `default` values.
 
 `/omd` stays the native recovery path.
 
+### Settings file (`settings_file_v1`)
+
+Experimental. A user can set a mod's settings in a file instead of through `settings.write`:
+`settings/<mod_id>.json`, `.yaml` or `.yml` in the mod store, the directory that holds `mods.json`.
+
+- At most one of the three files may exist (more than one is invalid), at most 64 KiB, and its top level must be an
+  object whose keys are the mod's setting names.
+- Its keys override the saved settings (and the schema `default` values) in every callback, render and chain
+  digest. The file is validated like `settings.write`: a key outside a schema with `additionalProperties: false`,
+  a wrongly typed value and a missing `required` setting are invalid.
+- Administrator-managed selections ignore the file (status `ignored`).
+- The saved settings must be valid on their own, so a `required` setting without a `default` is saved through
+  `settings.write` or `/omd`; the file then overrides it.
+- An unreadable, oversize, unparsable or invalid file is skipped whole: the saved settings apply, the mod stays on and
+  its view diagnostics carry `settings_file_invalid: <reason>`.
+- Creating, editing or deleting the file applies at the refresh points of a `mods.json` change.
+- `api.settingsFile` is `{path, status: 'missing' | 'loaded' | 'invalid' | 'ignored', error: string | null}`. `path` is the
+  absolute file to tell the user to edit (the `.json` one while none exists); `error` is the reason when `invalid`.
+- `settings.write` of a key the file sets fails with `setting_set_by_file: <key>`. `omd-mod selection-status` lists
+  such keys with origin `file` and the file under `settings_file`.
+
+Require `settings_file_v1` to use it.
+
 ## Host limits
 
 `host.json` may set `mod_limits`:
@@ -205,8 +228,8 @@ reports the composed view's diagnostics under `terminal`.
 ### Callback lifetime
 
 - General callbacks get a fresh VM context and activation.
-- A package's later callbacks may reuse its sandboxed runner process and a bounded cache of stripped source and
-  bytecode; runners are never shared between packages.
+- A package's later callbacks may reuse its sandboxed runner process and a bounded
+  bytecode cache; runners are never shared between packages.
 - Work a callback leaves running settles before its result is returned, and a host call from it after the callback
   returned fails that callback.
 - Persist state through `api.state`; module globals do not survive general callbacks.
@@ -272,8 +295,8 @@ manifest admits:
   and its `set` lands on the cleared state, even with the value it read; a change of repository during it cancels
   it.
 
-Durable `api.state` is unchanged. Use UI state for open dialogs and filters, and durable state for preferences that
-must survive a restart.
+Saved `api.state` is unchanged. Use UI state for open dialogs and filters, and saved state for preferences that
+must survive a restart (a power failure can lose the last commits; `store.*` data is fully synced).
 
 ### Experimental command views
 

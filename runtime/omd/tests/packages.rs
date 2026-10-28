@@ -532,12 +532,6 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 
     let store = store_with_node(&temp);
-    std::fs::create_dir(root.join("store").join(format!(
-        ".repository-{}.{}.tmp",
-        &revision[..12],
-        std::process::id()
-    )))
-    .unwrap();
     let source = ModPackageSource::Repository {
         repository: repository.canonicalize().unwrap().display().to_string(),
         revision: revision.clone(),

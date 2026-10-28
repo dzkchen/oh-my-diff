@@ -759,25 +759,23 @@ impl ModStore {
         bytes: &[u8],
         commit: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
+        let state = name.starts_with("state-");
         let limit = match name {
             "packages.lock.json" => 524_288,
             "package-transaction.json" => 1_048_576,
-            name if name.starts_with("state-") => STATE_LIMIT,
+            _ if state => STATE_LIMIT,
             _ => 65_536,
         };
         if bytes.len() > limit {
             return Err(failure("state_or_configuration_limit"));
         }
-        crate::fsio::write_bytes_before(
-            &self.root.join(name),
-            bytes,
-            if name.starts_with("state-") {
-                crate::fsio::Durability::Ordered
-            } else {
-                crate::fsio::Durability::Durable
-            },
-            commit,
-        )
+        // Mod state commits often and needs crash consistency, not durability; configuration and locks stay durable.
+        let durability = if state {
+            crate::fsio::Durability::Ordered
+        } else {
+            crate::fsio::Durability::Durable
+        };
+        crate::fsio::write_bytes_before(&self.root.join(name), bytes, durability, commit)
     }
 
     pub fn configuration(&self) -> Result<ModConfiguration> {
@@ -1007,7 +1005,8 @@ impl ModStore {
                         };
                         settings_origin.insert(key.clone(), origin);
                     }
-                    let error = if integrity != selection.sha256 {
+                    // A user can re-trust an edited source; administered content needs a package sync instead.
+                    let error = if integrity != selection.sha256 && !administered {
                         Some("source_changed: inspect and trust the new digest".to_owned())
                     } else {
                         super::selection_verdict(

@@ -38,7 +38,7 @@ omd-package mod enable omd_privacy
 - Images, audio and files aren't scanned unless `unscanned` is `deny`. Provider-side tools, other mods' network calls and processes you already allowed are out of reach.
 - The path check reads command text only. It misses paths built at run time. Globs and brace lists that could name a
   sensitive path ask, except the catch-all `*` and `.*` (so `ls -la .*` stays quiet; `cat .*` isn't caught).
-- Web search isn't scanned: it sends your recent messages and its queries as they are. Realtime calls are refused while it's on (`request_policy_unsupported_transport`). If the mod fails or times out, every request is refused. Turn the mod off in `/mods` to send again.
+- Web search isn't scanned: it sends your recent messages and its queries as they are. Realtime calls are refused while it's on (`request_policy_unsupported_transport`). If the mod fails or times out, every other request is refused, but web search still goes out unscanned. Turn the mod off in `/mods` to send again.
 - Saved state holds a salt and short fingerprints, never values. A fingerprint doesn't hide a guessable value, such as an IP address.
 
 Credit: behavior based on [secret-redactor](https://github.com/ray-amjad/awesome-claude-code-function-hooks/tree/12b5fea27a4bd1b88cd9c9b6abc1efc0756c6625/plugins/secret-redactor) by ray-amjad (MIT) and [Honmoon](https://github.com/pleaseai/honmoon/tree/e722aca593fa8bd2262f8f6451d27e47cc1cd054/packages/claude-plugin) by pleaseai (Apache-2.0); reimplemented, no code copied.

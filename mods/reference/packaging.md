@@ -232,7 +232,7 @@ and sources, so unblocking and enabling restores it.
 lose credentials and query strings. Its events:
 
 - `install`, `update`, `uninstall`, `rollback`, `enable`, `disable`, `quarantine`, `unblock`, `revoke`, `trust`,
-  `lifecycle`
+  `lifecycle`, `lifecycle_failed` (an uninstall script failed), `managed_deploy`, `managed_sync_refused`
 - `package_refused` (with an error code and the stripped source)
 - `load_denied` (a selection rejected at reload)
 

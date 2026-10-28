@@ -33,6 +33,10 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - HTTP streams (`http.open`, `http.read`, `http.close`); `http.request` is frozen.
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
+- `api.settingsFile` and the settings file (`settings_file_v1`).
+- Focus regions, `key_contexts`, the `region` and `help` key actions, `keys: 'all'` and a layout leaf's `style.focus`
+  (`terminal_focus_v1`).
+- Layout leaf `title` (`terminal_layout_title_v1`).
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 - `tools.original` (`tool_original_v1`), added after 1.0.0.
 - The `omd-mod-author cost` report, added after 1.0.0.

@@ -12,7 +12,8 @@ another request or stream hook holds the runtime.
 When a non-hook callback holds it, such as a tool waiting for the agent it spawned, a mod-spawned agent's request
 and every response stream proceed at once without hooks; other requests wait up to 2 s first.
 
-- Each skip is recorded as `middleware_skipped` with the hook and reason.
+- Each skip is recorded as `intercept_skipped` with the surface and reason (`mod_callback_in_flight` or
+  `mod_runtime_busy`).
 - A skipped or unsubscribed stream runs without stream hooks for the rest of that response.
 - The middleware log records only selections, transformations and fallbacks, and stops growing at 8 MiB.
 - These skips apply to `api.middleware` hooks. Interceptors hold the runtime only while a handler starts or
@@ -24,7 +25,7 @@ and every response stream proceed at once without hooks; other requests wait up 
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and
 host-operation provenance when a consumer calls it.
 
-- A nested call shares the initiating callback's cancellation, 128-call and 5 s execution budgets.
+- A nested call shares the initiating callback's cancellation, 512-call and 5 s execution budgets.
 - Recursive providers and chains beyond eight callback frames fail closed.
 - Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation.
 - Offline `host_calls` records the actual mod caller for every mocked operation.
@@ -106,8 +107,10 @@ host:
   as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
   Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
   import grant a runner; trusting or installing packages never does. A missing runner fails with
-  `runner_unavailable`, with no fallback to another program. Compiled modules cached in `<store>/cache/code` are
-  checked for corruption, not origin, so a process that can write the store can change what a trusted mod runs;
+  `runner_unavailable`, with no fallback to another program. The compiled-module cache in `<store>/cache/code` holds
+  only V8 bytecode and is not used while the broker or an administrator policy pins trust: the runner always compiles
+  the trusted package source, so the cache never supplies code text. Without the broker, a process that can write
+  the store can already change trust through `mods.json`, so the cache adds no authority there;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the
@@ -302,5 +305,6 @@ user and project mods; managed packages keep running while the policy lists them
 recovers from every customization.
 
 When a managed package fails, its required interceptors fail closed (`intercept_required_failed`) until an
-administrator changes or rolls back the policy. `omd-mod reset STORE managed.json` then `package-sync` repairs an
+administrator changes or rolls back the policy. An administrator's required `model_send` policy does not cover web
+search, which final-request policies never see. `omd-mod reset STORE managed.json` then `package-sync` repairs an
 unreadable deployment record, and until that sync the policy's targets fail closed as above.

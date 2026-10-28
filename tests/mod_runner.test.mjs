@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { callback, runner, runnerSync, surface } from './mod_runner.mjs';
+const served = ({ stdout }) => stdout.replace('{"ready":true}\n', '').trim().split('\n').map(line => JSON.parse(line));
 function run(source, extra = {}) {
   return runnerSync({ source, filename: 'fixture.ts', capabilities: [], state: null, settings: {}, event: 'inspect', ...extra });
 }
@@ -77,13 +79,25 @@ test('warm renders and continuation replays restore post-activation atoms', () =
   const result = spawnSync(runner, [], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
-  const replies = result.stdout.replace('{"ready":true}\n', '').trim().split('\n').map(JSON.parse);
+  const replies = served(result);
   assert.equal(replies.length, 4);
   assert.equal(replies[0].value.result.value, 1);
   assert.equal(replies[1].value.result.value, 1);
   assert.deepEqual(replies[2].host_call, receipt.call);
   assert.equal(replies[3].value.result.value, 1);
   for (const reply of replies) assert.deepEqual(reply.state, { value: 0 });
+  assert.equal(result.status, 0, result.stderr);
+});
+test('the code cache supplies bytecode only and is reported for offered modules', () => {
+  const source = 'export default api => api.command("who", () => "trusted")';
+  const key = createHash('sha256').update(`true:${source}`).digest('hex');
+  const offer = { code_cache: { [key]: { code: 'export default api => api.command("who", () => "tampered")', data: '' } } };
+  const request = { source, filename: 'fixture.ts', capabilities: ['commands'], state: null, settings: {}, event: 'command', name: 'who' };
+  const result = spawnSync(runner, [], { input: [offer, request].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000 });
+  const replies = served(result);
+  assert.equal(replies.at(-1).value, 'trusted');
+  const kept = replies.filter(reply => reply.code_cache).map(reply => reply.code_cache);
+  assert.deepEqual(kept.map(entry => [entry.key, Object.keys(entry).sort()]), [[key, ['data', 'key']]]);
   assert.equal(result.status, 0, result.stderr);
 });
 test('a callback clock stands still except across its own sleeps', () => {
@@ -127,18 +141,18 @@ test('component module steps deliver input, ticks and one post without host auth
   assert.match(run(writer, { capabilities: ['terminal', 'store'], event: 'component', name: 'w', payload: { now: 0, events: [] } }).error, /render_side_effect_refused/);
   const slow = { source: 'export default api => api.component("s", { view: () => { let x = 0; for (let i = 0; i < 1e7; i += 1) x = (x * 31 + i) | 0; return x === 0.5 ? [x] : []; } })',
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
-  const slowSteps = spawnSync(runner, [], {
+  const slowSteps = served(spawnSync(runner, [], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
-  }).stdout.replace('{"ready":true}\n', '').trim().split('\n').map(JSON.parse);
+  }));
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
   const probe = { source: 'export default api => api.component("c", { view: () => [{ type: "text", id: "t", label: "c", text: JSON.stringify([api.state.get(), api.uiState.get()]) }] })',
     filename: 'fixture.ts', capabilities: ['terminal', 'store'], state: { n: 1 }, ui_state: { open: 1 }, settings: {}, surface, event: 'component', name: 'c', serve: true, payload: { instance: 'c', now: 0, events: [] } };
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
-  const texts = spawnSync(runner, [], {
+  const texts = served(spawnSync(runner, [], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
-  }).stdout.replace('{"ready":true}\n', '').trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
+  })).map(reply => reply.value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
 });
 test('entrypoints import declared assets by relative path and report them', () => {

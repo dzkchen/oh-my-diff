@@ -10,7 +10,17 @@ export const fitView = (text: string, bytes: number, lines: number, encoded: num
   let { text: kept, cut } = clamp(text, bytes);
   const rows = kept.split('\n');
   if (rows.length > lines) { kept = rows.slice(0, lines).join('\n'); cut = true; }
-  while (size(JSON.stringify(kept)) > encoded) { const points = [...kept]; kept = points.slice(0, Math.floor(points.length * 0.9)).join(''); cut = true; }
+  if (size(JSON.stringify(kept)) > encoded) {
+    // A string encodes code point by code point, so the longest prefix within the budget is found in one pass.
+    let room = encoded - 2, end = 0;
+    for (const char of kept) {
+      room -= size(JSON.stringify(char)) - 2;
+      if (room < 0) break;
+      end += char.length;
+    }
+    kept = kept.slice(0, end);
+    cut = true;
+  }
   return { text: kept, cut };
 };
 const WIDE = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}/u;

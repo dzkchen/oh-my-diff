@@ -59,7 +59,7 @@ fn with<T>(
     let before = consents.clone();
     let result = change(&mut consents)?;
     if consents != before {
-        crate::fsio::write_private(&path, &consents)?;
+        crate::fsio::write_json(&path, &consents)?;
     }
     Ok(result)
 }

@@ -18,8 +18,8 @@ release.
 
 Only the current API loads.
 
-Upstream lag on 2026-10-23: none. Codex 0.164.0 is the latest stable Codex release. A newer Codex is supported once an
-OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
+Upstream lag on 2026-10-28: one release. Codex 0.165.0 (2026-10-27) is the latest stable Codex release; OMD supports
+0.164.0. A newer Codex is supported once an OMD release lists it here. Update and roll back OMD with `omd update` and `omd update rollback`
 ([install](../../docs/install.md#update)).
 
 ## What the host checks

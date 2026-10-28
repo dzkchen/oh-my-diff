@@ -25,7 +25,8 @@ OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 def shows(screen, phrase):
     words = phrase.split()
-    pattern = r"\s*".join(map(re.escape, words))
+    # A cursor move inside a redrawn word reads as a space, so a word may be split by one.
+    pattern = r"\s*".join(r"\s?".join(map(re.escape, word)) for word in words)
     pattern = (r"(?<!\w)" if re.match(r"\w", words[0]) else "") + pattern + (r"(?!\w)" if re.search(r"\w$", words[-1]) else "")
     return re.search(pattern, screen) is not None
 

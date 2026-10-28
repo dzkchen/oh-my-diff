@@ -8,6 +8,7 @@ const setupKey = 'setup';
 const setupWindow = 30 * 60_000;
 // The shared log only grows; its newest rows fit one host result with room for the settle calls.
 const LOG_TAIL_BYTES = 32_768;
+const LOG_TAIL_TIMEOUT_MS = 5_000;
 const SETTLE_POLLS = 6;
 const OUTPUT_BYTES = 12_288;
 export const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
@@ -89,7 +90,7 @@ export default function activate(api: ModAPI): void {
     return published;
   };
   const tail = (path: string) => {
-    const run = api.host.tryCall('exec.run', { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path], timeout_ms: 5_000 });
+    const run = api.host.tryCall('exec.run', { program: '/usr/bin/tail', argv: ['-c', String(LOG_TAIL_BYTES), path], timeout_ms: LOG_TAIL_TIMEOUT_MS });
     return run.ok && run.value.exit_code === 0 ? run.value.stdout : null;
   };
   // Cursor prices a run minutes after it ends; poll through six minutes and drain ready charges in bounded batches.

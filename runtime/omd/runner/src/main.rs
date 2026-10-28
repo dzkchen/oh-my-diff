@@ -357,43 +357,49 @@ fn compile<'s>(
             .get(&key)
             .map(|entry| (entry.code.clone(), entry.data.clone()))
     });
-    let offered = OFFERED.with_borrow(Option::is_some).then(|| {
-        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, key.as_bytes())
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    });
-    let stored = match (&cached, &offered) {
-        (None, Some(name)) => OFFERED.with_borrow(|offered| {
+    // The host lists every module it keeps: stored bytecode where it holds some, `null` otherwise.
+    let (offered, stored) = OFFERED
+        .with_borrow(|offered| {
             use base64::Engine as _;
-            let entry = offered.as_ref()?.get(name)?;
-            let data = base64::engine::general_purpose::STANDARD
-                .decode(entry["data"].as_str()?)
-                .ok()?;
-            Some((entry["code"].as_str()?.to_owned(), data))
-        }),
-        _ => None,
-    };
-    let from_store = cached.is_none() && stored.is_some();
-    let (code, data) = match cached.or(stored) {
+            let name = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, key.as_bytes())
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let data = offered.as_ref()?.get(&name)?["data"]
+                .as_str()
+                .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok());
+            Some((name, data))
+        })
+        .unzip();
+    let stored = stored.flatten().filter(|_| cached.is_none());
+    let from_store = stored.is_some();
+    let (code, data) = match cached {
         Some(entry) => entry,
-        None if typescript => match strip(source, identifier) {
-            Ok(code) => (code, Vec::new()),
-            Err((code, message, located)) => {
-                let text = string(scope, &message);
-                let exception = v8::Exception::syntax_error(scope, text);
-                if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
-                    let code_value = string(scope, code);
-                    set(scope, object, "code", code_value.into());
-                    let stack = string(scope, &format!("{located}SyntaxError [{code}]: {message}"));
-                    set(scope, object, "stack", stack.into());
+        // Stored entries hold bytecode only: the code is always this request's trusted source.
+        None => {
+            let code = if typescript {
+                match strip(source, identifier) {
+                    Ok(code) => code,
+                    Err((code, message, located)) => {
+                        let text = string(scope, &message);
+                        let exception = v8::Exception::syntax_error(scope, text);
+                        if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
+                            let code_value = string(scope, code);
+                            set(scope, object, "code", code_value.into());
+                            let stack =
+                                string(scope, &format!("{located}SyntaxError [{code}]: {message}"));
+                            set(scope, object, "stack", stack.into());
+                        }
+                        scope.throw_exception(exception);
+                        return None;
+                    }
                 }
-                scope.throw_exception(exception);
-                return None;
-            }
-        },
-        None => (source.to_owned(), Vec::new()),
+            } else {
+                source.to_owned()
+            };
+            (code, stored.unwrap_or_default())
+        }
     };
     let text = string(scope, &code);
     let name = string(scope, identifier);
@@ -453,10 +459,7 @@ fn compile<'s>(
         };
         let cache = module.get_unbound_module_script(scope).create_code_cache();
         if let Some(cache) = cache {
-            if let Some(name) = offered {
-                keep(name, &code, &cache);
-            }
-            remember(key, code, cache.to_vec());
+            record(offered, key, code, &cache);
         }
         module
     } else {
@@ -475,10 +478,7 @@ fn compile<'s>(
         let rejected = source.get_cached_data().is_some_and(|data| data.rejected());
         if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
         {
-            if let Some(name) = offered {
-                keep(name, &code, &cache);
-            }
-            remember(key, code, cache.to_vec());
+            record(offered, key, code, &cache);
         } else if !rejected && from_store {
             remember(key, code, data);
         }
@@ -489,11 +489,19 @@ fn compile<'s>(
     Some(module)
 }
 
-fn keep(name: String, code: &str, data: &[u8]) {
+/// Remembers fresh bytecode in this runner and, when the host asked for this module, reports it to be kept.
+fn record(offered: Option<String>, key: String, code: String, data: &[u8]) {
+    if let Some(name) = offered {
+        keep(name, data);
+    }
+    remember(key, code, data.to_vec());
+}
+
+fn keep(name: String, data: &[u8]) {
     use base64::Engine as _;
     let data = base64::engine::general_purpose::STANDARD.encode(data);
     COMPILED.with_borrow_mut(|compiled| {
-        compiled.push(serde_json::json!({"code_cache": {"key": name, "code": code, "data": data}}));
+        compiled.push(serde_json::json!({"code_cache": {"key": name, "data": data}}));
     });
 }
 

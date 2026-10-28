@@ -859,7 +859,16 @@ fn reject(
     Ok(())
 }
 
-/// Runs `work` on up to eight threads, returning results in input order; `active` cancels the rest.
+fn timed_out(error: &str) -> bool {
+    error.starts_with("callback_timeout")
+}
+
+/// The most runner calls `concurrently` runs at once.
+const MAX_WORKERS: usize = 8;
+/// How often a waiting `concurrently` checks `active`.
+const CANCEL_POLL: Duration = Duration::from_millis(10);
+
+/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 fn concurrently<T: Send, R: Send>(
     items: Vec<T>,
     active: &dyn Fn() -> bool,
@@ -867,7 +876,7 @@ fn concurrently<T: Send, R: Send>(
 ) -> Vec<R> {
     let workers = std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
-        .clamp(1, 8)
+        .clamp(1, MAX_WORKERS)
         .min(items.len());
     let cancelled = AtomicBool::new(false);
     let queue = Mutex::new(items.into_iter().enumerate());
@@ -894,7 +903,7 @@ fn concurrently<T: Send, R: Send>(
             if !active() {
                 cancelled.store(true, Ordering::Relaxed);
             }
-            match results.recv_timeout(Duration::from_millis(10)) {
+            match results.recv_timeout(CANCEL_POLL) {
                 Ok(result) => done.push(result),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -2747,8 +2756,8 @@ struct Loaded {
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String)>>,
-    /// The store's code cache root; `None` runs without one.
-    code_cache: Option<Arc<Path>>,
+    /// The store's code cache; `None` runs without one.
+    code_cache: Option<Arc<code_cache::CacheRoot>>,
     adapter: Option<Value>,
     state: Value,
     /// The state the inspection ran with; `state` follows later callbacks.
@@ -2778,10 +2787,12 @@ struct UiState {
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
 
+/// A store root and the checkout a host opened in.
+type ActivationKey = (PathBuf, Option<PathBuf>);
+
 /// Error-free inspections by store and checkout, newest first; a host opening there reuses one only for an unchanged selection and adapter.
-#[allow(clippy::type_complexity)]
-static ACTIVATED: Mutex<Vec<((PathBuf, Option<PathBuf>), BTreeMap<String, Loaded>)>> =
-    Mutex::new(Vec::new());
+static ACTIVATED: Mutex<Vec<(ActivationKey, BTreeMap<String, Loaded>)>> = Mutex::new(Vec::new());
+/// Checkouts `ACTIVATED` remembers; one process rarely opens hosts in more.
 const ACTIVATED_CHECKOUTS: usize = 8;
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -2949,8 +2960,11 @@ mod reload_tests {
         std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
         let mut host = ModHost::open(base.join("store")).unwrap();
         let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
+        assert!(host.loaded["hello"].code_cache.is_some());
         host.set_managed_policy(policy, owner, "alice").unwrap();
         let loaded = host.loaded["hello"].clone();
+        // Trust pinned outside the store turns the code cache off, also for a reused inspection.
+        assert!(loaded.code_cache.is_none());
         host.check_callback_authority(&loaded).unwrap();
         let reads = store::READS.get();
         for _ in 0..100 {
@@ -3895,6 +3909,17 @@ impl ModHost {
                 .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
     }
 
+    /// Retries a timed-out inspection of this configuration once.
+    fn schedule_inspect_retry(&mut self, hash: &str, initial: bool) {
+        self.inspect_retry = (self.inspect_retried != hash).then(|| (initial, Instant::now()));
+        hash.clone_into(&mut self.inspect_retried);
+    }
+
+    /// `stamp` if the configuration files still match it, so a change during the reload triggers another.
+    fn settled(&self, stamp: Option<ConfigurationStamp>) -> Option<ConfigurationStamp> {
+        stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp))
+    }
+
     /// A timed-out inspection is retried once it is 2 s old.
     fn inspect_retry_due(&self) -> bool {
         self.inspect_retry
@@ -3931,8 +3956,7 @@ impl ModHost {
         };
         let retrying = hash == self.configuration_sha256;
         if retrying && !self.inspect_retry_due() {
-            self.configuration_stamp = stamp
-                .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
+            self.configuration_stamp = self.settled(stamp);
             return Ok(false);
         }
         let configured = bytes
@@ -4046,6 +4070,13 @@ impl ModHost {
         )?;
         let adapters = Self::adapters(&selected);
         let seeded = std::mem::take(&mut self.seeded);
+        // Trust pinned outside the store (broker or managed policy) must not depend on files in it.
+        let caching = brokered.is_none() && self.managed.is_none();
+        let cache_root = || {
+            Arc::new(code_cache::CacheRoot::new(
+                self.store.root.join("cache").join("code"),
+            ))
+        };
         let mut next = BTreeMap::new();
         let mut inspections = Vec::new();
         for (id, (mut selection, package, source)) in selected {
@@ -4078,7 +4109,12 @@ impl ModHost {
                 })
             });
             if let Some(previous) = reused {
-                next.insert(id, previous.clone());
+                let mut reused = previous.clone();
+                reused.code_cache = match reused.code_cache.take() {
+                    Some(cache) if caching => Some(cache),
+                    _ => caching.then(cache_root),
+                };
+                next.insert(id, reused);
                 continue;
             }
             let assets = (|| {
@@ -4121,7 +4157,7 @@ impl ModHost {
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
-                code_cache: Some(self.store.root.join("cache").join("code").into()),
+                code_cache: caching.then(cache_root),
                 selection,
                 state: Value::Null,
                 registered_state: Arc::default(),
@@ -4166,13 +4202,9 @@ impl ModHost {
                             .get(&id)
                             .is_none_or(|previous| previous.error.is_some());
                     // The working mods stay; the transactional reload runs once more when a retry is due, then waits for a configuration change.
-                    if !lenient && error.to_string().starts_with("callback_timeout") {
-                        self.inspect_retry =
-                            (self.inspect_retried != hash).then(|| (initial, Instant::now()));
-                        self.inspect_retried.clone_from(&hash);
-                        self.configuration_stamp = stamp.clone().filter(|stamp| {
-                            configuration_stamps(&self.store.root).as_ref() == Some(stamp)
-                        });
+                    if !lenient && timed_out(&error.to_string()) {
+                        self.schedule_inspect_retry(&hash, initial);
+                        self.configuration_stamp = self.settled(stamp.clone());
                     }
                     fail(lenient, &mut loaded, error)?;
                 }
@@ -4207,12 +4239,9 @@ impl ModHost {
                 .len(),
         );
         // A timed-out inspection runs again at the next reload, once per configuration.
-        let timed_out = next.values().any(|loaded| {
-            loaded
-                .error
-                .as_deref()
-                .is_some_and(|error| error.starts_with("callback_timeout"))
-        });
+        let any_timed_out = next
+            .values()
+            .any(|loaded| loaded.error.as_deref().is_some_and(timed_out));
         for (id, previous) in &mut self.loaded {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
@@ -4248,14 +4277,13 @@ impl ModHost {
         }
         self.retain_environment();
         self.unserved = self.unserved_targets(&user);
-        self.inspect_retry =
-            (timed_out && self.inspect_retried != hash).then(|| (initial, Instant::now()));
-        if self.inspect_retry.is_some() {
-            self.inspect_retried.clone_from(&hash);
+        if any_timed_out {
+            self.schedule_inspect_retry(&hash, initial);
+        } else {
+            self.inspect_retry = None;
         }
         self.configuration_sha256 = hash;
-        self.configuration_stamp =
-            stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
+        self.configuration_stamp = self.settled(stamp);
         let key = (self.store.root.clone(), self.project.clone());
         let mut inspected: BTreeMap<_, _> = self
             .loaded
@@ -4944,7 +4972,7 @@ impl ModHost {
             }
             let timed_out = inspection
                 .as_ref()
-                .is_err_and(|error| error.to_string().starts_with("callback_timeout"));
+                .is_err_and(|error| timed_out(&error.to_string()));
             inspected.insert(id, (loaded, inspection));
             if timed_out {
                 break;

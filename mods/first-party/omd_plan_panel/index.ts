@@ -7,6 +7,7 @@ type View = { collapsed: boolean; all: boolean };
 
 const THREADS = 16;
 const STEPS = 40;
+// Well under the host's 512 KiB state limit (store.rs STATE_LIMIT), leaving room for the stored envelope.
 const BYTES = 160 * 1024;
 const GLYPH: Record<Status, string> = { pending: '○', inProgress: '◐', completed: '✓' };
 const TONE: Record<Status, TerminalTone> = { pending: 'normal', inProgress: 'accent', completed: 'muted' };

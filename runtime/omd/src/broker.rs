@@ -1,4 +1,4 @@
-use crate::fsio::write_private;
+use crate::fsio::write_json;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -473,7 +473,7 @@ impl Broker {
                 .lock()
                 .map_err(|_| failure("authority_state_poisoned"))?;
             match read_json(&record, Value::Null)? {
-                Value::Null => write_private(&record, &json!(uid))?,
+                Value::Null => write_json(&record, &json!(uid))?,
                 owner if owner != json!(uid) => return Err(failure(refused)),
                 _ => {}
             }
@@ -636,7 +636,7 @@ impl Broker {
                     .ok_or_else(|| failure("authority_request_invalid"))?;
                 let generation = current["generation"].as_u64().unwrap_or_default() + 1;
                 let next = json!({"generation": generation, "grants": grants});
-                write_private(&path, &next)?;
+                write_json(&path, &next)?;
                 next
             }
             "policy.get" => read_json(&self.root.join("policy.json"), json!({}))?
@@ -657,8 +657,8 @@ impl Broker {
                     (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
                 previous[key] = policy[key].clone();
                 policy[key] = arguments["value"].clone();
-                write_private(&kept, &previous)?;
-                write_private(&path, &policy)?;
+                write_json(&kept, &previous)?;
+                write_json(&path, &policy)?;
                 Value::Null
             }
             "policy.rollback" => {
@@ -675,8 +675,8 @@ impl Broker {
                 let restored = previous[key].take();
                 previous[key] = policy[key].take();
                 policy[key] = restored;
-                write_private(&kept, &previous)?;
-                write_private(&path, &policy)?;
+                write_json(&kept, &previous)?;
+                write_json(&path, &policy)?;
                 Value::Null
             }
             "peer.seal" | "peer.verify" => {
@@ -685,7 +685,7 @@ impl Broker {
                 let mut stored = read_json(&path, json!({}))?;
                 if !stored["key"].is_string() {
                     stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
-                    write_private(&path, &stored)?;
+                    write_json(&path, &stored)?;
                 }
                 let tag = hmac(
                     stored["key"].as_str().unwrap_or_default().as_bytes(),
@@ -718,14 +718,14 @@ impl Broker {
                             .ok_or_else(|| failure("authority_request_invalid"))?,
                         "head": digest_text(&arguments, "head")?,
                         "last": digest_text(&arguments, "last")?});
-                    write_private(&path, &anchor)?;
+                    write_json(&path, &anchor)?;
                 } else if op == "anchor.append" {
                     let entry = digest_text(&arguments, "sha256")?;
                     anchor = json!({"stream": stream,
                         "count": anchor["count"].as_u64().unwrap_or_default() + 1,
                         "head": chain(anchor["head"].as_str().unwrap_or_default(), &entry),
                         "last": entry});
-                    write_private(&path, &anchor)?;
+                    write_json(&path, &anchor)?;
                 }
                 anchor
             }

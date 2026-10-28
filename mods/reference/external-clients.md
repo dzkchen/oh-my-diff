@@ -175,7 +175,8 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
 - A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and
-  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload.
+  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 ### Host notifications and server requests
 
@@ -305,7 +306,7 @@ it sandboxed with `network: 'loopback'` (`network`) for a loopback `ws://` liste
 The UI process connects with the SDK in `@oh-my-diff/mod-api/client`:
 
 ```ts
-connect({url, token?, command?, name, renderer, operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
+connect({url, token?, command?, name, renderer, operations?, reconnect?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
 ```
 
 It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
@@ -313,7 +314,7 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The session's `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
   `recovery` and `request(method, params)` cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff, re-initializes, re-attaches, replays the last update, resumes the
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches, replays the last update, resumes the
   threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
 - `unsupported(component, renderer, drawable)` returns null or an `unsupported_element: <type> '<id>': <reason>;
   drawing its fallback "<text>"` error for a component the renderer cannot draw (a type outside `drawable`, a

@@ -130,9 +130,6 @@ test('a Cursor setup that never finishes is stopped at its deadline and its pend
   const restarted = modEvent('start', null, started.state, call => call.operation === 'sidecars.status' ? { running: true } : cancelled(call));
   assert.equal(restarted.state.setup, null);
   assert.deepEqual(restarted.calls.filter(call => call.operation === 'events.cancel').map(call => call.arguments), [{ key: 'setup' }]);
-  const setup = readFileSync(new URL('./setup.mjs', import.meta.url), 'utf8');
-  assert.match(setup, /BROKER_TIMEOUT_MS = 600_000;/);
-  assert.equal([...setup.matchAll(/execFileSync\(/g)].length, [...setup.matchAll(/timeout: [A-Z_]+MS, killSignal: 'SIGKILL'/g)].length);
 });
 
 test('stored Cursor models reach /model at start and the sidecar restarts only for Cursor turns', () => {

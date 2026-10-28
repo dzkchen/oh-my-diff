@@ -545,8 +545,7 @@ fn run(args: &[String]) -> io::Result<Value> {
             let call = match call {
                 [] => None,
                 [name] => Some((name.as_str(), Value::String(String::new()))),
-                [name, payload] => Some((name.as_str(), serde_json::from_str(payload)?)),
-                _ => None,
+                [name, payload, ..] => Some((name.as_str(), serde_json::from_str(payload)?)),
             };
             ModHost::cost(
                 store(root)?,

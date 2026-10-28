@@ -38,6 +38,7 @@ const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
+// The catalog is kept in UI state, which the host caps at 64 KiB (validate_ui_state); stop paging once the raw index pages reach it.
 const INDEX_BYTES = 65_536;
 const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
 const GROUPS = ['Needs attention', 'On', 'Off'];

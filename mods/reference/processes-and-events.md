@@ -13,8 +13,6 @@ managed process, feeds a terminal raster, or reacts to background events.
 - `framing: "content-length"` (default), `"ndjson"` or `"raw"`;
 - `network: "none"` or `"loopback"`.
 
-The protocol-named transports are removed.
-
 ### `process.exchange`
 
 `process.exchange` returns messages until the next one would push the encoded `messages` past 256 KiB (at most 64,

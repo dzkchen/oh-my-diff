@@ -655,7 +655,7 @@ impl Task {
                 return Err(denied("evidence event exceeds size limit"));
             }
             let path = self.evidence.join(format!("{:08}.json", state.sequence));
-            crate::fsio::create_private(&path, &bytes)?;
+            crate::fsio::create_new(&path, &bytes)?;
             let written = crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes));
             if written.is_err() {
                 let _ = fs::remove_file(&path);

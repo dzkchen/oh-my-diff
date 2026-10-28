@@ -1,7 +1,7 @@
 //! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 
 use crate::broker;
-use crate::fsio::write_private;
+use crate::fsio::write_json;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -197,7 +197,7 @@ impl Peers {
     }
 
     pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
-        write_private(
+        write_json(
             &self
                 .root
                 .join("sessions")
@@ -306,7 +306,7 @@ impl Peers {
             "to": {"session": to, "package": package}, "correlation": correlation, "data": data,
             "sent_at_ms": sent_at_ms, "expires_at_ms": sent_at_ms + ttl_ms});
         private_directory(&inbox)?;
-        write_private(
+        write_json(
             &inbox.join(format!("{id}.json")),
             &sealed(seal, "message", message)?,
         )?;
@@ -378,7 +378,7 @@ impl Peers {
             "correlation": message["correlation"]});
         let receipts = self.root.join("receipts").join(sender);
         private_directory(&receipts)?;
-        write_private(
+        write_json(
             &receipts.join(format!("{id}.json")),
             &sealed(seal, "receipt", receipt)?,
         )

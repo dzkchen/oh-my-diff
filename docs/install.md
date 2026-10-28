@@ -70,8 +70,7 @@ delete it to remove them.
 - **Locations:** `--root DIR` (default `~/.local/share/oh-my-diff`), `--bin-dir DIR` (default `~/.local/bin`). An
   existing command there becomes `NAME.before-omd` and comes back on uninstall.
 - **Layout:** under the root, `releases/` holds the current and previous generation, `stores/` your mod choices and
-  `objects/` one copy of each package source and management file, hard-linked into `catalog/` and every release
-  (an update upgrades an older install in place). `sessions/` holds one marker per open `codex`, cleared at the next launch
+  `objects/` one copy of each package source and management file, hard-linked into `catalog/` and every release. `sessions/` holds one marker per open `codex`, cleared at the next launch
   after it exits.
 - **Without `omd`:** `sh ~/.local/share/oh-my-diff/current/prefix/management/install.sh uninstall` (the script also
   takes `status` and `rollback`).

@@ -99,15 +99,18 @@ pub(crate) fn admit(
 pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::error::ApiError> {
     if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed()) {
         return Err(crate::error::ApiError::InvalidRequest {
-            message: format!("local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"),
+            message: format!(
+                "local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"
+            ),
         });
     }
     Ok(())
 }
 
-/// Web search sends recent conversation text and queries without passing final-request policies.
-pub const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
-pub const POLICED_UNARY_PATHS: &[&str] = &[
+/// Web search sends recent conversation text and queries without passing final-request policies; the unary paths
+/// below pass them, and any other unary request is refused while a policy is active.
+const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
+const POLICED_UNARY_PATHS: &[&str] = &[
     "images/generations",
     "images/edits",
     "memories/trace_summarize",
@@ -121,12 +124,13 @@ pub(crate) fn admit_unary(
     let thread = headers
         .get("thread-id")
         .and_then(|value| value.to_str().ok());
-    match (OBSERVER.get(), body) {
-        _ if path == UNPOLICED_SEARCH_PATH => {}
-        (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
-            observer.police_unary(thread, body)?
+    if path != UNPOLICED_SEARCH_PATH {
+        match (OBSERVER.get(), body) {
+            (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
+                observer.police_unary(thread, body)?
+            }
+            _ => reject_policed_transport(path)?,
         }
-        _ => reject_policed_transport(path)?,
     }
     if OBSERVER
         .get()

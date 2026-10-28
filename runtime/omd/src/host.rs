@@ -1615,6 +1615,7 @@ impl Host<'_> {
         }
         let path = directory.join(format!("{digest}.json"));
         crate::fsio::write_if_changed(&path, &bytes)?;
+        // An identical backup is left as it was, so keep that one private too.
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         Ok(json!({"reference": digest, "sha256": digest}))
     }

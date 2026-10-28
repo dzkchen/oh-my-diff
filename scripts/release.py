@@ -147,7 +147,8 @@ def check(version=None):
         if not entries or entries[0].get("version") != version:
             problems.append(f"the newest changelog entry is not {version}")
     problems += [f"broken link {item}" for item in broken_links()]
-    problems += [drift] if (drift := reference_drift()) else []
+    if drift := reference_drift():
+        problems.append(drift)
     if problems:
         raise SystemExit("\n".join(problems))
     print(f"release metadata consistent{f' for {version}' if version else ''}")

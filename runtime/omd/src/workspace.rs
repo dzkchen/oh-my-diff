@@ -120,12 +120,12 @@ pub struct WorkspaceChange {
     pub after: Option<String>,
 }
 
-fn invalid(message: &str) -> io::Error {
-    io::Error::other(message)
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::other(message.into())
 }
 
 fn hardlink(name: &str) -> io::Error {
-    invalid(&format!(
+    invalid(format!(
         "workspace hardlink rejected: {name} shares its contents with another file; replace it with a separate copy"
     ))
 }
@@ -164,7 +164,7 @@ fn read_version(
             }
             let after = input.metadata()?;
             if !same_file(&metadata, &after)? {
-                return Err(invalid(&format!(
+                return Err(invalid(format!(
                     "workspace file changed during read: {name}"
                 )));
             }
@@ -291,7 +291,7 @@ impl WorkspaceTransaction {
             }
             let expected = self.expected.get(name).cloned().flatten();
             if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
-                return Err(invalid(&format!("stale expected version for {name}")));
+                return Err(invalid(format!("stale expected version for {name}")));
             }
             before.insert(name.clone(), entry);
         }
@@ -391,7 +391,7 @@ impl WorkspaceTransaction {
                     .as_ref()
                     .map(|(bytes, _)| content_hash(bytes));
                 if &current != expected_after {
-                    return Err(invalid(&format!(
+                    return Err(invalid(format!(
                         "transaction failed: {error}; rollback conflict at {name}"
                     )));
                 }
@@ -745,7 +745,7 @@ fn visit(
         };
         let metadata = input.metadata()?;
         if !metadata.is_file() {
-            return Err(invalid(&format!("snapshot requires regular files: {name}")));
+            return Err(invalid(format!("snapshot requires regular files: {name}")));
         }
         if metadata.nlink() != 1 {
             return Err(hardlink(name));
@@ -762,7 +762,7 @@ fn visit(
         remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
         let after = fs::symlink_metadata(&path)?;
         if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-            return Err(invalid(&format!("source changed during snapshot: {name}")));
+            return Err(invalid(format!("source changed during snapshot: {name}")));
         }
         observed.insert(name.clone(), Some(metadata));
     }
@@ -918,7 +918,7 @@ impl Snapshot {
         let changed = self.changed_paths(candidate);
         for name in &changed {
             if self.files.get(name) != current.files.get(name) {
-                return Err(invalid(&format!("intervening edit conflicts: {name}")));
+                return Err(invalid(format!("intervening edit conflicts: {name}")));
             }
         }
         let mut merged = current.clone();

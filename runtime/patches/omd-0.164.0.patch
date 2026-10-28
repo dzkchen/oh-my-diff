@@ -31814,7 +31814,7 @@ index 5db90bba1ed508ca489297feebea342dc92254a0..76f1636eb04196318b7eb521618b5eb7
  pub use sandbox_integrity::FileContentsChecker;
  pub use sandbox_integrity::IntegrityFinding;
 diff --git a/codex-rs/sandboxing/src/manager.rs b/codex-rs/sandboxing/src/manager.rs
-index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..4a7b03dd95974dc244721f70ca2e50cd08a06bf1 100644
+index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..2095a79ad9a5f14c4e1f32e44bcccad31fe80d59 100644
 --- a/codex-rs/sandboxing/src/manager.rs
 +++ b/codex-rs/sandboxing/src/manager.rs
 @@ -20,6 +20,10 @@ use codex_network_proxy::NetworkProxy;
@@ -31832,9 +31832,9 @@ index f6c281a061d0af01ddf0ee9d56646ea5c0943ad9..4a7b03dd95974dc244721f70ca2e50cd
          }
      }
 
-+    /// Creates the filesystem-helper manager when `file_system_helpers` is set, otherwise the default one.
-+    pub fn for_policy(file_system_helpers: bool) -> Self {
-+        if file_system_helpers {
++    /// The filesystem-helper manager when the `file_system_helper_sandbox` setting is on, otherwise the default one.
++    pub fn for_policy(file_system_helper_sandbox: bool) -> Self {
++        if file_system_helper_sandbox {
 +            Self::for_file_system_helpers()
 +        } else {
 +            Self::new()
@@ -32966,10 +32966,20 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d4620103e 100644
+index 6687d053b4b506d5a7a36e88dc88d86914189b34..9a6b56c689734ee56934a572d6a7aa8ab17fbda8 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -126,6 +126,7 @@ impl App {
+@@ -23,6 +23,9 @@ use codex_app_server_protocol::ThreadGoalStatus;
+ #[cfg(target_os = "windows")]
+ use codex_app_server_protocol::WindowsSandboxSetupMode;
+
++/// A mod result's history cell queued within this of the result is drawn at once rather than at the next frame.
++const MOD_RESULT_DRAW_WINDOW: Duration = Duration::from_millis(50);
++
+ pub(super) const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
+
+ impl App {
+@@ -126,6 +129,7 @@ impl App {
                  event,
                  AppEvent::OpenAgentPicker
                      | AppEvent::SelectAgentThread(_)
@@ -32977,7 +32987,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
                      | AppEvent::StartSide { .. }
                      | AppEvent::ForkCurrentSession { .. }
                      | AppEvent::StartManagedWorktree {
-@@ -447,6 +448,129 @@ impl App {
+@@ -447,6 +451,129 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -33107,7 +33117,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -794,7 +918,10 @@ impl App {
+@@ -794,7 +921,10 @@ impl App {
                          return Ok(AppRunControl::Continue);
                      }
                  };
@@ -33119,7 +33129,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
                      Ok(reverted) => reverted,
                      Err(err) => {
                      // Validation and unsupported-method errors leave history unchanged. Other
-@@ -887,6 +1014,10 @@ impl App {
+@@ -887,6 +1017,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -33130,14 +33140,14 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -914,6 +1045,14 @@ impl App {
+@@ -914,6 +1048,14 @@ impl App {
              }
              AppEvent::InsertHistoryCell(cell) => {
                  self.insert_history_cell(tui, cell);
 +                if self
 +                    .mod_result_finished
 +                    .take()
-+                    .is_some_and(|finished| finished.elapsed() < Duration::from_millis(50))
++                    .is_some_and(|finished| finished.elapsed() < MOD_RESULT_DRAW_WINDOW)
 +                    && self.overlay.is_none()
 +                {
 +                    self.draw_now(tui)?;
@@ -33145,7 +33155,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
              }
              AppEvent::TurnTipReady { thread_id, turn_id } => {
                  self.turn_tips.ready(thread_id, &turn_id, self.transcript_cells.last());
-@@ -1760,8 +1899,18 @@ impl App {
+@@ -1760,8 +1902,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -33164,7 +33174,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2562,16 +2711,25 @@ impl App {
+@@ -2562,16 +2714,25 @@ impl App {
              }
              AppEvent::PersistModelSelection { model, effort } => {
                  self.app_event_tx.send(AppEvent::FollowTranscript);
@@ -33200,7 +33210,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..f12b579dfc527d6f6384e04c2f92078d
                      Ok(()) => {
                          let effort_label = effort
                              .as_ref()
-@@ -3116,6 +3274,14 @@ impl App {
+@@ -3116,6 +3277,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -35256,7 +35266,7 @@ index 57a66255c5544dd62a6754eb857cec017a7a9a65..9edd1b8e6240f0811afb4793125faab5
      /// across external refreshes.
      fn selected_index(&self) -> Option<usize> {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..4a4e3f81ec2c1e501a90fb8d79fc0585e4a60667 100644
+index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..e8fb6fc082ad90665a58d89c2f464dcc62c23304 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -390,6 +390,7 @@ mod draft_state;
@@ -35510,8 +35520,8 @@ index 90e854d12876d8bf2e0763e2253b5593aa77e4b9..4a4e3f81ec2c1e501a90fb8d79fc0585
 +            return false;
 +        }
 +        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-+            history_cell::new_error_event(format!(
-+                "'/{command}' takes no images; remove them to run it."
++            history_cell::new_error_event(super::slash_commands::mod_command_images_refused(
++                command,
 +            )),
 +        )));
 +        true
@@ -37133,10 +37143,19 @@ index fb95a97014dd9a6090d41de481d2f82fb8e741a7..e1a7846e062d89a9e0af26ca547c627b
 
  impl RequestUserInputOverlay {
 diff --git a/codex-rs/tui/src/bottom_pane/slash_commands.rs b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d425902b54680 100644
+index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..80e16a43e349bae646ea2fff232948907868f485 100644
 --- a/codex-rs/tui/src/bottom_pane/slash_commands.rs
 +++ b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-@@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
+@@ -17,10 +17,16 @@ pub(crate) struct ServiceTierCommand {
+     pub(crate) description: String,
+ }
+
++/// The error when a mod command is submitted with attached images, which mod commands can't receive.
++pub(crate) fn mod_command_images_refused(command: &str) -> String {
++    format!("'/{command}' takes no images; remove them to run it.")
++}
++
+ #[derive(Clone, Debug, PartialEq, Eq)]
  pub(crate) enum SlashCommandItem {
      Builtin(SlashCommand),
      ServiceTier(ServiceTierCommand),
@@ -37144,7 +37163,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
  }
 
  impl SlashCommandItem {
-@@ -28,6 +29,7 @@ impl SlashCommandItem {
+@@ -28,6 +34,7 @@ impl SlashCommandItem {
          match self {
              Self::Builtin(cmd) => cmd.command(),
              Self::ServiceTier(command) => &command.name,
@@ -37152,7 +37171,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
          }
      }
 
-@@ -35,13 +37,14 @@ impl SlashCommandItem {
+@@ -35,13 +42,14 @@ impl SlashCommandItem {
          match self {
              Self::Builtin(cmd) => cmd.supports_inline_args(),
              Self::ServiceTier(_) => false,
@@ -37168,7 +37187,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
          }
      }
 
-@@ -49,8 +52,24 @@ impl SlashCommandItem {
+@@ -49,8 +57,24 @@ impl SlashCommandItem {
          match self {
              Self::Builtin(cmd) => cmd.available_during_task(),
              Self::ServiceTier(_) => true,
@@ -37193,7 +37212,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
  }
 
  #[derive(Clone, Copy, Debug, Default)]
-@@ -70,6 +89,7 @@ pub(crate) struct BuiltinCommandFlags {
+@@ -70,6 +94,7 @@ pub(crate) struct BuiltinCommandFlags {
 
  /// Return the built-ins that should be visible/usable for the current input.
  pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static str, SlashCommand)> {
@@ -37201,7 +37220,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
      built_in_slash_commands()
          .into_iter()
          .filter(|(_, cmd)| flags.allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
-@@ -84,6 +104,8 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
+@@ -84,6 +109,8 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
              flags.daybreak_command_description.is_some() || *cmd != SlashCommand::Daybreak
          })
          .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
@@ -37210,7 +37229,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
          .collect()
  }
 
-@@ -91,10 +113,27 @@ pub(crate) fn commands_for_input(
+@@ -91,10 +118,27 @@ pub(crate) fn commands_for_input(
      flags: BuiltinCommandFlags,
      service_tier_commands: &[ServiceTierCommand],
  ) -> Vec<SlashCommandItem> {
@@ -37239,7 +37258,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
          if cmd == SlashCommand::Model && tiers_enabled {
              commands.extend(
                  service_tier_commands
-@@ -104,10 +143,39 @@ pub(crate) fn commands_for_input(
+@@ -104,10 +148,39 @@ pub(crate) fn commands_for_input(
              );
          }
      }
@@ -37281,7 +37300,7 @@ index 4c455ed8c13b13046431bc5258aea0d5bb53ea3d..0d767d332c186419551c697a3f4d4259
  }
 
  /// Find a single built-in command by a recognized name or alias, after applying feature gating.
-@@ -137,20 +205,27 @@ pub(crate) fn find_slash_command(
+@@ -137,20 +210,27 @@ pub(crate) fn find_slash_command(
      flags: BuiltinCommandFlags,
      service_tier_commands: &[ServiceTierCommand],
  ) -> Option<SlashCommandItem> {
@@ -38453,7 +38472,7 @@ index f505fdde3841a00739620ddc28201f33de635d26..cf083644ec31879e1d47f7303163d377
                  path,
              });
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index e9ea6e42fec43479cba9ca940d4516a8151219b3..e6a436670a7ab40c0374fb9773ce491797dd8387 100644
+index e9ea6e42fec43479cba9ca940d4516a8151219b3..32e9c302591c323d74b006943d86559f7cbaa3e3 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 @@ -18,14 +18,15 @@ use crate::goal_display::GOAL_USAGE;
@@ -38577,14 +38596,16 @@ index e9ea6e42fec43479cba9ca940d4516a8151219b3..e6a436670a7ab40c0374fb9773ce4917
      fn dispatch_prepared_command_with_args(
          &mut self,
          cmd: SlashCommand,
-@@ -1189,9 +1261,33 @@ impl ChatWidget {
+@@ -1189,9 +1261,35 @@ impl ChatWidget {
              );
              return QueueDrain::Continue;
          };
 +        if matches!(command, SlashCommandItem::Mod(_))
 +            && (!local_images.is_empty() || !remote_image_urls.is_empty())
 +        {
-+            self.add_error_message(format!("'/{name}' takes no images; remove them to run it."));
++            self.add_error_message(
++                crate::bottom_pane::slash_commands::mod_command_images_refused(name),
++            );
 +            self.restore_user_message_to_composer(UserMessage {
 +                text,
 +                local_images,
@@ -38611,7 +38632,7 @@ index e9ea6e42fec43479cba9ca940d4516a8151219b3..e6a436670a7ab40c0374fb9773ce4917
                  SlashCommandItem::Builtin(cmd) => {
                      self.dispatch_command_from_source(cmd, SlashCommandDispatchSource::Queued);
                      self.queued_command_drain_result(cmd)
-@@ -1200,8 +1296,16 @@ impl ChatWidget {
+@@ -1200,8 +1298,16 @@ impl ChatWidget {
                      self.handle_service_tier_command_dispatch(command);
                      QueueDrain::Continue
                  }
@@ -38628,7 +38649,7 @@ index e9ea6e42fec43479cba9ca940d4516a8151219b3..e6a436670a7ab40c0374fb9773ce4917
 
          if !command.supports_inline_args() {
              self.submit_user_message(UserMessage {
-@@ -1232,18 +1336,20 @@ impl ChatWidget {
+@@ -1232,18 +1338,20 @@ impl ChatWidget {
              rest_offset + leading_trimmed,
              &text_elements,
          );
@@ -38661,7 +38682,7 @@ index e9ea6e42fec43479cba9ca940d4516a8151219b3..e6a436670a7ab40c0374fb9773ce4917
          self.queued_command_drain_result(cmd)
      }
 
-@@ -1338,6 +1444,7 @@ impl ChatWidget {
+@@ -1338,6 +1446,7 @@ impl ChatWidget {
              | SlashCommand::Review
              | SlashCommand::Model
              | SlashCommand::Presets
@@ -48090,10 +48111,10 @@ index 0000000000000000000000000000000000000000..69c2876cf462293fa8f8ac863bb07f1a
 +}
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0dbcfbf85ff70ecc5bbac93346f2cf2e3c825552
+index 0000000000000000000000000000000000000000..366a90058552b1b93be475fd99368e624c080f5c
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,193 @@
 +use codex_client::EncodedJsonBody;
 +use codex_client::Request;
 +use codex_client::StreamResponse;
@@ -48195,15 +48216,18 @@ index 0000000000000000000000000000000000000000..0dbcfbf85ff70ecc5bbac93346f2cf2e
 +pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::error::ApiError> {
 +    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed()) {
 +        return Err(crate::error::ApiError::InvalidRequest {
-+            message: format!("local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"),
++            message: format!(
++                "local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"
++            ),
 +        });
 +    }
 +    Ok(())
 +}
 +
-+/// Web search sends recent conversation text and queries without passing final-request policies.
-+pub const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
-+pub const POLICED_UNARY_PATHS: &[&str] = &[
++/// Web search sends recent conversation text and queries without passing final-request policies; the unary paths
++/// below pass them, and any other unary request is refused while a policy is active.
++const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
++const POLICED_UNARY_PATHS: &[&str] = &[
 +    "images/generations",
 +    "images/edits",
 +    "memories/trace_summarize",
@@ -48217,12 +48241,13 @@ index 0000000000000000000000000000000000000000..0dbcfbf85ff70ecc5bbac93346f2cf2e
 +    let thread = headers
 +        .get("thread-id")
 +        .and_then(|value| value.to_str().ok());
-+    match (OBSERVER.get(), body) {
-+        _ if path == UNPOLICED_SEARCH_PATH => {}
-+        (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
-+            observer.police_unary(thread, body)?
++    if path != UNPOLICED_SEARCH_PATH {
++        match (OBSERVER.get(), body) {
++            (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
++                observer.police_unary(thread, body)?
++            }
++            _ => reject_policed_transport(path)?,
 +        }
-+        _ => reject_policed_transport(path)?,
 +    }
 +    if OBSERVER
 +        .get()
@@ -56818,10 +56843,10 @@ index 0000000000000000000000000000000000000000..109875e14f35a2df76d66c2e8b79c4fe
 +}
 diff --git a/codex-rs/ext/omd/src/bin/omd-mod.rs b/codex-rs/ext/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e7ac2d8cc91c118782f8c5929136a794e76ac210
+index 0000000000000000000000000000000000000000..edd4a0a85623ef9ff0182fd8221625c82dc77634
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,592 @@
+@@ -0,0 +1,591 @@
 +use codex_omd::MANAGED_POLICY_FILE;
 +use codex_omd::MANAGED_POLICY_KEY;
 +use codex_omd::Managed;
@@ -57369,8 +57394,7 @@ index 0000000000000000000000000000000000000000..e7ac2d8cc91c118782f8c5929136a794
 +            let call = match call {
 +                [] => None,
 +                [name] => Some((name.as_str(), Value::String(String::new()))),
-+                [name, payload] => Some((name.as_str(), serde_json::from_str(payload)?)),
-+                _ => None,
++                [name, payload, ..] => Some((name.as_str(), serde_json::from_str(payload)?)),
 +            };
 +            ModHost::cost(
 +                store(root)?,
@@ -61504,7 +61528,7 @@ index 0000000000000000000000000000000000000000..b7512def089c3293fc986e13a6f36b2c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..40e4e1dc5536920044aa349fb8f61b97002410ea
+index 0000000000000000000000000000000000000000..25609f0d0c90b4b50fcf1615178bef578a26a9a0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,715 @@
@@ -62082,7 +62106,7 @@ index 0000000000000000000000000000000000000000..40e4e1dc5536920044aa349fb8f61b97
 +    fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
 +        let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
 +        let path = self.evidence.join(name);
-+        match codex_omd::fsio::create_private(&path, &bytes) {
++        match codex_omd::fsio::create_new(&path, &bytes) {
 +            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
 +                let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
 +                if serde_json::from_slice::<Value>(&existing).is_err() {
@@ -88823,10 +88847,10 @@ index 0000000000000000000000000000000000000000..782b9faae4eeff2303e7b46dda2dcfc0
 +  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..732af27c0a0448542440ae2cfa9f7cf9f233e77b
+index 0000000000000000000000000000000000000000..febef4e11fecac483ecb9be1c00d7efe8404dd3e
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
-@@ -0,0 +1,1108 @@
+@@ -0,0 +1,1116 @@
 +mod crypto;
 +
 +use serde_json::Map;
@@ -89186,43 +89210,49 @@ index 0000000000000000000000000000000000000000..732af27c0a0448542440ae2cfa9f7cf9
 +            .get(&key)
 +            .map(|entry| (entry.code.clone(), entry.data.clone()))
 +    });
-+    let offered = OFFERED.with_borrow(Option::is_some).then(|| {
-+        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, key.as_bytes())
-+            .as_ref()
-+            .iter()
-+            .map(|byte| format!("{byte:02x}"))
-+            .collect::<String>()
-+    });
-+    let stored = match (&cached, &offered) {
-+        (None, Some(name)) => OFFERED.with_borrow(|offered| {
++    // The host lists every module it keeps: stored bytecode where it holds some, `null` otherwise.
++    let (offered, stored) = OFFERED
++        .with_borrow(|offered| {
 +            use base64::Engine as _;
-+            let entry = offered.as_ref()?.get(name)?;
-+            let data = base64::engine::general_purpose::STANDARD
-+                .decode(entry["data"].as_str()?)
-+                .ok()?;
-+            Some((entry["code"].as_str()?.to_owned(), data))
-+        }),
-+        _ => None,
-+    };
-+    let from_store = cached.is_none() && stored.is_some();
-+    let (code, data) = match cached.or(stored) {
++            let name = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, key.as_bytes())
++                .as_ref()
++                .iter()
++                .map(|byte| format!("{byte:02x}"))
++                .collect::<String>();
++            let data = offered.as_ref()?.get(&name)?["data"]
++                .as_str()
++                .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok());
++            Some((name, data))
++        })
++        .unzip();
++    let stored = stored.flatten().filter(|_| cached.is_none());
++    let from_store = stored.is_some();
++    let (code, data) = match cached {
 +        Some(entry) => entry,
-+        None if typescript => match strip(source, identifier) {
-+            Ok(code) => (code, Vec::new()),
-+            Err((code, message, located)) => {
-+                let text = string(scope, &message);
-+                let exception = v8::Exception::syntax_error(scope, text);
-+                if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
-+                    let code_value = string(scope, code);
-+                    set(scope, object, "code", code_value.into());
-+                    let stack = string(scope, &format!("{located}SyntaxError [{code}]: {message}"));
-+                    set(scope, object, "stack", stack.into());
++        // Stored entries hold bytecode only: the code is always this request's trusted source.
++        None => {
++            let code = if typescript {
++                match strip(source, identifier) {
++                    Ok(code) => code,
++                    Err((code, message, located)) => {
++                        let text = string(scope, &message);
++                        let exception = v8::Exception::syntax_error(scope, text);
++                        if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
++                            let code_value = string(scope, code);
++                            set(scope, object, "code", code_value.into());
++                            let stack =
++                                string(scope, &format!("{located}SyntaxError [{code}]: {message}"));
++                            set(scope, object, "stack", stack.into());
++                        }
++                        scope.throw_exception(exception);
++                        return None;
++                    }
 +                }
-+                scope.throw_exception(exception);
-+                return None;
-+            }
-+        },
-+        None => (source.to_owned(), Vec::new()),
++            } else {
++                source.to_owned()
++            };
++            (code, stored.unwrap_or_default())
++        }
 +    };
 +    let text = string(scope, &code);
 +    let name = string(scope, identifier);
@@ -89282,10 +89312,7 @@ index 0000000000000000000000000000000000000000..732af27c0a0448542440ae2cfa9f7cf9
 +        };
 +        let cache = module.get_unbound_module_script(scope).create_code_cache();
 +        if let Some(cache) = cache {
-+            if let Some(name) = offered {
-+                keep(name, &code, &cache);
-+            }
-+            remember(key, code, cache.to_vec());
++            record(offered, key, code, &cache);
 +        }
 +        module
 +    } else {
@@ -89304,10 +89331,7 @@ index 0000000000000000000000000000000000000000..732af27c0a0448542440ae2cfa9f7cf9
 +        let rejected = source.get_cached_data().is_some_and(|data| data.rejected());
 +        if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
 +        {
-+            if let Some(name) = offered {
-+                keep(name, &code, &cache);
-+            }
-+            remember(key, code, cache.to_vec());
++            record(offered, key, code, &cache);
 +        } else if !rejected && from_store {
 +            remember(key, code, data);
 +        }
@@ -89318,11 +89342,19 @@ index 0000000000000000000000000000000000000000..732af27c0a0448542440ae2cfa9f7cf9
 +    Some(module)
 +}
 +
-+fn keep(name: String, code: &str, data: &[u8]) {
++/// Remembers fresh bytecode in this runner and, when the host asked for this module, reports it to be kept.
++fn record(offered: Option<String>, key: String, code: String, data: &[u8]) {
++    if let Some(name) = offered {
++        keep(name, data);
++    }
++    remember(key, code, data.to_vec());
++}
++
++fn keep(name: String, data: &[u8]) {
 +    use base64::Engine as _;
 +    let data = base64::engine::general_purpose::STANDARD.encode(data);
 +    COMPILED.with_borrow_mut(|compiled| {
-+        compiled.push(serde_json::json!({"code_cache": {"key": name, "code": code, "data": data}}));
++        compiled.push(serde_json::json!({"code_cache": {"key": name, "data": data}}));
 +    });
 +}
 +
@@ -89956,7 +89988,7 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..123517675483591afaebf8716995e3db52a046ff
+index 0000000000000000000000000000000000000000..2405160ceb1ebaad147eea1a8462d7d258c5ecaf
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
 @@ -0,0 +1,1535 @@
@@ -90617,7 +90649,7 @@ index 0000000000000000000000000000000000000000..123517675483591afaebf8716995e3db
 +                return Err(denied("evidence event exceeds size limit"));
 +            }
 +            let path = self.evidence.join(format!("{:08}.json", state.sequence));
-+            crate::fsio::create_private(&path, &bytes)?;
++            crate::fsio::create_new(&path, &bytes)?;
 +            let written = crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes));
 +            if written.is_err() {
 +                let _ = fs::remove_file(&path);
@@ -95859,10 +95891,10 @@ index 0000000000000000000000000000000000000000..e0065379f85e81195d411f7aff23d166
 +mod tests;
 diff --git a/codex-rs/omd/src/blob_store_tests.rs b/codex-rs/omd/src/blob_store_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1dd0bb6965d6ca6dfd49e75d3b9b5f62be5e8f98
+index 0000000000000000000000000000000000000000..06c82632188fd7207163dbc4c7e3d01bb7422bff
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store_tests.rs
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,288 @@
 +use super::*;
 +use crate::resource_data::ResourceBinding;
 +
@@ -95952,15 +95984,10 @@ index 0000000000000000000000000000000000000000..1dd0bb6965d6ca6dfd49e75d3b9b5f62
 +}
 +
 +#[test]
-+fn put_blob_survives_a_stale_temporary_and_repairs_a_truncated_blob() {
++fn put_blob_repairs_a_truncated_blob() {
 +    with_store(|store| {
 +        let digest = hash(b"hello");
 +        let directory = store.blob_directory().unwrap();
-+        fs::write(
-+            directory.join(format!(".{digest}.{}", std::process::id())),
-+            b"",
-+        )
-+        .unwrap();
 +        assert_eq!(store.put_blob(b"hello").unwrap(), digest);
 +        fs::write(directory.join(format!("{digest}.bin")), b"he").unwrap();
 +        assert_eq!(store.put_blob(b"hello").unwrap(), digest);
@@ -96158,11 +96185,11 @@ index 0000000000000000000000000000000000000000..1dd0bb6965d6ca6dfd49e75d3b9b5f62
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f1f2e75b5
+index 0000000000000000000000000000000000000000..6124efdbdadf108c1587625c3626bddc5322ec0e
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
 @@ -0,0 +1,1012 @@
-+use crate::fsio::write_private;
++use crate::fsio::write_json;
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -96637,7 +96664,7 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                .lock()
 +                .map_err(|_| failure("authority_state_poisoned"))?;
 +            match read_json(&record, Value::Null)? {
-+                Value::Null => write_private(&record, &json!(uid))?,
++                Value::Null => write_json(&record, &json!(uid))?,
 +                owner if owner != json!(uid) => return Err(failure(refused)),
 +                _ => {}
 +            }
@@ -96800,7 +96827,7 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                    .ok_or_else(|| failure("authority_request_invalid"))?;
 +                let generation = current["generation"].as_u64().unwrap_or_default() + 1;
 +                let next = json!({"generation": generation, "grants": grants});
-+                write_private(&path, &next)?;
++                write_json(&path, &next)?;
 +                next
 +            }
 +            "policy.get" => read_json(&self.root.join("policy.json"), json!({}))?
@@ -96821,8 +96848,8 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                    (read_json(&path, json!({}))?, read_json(&kept, json!({}))?);
 +                previous[key] = policy[key].clone();
 +                policy[key] = arguments["value"].clone();
-+                write_private(&kept, &previous)?;
-+                write_private(&path, &policy)?;
++                write_json(&kept, &previous)?;
++                write_json(&path, &policy)?;
 +                Value::Null
 +            }
 +            "policy.rollback" => {
@@ -96839,8 +96866,8 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                let restored = previous[key].take();
 +                previous[key] = policy[key].take();
 +                policy[key] = restored;
-+                write_private(&kept, &previous)?;
-+                write_private(&path, &policy)?;
++                write_json(&kept, &previous)?;
++                write_json(&path, &policy)?;
 +                Value::Null
 +            }
 +            "peer.seal" | "peer.verify" => {
@@ -96849,7 +96876,7 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                let mut stored = read_json(&path, json!({}))?;
 +                if !stored["key"].is_string() {
 +                    stored = json!({"key": format!("{}{}", nonce()?, nonce()?)});
-+                    write_private(&path, &stored)?;
++                    write_json(&path, &stored)?;
 +                }
 +                let tag = hmac(
 +                    stored["key"].as_str().unwrap_or_default().as_bytes(),
@@ -96882,14 +96909,14 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +                            .ok_or_else(|| failure("authority_request_invalid"))?,
 +                        "head": digest_text(&arguments, "head")?,
 +                        "last": digest_text(&arguments, "last")?});
-+                    write_private(&path, &anchor)?;
++                    write_json(&path, &anchor)?;
 +                } else if op == "anchor.append" {
 +                    let entry = digest_text(&arguments, "sha256")?;
 +                    anchor = json!({"stream": stream,
 +                        "count": anchor["count"].as_u64().unwrap_or_default() + 1,
 +                        "head": chain(anchor["head"].as_str().unwrap_or_default(), &entry),
 +                        "last": entry});
-+                    write_private(&path, &anchor)?;
++                    write_json(&path, &anchor)?;
 +                }
 +                anchor
 +            }
@@ -97176,10 +97203,10 @@ index 0000000000000000000000000000000000000000..bff03c3194705ba39bf69e064f33890f
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..092cde218289f8628a40894ffda18a77d8b8eddc
+index 0000000000000000000000000000000000000000..ffb19d6a9449bd11c68b12fa2d2301732e85a13f
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,423 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -97598,9 +97625,7 @@ index 0000000000000000000000000000000000000000..092cde218289f8628a40894ffda18a77
 +    let writers: Vec<_> = (0..8)
 +        .map(|writer| {
 +            let path = path.clone();
-+            std::thread::spawn(move || {
-+                (0..50).all(|_| write_private(&path, &json!(writer)).is_ok())
-+            })
++            std::thread::spawn(move || (0..50).all(|_| write_json(&path, &json!(writer)).is_ok()))
 +        })
 +        .collect();
 +    assert!(writers.into_iter().all(|writer| writer.join().unwrap()));
@@ -100306,7 +100331,7 @@ index 0000000000000000000000000000000000000000..f49e17b382d90a7ce2b3d24f7e0ad5e2
 +}
 diff --git a/codex-rs/omd/src/consents.rs b/codex-rs/omd/src/consents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9406e1a0975c4cbda5087ee748ec009e6700262f
+index 0000000000000000000000000000000000000000..db8ba9074feb6af71eca6eb31a46aaf4b2bafa18
 --- /dev/null
 +++ b/codex-rs/omd/src/consents.rs
 @@ -0,0 +1,167 @@
@@ -100371,7 +100396,7 @@ index 0000000000000000000000000000000000000000..9406e1a0975c4cbda5087ee748ec009e
 +    let before = consents.clone();
 +    let result = change(&mut consents)?;
 +    if consents != before {
-+        crate::fsio::write_private(&path, &consents)?;
++        crate::fsio::write_json(&path, &consents)?;
 +    }
 +    Ok(result)
 +}
@@ -103135,26 +103160,33 @@ index 0000000000000000000000000000000000000000..7f016fb395d63716bdf94a2f8baae584
 +}
 diff --git a/codex-rs/omd/src/fsio.rs b/codex-rs/omd/src/fsio.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0fc013e8fc0944c48c11b609fd7cc5beef4b8cf8
+index 0000000000000000000000000000000000000000..f63928c4458c4f48aa78f4d86ce40d5b5a90ea12
 --- /dev/null
 +++ b/codex-rs/omd/src/fsio.rs
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,101 @@
++//! The host's one file writer: every write stages a 0600 temporary beside the target and renames it over, so a crash
++//! leaves the old or the new file, never a torn one.
++
 +use std::fs;
 +use std::io;
 +use std::io::Write;
 +use std::path::Path;
 +
++/// Staging files start with this; directory scans skip them.
 +pub const STAGING_PREFIX: &str = ".tmp";
 +
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +pub enum Durability {
++    /// The data and the rename survive power loss: the file and its directory are synced.
 +    Durable,
 +    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state).
 +    Ordered,
++    /// Atomic but unsynced: a crash leaves the old or new file, power loss may lose the write.
 +    Volatile,
 +}
 +
-+pub fn write_private(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
++/// Replaces `path` with `value` as JSON, durably.
++pub fn write_json(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
 +    write_bytes(path, &serde_json::to_vec(value)?, Durability::Durable)
 +}
 +
@@ -103162,6 +103194,7 @@ index 0000000000000000000000000000000000000000..0fc013e8fc0944c48c11b609fd7cc5be
 +    write_bytes_before(path, bytes, durability, || Ok(()))
 +}
 +
++/// Replaces `path`, running `before_replace` once the bytes are staged; its error leaves `path` untouched.
 +pub fn write_bytes_before(
 +    path: &Path,
 +    bytes: &[u8],
@@ -103177,7 +103210,8 @@ index 0000000000000000000000000000000000000000..0fc013e8fc0944c48c11b609fd7cc5be
 +    Ok(())
 +}
 +
-+pub fn create_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
++/// Creates `path` durably, failing if it exists; the file is removed again if its directory can't be synced.
++pub fn create_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 +    let (parent, file) = staged(path, bytes, Durability::Durable)?;
 +    file.persist_noclobber(path).map_err(|error| error.error)?;
 +    fs::File::open(parent)
@@ -103221,6 +103255,7 @@ index 0000000000000000000000000000000000000000..0fc013e8fc0944c48c11b609fd7cc5be
 +    }
 +}
 +
++/// Durably replaces `path` unless it already holds exactly `bytes`.
 +pub fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
 +    let unchanged = fs::symlink_metadata(path)
 +        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == bytes.len() as u64)
@@ -103648,10 +103683,10 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1f5e47214da07e8f9f1bf17a98f0298e52381a6
+index 0000000000000000000000000000000000000000..d57a480667e12316291636bb5b1920c2357070ef
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1772 @@
+@@ -0,0 +1,1773 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -105269,6 +105304,7 @@ index 0000000000000000000000000000000000000000..b1f5e47214da07e8f9f1bf17a98f0298
 +        }
 +        let path = directory.join(format!("{digest}.json"));
 +        crate::fsio::write_if_changed(&path, &bytes)?;
++        // An identical backup is left as it was, so keep that one private too.
 +        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
 +        Ok(json!({"reference": digest, "sha256": digest}))
 +    }
@@ -107471,10 +107507,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe39a42ef0
+index 0000000000000000000000000000000000000000..1eb5011700f3b53b9d533ee2c7adfbd1116b8a35
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6722 @@
+@@ -0,0 +1,6750 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -108336,7 +108372,16 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +    Ok(())
 +}
 +
-+/// Runs `work` on up to eight threads, returning results in input order; `active` cancels the rest.
++fn timed_out(error: &str) -> bool {
++    error.starts_with("callback_timeout")
++}
++
++/// The most runner calls `concurrently` runs at once.
++const MAX_WORKERS: usize = 8;
++/// How often a waiting `concurrently` checks `active`.
++const CANCEL_POLL: Duration = Duration::from_millis(10);
++
++/// Runs `work` on up to `MAX_WORKERS` threads, returning results in input order; `active` cancels the rest.
 +fn concurrently<T: Send, R: Send>(
 +    items: Vec<T>,
 +    active: &dyn Fn() -> bool,
@@ -108344,7 +108389,7 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +) -> Vec<R> {
 +    let workers = std::thread::available_parallelism()
 +        .map_or(1, std::num::NonZeroUsize::get)
-+        .clamp(1, 8)
++        .clamp(1, MAX_WORKERS)
 +        .min(items.len());
 +    let cancelled = AtomicBool::new(false);
 +    let queue = Mutex::new(items.into_iter().enumerate());
@@ -108371,7 +108416,7 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +            if !active() {
 +                cancelled.store(true, Ordering::Relaxed);
 +            }
-+            match results.recv_timeout(Duration::from_millis(10)) {
++            match results.recv_timeout(CANCEL_POLL) {
 +                Ok(result) => done.push(result),
 +                Err(mpsc::RecvTimeoutError::Timeout) => {}
 +                Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -110224,8 +110269,8 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +    source: Arc<str>,
 +    assets: Arc<BTreeMap<String, Value>>,
 +    request_metadata: Arc<OnceLock<(Value, String)>>,
-+    /// The store's code cache root; `None` runs without one.
-+    code_cache: Option<Arc<Path>>,
++    /// The store's code cache; `None` runs without one.
++    code_cache: Option<Arc<code_cache::CacheRoot>>,
 +    adapter: Option<Value>,
 +    state: Value,
 +    /// The state the inspection ran with; `state` follows later callbacks.
@@ -110255,10 +110300,12 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
 +    Mutex::new(BTreeMap::new());
 +
++/// A store root and the checkout a host opened in.
++type ActivationKey = (PathBuf, Option<PathBuf>);
++
 +/// Error-free inspections by store and checkout, newest first; a host opening there reuses one only for an unchanged selection and adapter.
-+#[allow(clippy::type_complexity)]
-+static ACTIVATED: Mutex<Vec<((PathBuf, Option<PathBuf>), BTreeMap<String, Loaded>)>> =
-+    Mutex::new(Vec::new());
++static ACTIVATED: Mutex<Vec<(ActivationKey, BTreeMap<String, Loaded>)>> = Mutex::new(Vec::new());
++/// Checkouts `ACTIVATED` remembers; one process rarely opens hosts in more.
 +const ACTIVATED_CHECKOUTS: usize = 8;
 +static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 +static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -110426,8 +110473,11 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +        std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
 +        let mut host = ModHost::open(base.join("store")).unwrap();
 +        let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
++        assert!(host.loaded["hello"].code_cache.is_some());
 +        host.set_managed_policy(policy, owner, "alice").unwrap();
 +        let loaded = host.loaded["hello"].clone();
++        // Trust pinned outside the store turns the code cache off, also for a reused inspection.
++        assert!(loaded.code_cache.is_none());
 +        host.check_callback_authority(&loaded).unwrap();
 +        let reads = store::READS.get();
 +        for _ in 0..100 {
@@ -111372,6 +111422,17 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
 +    }
 +
++    /// Retries a timed-out inspection of this configuration once.
++    fn schedule_inspect_retry(&mut self, hash: &str, initial: bool) {
++        self.inspect_retry = (self.inspect_retried != hash).then(|| (initial, Instant::now()));
++        hash.clone_into(&mut self.inspect_retried);
++    }
++
++    /// `stamp` if the configuration files still match it, so a change during the reload triggers another.
++    fn settled(&self, stamp: Option<ConfigurationStamp>) -> Option<ConfigurationStamp> {
++        stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp))
++    }
++
 +    /// A timed-out inspection is retried once it is 2 s old.
 +    fn inspect_retry_due(&self) -> bool {
 +        self.inspect_retry
@@ -111408,8 +111469,7 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +        };
 +        let retrying = hash == self.configuration_sha256;
 +        if retrying && !self.inspect_retry_due() {
-+            self.configuration_stamp = stamp
-+                .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
++            self.configuration_stamp = self.settled(stamp);
 +            return Ok(false);
 +        }
 +        let configured = bytes
@@ -111523,6 +111583,13 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +        )?;
 +        let adapters = Self::adapters(&selected);
 +        let seeded = std::mem::take(&mut self.seeded);
++        // Trust pinned outside the store (broker or managed policy) must not depend on files in it.
++        let caching = brokered.is_none() && self.managed.is_none();
++        let cache_root = || {
++            Arc::new(code_cache::CacheRoot::new(
++                self.store.root.join("cache").join("code"),
++            ))
++        };
 +        let mut next = BTreeMap::new();
 +        let mut inspections = Vec::new();
 +        for (id, (mut selection, package, source)) in selected {
@@ -111555,7 +111622,12 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +                })
 +            });
 +            if let Some(previous) = reused {
-+                next.insert(id, previous.clone());
++                let mut reused = previous.clone();
++                reused.code_cache = match reused.code_cache.take() {
++                    Some(cache) if caching => Some(cache),
++                    _ => caching.then(cache_root),
++                };
++                next.insert(id, reused);
 +                continue;
 +            }
 +            let assets = (|| {
@@ -111598,7 +111670,7 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +                source: source.into(),
 +                assets: Arc::new(assets),
 +                request_metadata: Arc::new(OnceLock::new()),
-+                code_cache: Some(self.store.root.join("cache").join("code").into()),
++                code_cache: caching.then(cache_root),
 +                selection,
 +                state: Value::Null,
 +                registered_state: Arc::default(),
@@ -111643,13 +111715,9 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +                            .get(&id)
 +                            .is_none_or(|previous| previous.error.is_some());
 +                    // The working mods stay; the transactional reload runs once more when a retry is due, then waits for a configuration change.
-+                    if !lenient && error.to_string().starts_with("callback_timeout") {
-+                        self.inspect_retry =
-+                            (self.inspect_retried != hash).then(|| (initial, Instant::now()));
-+                        self.inspect_retried.clone_from(&hash);
-+                        self.configuration_stamp = stamp.clone().filter(|stamp| {
-+                            configuration_stamps(&self.store.root).as_ref() == Some(stamp)
-+                        });
++                    if !lenient && timed_out(&error.to_string()) {
++                        self.schedule_inspect_retry(&hash, initial);
++                        self.configuration_stamp = self.settled(stamp.clone());
 +                    }
 +                    fail(lenient, &mut loaded, error)?;
 +                }
@@ -111684,12 +111752,9 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +                .len(),
 +        );
 +        // A timed-out inspection runs again at the next reload, once per configuration.
-+        let timed_out = next.values().any(|loaded| {
-+            loaded
-+                .error
-+                .as_deref()
-+                .is_some_and(|error| error.starts_with("callback_timeout"))
-+        });
++        let any_timed_out = next
++            .values()
++            .any(|loaded| loaded.error.as_deref().is_some_and(timed_out));
 +        for (id, previous) in &mut self.loaded {
 +            if next.get(id).is_none_or(|loaded| {
 +                !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
@@ -111725,14 +111790,13 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +        }
 +        self.retain_environment();
 +        self.unserved = self.unserved_targets(&user);
-+        self.inspect_retry =
-+            (timed_out && self.inspect_retried != hash).then(|| (initial, Instant::now()));
-+        if self.inspect_retry.is_some() {
-+            self.inspect_retried.clone_from(&hash);
++        if any_timed_out {
++            self.schedule_inspect_retry(&hash, initial);
++        } else {
++            self.inspect_retry = None;
 +        }
 +        self.configuration_sha256 = hash;
-+        self.configuration_stamp =
-+            stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
++        self.configuration_stamp = self.settled(stamp);
 +        let key = (self.store.root.clone(), self.project.clone());
 +        let mut inspected: BTreeMap<_, _> = self
 +            .loaded
@@ -112421,7 +112485,7 @@ index 0000000000000000000000000000000000000000..8e2dc7741d50310ebd1eee74921337fe
 +            }
 +            let timed_out = inspection
 +                .as_ref()
-+                .is_err_and(|error| error.to_string().starts_with("callback_timeout"));
++                .is_err_and(|error| timed_out(&error.to_string()));
 +            inspected.insert(id, (loaded, inspection));
 +            if timed_out {
 +                break;
@@ -117761,11 +117825,13 @@ index 0000000000000000000000000000000000000000..bdb99367e8b82ac6543334f903cf6c43
 +}
 diff --git a/codex-rs/omd/src/mods/code_cache.rs b/codex-rs/omd/src/mods/code_cache.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0860fac3d
+index 0000000000000000000000000000000000000000..69480d23f5108cc0e92ca3f5bce897694badcb17
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/code_cache.rs
-@@ -0,0 +1,196 @@
-+//! Compiled package modules kept across runner processes, by module source and runner build.
+@@ -0,0 +1,242 @@
++//! V8 bytecode of package modules kept across runner processes, by module source and runner build.
++//!
++//! Entries hold bytecode only: the runner always compiles the request's trusted source, so the cache can't supply code.
 +
 +use super::Result;
 +use serde_json::Map;
@@ -117774,12 +117840,15 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +use sha2::Digest;
 +use sha2::Sha256;
 +use std::collections::BTreeSet;
++use std::os::unix::fs::DirBuilderExt;
 +use std::path::Path;
 +use std::path::PathBuf;
-+use std::sync::atomic::AtomicBool;
-+use std::sync::atomic::Ordering;
++use std::sync::Mutex;
++use std::sync::OnceLock;
 +
 +const LIMIT: u64 = 32 << 20;
++/// Bytes written to a cache root between prunes.
++const PRUNE_EVERY: u64 = LIMIT / 8;
 +
 +/// The runner's key for a module: the hex SHA-256 of `"{typescript}:{source}"`.
 +fn key(typescript: bool, source: &str) -> String {
@@ -117816,14 +117885,29 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +        .collect()
 +}
 +
++/// A mod's cache root and, once computed, the modules its requests may compile.
++pub(super) struct CacheRoot {
++    root: PathBuf,
++    expected: OnceLock<BTreeSet<String>>,
++}
++
++impl CacheRoot {
++    pub(super) fn new(root: PathBuf) -> Self {
++        Self {
++            root,
++            expected: OnceLock::new(),
++        }
++    }
++}
++
 +pub(super) struct CodeCache {
 +    directory: PathBuf,
 +    expected: BTreeSet<String>,
 +}
 +
 +impl CodeCache {
-+    /// The cache for `request` under `root`, keyed by the runner's file stamp; `None` without a runner.
-+    pub(super) fn open<R>(root: &Path, request: &R) -> Option<Self>
++    /// The cache for `request` under `cache`, keyed by the runner's file stamp; `None` without a runner.
++    pub(super) fn open<R>(cache: &CacheRoot, request: &R) -> Option<Self>
 +    where
 +        R: for<'a> std::ops::Index<&'a str, Output = Value>,
 +    {
@@ -117831,38 +117915,38 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +        let stamp = super::file_stamp(&std::fs::metadata(runner).ok()?);
 +        let name = format!("{:x}", Sha256::digest(format!("{stamp:?}")));
 +        Some(Self {
-+            directory: root.join(&name[..16]),
-+            expected: keys(request),
++            directory: cache.root.join(&name[..16]),
++            expected: cache.expected.get_or_init(|| keys(request)).clone(),
 +        })
 +    }
 +
-+    /// The line offering a fresh runner the intact cached modules within `budget` bytes; even an empty offer asks it to report what it compiles.
++    /// The line offering a fresh runner the intact cached bytecode within `budget` bytes. It lists every expected
++    /// module (`null` where none is cached), so the runner reports exactly those it compiles fresh.
 +    pub(super) fn line(&self, budget: usize) -> Option<Vec<u8>> {
 +        let mut entries = Map::new();
++        // `{"code_cache":{}}` plus a newline, then per entry its quoted name, colon and comma.
 +        let mut size = 20;
 +        for name in &self.expected {
-+            let Ok(bytes) = std::fs::read(self.directory.join(name)) else {
-+                continue;
-+            };
-+            let Some((sum, body)) = bytes.split_at_checked(32) else {
-+                continue;
-+            };
-+            let Ok(entry) = serde_json::from_slice::<Value>(body) else {
-+                continue;
-+            };
-+            if Sha256::digest(body).as_slice() != sum || size + body.len() + name.len() + 4 > budget
-+            {
-+                continue;
-+            }
-+            size += body.len() + name.len() + 4;
-+            entries.insert(name.clone(), entry);
++            let cached = self
++                .read(name)
++                .filter(|entry| size + entry.to_string().len() + name.len() + 4 <= budget);
++            size += cached.as_ref().map_or(4, |entry| entry.to_string().len()) + name.len() + 4;
++            entries.insert(name.clone(), cached.unwrap_or(Value::Null));
 +        }
 +        let mut line = serde_json::to_vec(&json!({"code_cache": entries})).ok()?;
 +        line.push(b'\n');
 +        Some(line)
 +    }
 +
-+    /// Keeps a module the runner compiled for this request; anything else it reports is ignored.
++    /// An intact entry: its SHA-256 then a JSON body holding the bytecode.
++    fn read(&self, name: &str) -> Option<Value> {
++        let bytes = std::fs::read(self.directory.join(name)).ok()?;
++        let (sum, body) = bytes.split_at_checked(32)?;
++        let entry = serde_json::from_slice::<Value>(body).ok()?;
++        (Sha256::digest(body).as_slice() == sum && entry["data"].is_string()).then_some(entry)
++    }
++
++    /// Keeps bytecode the runner compiled for this request; anything else it reports is ignored.
 +    pub(super) fn keep(&self, reported: &Value) {
 +        let Some(name) = reported["key"]
 +            .as_str()
@@ -117870,27 +117954,52 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +        else {
 +            return;
 +        };
-+        let (Some(code), Some(data)) = (reported["code"].as_str(), reported["data"].as_str())
-+        else {
++        let Some(data) = reported["data"].as_str() else {
 +            return;
 +        };
-+        let _ = self.write(name, &json!({"code": code, "data": data}));
++        let _ = self.write(name, &json!({"data": data}));
 +    }
 +
 +    fn write(&self, name: &str, entry: &Value) -> Result<()> {
-+        std::fs::create_dir_all(&self.directory)?;
++        std::fs::DirBuilder::new()
++            .recursive(true)
++            .mode(0o700)
++            .create(&self.directory)?;
 +        let body = serde_json::to_vec(entry)?;
 +        let mut bytes = Sha256::digest(&body).to_vec();
 +        bytes.extend_from_slice(&body);
-+        let temporary = self.directory.join(format!(
-+            ".{name}.{}.{:?}.tmp",
-+            std::process::id(),
-+            std::thread::current().id()
-+        ));
-+        std::fs::write(&temporary, &bytes)?;
-+        std::fs::rename(&temporary, self.directory.join(name))?;
-+        static PRUNED: AtomicBool = AtomicBool::new(false);
-+        if !PRUNED.swap(true, Ordering::Relaxed) {
++        crate::fsio::write_bytes(
++            &self.directory.join(name),
++            &bytes,
++            crate::fsio::Durability::Volatile,
++        )?;
++        static WRITTEN: Mutex<Vec<(PathBuf, u64)>> = Mutex::new(Vec::new());
++        let due = {
++            let mut written = WRITTEN
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner);
++            let root = self
++                .directory
++                .parent()
++                .map(Path::to_path_buf)
++                .unwrap_or_default();
++            let index = match written.iter().position(|(seen, _)| *seen == root) {
++                Some(index) => index,
++                // A process prunes a root at its first write there, then every `PRUNE_EVERY` bytes.
++                None => {
++                    written.push((root, PRUNE_EVERY));
++                    written.len() - 1
++                }
++            };
++            let since = &mut written[index].1;
++            *since += bytes.len() as u64;
++            let due = *since >= PRUNE_EVERY;
++            if due {
++                *since = 0;
++            }
++            due
++        };
++        if due {
 +            self.prune();
 +        }
 +        Ok(())
@@ -117947,6 +118056,10 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +        for name in ["a", "b"] {
 +            cache.keep(&json!({"key": name, "code": "c", "data": "d"}));
 +        }
++        assert_eq!(
++            std::fs::read(cache.directory.join("a")).unwrap()[32..],
++            *br#"{"data":"d"}"#
++        );
 +        let path = cache.directory.join("b");
 +        let bytes = std::fs::read(&path).unwrap();
 +        let at = bytes.len() - 3;
@@ -117955,10 +118068,7 @@ index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0
 +        corrupt[at] = b'e';
 +        std::fs::write(&path, corrupt).unwrap();
 +        let line: Value = serde_json::from_slice(&cache.line(1 << 20).unwrap()).unwrap();
-+        assert_eq!(
-+            line,
-+            json!({"code_cache": {"a": {"code": "c", "data": "d"}}})
-+        );
++        assert_eq!(line, json!({"code_cache": {"a": {"data": "d"}, "b": null}}));
 +    }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
@@ -118485,10 +118595,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3b754f0f66b3448aa3abd5ad836d093b1883e33
+index 0000000000000000000000000000000000000000..e61f45652ba16d79e405839d8df4f694d0b7caff
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2930 @@
+@@ -0,0 +1,2935 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -120245,11 +120355,8 @@ index 0000000000000000000000000000000000000000..c3b754f0f66b3448aa3abd5ad836d093
 +                if actual.trim() != revision {
 +                    return Err(failure("repository_revision_mismatch"));
 +                }
-+                let staging = tempfile::Builder::new()
-+                    .prefix(&format!(".repository-{}.", &revision[..12]))
-+                    .suffix(".tmp")
-+                    .tempdir_in(&self.root)?
-+                    .keep();
++                let staging =
++                    staging_dir(&self.root, &format!(".repository-{}.", &revision[..12]))?;
 +                let result = (|| {
 +                    let prefix = if subdirectory.is_empty() {
 +                        String::new()
@@ -120455,11 +120562,10 @@ index 0000000000000000000000000000000000000000..c3b754f0f66b3448aa3abd5ad836d093
 +                "npm_integrity_changed: the registry now serves different content",
 +            ));
 +        }
-+        let staging = tempfile::Builder::new()
-+            .prefix(&format!(".npm-{}.", &digest(expected.as_bytes())[..12]))
-+            .suffix(".tmp")
-+            .tempdir_in(&self.root)?
-+            .keep();
++        let staging = staging_dir(
++            &self.root,
++            &format!(".npm-{}.", &digest(expected.as_bytes())[..12]),
++        )?;
 +        let result = (|| {
 +            let archive = npm_fetch(
 +                tarball,
@@ -120556,11 +120662,7 @@ index 0000000000000000000000000000000000000000..c3b754f0f66b3448aa3abd5ad836d093
 +        }
 +        sweep_staging(&self.root);
 +        sweep_staging(&base);
-+        let staging = tempfile::Builder::new()
-+            .prefix(&format!(".{integrity}."))
-+            .suffix(".tmp")
-+            .tempdir_in(&base)?
-+            .keep();
++        let staging = staging_dir(&base, &format!(".{integrity}."))?;
 +        let result = (|| {
 +            copy_file(source, &staging, "mod.json", 8192)?;
 +            copy_file(
@@ -120646,11 +120748,24 @@ index 0000000000000000000000000000000000000000..c3b754f0f66b3448aa3abd5ad836d093
 +    ))
 +}
 +
++/// A uniquely named `.{prefix}*.tmp` directory in `parent`, kept until the caller renames it or `sweep_staging` does.
++fn staging_dir(parent: &Path, prefix: &str) -> std::io::Result<PathBuf> {
++    Ok(tempfile::Builder::new()
++        .prefix(prefix)
++        .suffix(".tmp")
++        .tempdir_in(parent)?
++        .keep())
++}
++
++/// Older than any install still writing its staging directory.
++const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
++
++/// Removes `staging_dir` leftovers of crashed installs.
 +fn sweep_staging(directory: &Path) {
 +    let Ok(entries) = std::fs::read_dir(directory) else {
 +        return;
 +    };
-+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
++    let cutoff = std::time::SystemTime::now() - STALE_STAGING;
 +    for entry in entries.flatten() {
 +        let name = entry.file_name();
 +        let name = name.to_string_lossy();
@@ -122524,11 +122639,12 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c8762242606e834263ba810550ba9f64bbd8e50
+index 0000000000000000000000000000000000000000..461db3ecff2f320a968741b5cfdd0c5e4202b5e3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,836 @@
 +use super::Result;
++use super::code_cache::CacheRoot;
 +use super::code_cache::CodeCache;
 +use super::failure;
 +use serde_json::Value;
@@ -123091,7 +123207,7 @@ index 0000000000000000000000000000000000000000..0c8762242606e834263ba810550ba9f6
 +pub(super) fn evaluate_warm<R>(
 +    key: &str,
 +    request: &R,
-+    cache_root: Option<&Path>,
++    cache_root: Option<&CacheRoot>,
 +    budget: Duration,
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -123298,7 +123414,7 @@ index 0000000000000000000000000000000000000000..0c8762242606e834263ba810550ba9f6
 +
 +pub(super) fn evaluate<R>(
 +    request: &R,
-+    cache: Option<&Path>,
++    cache: Option<&CacheRoot>,
 +    budget: Duration,
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -124360,10 +124476,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4a2cdeedc64141093e7526eb4160a4b4c6b1f501
+index 0000000000000000000000000000000000000000..81912cc2e25d00fef74418db82dc5bca23884746
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1522 @@
+@@ -0,0 +1,1521 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -125125,25 +125241,23 @@ index 0000000000000000000000000000000000000000..4a2cdeedc64141093e7526eb4160a4b4
 +        bytes: &[u8],
 +        commit: impl FnOnce() -> Result<()>,
 +    ) -> Result<()> {
++        let state = name.starts_with("state-");
 +        let limit = match name {
 +            "packages.lock.json" => 524_288,
 +            "package-transaction.json" => 1_048_576,
-+            name if name.starts_with("state-") => STATE_LIMIT,
++            _ if state => STATE_LIMIT,
 +            _ => 65_536,
 +        };
 +        if bytes.len() > limit {
 +            return Err(failure("state_or_configuration_limit"));
 +        }
-+        crate::fsio::write_bytes_before(
-+            &self.root.join(name),
-+            bytes,
-+            if name.starts_with("state-") {
-+                crate::fsio::Durability::Ordered
-+            } else {
-+                crate::fsio::Durability::Durable
-+            },
-+            commit,
-+        )
++        // Mod state commits often and needs crash consistency, not durability; configuration and locks stay durable.
++        let durability = if state {
++            crate::fsio::Durability::Ordered
++        } else {
++            crate::fsio::Durability::Durable
++        };
++        crate::fsio::write_bytes_before(&self.root.join(name), bytes, durability, commit)
 +    }
 +
 +    pub fn configuration(&self) -> Result<ModConfiguration> {
@@ -125373,7 +125487,8 @@ index 0000000000000000000000000000000000000000..4a2cdeedc64141093e7526eb4160a4b4
 +                        };
 +                        settings_origin.insert(key.clone(), origin);
 +                    }
-+                    let error = if integrity != selection.sha256 {
++                    // A user can re-trust an edited source; administered content needs a package sync instead.
++                    let error = if integrity != selection.sha256 && !administered {
 +                        Some("source_changed: inspect and trust the new digest".to_owned())
 +                    } else {
 +                        super::selection_verdict(
@@ -129870,14 +129985,14 @@ index 0000000000000000000000000000000000000000..36a2af783cf315f4b1337a3223755256
 +}
 diff --git a/codex-rs/omd/src/peers.rs b/codex-rs/omd/src/peers.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..21b5f18ef1447374b95f0d8d3ba648d37eb0c478
+index 0000000000000000000000000000000000000000..ff5a43ee40f5441dd1ff8fe44ae8ab843afaff8e
 --- /dev/null
 +++ b/codex-rs/omd/src/peers.rs
 @@ -0,0 +1,450 @@
 +//! Peer-session mailboxes in a shared mod store, countersigned by the authority broker.
 +
 +use crate::broker;
-+use crate::fsio::write_private;
++use crate::fsio::write_json;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -130073,7 +130188,7 @@ index 0000000000000000000000000000000000000000..21b5f18ef1447374b95f0d8d3ba648d3
 +    }
 +
 +    pub fn publish(&self, endpoints: &[Endpoint]) -> io::Result<()> {
-+        write_private(
++        write_json(
 +            &self
 +                .root
 +                .join("sessions")
@@ -130182,7 +130297,7 @@ index 0000000000000000000000000000000000000000..21b5f18ef1447374b95f0d8d3ba648d3
 +            "to": {"session": to, "package": package}, "correlation": correlation, "data": data,
 +            "sent_at_ms": sent_at_ms, "expires_at_ms": sent_at_ms + ttl_ms});
 +        private_directory(&inbox)?;
-+        write_private(
++        write_json(
 +            &inbox.join(format!("{id}.json")),
 +            &sealed(seal, "message", message)?,
 +        )?;
@@ -130254,7 +130369,7 @@ index 0000000000000000000000000000000000000000..21b5f18ef1447374b95f0d8d3ba648d3
 +            "correlation": message["correlation"]});
 +        let receipts = self.root.join("receipts").join(sender);
 +        private_directory(&receipts)?;
-+        write_private(
++        write_json(
 +            &receipts.join(format!("{id}.json")),
 +            &sealed(seal, "receipt", receipt)?,
 +        )
@@ -130578,7 +130693,7 @@ index 0000000000000000000000000000000000000000..dbf1f542f1154706c947a0454ddc3659
 +}
 diff --git a/codex-rs/omd/src/plan_routes.rs b/codex-rs/omd/src/plan_routes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..915a35640fd11354d8e74b4e4b7c8b7171531f8f
+index 0000000000000000000000000000000000000000..e649b5caff2b2d4c39d5aa33557f598e6177f27b
 --- /dev/null
 +++ b/codex-rs/omd/src/plan_routes.rs
 @@ -0,0 +1,111 @@
@@ -130669,7 +130784,7 @@ index 0000000000000000000000000000000000000000..915a35640fd11354d8e74b4e4b7c8b71
 +        None if routes.len() >= ROUTES => return Err(io::Error::other("host_routes_full")),
 +        None => {}
 +    }
-+    crate::fsio::write_private(&grant_path, &grant)?;
++    crate::fsio::write_json(&grant_path, &grant)?;
 +    let sha256 = crate::resource_data::hash(&bytes);
 +    routes.push(json!({"name": name, "provider": "openai", "model": plan.model,
 +        "reasoning_effort": plan.reasoning_effort, "responses_url": SUBSCRIPTION_RESPONSES_URL,
@@ -130678,7 +130793,7 @@ index 0000000000000000000000000000000000000000..915a35640fd11354d8e74b4e4b7c8b71
 +            "output_microusd_per_million": 0, "reservation_microusd": 0,
 +            "max_output_tokens": plan.context_window.min(128_000), "input_token_ceiling": plan.context_window,
 +            "included_subscription": true}}));
-+    crate::fsio::write_private(&host_path, &host)?;
++    crate::fsio::write_json(&host_path, &host)?;
 +    Ok(name)
 +}
 +
@@ -130850,7 +130965,7 @@ index 0000000000000000000000000000000000000000..f8b869378224741c22fa9ed735dab20e
 +}
 diff --git a/codex-rs/omd/src/power.rs b/codex-rs/omd/src/power.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8371a62209370930061f5965057e01397a03a1ec
+index 0000000000000000000000000000000000000000..a1bc46dd38720a167051ceccba70831abd6c7564
 --- /dev/null
 +++ b/codex-rs/omd/src/power.rs
 @@ -0,0 +1,418 @@
@@ -130995,7 +131110,7 @@ index 0000000000000000000000000000000000000000..8371a62209370930061f5965057e0139
 +            return Err(failure("authority_power_busy"));
 +        }
 +        if *holders == 0 && !self.record.exists() {
-+            crate::fsio::write_private(&self.record, &json!({"previous": self.disabled()?}))?;
++            crate::fsio::write_json(&self.record, &json!({"previous": self.disabled()?}))?;
 +            if let Err(error) = self.set(true) {
 +                let _ = fs::remove_file(&self.record);
 +                return Err(error);
@@ -132607,7 +132722,7 @@ index 0000000000000000000000000000000000000000..4c609671eb333a8968173bdd8f19de0a
 +}
 diff --git a/codex-rs/omd/src/route_writes.rs b/codex-rs/omd/src/route_writes.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..edca33d1e64229045bc2aa14da029f680c8f0637
+index 0000000000000000000000000000000000000000..30b4f0637ed2b4a9c34d2ec720125e062a9077b6
 --- /dev/null
 +++ b/codex-rs/omd/src/route_writes.rs
 @@ -0,0 +1,332 @@
@@ -132680,7 +132795,7 @@ index 0000000000000000000000000000000000000000..edca33d1e64229045bc2aa14da029f68
 +            "routes_write_changed: host.json changed after the confirmation; try again".into(),
 +        );
 +    }
-+    crate::fsio::write_private(&store.join("host.json"), &merged)
++    crate::fsio::write_json(&store.join("host.json"), &merged)
 +        .map_err(|error| error.to_string())?;
 +    let names = |key: &str, field: &str, owner: &str| {
 +        merged[key]
@@ -135220,7 +135335,7 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b552695cc5
+index 0000000000000000000000000000000000000000..14964f0f77d0be3dee48b64aef6724fe200b8474
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,1383 @@
@@ -135346,12 +135461,12 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +    pub after: Option<String>,
 +}
 +
-+fn invalid(message: &str) -> io::Error {
-+    io::Error::other(message)
++fn invalid(message: impl Into<String>) -> io::Error {
++    io::Error::other(message.into())
 +}
 +
 +fn hardlink(name: &str) -> io::Error {
-+    invalid(&format!(
++    invalid(format!(
 +        "workspace hardlink rejected: {name} shares its contents with another file; replace it with a separate copy"
 +    ))
 +}
@@ -135390,7 +135505,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +            }
 +            let after = input.metadata()?;
 +            if !same_file(&metadata, &after)? {
-+                return Err(invalid(&format!(
++                return Err(invalid(format!(
 +                    "workspace file changed during read: {name}"
 +                )));
 +            }
@@ -135517,7 +135632,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +            }
 +            let expected = self.expected.get(name).cloned().flatten();
 +            if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
-+                return Err(invalid(&format!("stale expected version for {name}")));
++                return Err(invalid(format!("stale expected version for {name}")));
 +            }
 +            before.insert(name.clone(), entry);
 +        }
@@ -135617,7 +135732,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +                    .as_ref()
 +                    .map(|(bytes, _)| content_hash(bytes));
 +                if &current != expected_after {
-+                    return Err(invalid(&format!(
++                    return Err(invalid(format!(
 +                        "transaction failed: {error}; rollback conflict at {name}"
 +                    )));
 +                }
@@ -135971,7 +136086,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +        };
 +        let metadata = input.metadata()?;
 +        if !metadata.is_file() {
-+            return Err(invalid(&format!("snapshot requires regular files: {name}")));
++            return Err(invalid(format!("snapshot requires regular files: {name}")));
 +        }
 +        if metadata.nlink() != 1 {
 +            return Err(hardlink(name));
@@ -135988,7 +136103,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
 +        let after = fs::symlink_metadata(&path)?;
 +        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-+            return Err(invalid(&format!("source changed during snapshot: {name}")));
++            return Err(invalid(format!("source changed during snapshot: {name}")));
 +        }
 +        observed.insert(name.clone(), Some(metadata));
 +    }
@@ -136144,7 +136259,7 @@ index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b5
 +        let changed = self.changed_paths(candidate);
 +        for name in &changed {
 +            if self.files.get(name) != current.files.get(name) {
-+                return Err(invalid(&format!("intervening edit conflicts: {name}")));
++                return Err(invalid(format!("intervening edit conflicts: {name}")));
 +            }
 +        }
 +        let mut merged = current.clone();
@@ -145957,10 +146072,10 @@ index 0000000000000000000000000000000000000000..85f4f21de9a0ed6d76324c15fe8d58f8
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3317c838eda9a7ccec9110ff9bfd72ee8b97a530
+index 0000000000000000000000000000000000000000..9ad2f55e7f8c61fc308d85421aae628b590d8c9c
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,1682 @@
+@@ -0,0 +1,1676 @@
 +const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -146495,12 +146610,6 @@ index 0000000000000000000000000000000000000000..3317c838eda9a7ccec9110ff9bfd72ee
 +    let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 +
 +    let store = store_with_node(&temp);
-+    std::fs::create_dir(root.join("store").join(format!(
-+        ".repository-{}.{}.tmp",
-+        &revision[..12],
-+        std::process::id()
-+    )))
-+    .unwrap();
 +    let source = ModPackageSource::Repository {
 +        repository: repository.canonicalize().unwrap().display().to_string(),
 +        revision: revision.clone(),
@@ -165384,10 +165493,10 @@ index 0000000000000000000000000000000000000000..f7e19aa319b52beb3f36fec5f713fc20
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2d239fb41d26011663eebaac67c954e176de6fa
+index 0000000000000000000000000000000000000000..69688c86789b78033203496a376ee95f85e34df6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,775 @@
+@@ -0,0 +1,770 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -166063,17 +166172,20 @@ index 0000000000000000000000000000000000000000..a2d239fb41d26011663eebaac67c954e
 +        RAN.store(true, Ordering::SeqCst);
 +    };
 +    in_background(&PENDING, true, work);
-+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-+    while PENDING.locked().1.is_some() {
-+        assert!(Instant::now() < deadline, "the panicking request never ran");
-+        std::thread::sleep(std::time::Duration::from_millis(10));
-+    }
++    wait_until("the panicking request never ran", || {
++        PENDING.locked().1.is_none()
++    });
 +    in_background(&PENDING, false, work);
-+    while !RAN.load(Ordering::SeqCst) {
-+        assert!(
-+            Instant::now() < deadline,
-+            "a request after the panic never ran"
-+        );
++    wait_until("a request after the panic never ran", || {
++        RAN.load(Ordering::SeqCst)
++    });
++}
++
++/// Polls `done` for up to 10 s.
++fn wait_until(failure: &str, done: impl Fn() -> bool) {
++    let deadline = Instant::now() + std::time::Duration::from_secs(10);
++    while !done() {
++        assert!(Instant::now() < deadline, "{failure}");
 +        std::thread::sleep(std::time::Duration::from_millis(10));
 +    }
 +}
@@ -166113,14 +166225,9 @@ index 0000000000000000000000000000000000000000..a2d239fb41d26011663eebaac67c954e
 +    assert_eq!(composed_commands(rows.clone()), rows);
 +    assert!(started.elapsed() < std::time::Duration::from_millis(50));
 +    holder.join().unwrap();
-+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-+    while composed_commands(rows.clone())[1]["hidden"] != true {
-+        assert!(
-+            Instant::now() < deadline,
-+            "the command list was never composed"
-+        );
-+        std::thread::sleep(std::time::Duration::from_millis(10));
-+    }
++    wait_until("the command list was never composed", || {
++        composed_commands(rows.clone())[1]["hidden"] == true
++    });
 +    assert_eq!(composed_commands(rows.clone())[0]["hidden"], false);
 +    *COMPOSED.locked() = None;
 +}
@@ -166138,14 +166245,11 @@ index 0000000000000000000000000000000000000000..a2d239fb41d26011663eebaac67c954e
 +    slash_commands();
 +    assert!(started.elapsed() < std::time::Duration::from_millis(50));
 +    holder.join().unwrap();
-+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
-+    while !slash_commands()
-+        .iter()
-+        .any(|command| command.invocation == "guard:hello")
-+    {
-+        assert!(Instant::now() < deadline, "the catalog was never refreshed");
-+        std::thread::sleep(std::time::Duration::from_millis(10));
-+    }
++    wait_until("the catalog was never refreshed", || {
++        slash_commands()
++            .iter()
++            .any(|command| command.invocation == "guard:hello")
++    });
 +    *CATALOG.locked() = None;
 +}
 +
