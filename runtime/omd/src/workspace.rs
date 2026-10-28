@@ -124,6 +124,12 @@ fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
 }
 
+fn hardlink(name: &str) -> io::Error {
+    invalid(&format!(
+        "workspace hardlink rejected: {name} shares its contents with another file; replace it with a separate copy"
+    ))
+}
+
 fn too_large() -> io::Error {
     io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
 }
@@ -145,6 +151,9 @@ fn read_version(
             if !metadata.is_file() {
                 return Err(invalid("workspace path is not a regular file"));
             }
+            if metadata.nlink() != 1 {
+                return Err(hardlink(name));
+            }
             if metadata.len() > max_bytes as u64 {
                 return Err(invalid("workspace file exceeds limit"));
             }
@@ -155,7 +164,7 @@ fn read_version(
             }
             let after = input.metadata()?;
             if !same_file(&metadata, &after)? {
-                return Err(invalid("workspace file changed during read"));
+                return Err(invalid(&format!("workspace file changed during read: {name}")));
             }
             Ok(Some((bytes, metadata.permissions())))
         }
@@ -464,6 +473,8 @@ impl WorkspaceIndex {
                 );
                 let hash = match cached.get(&name) {
                     Some((seen, hash)) if *seen == stamp => hash.clone(),
+                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
+                    _ if metadata.nlink() != 1 => content_hash(format!("hardlink:{stamp:?}").as_bytes()),
                     _ => {
                         let (content, _) = read_version(repository, &name, max_bytes)?
                             .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -697,9 +708,7 @@ fn same_file(before: &fs::Metadata, after: &fs::Metadata) -> io::Result<bool> {
         && before.modified()? == after.modified()?
         && before.ctime() == after.ctime()
         && before.ctime_nsec() == after.ctime_nsec()
-        && before.mode() == after.mode()
-        && before.nlink() == 1
-        && after.nlink() == 1)
+        && before.mode() == after.mode())
 }
 
 fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
@@ -732,10 +741,10 @@ fn visit(
         };
         let metadata = input.metadata()?;
         if !metadata.is_file() {
-            return Err(invalid("snapshot requires regular files"));
+            return Err(invalid(&format!("snapshot requires regular files: {name}")));
         }
         if metadata.nlink() != 1 {
-            return Err(invalid("snapshot hardlink rejected"));
+            return Err(hardlink(name));
         }
         let executable = metadata.permissions().mode() & 0o111 != 0;
         let count = read(
@@ -749,7 +758,7 @@ fn visit(
         remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
         let after = fs::symlink_metadata(&path)?;
         if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-            return Err(invalid("source changed during snapshot"));
+            return Err(invalid(&format!("source changed during snapshot: {name}")));
         }
         observed.insert(name.clone(), Some(metadata));
     }
@@ -1142,6 +1151,33 @@ mod transaction_tests {
             .map(|change| change.path)
             .collect();
         assert_eq!(changed, [".cache/note.md", "build/x.rs"]);
+    }
+
+    #[test]
+    fn hardlinked_files_are_tracked_by_identity_and_never_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_ne!(before.files["b.txt"], content_hash(b"one\n"));
+        fs::write(root.join("b.txt"), "two\n").unwrap();
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_eq!(before.changed(&after).len(), 2);
+        let paths = BTreeSet::from(["a.txt".into()]);
+        let error = Snapshot::capture(&root, &paths, 64).unwrap_err().to_string();
+        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([(
+                "a.txt".into(),
+                Some(Fingerprint::Hash(content_hash(b"one\n"))),
+            )]),
+            writes: BTreeMap::from([("a.txt".into(), "two\n".into())]),
+            ..Default::default()
+        };
+        let error = transaction.apply(&root, || true).unwrap_err().to_string();
+        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
+        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
     }
 
     #[test]

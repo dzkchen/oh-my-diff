@@ -18836,14 +18836,14 @@ index 6c010c59d41e2820ffc3f4b2313679c52913520d..e3394a3f63f1a268a7adc61be96a5952
      Ok(())
  }
 diff --git a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
-index 29f5d59250a5196baa79f104eb5c2801264b2cc6..c3f58d4d37d5e7f1fec647192f9ec46fd61a5bde 100644
+index 29f5d59250a5196baa79f104eb5c2801264b2cc6..16a688d5dd47e11ec684fb7be022a16b15a20624 100644
 --- a/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
 +++ b/codex-rs/codex-api/src/endpoint/realtime_websocket/methods.rs
 @@ -1096,6 +1096,7 @@ impl RealtimeWebsocketClient {
          session_initialization: RealtimeSessionInitialization,
          transcript_state: RealtimeTranscriptState,
      ) -> Result<RealtimeWebsocketConnection, ApiError> {
-+        crate::request_observer::reject_policed_transport()?;
++        crate::request_observer::reject_policed_transport("realtime")?;
          // The WebRTC call already exists; this loop only retries joining its sideband control
          // socket. Once joined, the returned connection is the same reader/writer state that the
          // ordinary websocket start path uses.
@@ -18851,7 +18851,7 @@ index 29f5d59250a5196baa79f104eb5c2801264b2cc6..c3f58d4d37d5e7f1fec647192f9ec46f
          session_initialization: RealtimeSessionInitialization,
          transcript_state: RealtimeTranscriptState,
      ) -> Result<RealtimeWebsocketConnection, ApiError> {
-+        crate::request_observer::reject_policed_transport()?;
++        crate::request_observer::reject_policed_transport("realtime")?;
          ensure_rustls_crypto_provider();
 
          let mut request = ws_url
@@ -18890,7 +18890,7 @@ index c59683d69dd85489e987f5b7a002c69ee55a14cb..f5c2bf9e6a32ce464c341dba83b2fd52
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225b5cbb6c37456d14e85b3fe069d878ada3..b4a69c25f7ccf17139aaaefffac57b6bbe427106 100644
+index 7849225b5cbb6c37456d14e85b3fe069d878ada3..208efd341819ae801a6a4e8dd38705a8f48736dc 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -18909,12 +18909,19 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..b4a69c25f7ccf17139aaaefffac57b6b
  use codex_client::TransportError;
  use http::HeaderMap;
  use http::Method;
-@@ -88,6 +88,9 @@ impl<T: HttpTransport> EndpointSession<T> {
+@@ -82,12 +82,15 @@ impl<T: HttpTransport> EndpointSession<T> {
+         method: Method,
+         path: &str,
+         extra_headers: HeaderMap,
+-        body: Option<Value>,
++        mut body: Option<Value>,
+         configure: C,
+     ) -> Result<Response, ApiError>
      where
          C: Fn(&mut Request),
      {
 +        if method == Method::POST {
-+            crate::request_observer::reject_unobserved_transport(&extra_headers)?;
++            crate::request_observer::admit_unary(path, &extra_headers, body.as_mut())?;
 +        }
          let body = body.map(RequestBody::Json);
          let make_request = || {
@@ -32005,7 +32012,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..9052ab74e7c22e3b9b7816ab49e43be6bac6badf 100644
+index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..86ed95281378964b1ae96ed2224d304d658fb5be 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32013,7 +32020,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..9052ab74e7c22e3b9b7816ab49e43be6
  mod managed_worktree_creation;
  mod misalignment_policy;
 +mod mod_credentials;
-+mod mod_surface;
++pub(crate) mod mod_surface;
 +#[cfg(test)]
 +pub(crate) use mod_surface::apply_confirmed_package;
  mod model_defaults;
@@ -32678,7 +32685,7 @@ index 1d328eae53536d0899756dde97a2c23329771e76..bc18b805b620cb9450de010ffc823587
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 6687d053b4b506d5a7a36e88dc88d86914189b34..9d40a549fc2d9cf6f686a09a057ed1af017a870d 100644
+index 6687d053b4b506d5a7a36e88dc88d86914189b34..5ee31929667ef37210b3a80334b5f3374885e83d 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -126,6 +126,7 @@ impl App {
@@ -32822,7 +32829,19 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9d40a549fc2d9cf6f686a09a057ed1af
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -887,6 +1014,10 @@ impl App {
+@@ -794,7 +921,10 @@ impl App {
+                         return Ok(AppRunControl::Continue);
+                     }
+                 };
+-                let reverted = match app_server.revert_thread(thread_id, before_turn_id, &retained_turns).await {
++                let parked = crate::mod_surface::ParkedLoop::new(app_server.request_handle());
++                let reverted = app_server.revert_thread(thread_id, before_turn_id, &retained_turns).await;
++                drop(parked);
++                let reverted = match reverted {
+                     Ok(reverted) => reverted,
+                     Err(err) => {
+                     // Validation and unsupported-method errors leave history unchanged. Other
+@@ -887,6 +1017,10 @@ impl App {
                      tui.frame_requester().schedule_frame();
                  }
              }
@@ -32833,7 +32852,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9d40a549fc2d9cf6f686a09a057ed1af
              AppEvent::BeginInitialHistoryReplayBuffer => {
                  self.begin_initial_history_replay_buffer();
              }
-@@ -1760,8 +1891,18 @@ impl App {
+@@ -1760,8 +1894,18 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -32852,7 +32871,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9d40a549fc2d9cf6f686a09a057ed1af
              AppEvent::TaskSearchResult {
                  thread_id,
                  query,
-@@ -2562,16 +2703,25 @@ impl App {
+@@ -2562,16 +2706,25 @@ impl App {
              }
              AppEvent::PersistModelSelection { model, effort } => {
                  self.app_event_tx.send(AppEvent::FollowTranscript);
@@ -32888,7 +32907,7 @@ index 6687d053b4b506d5a7a36e88dc88d86914189b34..9d40a549fc2d9cf6f686a09a057ed1af
                      Ok(()) => {
                          let effort_label = effort
                              .as_ref()
-@@ -3116,6 +3266,14 @@ impl App {
+@@ -3116,6 +3269,14 @@ impl App {
                  self.select_agent_thread(tui, app_server, thread_id)
                      .await?;
              }
@@ -47558,10 +47577,10 @@ index 0000000000000000000000000000000000000000..69c2876cf462293fa8f8ac863bb07f1a
 +}
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..acabea2c8287535a1c7632465902e8671157bf68
+index 0000000000000000000000000000000000000000..0dbcfbf85ff70ecc5bbac93346f2cf2e3c825552
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,189 @@
 +use codex_client::EncodedJsonBody;
 +use codex_client::Request;
 +use codex_client::StreamResponse;
@@ -47590,13 +47609,18 @@ index 0000000000000000000000000000000000000000..acabea2c8287535a1c7632465902e867
 +        request: &mut Request,
 +        body: Option<&EncodedJsonBody>,
 +    ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
++    /// Runs the final-request stage over a unary JSON request body.
++    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
++        let _ = (thread, body);
++        Ok(())
++    }
 +    fn requires_observation(&self, thread: Option<&str>) -> bool {
 +        let _ = thread;
 +        true
 +    }
-+    /// Whether a required final-request policy must see every provider request.
-+    fn policed(&self) -> bool {
-+        false
++    /// The mods whose required final-request policy must see every provider request.
++    fn policed(&self) -> Option<String> {
++        None
 +    }
 +    fn answer(&self, request: &Request) -> Option<Vec<Value>> {
 +        let _ = request;
@@ -47655,22 +47679,38 @@ index 0000000000000000000000000000000000000000..acabea2c8287535a1c7632465902e867
 +    }
 +}
 +
-+pub(crate) fn reject_policed_transport() -> Result<(), crate::error::ApiError> {
-+    if OBSERVER.get().is_some_and(|observer| observer.policed()) {
++pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::error::ApiError> {
++    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed()) {
 +        return Err(crate::error::ApiError::InvalidRequest {
-+            message: "local OMD request policy: final_request_refused: request_policy_unsupported_transport: a final-request policy is active and this provider transport cannot pass it".into(),
++            message: format!("local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"),
 +        });
 +    }
 +    Ok(())
 +}
 +
-+pub(crate) fn reject_unobserved_transport(
++/// Web search sends recent conversation text and queries without passing final-request policies.
++pub const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
++pub const POLICED_UNARY_PATHS: &[&str] = &[
++    "images/generations",
++    "images/edits",
++    "memories/trace_summarize",
++];
++
++pub(crate) fn admit_unary(
++    path: &str,
 +    headers: &http::HeaderMap,
++    body: Option<&mut Value>,
 +) -> Result<(), crate::error::ApiError> {
-+    reject_policed_transport()?;
 +    let thread = headers
 +        .get("thread-id")
 +        .and_then(|value| value.to_str().ok());
++    match (OBSERVER.get(), body) {
++        _ if path == UNPOLICED_SEARCH_PATH => {}
++        (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
++            observer.police_unary(thread, body)?
++        }
++        _ => reject_policed_transport(path)?,
++    }
 +    if OBSERVER
 +        .get()
 +        .is_some_and(|observer| observer.requires_observation(thread))
@@ -47732,10 +47772,10 @@ index 0000000000000000000000000000000000000000..acabea2c8287535a1c7632465902e867
 +}
 diff --git a/codex-rs/codex-api/tests/policed_transport.rs b/codex-rs/codex-api/tests/policed_transport.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8e1382c11
+index 0000000000000000000000000000000000000000..a91ce04495cd6345d040eead87767dd291db02f5
 --- /dev/null
 +++ b/codex-rs/codex-api/tests/policed_transport.rs
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,231 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::AtomicUsize;
@@ -47744,7 +47784,10 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +
 +use codex_api::AuthError;
 +use codex_api::AuthProvider;
++use codex_api::ImageGenerationRequest;
++use codex_api::ImagesClient;
 +use codex_api::Provider;
++use codex_api::RealtimeCallClient;
 +use codex_api::RealtimeEventParser;
 +use codex_api::RealtimeOutputModality;
 +use codex_api::RealtimeSessionConfig;
@@ -47791,17 +47834,32 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +        false
 +    }
 +
-+    fn policed(&self) -> bool {
-+        true
++    fn police_unary(
++        &self,
++        _thread: Option<&str>,
++        body: &mut serde_json::Value,
++    ) -> Result<(), TransportError> {
++        if body["prompt"] == "SECRET-3" {
++            return Err(TransportError::Build("policy denied SECRET-3".into()));
++        }
++        body["prompt"] = "[redacted]".into();
++        Ok(())
++    }
++
++    fn policed(&self) -> Option<String> {
++        Some("privacy_fixture".into())
 +    }
 +}
 +
 +#[derive(Clone, Default)]
-+struct Counting(Arc<AtomicUsize>);
++struct Counting(Arc<AtomicUsize>, Arc<std::sync::Mutex<Vec<String>>>);
 +
 +impl HttpTransport for Counting {
-+    async fn execute(&self, _req: Request) -> Result<Response, TransportError> {
++    async fn execute(&self, req: Request) -> Result<Response, TransportError> {
 +        self.0.fetch_add(1, Ordering::SeqCst);
++        if let Some(codex_client::RequestBody::Json(body)) = &req.body {
++            self.1.lock().unwrap().push(body.to_string());
++        }
 +        Err(TransportError::Build("sent".into()))
 +    }
 +
@@ -47836,8 +47894,22 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +    }
 +}
 +
++fn session(instructions: &str) -> RealtimeSessionConfig {
++    RealtimeSessionConfig {
++        instructions: instructions.into(),
++        initial_items: Vec::new(),
++        delegation_ack_filler: None,
++        model: Some("realtime-test-model".into()),
++        session_id: Some("conv".into()),
++        event_parser: RealtimeEventParser::V1,
++        session_mode: RealtimeSessionMode::Conversational,
++        output_modality: RealtimeOutputModality::Audio,
++        voice: RealtimeVoice::Cove,
++    }
++}
++
 +#[tokio::test]
-+async fn an_active_final_request_policy_refuses_transports_that_cannot_pass_it() {
++async fn an_active_final_request_policy_polices_unary_requests_and_refuses_the_rest() {
 +    codex_api::request_observer::install_response_observer(Arc::new(Policed))
 +        .expect("observer installs once");
 +    let transport = Counting::default();
@@ -47858,14 +47930,51 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +    let error = search
 +        .search(&request, HeaderMap::new())
 +        .await
-+        .expect_err("search is refused");
-+    assert!(
-+        error
-+            .to_string()
-+            .contains("request_policy_unsupported_transport"),
-+        "{error}"
++        .expect_err("the fixture transport fails after sending");
++    assert!(error.to_string().contains("sent"), "{error}");
++    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
++
++    let images = ImagesClient::new(
++        transport.clone(),
++        provider("https://example.com/v1".into()),
++        Arc::new(NoAuth),
 +    );
-+    assert_eq!(transport.0.load(Ordering::SeqCst), 0);
++    let image = |prompt: &str| ImageGenerationRequest {
++        prompt: prompt.into(),
++        background: None,
++        model: "image-model".into(),
++        n: None,
++        quality: None,
++        size: None,
++    };
++    let denied = images
++        .generate(&image("SECRET-3"), HeaderMap::new())
++        .await
++        .expect_err("the policy denies")
++        .into_parts()
++        .0;
++    assert!(denied.to_string().contains("policy denied SECRET-3"), "{denied}");
++    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
++    let _ = images.generate(&image("SECRET-4"), HeaderMap::new()).await;
++    let sent = transport.1.lock().unwrap().clone();
++    assert!(sent[1].contains("[redacted]") && !sent[1].contains("SECRET-4"), "{sent:?}");
++
++    let call = RealtimeCallClient::new(
++        transport.clone(),
++        provider("https://example.com/backend-api".into()),
++        Arc::new(NoAuth),
++    );
++    let refused = call
++        .create_with_session("v=0".into(), session("SECRET-5"))
++        .await
++        .expect_err("call creation is refused");
++    assert!(
++        refused
++            .to_string()
++            .contains("realtime/calls requests cannot pass the final-request policy"),
++        "{refused}"
++    );
++    assert_eq!(transport.0.load(Ordering::SeqCst), 2);
 +
 +    let listener = TcpListener::bind("127.0.0.1:0")
 +        .await
@@ -47877,17 +47986,7 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +    );
 +    let refused = realtime
 +        .connect(
-+            RealtimeSessionConfig {
-+                instructions: "SECRET-2".into(),
-+                initial_items: Vec::new(),
-+                delegation_ack_filler: None,
-+                model: Some("realtime-test-model".into()),
-+                session_id: Some("conv".into()),
-+                event_parser: RealtimeEventParser::V1,
-+                session_mode: RealtimeSessionMode::Conversational,
-+                output_modality: RealtimeOutputModality::Audio,
-+                voice: RealtimeVoice::Cove,
-+            },
++            session("SECRET-2"),
 +            HeaderMap::new(),
 +            HeaderMap::new(),
 +        )
@@ -47898,7 +47997,7 @@ index 0000000000000000000000000000000000000000..c6861a8b4fee3bec138dc86d78180bb8
 +    assert!(
 +        error
 +            .to_string()
-+            .contains("request_policy_unsupported_transport"),
++            .contains("realtime requests cannot pass the final-request policy of privacy_fixture"),
 +        "{error}"
 +    );
 +    assert!(
@@ -52493,10 +52592,10 @@ index 0000000000000000000000000000000000000000..de07b069546c30022dcdd1dc71f5babe
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2598b7ce9da739abb386fcacca9e9084d5e014bb
+index 0000000000000000000000000000000000000000..ce84fe7a3d44de71573abde9f78ad49d18a5348f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2324 @@
+@@ -0,0 +1,2350 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -54070,13 +54169,39 @@ index 0000000000000000000000000000000000000000..2598b7ce9da739abb386fcacca9e9084
 +            .map(|(_, events)| events)
 +    }
 +
-+    fn policed(&self) -> bool {
-+        self.runtime.lock().ok().is_some_and(|installed| {
-+            installed.as_ref().is_some_and(|(_, required)| {
-+                required
-+                    .lock()
-+                    .map_or(true, |required| required.contains(&"model_send"))
-+            })
++    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
++        let Some(mods) = self.mods() else {
++            return Ok(());
++        };
++        let thread = thread.unwrap_or_default();
++        let account = self
++            .by_thread
++            .lock()
++            .map_err(|_| denied("account lock poisoned"))?
++            .get(thread)
++            .cloned();
++        let request_id = self.request_id();
++        self.police(&mods, account.as_ref(), thread, &request_id, 1, body)
++            .map(drop)
++    }
++
++    fn policed(&self) -> Option<String> {
++        let installed = self.runtime.lock().ok()?;
++        let (mods, required) = installed.as_ref()?;
++        if !required
++            .lock()
++            .map_or(true, |required| required.contains(&"model_send"))
++        {
++            return None;
++        }
++        let owners = mods
++            .try_lock()
++            .map(|mods| mods.policy_owners().join(", "))
++            .unwrap_or_default();
++        Some(if owners.is_empty() {
++            "an enabled mod".into()
++        } else {
++            owners
 +        })
 +    }
 +
@@ -54823,10 +54948,10 @@ index 0000000000000000000000000000000000000000..2598b7ce9da739abb386fcacca9e9084
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8b489a358
+index 0000000000000000000000000000000000000000..109875e14f35a2df76d66c2e8b79c4fe869528a3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,1311 @@
+@@ -0,0 +1,1360 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -55009,7 +55134,7 @@ index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8
 +        source,
 +        &["middleware", "request_policy"],
 +    );
-+    assert!(ResponseObserver::policed(&accounts));
++    assert!(ResponseObserver::policed(&accounts).is_some());
 +    let long = format!("{} SECRET-4", "é".repeat(140_000));
 +    let body = |user: &str| {
 +        json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true,"instructions":"base",
@@ -55083,6 +55208,52 @@ index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8
 +}
 +
 +#[test]
++fn final_request_policies_redact_unary_image_and_memory_bodies() {
++    let (root, accounts, _task, _request, _body) = setup();
++    let source = r"export default api => {
++        api.intercept('model_send', {required: true}, async (e, next) => {
++            const inner = await next(e);
++            if (e.opaque.some(o => o.kind === 'file_id')) return {deny: 'unscanned file'};
++            const edits = e.segments.filter(s => s.editable).flatMap(s =>
++                [...s.text.matchAll(/SECRET-\d+/g)].map(m => ({segment: s.id, start: m.index, end: m.index + m[0].length, text: '[secret]'})));
++            return {edits: [...inner.edits, ...edits]};
++        });
++    }";
++    install_package(
++        &accounts,
++        root.path(),
++        source,
++        &["middleware", "request_policy"],
++    );
++    let mut image = json!({"model":"image-model","prompt":"draw SECRET-1"});
++    ResponseObserver::police_unary(&accounts, None, &mut image).unwrap();
++    assert_eq!(image["prompt"], "draw [secret]");
++    let mut memory = serde_json::to_value(codex_api::MemorySummarizeInput {
++        model: "memory-model".into(),
++        raw_memories: vec![codex_api::RawMemory {
++            id: "m1".into(),
++            metadata: codex_api::RawMemoryMetadata {
++                source_path: "/x".into(),
++            },
++            items: vec![json!({"type":"message","role":"user",
++                "content":[{"type":"input_text","text":"key SECRET-2"}]})],
++        }],
++        reasoning: None,
++    })
++    .unwrap();
++    ResponseObserver::police_unary(&accounts, Some("child"), &mut memory).unwrap();
++    assert_eq!(
++        memory["traces"][0]["items"][0]["content"][0]["text"],
++        "key [secret]"
++    );
++    let mut edit = json!({"model":"image-model","prompt":"edit","images":[{"file_id":"f1"}]});
++    let refused = ResponseObserver::police_unary(&accounts, None, &mut edit)
++        .unwrap_err()
++        .to_string();
++    assert!(refused.contains("unscanned file"), "{refused}");
++}
++
++#[test]
 +fn declared_request_policies_refuse_until_disabled_and_are_inert_without_policies() {
 +    let (root, accounts, _task, _request, _body) = setup();
 +    let source = "export default api => { throw new Error('policy failed to start'); }";
@@ -55102,11 +55273,14 @@ index 0000000000000000000000000000000000000000..72db022065a447c3a5ba5bc83fc4ddf8
 +        );
 +        assert!(refused.contains("policy failed to start"), "{refused}");
 +    }
-+    assert!(ResponseObserver::policed(&accounts));
++    assert_eq!(
++        ResponseObserver::policed(&accounts).as_deref(),
++        Some("request_router")
++    );
 +
 +    store.enable(&package, false).unwrap();
 +    runtime.lock().unwrap().reload().unwrap();
-+    assert!(!ResponseObserver::policed(&accounts));
++    assert_eq!(ResponseObserver::policed(&accounts), None);
 +    let internal = prepared(&accounts, "title-thread", &body).unwrap();
 +    assert_eq!(internal, body);
 +    assert!(prepared(&accounts, "child", &body).is_ok());
@@ -104408,10 +104582,10 @@ index 0000000000000000000000000000000000000000..cde03e640c2a6b0352d1217bd1b40abc
 +}
 diff --git a/codex-rs/omd/src/model_request.rs b/codex-rs/omd/src/model_request.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3a9a4dba8780a0914fa25842591aa1e0e235d0c
+index 0000000000000000000000000000000000000000..c0dad34b5c764d5cf2648b2c903213ab35f63ac8
 --- /dev/null
 +++ b/codex-rs/omd/src/model_request.rs
-@@ -0,0 +1,1145 @@
+@@ -0,0 +1,1155 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -105094,7 +105268,15 @@ index 0000000000000000000000000000000000000000..a3a9a4dba8780a0914fa25842591aa1e
 +    "collaboration_mode.",
 +    "guardian.",
 +];
-+const SEND_FIELDS: &[&str] = &["instructions", "input", "tools", "text"];
++const SEND_FIELDS: &[&str] = &[
++    "instructions",
++    "input",
++    "tools",
++    "text",
++    "prompt",
++    "images",
++    "traces",
++];
 +const STRUCTURAL_KEYS: &[&str] = &[
 +    "type",
 +    "id",
@@ -105216,6 +105398,8 @@ index 0000000000000000000000000000000000000000..a3a9a4dba8780a0914fa25842591aa1e
 +        ["instructions"] => ("instructions".into(), "system".into(), true),
 +        ["tools", ..] => ("tool_spec".into(), "system".into(), false),
 +        ["text", ..] => ("output_schema".into(), "system".into(), false),
++        ["prompt"] => ("image.prompt".into(), "user".into(), true),
++        ["traces", ..] => ("memory".into(), "user".into(), true),
 +        ["input", index, rest @ ..] => {
 +            let item = &request["input"][index.parse::<usize>().unwrap_or(usize::MAX)];
 +            let kind = item["type"].as_str().unwrap_or("item");
@@ -113745,10 +113929,10 @@ index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc9848651
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2d9106ccb
+index 0000000000000000000000000000000000000000..1bd327e0b573fc88a5b5227150a191ae23df2ae8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1967 @@
+@@ -0,0 +1,1980 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -115400,6 +115584,19 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +                });
 +            }
 +        }
++    }
++
++    pub fn policy_owners(&self) -> Vec<String> {
++        self.loaded
++            .iter()
++            .filter(|(_, loaded)| {
++                self.policies.contains(&loaded.selection.path)
++                    || loaded.registrations.interceptors.iter().any(|interceptor| {
++                        interceptor.required && granted(loaded, &interceptor.pattern, "model_send")
++                    })
++            })
++            .map(|(id, _)| id.clone())
++            .collect()
 +    }
 +
 +    pub fn send_policy(&self) -> Option<SendPolicy> {
@@ -132510,10 +132707,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544b3575b3e
+index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5473fa19d
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1335 @@
+@@ -0,0 +1,1371 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -132640,6 +132837,12 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +    io::Error::other(message)
 +}
 +
++fn hardlink(name: &str) -> io::Error {
++    invalid(&format!(
++        "workspace hardlink rejected: {name} shares its contents with another file; replace it with a separate copy"
++    ))
++}
++
 +fn too_large() -> io::Error {
 +    io::Error::new(io::ErrorKind::FileTooLarge, "snapshot size limit")
 +}
@@ -132661,6 +132864,9 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +            if !metadata.is_file() {
 +                return Err(invalid("workspace path is not a regular file"));
 +            }
++            if metadata.nlink() != 1 {
++                return Err(hardlink(name));
++            }
 +            if metadata.len() > max_bytes as u64 {
 +                return Err(invalid("workspace file exceeds limit"));
 +            }
@@ -132671,7 +132877,7 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +            }
 +            let after = input.metadata()?;
 +            if !same_file(&metadata, &after)? {
-+                return Err(invalid("workspace file changed during read"));
++                return Err(invalid(&format!("workspace file changed during read: {name}")));
 +            }
 +            Ok(Some((bytes, metadata.permissions())))
 +        }
@@ -132980,6 +133186,8 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +                );
 +                let hash = match cached.get(&name) {
 +                    Some((seen, hash)) if *seen == stamp => hash.clone(),
++                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
++                    _ if metadata.nlink() != 1 => content_hash(format!("hardlink:{stamp:?}").as_bytes()),
 +                    _ => {
 +                        let (content, _) = read_version(repository, &name, max_bytes)?
 +                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -133213,9 +133421,7 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +        && before.modified()? == after.modified()?
 +        && before.ctime() == after.ctime()
 +        && before.ctime_nsec() == after.ctime_nsec()
-+        && before.mode() == after.mode()
-+        && before.nlink() == 1
-+        && after.nlink() == 1)
++        && before.mode() == after.mode())
 +}
 +
 +fn frame(digest: &mut Sha256, name: &str, executable: bool, contents: &[u8]) {
@@ -133248,10 +133454,10 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +        };
 +        let metadata = input.metadata()?;
 +        if !metadata.is_file() {
-+            return Err(invalid("snapshot requires regular files"));
++            return Err(invalid(&format!("snapshot requires regular files: {name}")));
 +        }
 +        if metadata.nlink() != 1 {
-+            return Err(invalid("snapshot hardlink rejected"));
++            return Err(hardlink(name));
 +        }
 +        let executable = metadata.permissions().mode() & 0o111 != 0;
 +        let count = read(
@@ -133265,7 +133471,7 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +        remaining = remaining.checked_sub(cost).ok_or_else(too_large)?;
 +        let after = fs::symlink_metadata(&path)?;
 +        if !same_file(&metadata, &input.metadata()?)? || !same_file(&metadata, &after)? {
-+            return Err(invalid("source changed during snapshot"));
++            return Err(invalid(&format!("source changed during snapshot: {name}")));
 +        }
 +        observed.insert(name.clone(), Some(metadata));
 +    }
@@ -133658,6 +133864,33 @@ index 0000000000000000000000000000000000000000..708bcd310ce541310366a935d3cd2544
 +            .map(|change| change.path)
 +            .collect();
 +        assert_eq!(changed, [".cache/note.md", "build/x.rs"]);
++    }
++
++    #[test]
++    fn hardlinked_files_are_tracked_by_identity_and_never_read() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("a.txt"), "one\n").unwrap();
++        fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
++        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        assert_ne!(before.files["b.txt"], content_hash(b"one\n"));
++        fs::write(root.join("b.txt"), "two\n").unwrap();
++        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        assert_eq!(before.changed(&after).len(), 2);
++        let paths = BTreeSet::from(["a.txt".into()]);
++        let error = Snapshot::capture(&root, &paths, 64).unwrap_err().to_string();
++        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
++        let transaction = WorkspaceTransaction {
++            expected: BTreeMap::from([(
++                "a.txt".into(),
++                Some(Fingerprint::Hash(content_hash(b"one\n"))),
++            )]),
++            writes: BTreeMap::from([("a.txt".into(), "two\n".into())]),
++            ..Default::default()
++        };
++        let error = transaction.apply(&root, || true).unwrap_err().to_string();
++        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
++        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
 +    }
 +
 +    #[test]
@@ -149422,10 +149655,10 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cadc87eaee3
+index 0000000000000000000000000000000000000000..31074407e63da699a9349592f697302211831788
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,2178 @@
+@@ -0,0 +1,2189 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -149739,6 +149972,42 @@ index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cad
 +fn translate_images(caller: &str, thread: Option<&str>, value: &mut Value) -> Result<(), String> {
 +    let (store, repository) = store_paths()?;
 +    codex_omd::client_surface::translate_images(&store, &repository, caller, thread, value)
++}
++
++pub(crate) fn spawn_app_request(
++    call: SurfaceCall,
++    handle: codex_app_server_client::AppServerRequestHandle,
++    id: codex_app_server_protocol::RequestId,
++) {
++    let method = call.arguments["method"]
++        .as_str()
++        .unwrap_or_default()
++        .to_owned();
++    let mut params = call.arguments["params"].clone();
++    if let Err(error) = translate_images(&call.caller, call.thread.as_deref(), &mut params) {
++        let _ = call.reply.send(Err(error));
++        return;
++    }
++    let request = json!({"method": method, "id": id, "params": params});
++    let request = match serde_json::from_value::<codex_app_server_protocol::ClientRequest>(request)
++    {
++        Ok(request) => request,
++        Err(error) => {
++            let _ = call.reply.send(Err(format!("app_params_invalid: {error}")));
++            return;
++        }
++    };
++    tokio::spawn(async move {
++        if let Err(error) = crate::mod_surface::validate_call(&call) {
++            let _ = call.reply.send(Err(error));
++            return;
++        }
++        let result = handle
++            .request_typed::<Value>(request)
++            .await
++            .map_err(|error| error.to_string());
++        let _ = call.reply.send(result);
++    });
 +}
 +
 +type PackageControl = codex_omd::package_controls::PackageControl;
@@ -150704,37 +150973,12 @@ index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cad
 +        }
 +        let result = match call.operation.as_str() {
 +            "app.request" => {
-+                let method = call.arguments["method"]
-+                    .as_str()
-+                    .unwrap_or_default()
-+                    .to_owned();
-+                let mut params = call.arguments["params"].clone();
-+                if let Err(error) =
-+                    translate_images(&call.caller, call.thread.as_deref(), &mut params)
-+                {
-+                    let _ = call.reply.send(Err(error));
-+                    return;
-+                }
-+                let request =
-+                    json!({"method": method, "id": app_server.next_request_id(), "params": params});
-+                match serde_json::from_value::<codex_app_server_protocol::ClientRequest>(request) {
-+                    Ok(request) => {
-+                        let handle = app_server.request_handle();
-+                        tokio::spawn(async move {
-+                            if let Err(error) = crate::mod_surface::validate_call(&call) {
-+                                let _ = call.reply.send(Err(error));
-+                                return;
-+                            }
-+                            let result = handle
-+                                .request_typed::<Value>(request)
-+                                .await
-+                                .map_err(|error| error.to_string());
-+                            let _ = call.reply.send(result);
-+                        });
-+                        return;
-+                    }
-+                    Err(error) => Err(format!("app_params_invalid: {error}")),
-+                }
++                spawn_app_request(
++                    call,
++                    app_server.request_handle(),
++                    app_server.next_request_id(),
++                );
++                return;
 +            }
 +            "app.respond" => {
 +                let result = call.arguments["result"].clone();
@@ -162697,10 +162941,10 @@ index 0000000000000000000000000000000000000000..4ac81f3fd9fd744ee640308be6307f03
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7911f81a639d3e10376b224c72f7ae23511e49bf
+index 0000000000000000000000000000000000000000..a62aaf4b818d8c2b37c842143fa011d5911e66cb
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,1136 @@
+@@ -0,0 +1,1168 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use crate::omd::LockExt;
@@ -162737,6 +162981,20 @@ index 0000000000000000000000000000000000000000..7911f81a639d3e10376b224c72f7ae23
 +        }));
 +        if !(call.validity.0)() {
 +            call.reply_blit(Err("client_context_changed".into()));
++            return Ok(());
++        }
++        if call.operation == "app.request"
++            && let Some(handle) = PARKED.locked().clone()
++        {
++            if let Err(error) = validate_call_classified(&call) {
++                call.reply_blit(Err(error));
++                return Ok(());
++            }
++            let id = codex_app_server_protocol::RequestId::String(format!(
++                "omd-parked-{}",
++                PARKED_REQUESTS.fetch_add(1, Ordering::Relaxed)
++            ));
++            crate::app::mod_surface::spawn_app_request(call, handle, id);
 +            return Ok(());
 +        }
 +        let binding = (call.operation == "terminal.pty")
@@ -162785,6 +163043,24 @@ index 0000000000000000000000000000000000000000..7911f81a639d3e10376b224c72f7ae23
 +}
 +
 +static STATE: Mutex<Option<State>> = Mutex::new(None);
++static PARKED: Mutex<Option<codex_app_server_client::AppServerRequestHandle>> = Mutex::new(None);
++static PARKED_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// While held, `app.request` calls bypass the event loop, which is awaiting a request whose mod lifecycle callbacks make them.
++pub(crate) struct ParkedLoop;
++
++impl ParkedLoop {
++    pub(crate) fn new(handle: codex_app_server_client::AppServerRequestHandle) -> Self {
++        *PARKED.locked() = Some(handle);
++        Self
++    }
++}
++
++impl Drop for ParkedLoop {
++    fn drop(&mut self) {
++        *PARKED.locked() = None;
++    }
++}
 +static CONTEXT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 +
 +fn with<T>(run: impl FnOnce(&mut State) -> T) -> T {
@@ -163839,12 +164115,13 @@ index 0000000000000000000000000000000000000000..7911f81a639d3e10376b224c72f7ae23
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608bf97b902
+index 0000000000000000000000000000000000000000..01b27ba08a2fdb847953c1e9a63f59da675285be
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,990 @@
+@@ -0,0 +1,1042 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
++use crate::test_support::PathBufExt;
 +use pretty_assertions::assert_eq;
 +
 +struct Echo;
@@ -164832,6 +165109,57 @@ index 0000000000000000000000000000000000000000..e21f8ec13a33aa8ca4b911eac3795608
 +    assert_eq!(state("other"), Value::Null);
 +    crate::mod_layout::hide();
 +    crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++#[serial_test::serial]
++async fn app_requests_are_served_while_the_event_loop_awaits_a_lifecycle_request() {
++    struct Restore(Option<State>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            *STATE.locked() = self.0.take();
++        }
++    }
++    let _restore = Restore(STATE.locked().take());
++    let (chat_widget, _, _, _) =
++        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
++    let mut config = chat_widget.config_ref().clone();
++    let codex_home = tempfile::tempdir().unwrap();
++    config.codex_home = codex_home.path().to_path_buf().abs();
++    config.sqlite =
++        codex_state::SqliteConfig::new_for_testing(codex_home.path().to_path_buf().abs());
++    let app_server = crate::start_embedded_app_server_for_picker(&config)
++        .await
++        .unwrap();
++    let store = codex_home.path().canonicalize().unwrap().join("store");
++    codex_omd::ModStore::create(store.clone()).unwrap();
++    let _environment = crate::omd::tests::omd_environment(&store);
++    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++    attach(&AppEventSender::new(tx), Some("surface-a".to_owned()));
++    let submit = || {
++        codex_omd::client_surface::submit(
++            codex_omd::broker::HOST_CALLER,
++            "app.request",
++            json!({"method": "config/read", "params": {}}),
++            InvocationContext::User,
++            false,
++            Some("surface-a"),
++            None,
++        )
++        .unwrap()
++    };
++    let parked = ParkedLoop::new(app_server.request_handle());
++    let pending = submit();
++    let reply = tokio::task::spawn_blocking(move || {
++        pending.recv_timeout(std::time::Duration::from_secs(10))
++    })
++    .await
++    .unwrap();
++    assert!(reply.unwrap().unwrap()["config"].is_object());
++    assert!(rx.try_recv().is_err());
++    drop(parked);
++    let _queued = submit();
++    assert!(matches!(rx.try_recv(), Ok(AppEvent::ModSurfaceCall(..))));
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644

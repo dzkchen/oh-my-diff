@@ -88,10 +88,9 @@ test('advisor keeps cross-thread and stale advice out of context, with explicit 
   invoke({ phase: 'resume' }, () => assert.fail('resume must not relaunch review'), { ...advisorOptions, event: 'resume', state });
 });
 
-function consultHost(overrides = {}) {
+function consultHost(overrides = {}, history = `[{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the parser. api_key=sk-live-123456"}]}]`) {
   const calls = [];
   const snapshot = { reference: digest('history'), sha256: digest('history-sha') };
-  const history = `{"records":[{"role":"user","text":"Fix the parser. api_key=sk-live-123456"}]}`;
   return { calls, host(call) {
     calls.push(call);
     if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
@@ -129,6 +128,23 @@ test('advisor prompts and review briefs are redacted, ask is bounded and limited
   const reviewing = advisorHost({}, secret);
   const requested = invoke(completed, reviewing.host, advisorOptions).state;
   assert.doesNotMatch(reviewing.calls.find(call => call.operation === 'agents.spawn').arguments.prompt + requested.brief, /sk-live/);
+});
+
+test('advisor sends the newest complete history records within the section budget', () => {
+  const records = Array.from({ length: 30 }, (_, index) => ({ type: 'message', role: index % 2 ? 'assistant' : 'user', content: [{ type: 'input_text', text: `record-${String(index).padStart(2, '0')} ${'x'.repeat(150)}` }] }));
+  const run = items => {
+    const fixture = consultHost({}, JSON.stringify(items));
+    invoke({}, fixture.host, { ...consultOptions({ share: ['conversation'] }), event: 'tool', name: 'ask' });
+    return prompt(fixture).split('## Recent conversation (newest history records)\n')[1];
+  };
+  const section = run(records);
+  assert.match(section, /record-29 /);
+  assert.doesNotMatch(section, /record-00 /);
+  const lines = section.split('\n');
+  assert.ok(lines.length > 5 && Buffer.byteLength(section) <= 2500);
+  for (const line of lines) assert.equal(JSON.parse(line).type, 'message');
+  assert.match(lines.at(-1), /record-29 /);
+  assert.match(run([...records.slice(0, 2), { ...records[2], content: [{ type: 'input_text', text: 'y'.repeat(4000) }] }]), /omitted: the newest history record exceeds/);
 });
 
 test('advisor without a route names the worker routes instead of calling a model', () => {

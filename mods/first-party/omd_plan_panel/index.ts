@@ -7,6 +7,7 @@ type View = { collapsed: boolean; all: boolean };
 
 const THREADS = 16;
 const STEPS = 40;
+const BYTES = 160 * 1024;
 const GLYPH: Record<Status, string> = { pending: '○', inProgress: '◐', completed: '✓' };
 const TONE: Record<Status, TerminalTone> = { pending: 'normal', inProgress: 'accent', completed: 'muted' };
 
@@ -24,6 +25,7 @@ export default function activate(api: ModAPI) {
   const load = (): State => ({ plans: {}, seq: 0, ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const view = (): View => ({ collapsed: false, all: false, ...(api.uiState.get() as Partial<View> | null) });
+  const utf8 = new TextEncoder();
   const rows = Math.max(2, Math.min(40, Number(api.settings.rows) || 8));
 
   api.on('app_notification', ({ method, params, thread_id }) => {
@@ -37,7 +39,8 @@ export default function activate(api: ModAPI) {
         status: (Object.hasOwn(GLYPH, String(item.status)) ? item.status : 'pending') as Status,
       }));
       state.plans[thread] = { steps, seq: ++state.seq };
-      for (const old of Object.keys(state.plans).sort((a, b) => state.plans[b].seq - state.plans[a].seq).slice(THREADS)) delete state.plans[old];
+      const newest = Object.keys(state.plans).sort((a, b) => state.plans[b].seq - state.plans[a].seq);
+      while (newest.length > 1 && (newest.length > THREADS || utf8.encode(JSON.stringify(state)).length > BYTES)) delete state.plans[newest.pop()!];
     } else if (method === 'turn/started' && state.plans[thread]?.steps.every(step => step.status === 'completed')) delete state.plans[thread];
     else return;
     save(state);

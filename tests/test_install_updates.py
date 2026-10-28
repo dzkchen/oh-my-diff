@@ -456,6 +456,7 @@ class UpdateSelection(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unmanaged files"):
                     self.module.uninstall(args, self.root, bin_dir, self.current)
                 self.assertTrue((self.root / "current").is_symlink() and (self.current / "receipt.json").is_file())
+                self.assertEqual(self.module.pointer(self.root, "previous"), older)
                 (older / "prefix/personal.txt").unlink()
                 self.module.uninstall(args, self.root, bin_dir, self.current)
             self.assertIsNone(self.module.flocked(self.root / ".install.lock"), "a fresh entrant waits for the holder")
@@ -471,6 +472,27 @@ class UpdateSelection(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.root.iterdir()), [".install.lock", "bin", "catalog", "releases", "stores"])
         self.assertEqual(list((self.root / "releases").iterdir()), [])
         self.assertTrue((self.root / "stores/platform/mods.json").is_file())
+
+    def test_rollback_recovers_a_damaged_current_installation(self):
+        bin_dir = self.root / "bin"
+        older = self.root / "releases" / ("1" * 32)
+        (older / "prefix").mkdir(parents=True)
+        (older / "receipt.json").write_text(json.dumps({"schema": 1, "generation": older.name, "profile": "platform", "version": "0.0.9"}))
+        receipt = json.loads((self.current / "receipt.json").read_text()) | {"version": "0.1.0"}
+        (self.current / "receipt.json").write_text(json.dumps(receipt))
+        (self.root / "previous").symlink_to(older)
+
+        def status(generation, upstream, directory):
+            if generation == self.current:
+                raise ValueError(f"managed artifact changed: {generation}/codex")
+            return {"profile": "platform"}
+
+        with patch.object(self.module, "status", side_effect=status), patch.object(self.module, "package"), \
+                patch.object(self.module, "broker_deployed", return_value=False), patch("builtins.print"):
+            self.module.rollback(types.SimpleNamespace(session=None, upstream=None), self.root, bin_dir, self.current)
+        self.assertEqual(self.module.pointer(self.root, "current"), older)
+        self.assertEqual(self.module.pointer(self.root, "previous"), self.current)
+        self.assertEqual(os.readlink(bin_dir / "codex"), str(self.root / "current/bin/codex"))
 
     def test_interrupted_uninstall_finishes_on_the_next_start(self):
         real_unlink, real_rmdir = Path.unlink, Path.rmdir

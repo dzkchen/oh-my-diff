@@ -26,13 +26,18 @@ pub trait ResponseObserver: Send + Sync {
         request: &mut Request,
         body: Option<&EncodedJsonBody>,
     ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
+    /// Runs the final-request stage over a unary JSON request body.
+    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
+        let _ = (thread, body);
+        Ok(())
+    }
     fn requires_observation(&self, thread: Option<&str>) -> bool {
         let _ = thread;
         true
     }
-    /// Whether a required final-request policy must see every provider request.
-    fn policed(&self) -> bool {
-        false
+    /// The mods whose required final-request policy must see every provider request.
+    fn policed(&self) -> Option<String> {
+        None
     }
     fn answer(&self, request: &Request) -> Option<Vec<Value>> {
         let _ = request;
@@ -91,22 +96,38 @@ pub(crate) fn admit(
     }
 }
 
-pub(crate) fn reject_policed_transport() -> Result<(), crate::error::ApiError> {
-    if OBSERVER.get().is_some_and(|observer| observer.policed()) {
+pub(crate) fn reject_policed_transport(transport: &str) -> Result<(), crate::error::ApiError> {
+    if let Some(owners) = OBSERVER.get().and_then(|observer| observer.policed()) {
         return Err(crate::error::ApiError::InvalidRequest {
-            message: "local OMD request policy: final_request_refused: request_policy_unsupported_transport: a final-request policy is active and this provider transport cannot pass it".into(),
+            message: format!("local OMD request policy: final_request_refused: request_policy_unsupported_transport: {transport} requests cannot pass the final-request policy of {owners}; turn {owners} off to use this feature"),
         });
     }
     Ok(())
 }
 
-pub(crate) fn reject_unobserved_transport(
+/// Web search sends recent conversation text and queries without passing final-request policies.
+pub const UNPOLICED_SEARCH_PATH: &str = "alpha/search";
+pub const POLICED_UNARY_PATHS: &[&str] = &[
+    "images/generations",
+    "images/edits",
+    "memories/trace_summarize",
+];
+
+pub(crate) fn admit_unary(
+    path: &str,
     headers: &http::HeaderMap,
+    body: Option<&mut Value>,
 ) -> Result<(), crate::error::ApiError> {
-    reject_policed_transport()?;
     let thread = headers
         .get("thread-id")
         .and_then(|value| value.to_str().ok());
+    match (OBSERVER.get(), body) {
+        _ if path == UNPOLICED_SEARCH_PATH => {}
+        (Some(observer), Some(body)) if POLICED_UNARY_PATHS.contains(&path) => {
+            observer.police_unary(thread, body)?
+        }
+        _ => reject_policed_transport(path)?,
+    }
     if OBSERVER
         .get()
         .is_some_and(|observer| observer.requires_observation(thread))

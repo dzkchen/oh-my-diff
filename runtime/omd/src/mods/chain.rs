@@ -1651,6 +1651,19 @@ impl ModHost {
         }
     }
 
+    pub fn policy_owners(&self) -> Vec<String> {
+        self.loaded
+            .iter()
+            .filter(|(_, loaded)| {
+                self.policies.contains(&loaded.selection.path)
+                    || loaded.registrations.interceptors.iter().any(|interceptor| {
+                        interceptor.required && granted(loaded, &interceptor.pattern, "model_send")
+                    })
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     pub fn send_policy(&self) -> Option<SendPolicy> {
         let required = self.intercepts("model_send");
         if required.is_none() && self.policies.is_empty() {
