@@ -322,8 +322,21 @@ pub(super) fn run(
         Ok(receipt)
     };
     let evaluated = match &warm {
-        Some(key) => process::evaluate_warm(key, &request, budget, active, &mut answer),
-        None => process::evaluate(&request, budget, active, &mut answer),
+        Some(key) => process::evaluate_warm(
+            key,
+            &request,
+            loaded.code_cache.as_deref(),
+            budget,
+            active,
+            &mut answer,
+        ),
+        None => process::evaluate(
+            &request,
+            loaded.code_cache.as_deref(),
+            budget,
+            active,
+            &mut answer,
+        ),
     }?;
     let mut reply: Reply = serde_json::from_value(evaluated).inspect_err(|_| {
         if let Some(key) = &warm {

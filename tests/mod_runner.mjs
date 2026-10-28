@@ -93,7 +93,8 @@ function line(worker) {
 }
 
 function frame(worker) {
-  const text = line(worker);
+  let text = line(worker);
+  if (text === '{"ready":true}') text = line(worker);
   if (text !== null) return JSON.parse(text);
   if (Date.now() >= worker.deadline) throw new Error('runner_timed_out');
   throw new Error(`runner_exited_without_result: ${readFileSync(worker.stderr, 'utf8').trim()}`);

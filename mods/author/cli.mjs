@@ -28,7 +28,7 @@ const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = sdkPackage.files.filter(file => file.startsWith('examples/')).map(file => file.slice('examples/'.length));
 
-const USAGE = 'usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n';
+const USAGE = 'usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | cost DIR [COMMAND [ARGS_JSON]] [--runs N] | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n';
 
 /** @returns {never} */
 function fail(message) {
@@ -317,6 +317,24 @@ async function packageProject(directory) {
   print({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) });
 }
 
+function costProject(directory, args) {
+  const at = args.indexOf('--runs');
+  const runs = at === -1 ? '10' : args[at + 1] ?? '';
+  if (!/^[1-9]\d*$/.test(runs) || Number(runs) > 100) fail('cost --runs takes a whole number from 1 to 100');
+  const call = at === -1 ? args : [...args.slice(0, at), ...args.slice(at + 2)];
+  if (call.length > 2) fail(USAGE.trim());
+  compileJsx(directory);
+  const temporary = mkdtempSync(join(tmpdir(), 'omd-mod-author-'));
+  const store = join(temporary, 'store');
+  try {
+    engineJson(['init', store]);
+    const { manifest } = trustPackage(store, directory);
+    print(JSON.parse(command(engine, ['cost', store, manifest.id, runs, ...call], { capture: true, cwd: temporary })));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 function watchProject(directory, store, once) {
   let files = new Set(['mod.json']);
   const reload = () => {
@@ -376,6 +394,7 @@ async function main() {
     case 'run': return runScenario(directory, 'mod.test.json');
     case 'debug': return runScenario(directory, 'debug.test.json');
     case 'package': return packageProject(directory);
+    case 'cost': return costProject(directory, process.argv.slice(2).filter(argument => argument !== '--').slice(2));
     case 'watch': return watchProject(directory, resolve(nameOrStore || fail('watch requires STORE')), extra === '--once');
     case 'report':
     case 'events': return print(engineJson([action, directory]));

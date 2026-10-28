@@ -241,7 +241,7 @@ fn package_target(target: &str) -> io::Result<PathBuf> {
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(concat!(
-            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE MOD_ID_OR_PACKAGE | rollback STORE MOD_ID_OR_PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE | authorize-runner STORE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE MOD_ID_OR_PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | require STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, repository, revision (commit, branch or tag), subdirectory?} or {kind: package, index, id, version} or {kind: npm, package, version?, registry?, integrity?}; scope?; offline?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable/package-unblock STORE ID | package-quarantine STORE ID REASON | security-events STORE | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | reset STORE host.json|mods.json|packages.lock.json|managed.json | policy show|clear|rollback | policy check/set FILE | policy explain STORE [PROJECT_DIR] | package-sync STORE [--offline|--rollback] | credentials STORE add-secret MOD_ID LABEL ORIGIN (value on stdin) | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE MOD_ID_OR_PACKAGE | rollback STORE MOD_ID_OR_PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD] | cost STORE MOD RUNS [COMMAND [ARGS_JSON]]",
             " | broker-grants-import STORE [SNAPSHOT_JSON]"
         ))
     };
@@ -536,6 +536,27 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
         }
         [command, denial] if command == "explain" => Ok(ModHost::capability_explanation(denial)),
+        [command, root, id, runs, call @ ..] if command == "cost" && call.len() <= 2 => {
+            let runs = runs
+                .parse::<usize>()
+                .ok()
+                .filter(|runs| (1..=100).contains(runs))
+                .ok_or_else(bad)?;
+            let call = match call {
+                [] => None,
+                [name] => Some((name.as_str(), Value::String(String::new()))),
+                [name, payload] => Some((name.as_str(), serde_json::from_str(payload)?)),
+                _ => None,
+            };
+            ModHost::cost(
+                store(root)?,
+                validate_tool_schema,
+                &std::env::current_dir()?,
+                id,
+                call,
+                runs,
+            )
+        }
         [command, root, id, name, payload, thread @ ..]
             if command == "command" && thread.len() <= 1 =>
         {

@@ -539,7 +539,7 @@ fn write_directory_state(
     crate::fsio::write_bytes(
         &directory.join(name),
         &stored_state(version, value)?,
-        crate::fsio::Durability::Durable,
+        crate::fsio::Durability::Ordered,
     )
 }
 
@@ -584,9 +584,9 @@ pub(super) fn migrate_directory_state(
     crate::fsio::write_bytes(
         &directory.join(format!("{name}-backup-{}", digest(&bytes))),
         &bytes,
-        crate::fsio::Durability::Durable,
+        crate::fsio::Durability::Ordered,
     )?;
-    crate::fsio::write_bytes(&path, &migrated, crate::fsio::Durability::Durable)?;
+    crate::fsio::write_bytes(&path, &migrated, crate::fsio::Durability::Ordered)?;
     Ok(value)
 }
 
@@ -771,7 +771,11 @@ impl ModStore {
         crate::fsio::write_bytes_before(
             &self.root.join(name),
             bytes,
-            crate::fsio::Durability::Durable,
+            if name.starts_with("state-") {
+                crate::fsio::Durability::Ordered
+            } else {
+                crate::fsio::Durability::Durable
+            },
             commit,
         )
     }

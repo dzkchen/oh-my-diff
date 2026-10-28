@@ -1,6 +1,7 @@
 mod author;
 mod bridge;
 mod chain;
+mod code_cache;
 mod operation_validation;
 mod persisted;
 mod render;
@@ -120,6 +121,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::PoisonError;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -853,6 +858,55 @@ fn reject(
     });
     Ok(())
 }
+
+/// Runs `work` on up to eight threads, returning results in input order; `active` cancels the rest.
+fn concurrently<T: Send, R: Send>(
+    items: Vec<T>,
+    active: &dyn Fn() -> bool,
+    work: impl Fn(T, &dyn Fn() -> bool) -> R + Sync,
+) -> Vec<R> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .clamp(1, 8)
+        .min(items.len());
+    let cancelled = AtomicBool::new(false);
+    let queue = Mutex::new(items.into_iter().enumerate());
+    let (sender, results) = mpsc::channel();
+    let mut done = Vec::new();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let (sender, queue, cancelled, work) = (sender.clone(), &queue, &cancelled, &work);
+            scope.spawn(move || {
+                let active = || !cancelled.load(Ordering::Relaxed);
+                loop {
+                    let next = queue.lock().unwrap_or_else(PoisonError::into_inner).next();
+                    let Some((index, item)) = next else {
+                        break;
+                    };
+                    if sender.send((index, work(item, &active))).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(sender);
+        loop {
+            if !active() {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+            match results.recv_timeout(Duration::from_millis(10)) {
+                Ok(result) => done.push(result),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+    done.sort_by_key(|(index, _)| *index);
+    done.into_iter().map(|(_, result)| result).collect()
+}
+
+/// A mod's validated registrations, its source use, and its unused grants and environment.
+type Inspection = (Registrations, ModSourceUse, Vec<String>, Vec<String>);
 
 fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
     if !initial {
@@ -2693,8 +2747,12 @@ struct Loaded {
     source: Arc<str>,
     assets: Arc<BTreeMap<String, Value>>,
     request_metadata: Arc<OnceLock<(Value, String)>>,
+    /// The store's code cache root; `None` runs without one.
+    code_cache: Option<Arc<Path>>,
     adapter: Option<Value>,
     state: Value,
+    /// The state the inspection ran with; `state` follows later callbacks.
+    registered_state: Arc<Value>,
     ui: Option<(String, Arc<Mutex<UiState>>)>,
     ui_state: Value,
     ui_revision: u64,
@@ -2719,6 +2777,12 @@ struct UiState {
 
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
+
+/// Error-free inspections by store and checkout, newest first; a host opening there reuses one only for an unchanged selection and adapter.
+#[allow(clippy::type_complexity)]
+static ACTIVATED: Mutex<Vec<((PathBuf, Option<PathBuf>), BTreeMap<String, Loaded>)>> =
+    Mutex::new(Vec::new());
+const ACTIVATED_CHECKOUTS: usize = 8;
 static UI_RESETS: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
 static TURNED_OFF: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -2988,6 +3052,19 @@ type Authority = (
 );
 
 impl Loaded {
+    /// This activation for another host: the inspection without this host's UI or telemetry.
+    fn inspected(&self) -> Self {
+        Self {
+            ui: None,
+            ui_state: Value::Null,
+            ui_revision: 0,
+            ui_clears: 0,
+            command_view: None,
+            telemetry: ModTelemetry::default(),
+            ..self.clone()
+        }
+    }
+
     fn clear_ui(&mut self) {
         self.command_view = None;
         if let Some((_, state)) = self.ui.take()
@@ -3051,6 +3128,10 @@ pub struct ModHost {
     generation: u64,
     configuration_sha256: String,
     configuration_stamp: Option<ConfigurationStamp>,
+    /// The configuration whose timed-out inspections were already retried once.
+    inspect_retried: String,
+    /// A pending retry and the leniency (`initial`) of the reload it repeats.
+    inspect_retry: Option<(bool, Instant)>,
     ui_configuration: Option<(u64, String)>,
     selections: (usize, usize),
     loaded: BTreeMap<String, Loaded>,
@@ -3082,6 +3163,8 @@ pub struct ModHost {
     unserved: Vec<(String, Vec<String>, String)>,
     project: Option<PathBuf>,
     pool: u64,
+    /// Inspections another host in this process published for this store and checkout, offered to the first reload.
+    seeded: BTreeMap<String, Loaded>,
 }
 
 impl Drop for ModHost {
@@ -3536,6 +3619,77 @@ impl ModHost {
         Self::open_in_guarded(root, tool_validator, repository, &|| true)
     }
 
+    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
+    pub fn cost(
+        root: PathBuf,
+        tool_validator: fn(&Value) -> Result<()>,
+        repository: &Path,
+        id: &str,
+        command: Option<(&str, Value)>,
+        runs: usize,
+    ) -> Result<Value> {
+        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+        let mut usage = (0, 0);
+        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
+        for _ in 0..runs {
+            process::stop_runners();
+            ACTIVATED
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|((store, _), _)| store != &root);
+            let started = Instant::now();
+            let mut host = Self::open_in(root.clone(), tool_validator, repository)?;
+            samples
+                .entry("activation_ms")
+                .or_default()
+                .push(elapsed(started));
+            let loaded = host.loaded.get(id).ok_or_else(|| failure("mod_disabled"))?;
+            if let Some(error) = &loaded.error {
+                return Err(failure(format!("mod_failed: {error}")));
+            }
+            if host
+                .event_ids("terminal")
+                .iter()
+                .any(|handler| handler == id)
+            {
+                let started = Instant::now();
+                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
+                let render_ms = elapsed(started);
+                let prefix = format!("{id}: ");
+                if let Some(error) = view
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| d.strip_prefix(&prefix))
+                {
+                    return Err(failure(format!("mod_failed: {error}")));
+                }
+                samples
+                    .entry("first_render_ms")
+                    .or_default()
+                    .push(render_ms);
+            }
+            if let Some((name, payload)) = &command {
+                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
+                    let started = Instant::now();
+                    host.invoke(id, host.generation, "command", name, payload.clone())?;
+                    samples.entry(sample).or_default().push(elapsed(started));
+                }
+            }
+            usage = process::runner_usage();
+        }
+        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
+            "runner_peak_footprint_bytes": usage.1});
+        for (metric, values) in samples {
+            let first = values[0];
+            let mut sorted = values;
+            sorted.sort_by(f64::total_cmp);
+            let at =
+                |quantile: f64| sorted[((sorted.len() - 1) as f64 * quantile).round() as usize];
+            report[metric] = json!({"first": first, "p50": at(0.5), "p95": at(0.95)});
+        }
+        Ok(report)
+    }
+
     pub fn open_in_guarded(
         root: PathBuf,
         tool_validator: fn(&Value) -> Result<()>,
@@ -3557,6 +3711,8 @@ impl ModHost {
             generation: 0,
             configuration_sha256: String::new(),
             configuration_stamp: None,
+            inspect_retried: String::new(),
+            inspect_retry: None,
             ui_configuration: None,
             selections: (0, 0),
             loaded: BTreeMap::new(),
@@ -3591,9 +3747,22 @@ impl ModHost {
                 static HOSTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 HOSTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             },
+            seeded: BTreeMap::new(),
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
+        }
+        let key = (host.store.root.clone(), host.project.clone());
+        if let Some((_, loaded)) = ACTIVATED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|(activated, _)| activated == &key)
+        {
+            host.seeded = loaded
+                .iter()
+                .map(|(id, loaded)| (id.clone(), loaded.inspected()))
+                .collect();
         }
         host.reload_guarded(active)?;
         Ok(host)
@@ -3624,6 +3793,21 @@ impl ModHost {
                 git.canonicalize().ok()
             })
             .map(|git| git.join("omd").join("state"));
+    }
+
+    /// The state an inspection runs with: the bound thread's or checkout's, `null` while older state awaits migration.
+    fn inspection_state(&self, package: &ModPackage, scope: &str) -> Result<Value> {
+        let location = self.state_location(package, scope, bound_thread().as_deref());
+        match self.store.scoped_state(&location, package.state_version) {
+            // Older thread or checkout state migrates at the mod's first callback there.
+            Err(error)
+                if matches!(location, store::StateLocation::Directory(..))
+                    && error.to_string().starts_with("state_migration_required") =>
+            {
+                Ok(Value::Null)
+            }
+            state => state,
+        }
     }
 
     fn state_location(
@@ -3698,15 +3882,23 @@ impl ModHost {
         )];
         self.publish_surfaces();
         self.configuration_sha256.clear();
+        self.inspect_retry = None;
     }
 
     fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
-        stamp.is_some()
+        !self.inspect_retry_due()
+            && stamp.is_some()
             && *stamp == self.configuration_stamp
             && self
                 .brokered
                 .as_ref()
                 .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
+    }
+
+    /// A timed-out inspection is retried once it is 2 s old.
+    fn inspect_retry_due(&self) -> bool {
+        self.inspect_retry
+            .is_some_and(|(_, failed)| failed.elapsed() >= Duration::from_secs(2))
     }
 
     pub fn refresh_due(&self) -> bool {
@@ -3737,7 +3929,8 @@ impl ModHost {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        if hash == self.configuration_sha256 {
+        let retrying = hash == self.configuration_sha256;
+        if retrying && !self.inspect_retry_due() {
             self.configuration_stamp = stamp
                 .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
             return Ok(false);
@@ -3810,7 +4003,10 @@ impl ModHost {
             .map(|m| m.path.clone())
             .collect();
         self.publish_surfaces();
-        let initial = self.configuration_sha256.is_empty() || self.managed.is_some();
+        let initial = match self.inspect_retry {
+            Some((initial, _)) if retrying => initial,
+            _ => self.configuration_sha256.is_empty() || self.managed.is_some(),
+        };
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
             let keep = selections.iter().enumerate().any(|(index, m)| {
@@ -3849,15 +4045,17 @@ impl ModHost {
             store::package,
         )?;
         let adapters = Self::adapters(&selected);
+        let seeded = std::mem::take(&mut self.seeded);
         let mut next = BTreeMap::new();
+        let mut inspections = Vec::new();
         for (id, (mut selection, package, source)) in selected {
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
             let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
             selection.settings.extend(file_settings);
-            // An unchanged trusted selection and adapter keep their inspection; only changed mods run again.
-            if let Some(previous) = self.loaded.get(&id).filter(|previous| {
+            // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
+            let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
                     && previous.settings_file == settings_file
                     && previous.adapter.as_ref()
@@ -3867,7 +4065,19 @@ impl ModHost {
                             .and_then(|name| adapters.get(name))
                     && serde_json::to_value(&previous.selection).ok()
                         == serde_json::to_value(&selection).ok()
-            }) {
+                    && previous
+                        .registrations
+                        .tools
+                        .iter()
+                        .all(|tool| (self.tool_validator)(&tool.parameters).is_ok())
+            };
+            let reused = self.loaded.get(&id).filter(unchanged).or_else(|| {
+                seeded.get(&id).filter(unchanged).filter(|previous| {
+                    self.inspection_state(&previous.package, &previous.selection.scope)
+                        .is_ok_and(|state| state == *previous.registered_state)
+                })
+            });
+            if let Some(previous) = reused {
                 next.insert(id, previous.clone());
                 continue;
             }
@@ -3911,8 +4121,10 @@ impl ModHost {
                 source: source.into(),
                 assets: Arc::new(assets),
                 request_metadata: Arc::new(OnceLock::new()),
+                code_cache: Some(self.store.root.join("cache").join("code").into()),
                 selection,
                 state: Value::Null,
+                registered_state: Arc::default(),
                 ui: None,
                 ui_state: Value::Null,
                 ui_revision: 0,
@@ -3927,75 +4139,43 @@ impl ModHost {
                 error: None,
                 telemetry: ModTelemetry::default(),
             };
-            let prepared = (|| {
+            let ready = (|| {
                 if let Some(Err(error)) = &adapter {
                     return Err(failure(error.to_string()));
                 }
-                let location = self.state_location(
-                    &loaded.package,
-                    &loaded.selection.scope,
-                    bound_thread().as_deref(),
-                );
-                loaded.state = match self
-                    .store
-                    .scoped_state(&location, loaded.package.state_version)
-                {
-                    // Older thread or checkout state migrates at the mod's first callback there.
-                    Err(error)
-                        if matches!(location, store::StateLocation::Directory(..))
-                            && error.to_string().starts_with("state_migration_required") =>
-                    {
-                        Value::Null
-                    }
-                    state => state?,
-                };
-                let reply = Self::run(&loaded, "inspect", "", Value::Null, active)?;
-                if reply.state != loaded.state {
-                    return Err(failure("state_write_during_registration"));
-                }
-                let registrations = reply.registrations;
-                Self::validate_registrations(&loaded.package, &registrations)?;
-                for tool in &registrations.tools {
-                    (self.tool_validator)(&tool.parameters)?;
-                }
-                let mut code = loaded.source.to_string();
-                for name in registrations
-                    .modules
-                    .iter()
-                    .filter(|name| !name.ends_with(".json"))
-                {
-                    if let Some(text) = loaded
-                        .assets
-                        .get(name)
-                        .and_then(|asset| asset["text"].as_str())
-                    {
-                        code.push('\n');
-                        code.push_str(text);
-                    }
-                }
-                let (source_use, unused_grants, unused_environment) =
-                    source_use(&code, &loaded.package, &registrations)?;
-                Ok((registrations, source_use, unused_grants, unused_environment))
+                loaded.state = self.inspection_state(&loaded.package, &loaded.selection.scope)?;
+                Ok(())
             })();
-            if !active() {
-                return Err(failure("callback_cancelled"));
-            }
+            inspections.push((id, loaded, ready));
+        }
+        for (id, (mut loaded, prepared)) in
+            Self::inspect_all(inspections, self.tool_validator, active)?
+        {
             match prepared {
                 Ok((registrations, source_use, unused_grants, unused_environment)) => {
+                    loaded.registered_state = Arc::new(loaded.state.clone());
                     loaded.registrations = registrations;
                     loaded.source_use = source_use;
                     loaded.unused_grants = unused_grants;
                     loaded.unused_environment = unused_environment;
                 }
-                Err(error) => fail(
-                    initial
+                Err(error) => {
+                    let lenient = initial
                         || self
                             .loaded
                             .get(&id)
-                            .is_none_or(|previous| previous.error.is_some()),
-                    &mut loaded,
-                    error,
-                )?,
+                            .is_none_or(|previous| previous.error.is_some());
+                    // The working mods stay; the transactional reload runs once more when a retry is due, then waits for a configuration change.
+                    if !lenient && error.to_string().starts_with("callback_timeout") {
+                        self.inspect_retry =
+                            (self.inspect_retried != hash).then(|| (initial, Instant::now()));
+                        self.inspect_retried.clone_from(&hash);
+                        self.configuration_stamp = stamp.clone().filter(|stamp| {
+                            configuration_stamps(&self.store.root).as_ref() == Some(stamp)
+                        });
+                    }
+                    fail(lenient, &mut loaded, error)?;
+                }
             }
             next.insert(id, loaded);
         }
@@ -4026,6 +4206,13 @@ impl ModHost {
                 .collect::<BTreeSet<_>>()
                 .len(),
         );
+        // A timed-out inspection runs again at the next reload, once per configuration.
+        let timed_out = next.values().any(|loaded| {
+            loaded
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("callback_timeout"))
+        });
         for (id, previous) in &mut self.loaded {
             if next.get(id).is_none_or(|loaded| {
                 !Arc::ptr_eq(&loaded.request_metadata, &previous.request_metadata)
@@ -4061,9 +4248,40 @@ impl ModHost {
         }
         self.retain_environment();
         self.unserved = self.unserved_targets(&user);
+        self.inspect_retry =
+            (timed_out && self.inspect_retried != hash).then(|| (initial, Instant::now()));
+        if self.inspect_retry.is_some() {
+            self.inspect_retried.clone_from(&hash);
+        }
         self.configuration_sha256 = hash;
         self.configuration_stamp =
             stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
+        let key = (self.store.root.clone(), self.project.clone());
+        let mut inspected: BTreeMap<_, _> = self
+            .loaded
+            .iter()
+            .filter(|(_, loaded)| loaded.error.is_none())
+            .map(|(id, loaded)| (id.clone(), loaded.inspected()))
+            .collect();
+        {
+            let mut activated = ACTIVATED.lock().unwrap_or_else(PoisonError::into_inner);
+            // A mod that failed here (an inspection timeout) keeps the inspection another host published.
+            if let Some(index) = activated
+                .iter()
+                .position(|(activated, _)| activated == &key)
+            {
+                let (_, mut previous) = activated.remove(index);
+                for id in self.loaded.keys() {
+                    if !inspected.contains_key(id)
+                        && let Some(loaded) = previous.remove(id)
+                    {
+                        inspected.insert(id.clone(), loaded);
+                    }
+                }
+            }
+            activated.insert(0, (key, inspected));
+            activated.truncate(ACTIVATED_CHECKOUTS);
+        }
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
@@ -4708,6 +4926,77 @@ impl ModHost {
             return Err(failure("invalid_replacement_point"));
         }
         chain::validate(&registrations.interceptors, &package.capabilities)
+    }
+
+    /// Inspects mods in id order, so registration order and conflicts resolve as if serial.
+    fn inspect_all(
+        inspections: Vec<(String, Loaded, Result<()>)>,
+        tool_validator: fn(&Value) -> Result<()>,
+        active: &dyn Fn() -> bool,
+    ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
+        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
+        let mut inspected = BTreeMap::new();
+        let mut inspections = inspections.into_iter();
+        for (id, loaded, ready) in inspections.by_ref() {
+            let inspection = ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            let timed_out = inspection
+                .as_ref()
+                .is_err_and(|error| error.to_string().starts_with("callback_timeout"));
+            inspected.insert(id, (loaded, inspection));
+            if timed_out {
+                break;
+            }
+        }
+        inspected.extend(concurrently(
+            inspections.collect(),
+            active,
+            |(id, loaded, ready), active| {
+                let inspection =
+                    ready.and_then(|()| Self::inspect(&loaded, tool_validator, active));
+                (id, (loaded, inspection))
+            },
+        ));
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
+        Ok(inspected)
+    }
+
+    fn inspect(
+        loaded: &Loaded,
+        tool_validator: fn(&Value) -> Result<()>,
+        active: &dyn Fn() -> bool,
+    ) -> Result<Inspection> {
+        let reply = Self::run(loaded, "inspect", "", Value::Null, active)?;
+        if reply.state != loaded.state {
+            return Err(failure("state_write_during_registration"));
+        }
+        let registrations = reply.registrations;
+        Self::validate_registrations(&loaded.package, &registrations)?;
+        for tool in &registrations.tools {
+            tool_validator(&tool.parameters)?;
+        }
+        let mut code = loaded.source.to_string();
+        for name in registrations
+            .modules
+            .iter()
+            .filter(|name| !name.ends_with(".json"))
+        {
+            if let Some(text) = loaded
+                .assets
+                .get(name)
+                .and_then(|asset| asset["text"].as_str())
+            {
+                code.push('\n');
+                code.push_str(text);
+            }
+        }
+        let (source_use, unused_grants, unused_environment) =
+            source_use(&code, &loaded.package, &registrations)?;
+        Ok((registrations, source_use, unused_grants, unused_environment))
     }
 
     fn run(
@@ -5604,38 +5893,94 @@ impl ModHost {
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
         let thread = state_thread(&payload);
         let payload_hash = digest(payload.to_string().as_bytes());
-        let results: Vec<_> = self
-            .event_ids("terminal")
+        let generation = self.generation;
+        let mut results = Vec::new();
+        let mut stale = Vec::new();
+        for id in self.event_ids("terminal") {
+            let key = self
+                .terminal_state_key(&id, thread.as_deref())
+                .map(|stamp| format!("{stamp}:{payload_hash}"));
+            // A handler that read the clock is rerun once its result is a second old.
+            if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
+                && key == cached
+                && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
+            {
+                results.push((id, Some(Ok(value.clone()))));
+                continue;
+            }
+            let begun = self.begin(&id, generation, &active, thread.as_deref());
+            stale.push((results.len(), key, begun));
+            results.push((id, None));
+        }
+        // Terminal handlers make no host calls, so their runners work in parallel.
+        let payload = &payload;
+        let replies = concurrently(stale, &active, |(index, key, begun), active| {
+            let reply = begun.and_then(|mut invocation| {
+                if invocation.migrate {
+                    invocation.loaded.state =
+                        packages::migrate_state(&invocation.loaded, &invocation.location, active)?;
+                }
+                let reply = registered_call(&invocation.loaded, &invocation.dynamic, "terminal", "")
+                    .and_then(|()| {
+                        bridge::run(
+                            &invocation.loaded,
+                            "terminal",
+                            "",
+                            payload.clone(),
+                            &[],
+                            active,
+                            &mut |call| {
+                                Err(failure(match call.operation.as_str() {
+                                    "time.sleep" => "host_operation_unavailable: time.sleep is not available during terminal",
+                                    _ => "host_operation_unavailable: requires a native task",
+                                }))
+                            },
+                            &mut |_| {},
+                            Some(invocation.virtual_time_ms.unwrap_or_else(crate::peers::now_ms)),
+                            &InvocationScope::default(),
+                        )
+                    });
+                Ok((invocation, reply))
+            });
+            (index, key, reply)
+        });
+        for (index, key, reply) in replies {
+            let id = results[index].0.clone();
+            let result = match reply {
+                Ok((invocation, reply)) => {
+                    match self.finish(&id, generation, "terminal", "", invocation, reply, &active) {
+                        Err(error) if error.to_string().starts_with("state_conflict") => self
+                            .invoke_guarded(
+                                &id,
+                                generation,
+                                "terminal",
+                                "",
+                                payload.clone(),
+                                &active,
+                            ),
+                        result => result,
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            match (&result, key) {
+                (Ok(value), Some(key)) => {
+                    let clock = self.clock_reads.contains(&id).then(Instant::now);
+                    self.renders.insert(id.clone(), (key, value.clone(), clock));
+                }
+                _ => {
+                    self.renders.remove(&id);
+                }
+            }
+            results[index].1 = Some(result);
+        }
+        let results: Vec<_> = results
             .into_iter()
-            .map(|id| {
-                let key = self
-                    .terminal_state_key(&id, thread.as_deref())
-                    .map(|stamp| format!("{stamp}:{payload_hash}"));
-                // A handler that read the clock is rerun once its result is a second old.
-                if let (Some(key), Some((cached, value, clock))) = (&key, self.renders.get(&id))
-                    && key == cached
-                    && clock.is_none_or(|at| at.elapsed() < Duration::from_secs(1))
-                {
-                    return (id, Ok(value.clone()));
-                }
-                let result = self.invoke_guarded(
-                    &id,
-                    self.generation,
-                    "terminal",
-                    "",
-                    payload.clone(),
-                    &active,
-                );
-                match (&result, key) {
-                    (Ok(value), Some(key)) => {
-                        let clock = self.clock_reads.contains(&id).then(Instant::now);
-                        self.renders.insert(id.clone(), (key, value.clone(), clock));
-                    }
-                    _ => {
-                        self.renders.remove(&id);
-                    }
-                }
-                (id, result)
+            .map(|(id, result)| {
+                (
+                    id,
+                    result.unwrap_or_else(|| Err(failure("callback_cancelled"))),
+                )
             })
             .collect();
         let origin = payload["event"].as_str().unwrap_or_default().to_owned();

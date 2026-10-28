@@ -8,6 +8,8 @@ pub const STAGING_PREFIX: &str = ".tmp";
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
     Durable,
+    /// Crash consistency without durability: a write barrier orders the data before the rename (mod state).
+    Ordered,
     Volatile,
 }
 
@@ -56,10 +58,26 @@ fn staged<'a>(
         .prefix(STAGING_PREFIX)
         .tempfile_in(parent)?;
     file.write_all(bytes)?;
-    if durability == Durability::Durable {
-        file.as_file().sync_all()?;
+    match durability {
+        Durability::Durable => file.as_file().sync_all()?,
+        Durability::Ordered => barrier(file.as_file())?,
+        Durability::Volatile => {}
     }
     Ok((parent, file))
+}
+
+fn barrier(file: &fs::File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    #[cfg(target_os = "macos")]
+    // SAFETY: `file` owns an open descriptor for the duration of the call.
+    let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) };
+    #[cfg(not(target_os = "macos"))]
+    // SAFETY: `file` owns an open descriptor for the duration of the call.
+    let status = unsafe { libc::fsync(file.as_raw_fd()) };
+    match status {
+        -1 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
+    }
 }
 
 pub fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {

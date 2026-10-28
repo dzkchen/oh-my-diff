@@ -35,6 +35,7 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
 - `tools.original` (`tool_original_v1`), added after 1.0.0.
+- The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.

@@ -353,6 +353,7 @@
     "classic_hooks:WorktreeCreate": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "classic_hooks:WorktreeRemove": {"status":"experimental","reason":"No first-party or example consumer with matched evidence; experimental in 1.0.0."},
     "author_commands:check": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm check"}},
+    "author_commands:cost": {"status":"experimental","reason":"Added after 1.0.0 for author cost reports; experimental."},
     "author_commands:create": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author create DIR ID"}},
     "author_commands:debug": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"pnpm debug"}},
     "author_commands:diagnostics": {"status":"frozen","consumer":{"path":"mods/REFERENCE.md","snippet":"omd-mod-author diagnostics STORE OUTPUT"}},
