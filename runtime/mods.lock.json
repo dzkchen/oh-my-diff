@@ -324,11 +324,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "2fb25377f3db19e42ac04d6b3745bf081fecd8278425db10aa9e14a23ae7d97b",
+        "index.ts": "fbad21b90c4d9d7598e794a65c0da748748ebccde49acd1062e58faa28727b69",
         "mod.json": "3947082592e288ad54f8fed63b730b033f69dc3cce81e41e6db94257f56d9b06"
       },
       "id": "omd_mods",
-      "package_sha256": "cdbc77c17f123cbc8a3fb66091a3845b6a213b9151eb9e5435cd330f1dad8a4b",
+      "package_sha256": "f60f9d7a464b50b3d243a5c5f0610c6afd7b8eda46c6241e031895addcb04fb6",
       "source": "mods/first-party/omd_mods",
       "version": "1.0.0"
     },

@@ -587,7 +587,7 @@ pub(super) fn migrate_directory_state(
     Ok(value)
 }
 
-/// Mod state needs crash consistency, not the latest write after a power loss: a write barrier orders the data before the atomic rename (0.3 ms), where `sync_all` (`F_FULLFSYNC`) and a directory sync cost about 8 ms per commit.
+/// Mod state needs crash consistency, not durability: a write barrier orders the data before the atomic rename.
 fn flush_state(file: &File) -> Result<()> {
     use std::os::fd::AsRawFd;
     #[cfg(target_os = "macos")]

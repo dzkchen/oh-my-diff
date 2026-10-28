@@ -497,7 +497,7 @@ fn keep(name: String, code: &str, data: &[u8]) {
     });
 }
 
-/// Reports modules compiled fresh to the host that offered a cache; an entry that would pass the output limit with its newline is not kept.
+/// Reports freshly compiled modules to a host that offered a cache, skipping frames over the output limit.
 fn report_compiled() {
     for frame in COMPILED.take() {
         let line = frame.to_string();
@@ -1033,7 +1033,7 @@ fn main() {
     let watchdog = Watchdog::start(isolate.thread_safe_handle());
     let mut generation = 1;
     let mut spare = prepare(&mut isolate, generation);
-    // The host's callback budget starts here, so a slow process start (macOS scans a freshly written runner) does not spend it.
+    // The host's callback budget starts at this line, not at spawn.
     if !write_out("{\"ready\":true}\n") {
         std::process::exit(1);
     }

@@ -15,7 +15,7 @@ const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
-// No Intl.Collator: a runner's first one loads ICU data (~5 ms), which every first /mods paid.
+// No Intl.Collator: it loads ICU data in every runner.
 const compare = (a: string, b: string) => {
   const [x, y] = [a.toLowerCase(), b.toLowerCase()];
   return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;

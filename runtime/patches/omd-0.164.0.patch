@@ -32005,7 +32005,7 @@ index 47968b86946d94be3b72d3dc2f817ec18cf82f55..34e3e9296f6339f2706e2e162bb5564a
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..b75f89664478119465fba884fce089daa55ed1d8 100644
+index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..b89ee0cc889164aab8ea8203086bfe7bff20545e 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -237,6 +237,10 @@ mod link_hover;
@@ -32023,7 +32023,7 @@ index 093a6af1b28a9edfc135758400ab51d2b7c93b2b..b75f89664478119465fba884fce089da
      pending_managed_worktree_transition: Option<Box<crate::app_event::ManagedWorktreeTransition>>,
      /// Holds notifications until the new widget is attached on a fresh loop iteration.
      pending_managed_worktree_attach: Option<Box<working_directory::ManagedWorktreeAttach>>,
-+    /// When a visible mod command finished: its result's history cell draws at once instead of in the frame limiter's next slot.
++    /// When a visible mod command finished, so its history cell draws at once.
 +    mod_result_finished: Option<Instant>,
      /// Keeps protected screens quarantined until initialized chat receives genuine user input.
      startup_protected_input_boundary: bool,
@@ -84749,12 +84749,12 @@ index 0000000000000000000000000000000000000000..9e13ca29890c55e27e0575423e702837
 +v8 = { workspace = true, features = ["v8_enable_sandbox"] }
 diff --git a/codex-rs/omd/runner/build.rs b/codex-rs/omd/runner/build.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9955cb0684f7b2bdda951f4fa011f42a0d6721f6
+index 0000000000000000000000000000000000000000..1be17343954a7f675b6043f83ef4bdf58452466c
 --- /dev/null
 +++ b/codex-rs/omd/runner/build.rs
 @@ -0,0 +1,6 @@
 +fn main() {
-+    // Exporting V8's weak C++ symbols makes dyld bind them on every runner start (about 20 ms).
++    // Exporting V8's weak C++ symbols makes dyld bind them on every runner start.
 +    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
 +        println!("cargo:rustc-link-arg-bins=-Wl,-exported_symbol,__mh_execute_header");
 +    }
@@ -87785,7 +87785,7 @@ index 0000000000000000000000000000000000000000..782b9faae4eeff2303e7b46dda2dcfc0
 +  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe77fc03d6967cf9092e31948f8189fab431eb20
+index 0000000000000000000000000000000000000000..a79c90179cd233328e8279fbda6dad4584ff38f3
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
 @@ -0,0 +1,1108 @@
@@ -88288,7 +88288,7 @@ index 0000000000000000000000000000000000000000..fe77fc03d6967cf9092e31948f8189fa
 +    });
 +}
 +
-+/// Reports modules compiled fresh to the host that offered a cache; an entry that would pass the output limit with its newline is not kept.
++/// Reports freshly compiled modules to a host that offered a cache, skipping frames over the output limit.
 +fn report_compiled() {
 +    for frame in COMPILED.take() {
 +        let line = frame.to_string();
@@ -88824,7 +88824,7 @@ index 0000000000000000000000000000000000000000..fe77fc03d6967cf9092e31948f8189fa
 +    let watchdog = Watchdog::start(isolate.thread_safe_handle());
 +    let mut generation = 1;
 +    let mut spare = prepare(&mut isolate, generation);
-+    // The host's callback budget starts here, so a slow process start (macOS scans a freshly written runner) does not spend it.
++    // The host's callback budget starts at this line, not at spawn.
 +    if !write_out("{\"ready\":true}\n") {
 +        std::process::exit(1);
 +    }
@@ -106129,10 +106129,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779cafb5d5af
+index 0000000000000000000000000000000000000000..27da3950cbfaedd2f13b3f5abb01280d09f38a9e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6577 @@
+@@ -0,0 +1,6585 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -106981,7 +106981,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +    Ok(())
 +}
 +
-+/// Runs `work` over `items` on up to eight threads and returns the results in input order; `active` is polled on the calling thread and cancels the rest.
++/// Runs `work` on up to eight threads, returning results in input order; `active` cancels the rest.
 +fn concurrently<T: Send, R: Send>(
 +    items: Vec<T>,
 +    active: &dyn Fn() -> bool,
@@ -107013,13 +107013,12 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +        }
 +        drop(sender);
 +        loop {
++            if !active() {
++                cancelled.store(true, Ordering::Relaxed);
++            }
 +            match results.recv_timeout(Duration::from_millis(10)) {
 +                Ok(result) => done.push(result),
-+                Err(mpsc::RecvTimeoutError::Timeout) => {
-+                    if !active() {
-+                        cancelled.store(true, Ordering::Relaxed);
-+                    }
-+                }
++                Err(mpsc::RecvTimeoutError::Timeout) => {}
 +                Err(mpsc::RecvTimeoutError::Disconnected) => break,
 +            }
 +        }
@@ -108789,7 +108788,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
 +    Mutex::new(BTreeMap::new());
 +
-+/// Error-free inspections in this process by store and checkout, most recently published first. A host opening there starts from them; its first reload keeps one only for an unchanged selection and adapter, and checks authority and tool schemas itself.
++/// Error-free inspections by store and checkout, newest first; a host opening there reuses one only for an unchanged selection and adapter.
 +#[allow(clippy::type_complexity)]
 +static ACTIVATED: Mutex<Vec<((PathBuf, Option<PathBuf>), BTreeMap<String, Loaded>)>> =
 +    Mutex::new(Vec::new());
@@ -109567,7 +109566,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +        Self::open_in_guarded(root, tool_validator, repository, &|| true)
 +    }
 +
-+    /// One mod's launch-like cost for authors: activation with empty runner pools and no shared inspection (the first run also starts with this process's code cache cold), its first terminal render, the first and second run of `command`, and the runners it keeps with their summed peak footprint.
++    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
 +    pub fn cost(
 +        root: PathBuf,
 +        tool_validator: fn(&Value) -> Result<()>,
@@ -109579,12 +109578,12 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +        let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
 +        let mut usage = (0, 0);
 +        let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
-+        for _ in 0..runs.max(1) {
++        for _ in 0..runs {
 +            process::stop_runners();
 +            ACTIVATED
 +                .lock()
 +                .unwrap_or_else(PoisonError::into_inner)
-+                .clear();
++                .retain(|((store, _), _)| store != &root);
 +            let started = Instant::now();
 +            let mut host = Self::open_in(root.clone(), tool_validator, repository)?;
 +            samples
@@ -109601,11 +109600,20 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +                .any(|handler| handler == id)
 +            {
 +                let started = Instant::now();
-+                host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
++                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
++                let render_ms = elapsed(started);
++                let prefix = format!("{id}: ");
++                if let Some(error) = view
++                    .diagnostics
++                    .iter()
++                    .find_map(|d| d.strip_prefix(&prefix))
++                {
++                    return Err(failure(format!("mod_failed: {error}")));
++                }
 +                samples
 +                    .entry("first_render_ms")
 +                    .or_default()
-+                    .push(elapsed(started));
++                    .push(render_ms);
 +            }
 +            if let Some((name, payload)) = &command {
 +                for sample in ["fresh_callback_ms", "reused_callback_ms"] {
@@ -109616,7 +109624,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +            }
 +            usage = process::runner_usage();
 +        }
-+        let mut report = json!({"mod": id, "runs": runs.max(1), "runners": usage.0,
++        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
 +            "runner_peak_footprint_bytes": usage.1});
 +        for (metric, values) in samples {
 +            let first = values[0];
@@ -109834,7 +109842,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +                .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
 +    }
 +
-+    /// A retry waits out the scan macOS runs on a freshly written runner's first starts.
++    /// A timed-out inspection is retried once it is 2 s old.
 +    fn inspect_retry_due(&self) -> bool {
 +        self.inspect_retry
 +            .is_some_and(|(_, failed)| failed.elapsed() >= Duration::from_secs(2))
@@ -109997,7 +110005,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +            if !active() {
 +                return Err(failure("callback_cancelled"));
 +            }
-+            // An unchanged trusted selection and adapter keep their inspection; only changed mods run again. Another host's inspection also needs the state it ran with, since registration may read it.
++            // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
 +            let unchanged = |previous: &&Loaded| {
 +                previous.error.is_none()
 +                    && previous.adapter.as_ref()
@@ -110146,7 +110154,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +                .collect::<BTreeSet<_>>()
 +                .len(),
 +        );
-+        // A runner start can outlast the budget (macOS scans a freshly written runner), so a timed-out inspection runs again at the next reload, once per configuration.
++        // A timed-out inspection runs again at the next reload, once per configuration.
 +        let timed_out = next.values().any(|loaded| {
 +            loaded
 +                .error
@@ -110916,13 +110924,13 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +        chain::validate(&registrations.interceptors, &package.capabilities)
 +    }
 +
-+    /// Inspects mods concurrently; results come back in id order, so registration order and conflicts resolve as if serial.
++    /// Inspects mods in id order, so registration order and conflicts resolve as if serial.
 +    fn inspect_all(
 +        inspections: Vec<(String, Loaded, Result<()>)>,
 +        tool_validator: fn(&Value) -> Result<()>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
-+        // One at a time: concurrent runner starts take the cores the terminal needs for its first keystrokes (Kitty, 4 performance cores: typeable 41 → 57 ms at eight). After a timeout the rest run together, so stalled runners cost about one more timeout, not one each.
++        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
 +        let mut inspected = BTreeMap::new();
 +        let mut inspections = inspections.into_iter();
 +        for (id, loaded, ready) in inspections.by_ref() {
@@ -110932,7 +110940,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +            }
 +            let timed_out = inspection
 +                .as_ref()
-+                .is_err_and(|error| error.to_string().contains("callback_timeout"));
++                .is_err_and(|error| error.to_string().starts_with("callback_timeout"));
 +            inspected.insert(id, (loaded, inspection));
 +            if timed_out {
 +                break;
@@ -111910,7 +111918,7 @@ index 0000000000000000000000000000000000000000..dfeab374cda0b5b9adc864a24743779c
 +            stale.push((results.len(), key, begun));
 +            results.push((id, None));
 +        }
-+        // Terminal handlers make no host calls, so only `begin` and `finish` need the host and the runners work in parallel.
++        // Terminal handlers make no host calls, so their runners work in parallel.
 +        let payload = &payload;
 +        let replies = concurrently(stale, &active, |(index, key, begun), active| {
 +            let reply = begun.and_then(|mut invocation| {
@@ -116247,11 +116255,11 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/code_cache.rs b/codex-rs/omd/src/mods/code_cache.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151b4c1426c
+index 0000000000000000000000000000000000000000..f7f0f42282956fdd7255a217f9d5d0b0860fac3d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/code_cache.rs
-@@ -0,0 +1,157 @@
-+//! Compiled package modules kept across runner processes: the runner's stripped code and V8 code cache, by module source, under one directory per runner binary.
+@@ -0,0 +1,196 @@
++//! Compiled package modules kept across runner processes, by module source and runner build.
 +
 +use super::Result;
 +use serde_json::Map;
@@ -116262,6 +116270,8 @@ index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151
 +use std::collections::BTreeSet;
 +use std::path::Path;
 +use std::path::PathBuf;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
 +
 +const LIMIT: u64 = 32 << 20;
 +
@@ -116306,7 +116316,7 @@ index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151
 +}
 +
 +impl CodeCache {
-+    /// The cache for one request under `root`, or `None` when the runner is unavailable. The runner's file stamp names its directory: hashing the binary would cost a quarter second, and V8 rejects data from another build anyway.
++    /// The cache for `request` under `root`, keyed by the runner's file stamp; `None` without a runner.
 +    pub(super) fn open<R>(root: &Path, request: &R) -> Option<Self>
 +    where
 +        R: for<'a> std::ops::Index<&'a str, Output = Value>,
@@ -116320,7 +116330,7 @@ index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151
 +        })
 +    }
 +
-+    /// The line offering a fresh runner the cached modules, kept under `budget` bytes; a corrupt entry is skipped. An empty offer still asks the runner to report what it compiles.
++    /// The line offering a fresh runner the intact cached modules within `budget` bytes; even an empty offer asks it to report what it compiles.
 +    pub(super) fn line(&self, budget: usize) -> Option<Vec<u8>> {
 +        let mut entries = Map::new();
 +        let mut size = 20;
@@ -116373,24 +116383,27 @@ index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151
 +        ));
 +        std::fs::write(&temporary, &bytes)?;
 +        std::fs::rename(&temporary, self.directory.join(name))?;
-+        self.prune();
++        static PRUNED: AtomicBool = AtomicBool::new(false);
++        if !PRUNED.swap(true, Ordering::Relaxed) {
++            self.prune();
++        }
 +        Ok(())
 +    }
 +
-+    /// Drops other runners' directories and the oldest entries beyond `LIMIT`.
++    /// Drops the oldest entries of every runner build beyond `LIMIT`, then emptied directories.
 +    fn prune(&self) {
 +        let Some(root) = self.directory.parent() else {
 +            return;
 +        };
-+        for directory in std::fs::read_dir(root).into_iter().flatten().flatten() {
-+            if directory.path() != self.directory {
-+                let _ = std::fs::remove_dir_all(directory.path());
-+            }
-+        }
-+        let mut entries: Vec<_> = std::fs::read_dir(&self.directory)
++        let directories: Vec<_> = std::fs::read_dir(root)
 +            .into_iter()
 +            .flatten()
 +            .flatten()
++            .map(|directory| directory.path())
++            .collect();
++        let mut entries: Vec<_> = directories
++            .iter()
++            .flat_map(|directory| std::fs::read_dir(directory).into_iter().flatten().flatten())
 +            .filter_map(|entry| {
 +                let metadata = entry.metadata().ok()?;
 +                Some((metadata.modified().ok()?, metadata.len(), entry.path()))
@@ -116406,6 +116419,40 @@ index 0000000000000000000000000000000000000000..dccd6d3ab3e5c14d7e3efe0ac3006151
 +                total -= size;
 +            }
 +        }
++        for directory in directories {
++            if directory != self.directory {
++                let _ = std::fs::remove_dir(directory);
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_corrupt_entry_is_not_offered() {
++        let temp = tempfile::tempdir().unwrap();
++        let cache = CodeCache {
++            directory: temp.path().join("runner"),
++            expected: ["a", "b"].map(String::from).into(),
++        };
++        for name in ["a", "b"] {
++            cache.keep(&json!({"key": name, "code": "c", "data": "d"}));
++        }
++        let path = cache.directory.join("b");
++        let bytes = std::fs::read(&path).unwrap();
++        let at = bytes.len() - 3;
++        assert_eq!(&bytes[at..], b"d\"}");
++        let mut corrupt = bytes;
++        corrupt[at] = b'e';
++        std::fs::write(&path, corrupt).unwrap();
++        let line: Value = serde_json::from_slice(&cache.line(1 << 20).unwrap()).unwrap();
++        assert_eq!(
++            line,
++            json!({"code_cache": {"a": {"code": "c", "data": "d"}}})
++        );
 +    }
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
@@ -122711,7 +122758,7 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f0174900bed8ba369e0087fe1cffdd30bb468e2
+index 0000000000000000000000000000000000000000..48b5d5d962088d031d6ca933d45be5c0b0cbfc2a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,1612 @@
@@ -123304,7 +123351,7 @@ index 0000000000000000000000000000000000000000..6f0174900bed8ba369e0087fe1cffdd3
 +    Ok(value)
 +}
 +
-+/// Mod state needs crash consistency, not the latest write after a power loss: a write barrier orders the data before the atomic rename (0.3 ms), where `sync_all` (`F_FULLFSYNC`) and a directory sync cost about 8 ms per commit.
++/// Mod state needs crash consistency, not durability: a write barrier orders the data before the atomic rename.
 +fn flush_state(file: &File) -> Result<()> {
 +    use std::os::fd::AsRawFd;
 +    #[cfg(target_os = "macos")]
@@ -138982,10 +139029,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d7395e34a8dc306976c71170372df37b11b37131
+index 0000000000000000000000000000000000000000..552043ffa0c5d941647b37cc9a7b645e3fcfa2ad
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4844 @@
+@@ -0,0 +1,4813 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -139444,37 +139491,6 @@ index 0000000000000000000000000000000000000000..d7395e34a8dc306976c71170372df37b
 +    std::fs::write(path.join("index.ts"), source + "\n").unwrap();
 +    trust(&store, &path, &["commands"]);
 +    assert_ne!(registrations(&open()), first);
-+}
-+
-+#[test]
-+fn cost_reports_activation_render_callbacks_and_runners() {
-+    let (temp, _, _) = fixture(
-+        "export default api => { api.command('go', () => 1); api.on('terminal', () => ({ status: 'x' })); }",
-+        &["commands", "terminal"],
-+    );
-+    let root = temp.path().canonicalize().unwrap();
-+    let report = ModHost::cost(
-+        root.join("store"),
-+        |_| Ok(()),
-+        &root,
-+        "fixture",
-+        Some(("go", json!(""))),
-+        2,
-+    )
-+    .unwrap();
-+    for metric in [
-+        "activation_ms",
-+        "first_render_ms",
-+        "fresh_callback_ms",
-+        "reused_callback_ms",
-+    ] {
-+        assert!(report[metric]["p50"].as_f64().unwrap() > 0.0, "{report}");
-+    }
-+    assert!(report["runners"].as_u64().unwrap() >= 1, "{report}");
-+    assert!(
-+        report["runner_peak_footprint_bytes"].as_u64().unwrap() > 0,
-+        "{report}"
-+    );
 +}
 +
 +#[test]

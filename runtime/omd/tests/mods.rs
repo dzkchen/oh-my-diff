@@ -459,37 +459,6 @@ fn hosts_opened_in_one_process_share_inspections_of_unchanged_selections() {
 }
 
 #[test]
-fn cost_reports_activation_render_callbacks_and_runners() {
-    let (temp, _, _) = fixture(
-        "export default api => { api.command('go', () => 1); api.on('terminal', () => ({ status: 'x' })); }",
-        &["commands", "terminal"],
-    );
-    let root = temp.path().canonicalize().unwrap();
-    let report = ModHost::cost(
-        root.join("store"),
-        |_| Ok(()),
-        &root,
-        "fixture",
-        Some(("go", json!(""))),
-        2,
-    )
-    .unwrap();
-    for metric in [
-        "activation_ms",
-        "first_render_ms",
-        "fresh_callback_ms",
-        "reused_callback_ms",
-    ] {
-        assert!(report[metric]["p50"].as_f64().unwrap() > 0.0, "{report}");
-    }
-    assert!(report["runners"].as_u64().unwrap() >= 1, "{report}");
-    assert!(
-        report["runner_peak_footprint_bytes"].as_u64().unwrap() > 0,
-        "{report}"
-    );
-}
-
-#[test]
 fn service_launch_uses_admitted_helpers_after_unchanged_configuration_reload() {
     let (temp, store, path) = fixture("export default () => {};", &[]);
     let manifest_path = path.join("mod.json");

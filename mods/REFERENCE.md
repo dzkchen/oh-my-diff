@@ -34,6 +34,7 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
 - `api.uiState` and command views.
 - `routes.write` (`route_write_v1`), added after 1.0.0.
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- The `omd-mod-author cost` report, added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
@@ -4958,10 +4959,13 @@ Name one of the package's commands, with an optional JSON payload, to time its c
 | `runners` | Runners the package keeps after the last run, idle spares excluded |
 | `runner_peak_footprint_bytes` | Sum of those runners' peak physical memory |
 
-Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache and, for a newly
+Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache (`<store>/cache/code`, safe to delete) and, for a newly
 written engine, the operating system's first-launch check, so compare `p50` between versions of a package. The numbers
 are host-side and exclude the terminal's draw. The scratch store has no Git checkout or session thread, so a command
 that writes `checkout` or `thread` state fails there, and a package that requires another fails activation.
+
+A runner loads ICU data on its first `Intl` or `localeCompare` use, about 5 ms; compare ASCII ids and versions with
+plain string and digit comparisons on hot paths.
 
 ## Packaging, publishing and offline scenarios
 
@@ -5457,7 +5461,8 @@ host:
   as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
   Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
   import grant a runner; trusting or installing packages never does. A missing runner fails with
-  `runner_unavailable`, with no fallback to another program;
+  `runner_unavailable`, with no fallback to another program. Compiled modules cached in `<store>/cache/code` are
+  checked for corruption, not origin, so a process that can write the store can change what a trusted mod runs;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the

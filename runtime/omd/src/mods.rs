@@ -846,7 +846,7 @@ fn reject(
     Ok(())
 }
 
-/// Runs `work` over `items` on up to eight threads and returns the results in input order; `active` is polled on the calling thread and cancels the rest.
+/// Runs `work` on up to eight threads, returning results in input order; `active` cancels the rest.
 fn concurrently<T: Send, R: Send>(
     items: Vec<T>,
     active: &dyn Fn() -> bool,
@@ -878,13 +878,12 @@ fn concurrently<T: Send, R: Send>(
         }
         drop(sender);
         loop {
+            if !active() {
+                cancelled.store(true, Ordering::Relaxed);
+            }
             match results.recv_timeout(Duration::from_millis(10)) {
                 Ok(result) => done.push(result),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if !active() {
-                        cancelled.store(true, Ordering::Relaxed);
-                    }
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
@@ -2654,7 +2653,7 @@ struct UiState {
 static UI_STATES: Mutex<BTreeMap<String, std::sync::Weak<Mutex<UiState>>>> =
     Mutex::new(BTreeMap::new());
 
-/// Error-free inspections in this process by store and checkout, most recently published first. A host opening there starts from them; its first reload keeps one only for an unchanged selection and adapter, and checks authority and tool schemas itself.
+/// Error-free inspections by store and checkout, newest first; a host opening there reuses one only for an unchanged selection and adapter.
 #[allow(clippy::type_complexity)]
 static ACTIVATED: Mutex<Vec<((PathBuf, Option<PathBuf>), BTreeMap<String, Loaded>)>> =
     Mutex::new(Vec::new());
@@ -3432,7 +3431,7 @@ impl ModHost {
         Self::open_in_guarded(root, tool_validator, repository, &|| true)
     }
 
-    /// One mod's launch-like cost for authors: activation with empty runner pools and no shared inspection (the first run also starts with this process's code cache cold), its first terminal render, the first and second run of `command`, and the runners it keeps with their summed peak footprint.
+    /// One mod's launch-like cost for `omd-mod cost`; it stops every runner in the process.
     pub fn cost(
         root: PathBuf,
         tool_validator: fn(&Value) -> Result<()>,
@@ -3444,12 +3443,12 @@ impl ModHost {
         let mut samples: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
         let mut usage = (0, 0);
         let elapsed = |started: Instant| started.elapsed().as_secs_f64() * 1000.0;
-        for _ in 0..runs.max(1) {
+        for _ in 0..runs {
             process::stop_runners();
             ACTIVATED
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .clear();
+                .retain(|((store, _), _)| store != &root);
             let started = Instant::now();
             let mut host = Self::open_in(root.clone(), tool_validator, repository)?;
             samples
@@ -3466,11 +3465,20 @@ impl ModHost {
                 .any(|handler| handler == id)
             {
                 let started = Instant::now();
-                host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
+                let view = host.terminal_view(json!({"event": "draw", "ledger": null}), || true);
+                let render_ms = elapsed(started);
+                let prefix = format!("{id}: ");
+                if let Some(error) = view
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| d.strip_prefix(&prefix))
+                {
+                    return Err(failure(format!("mod_failed: {error}")));
+                }
                 samples
                     .entry("first_render_ms")
                     .or_default()
-                    .push(elapsed(started));
+                    .push(render_ms);
             }
             if let Some((name, payload)) = &command {
                 for sample in ["fresh_callback_ms", "reused_callback_ms"] {
@@ -3481,7 +3489,7 @@ impl ModHost {
             }
             usage = process::runner_usage();
         }
-        let mut report = json!({"mod": id, "runs": runs.max(1), "runners": usage.0,
+        let mut report = json!({"mod": id, "runs": runs, "runners": usage.0,
             "runner_peak_footprint_bytes": usage.1});
         for (metric, values) in samples {
             let first = values[0];
@@ -3699,7 +3707,7 @@ impl ModHost {
                 .is_some_and(|(at, _, _)| at.elapsed() < BROKER_REFRESH)
     }
 
-    /// A retry waits out the scan macOS runs on a freshly written runner's first starts.
+    /// A timed-out inspection is retried once it is 2 s old.
     fn inspect_retry_due(&self) -> bool {
         self.inspect_retry
             .is_some_and(|(_, failed)| failed.elapsed() >= Duration::from_secs(2))
@@ -3862,7 +3870,7 @@ impl ModHost {
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
-            // An unchanged trusted selection and adapter keep their inspection; only changed mods run again. Another host's inspection also needs the state it ran with, since registration may read it.
+            // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
             let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
                     && previous.adapter.as_ref()
@@ -4011,7 +4019,7 @@ impl ModHost {
                 .collect::<BTreeSet<_>>()
                 .len(),
         );
-        // A runner start can outlast the budget (macOS scans a freshly written runner), so a timed-out inspection runs again at the next reload, once per configuration.
+        // A timed-out inspection runs again at the next reload, once per configuration.
         let timed_out = next.values().any(|loaded| {
             loaded
                 .error
@@ -4781,13 +4789,13 @@ impl ModHost {
         chain::validate(&registrations.interceptors, &package.capabilities)
     }
 
-    /// Inspects mods concurrently; results come back in id order, so registration order and conflicts resolve as if serial.
+    /// Inspects mods in id order, so registration order and conflicts resolve as if serial.
     fn inspect_all(
         inspections: Vec<(String, Loaded, Result<()>)>,
         tool_validator: fn(&Value) -> Result<()>,
         active: &dyn Fn() -> bool,
     ) -> Result<BTreeMap<String, (Loaded, Result<Inspection>)>> {
-        // One at a time: concurrent runner starts take the cores the terminal needs for its first keystrokes (Kitty, 4 performance cores: typeable 41 → 57 ms at eight). After a timeout the rest run together, so stalled runners cost about one more timeout, not one each.
+        // One at a time, since concurrent runner starts slow the first keystrokes; after a timeout the rest run together.
         let mut inspected = BTreeMap::new();
         let mut inspections = inspections.into_iter();
         for (id, loaded, ready) in inspections.by_ref() {
@@ -4797,7 +4805,7 @@ impl ModHost {
             }
             let timed_out = inspection
                 .as_ref()
-                .is_err_and(|error| error.to_string().contains("callback_timeout"));
+                .is_err_and(|error| error.to_string().starts_with("callback_timeout"));
             inspected.insert(id, (loaded, inspection));
             if timed_out {
                 break;
@@ -5775,7 +5783,7 @@ impl ModHost {
             stale.push((results.len(), key, begun));
             results.push((id, None));
         }
-        // Terminal handlers make no host calls, so only `begin` and `finish` need the host and the runners work in parallel.
+        // Terminal handlers make no host calls, so their runners work in parallel.
         let payload = &payload;
         let replies = concurrently(stale, &active, |(index, key, begun), active| {
             let reply = begun.and_then(|mut invocation| {

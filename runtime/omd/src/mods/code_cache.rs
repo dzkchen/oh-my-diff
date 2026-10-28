@@ -1,4 +1,4 @@
-//! Compiled package modules kept across runner processes: the runner's stripped code and V8 code cache, by module source, under one directory per runner binary.
+//! Compiled package modules kept across runner processes, by module source and runner build.
 
 use super::Result;
 use serde_json::Map;
@@ -9,6 +9,8 @@ use sha2::Sha256;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 const LIMIT: u64 = 32 << 20;
 
@@ -53,7 +55,7 @@ pub(super) struct CodeCache {
 }
 
 impl CodeCache {
-    /// The cache for one request under `root`, or `None` when the runner is unavailable. The runner's file stamp names its directory: hashing the binary would cost a quarter second, and V8 rejects data from another build anyway.
+    /// The cache for `request` under `root`, keyed by the runner's file stamp; `None` without a runner.
     pub(super) fn open<R>(root: &Path, request: &R) -> Option<Self>
     where
         R: for<'a> std::ops::Index<&'a str, Output = Value>,
@@ -67,7 +69,7 @@ impl CodeCache {
         })
     }
 
-    /// The line offering a fresh runner the cached modules, kept under `budget` bytes; a corrupt entry is skipped. An empty offer still asks the runner to report what it compiles.
+    /// The line offering a fresh runner the intact cached modules within `budget` bytes; even an empty offer asks it to report what it compiles.
     pub(super) fn line(&self, budget: usize) -> Option<Vec<u8>> {
         let mut entries = Map::new();
         let mut size = 20;
@@ -120,24 +122,27 @@ impl CodeCache {
         ));
         std::fs::write(&temporary, &bytes)?;
         std::fs::rename(&temporary, self.directory.join(name))?;
-        self.prune();
+        static PRUNED: AtomicBool = AtomicBool::new(false);
+        if !PRUNED.swap(true, Ordering::Relaxed) {
+            self.prune();
+        }
         Ok(())
     }
 
-    /// Drops other runners' directories and the oldest entries beyond `LIMIT`.
+    /// Drops the oldest entries of every runner build beyond `LIMIT`, then emptied directories.
     fn prune(&self) {
         let Some(root) = self.directory.parent() else {
             return;
         };
-        for directory in std::fs::read_dir(root).into_iter().flatten().flatten() {
-            if directory.path() != self.directory {
-                let _ = std::fs::remove_dir_all(directory.path());
-            }
-        }
-        let mut entries: Vec<_> = std::fs::read_dir(&self.directory)
+        let directories: Vec<_> = std::fs::read_dir(root)
             .into_iter()
             .flatten()
             .flatten()
+            .map(|directory| directory.path())
+            .collect();
+        let mut entries: Vec<_> = directories
+            .iter()
+            .flat_map(|directory| std::fs::read_dir(directory).into_iter().flatten().flatten())
             .filter_map(|entry| {
                 let metadata = entry.metadata().ok()?;
                 Some((metadata.modified().ok()?, metadata.len(), entry.path()))
@@ -153,5 +158,39 @@ impl CodeCache {
                 total -= size;
             }
         }
+        for directory in directories {
+            if directory != self.directory {
+                let _ = std::fs::remove_dir(directory);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_corrupt_entry_is_not_offered() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = CodeCache {
+            directory: temp.path().join("runner"),
+            expected: ["a", "b"].map(String::from).into(),
+        };
+        for name in ["a", "b"] {
+            cache.keep(&json!({"key": name, "code": "c", "data": "d"}));
+        }
+        let path = cache.directory.join("b");
+        let bytes = std::fs::read(&path).unwrap();
+        let at = bytes.len() - 3;
+        assert_eq!(&bytes[at..], b"d\"}");
+        let mut corrupt = bytes;
+        corrupt[at] = b'e';
+        std::fs::write(&path, corrupt).unwrap();
+        let line: Value = serde_json::from_slice(&cache.line(1 << 20).unwrap()).unwrap();
+        assert_eq!(
+            line,
+            json!({"code_cache": {"a": {"code": "c", "data": "d"}}})
+        );
     }
 }

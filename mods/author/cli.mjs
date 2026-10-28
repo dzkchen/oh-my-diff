@@ -317,7 +317,6 @@ async function packageProject(directory) {
   print({ package: target, sha256: packaged.sha256, source_maps: sourceMaps.map(path => join(target, path)) });
 }
 
-// Measured alone in a scratch store, so a package that requires another fails activation here.
 function costProject(directory, args) {
   const at = args.indexOf('--runs');
   const runs = at === -1 ? '10' : args[at + 1] ?? '';

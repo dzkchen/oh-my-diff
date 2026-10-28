@@ -290,7 +290,10 @@ Name one of the package's commands, with an optional JSON payload, to time its c
 | `runners` | Runners the package keeps after the last run, idle spares excluded |
 | `runner_peak_footprint_bytes` | Sum of those runners' peak physical memory |
 
-Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache and, for a newly
+Each timing reports `first`, `p50` and `p95` in milliseconds. `first` includes the cold code cache (`<store>/cache/code`, safe to delete) and, for a newly
 written engine, the operating system's first-launch check, so compare `p50` between versions of a package. The numbers
 are host-side and exclude the terminal's draw. The scratch store has no Git checkout or session thread, so a command
 that writes `checkout` or `thread` state fails there, and a package that requires another fails activation.
+
+A runner loads ICU data on its first `Intl` or `localeCompare` use, about 5 ms; compare ASCII ids and versions with
+plain string and digit comparisons on hot paths.
