@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "omd_frecency",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "api": "1.0.0",
   "state_version": 1,
-  "description": "Ranks @ file mentions by typo-tolerant fuzzy match, per-project frecency and Git status",
+  "description": "Ranks @ file mentions by typo-tolerant fuzzy match, per-project frecency, Git status and recent commits",
   "license": "MIT",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_frecency"},
   "capabilities": ["composer", "input", "lifecycle", "store", "exec", "fs.read"],

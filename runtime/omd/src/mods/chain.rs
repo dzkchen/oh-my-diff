@@ -610,12 +610,20 @@ fn validate_result(
             deny || object.is_some_and(|object| {
                 result["output"]
                     .as_str()
-                    .is_some_and(|output| output.len() <= RESULT_BYTES)
+                    .is_some_and(|output| output.len() <= crate::TOOL_OUTPUT_BYTES)
                     && result["success"].is_boolean()
                     && object.keys().all(|key| {
-                        ["output", "success", "truncated", "call_id", "value"]
-                            .contains(&key.as_str())
+                        [
+                            "output",
+                            "success",
+                            "truncated",
+                            "bytes",
+                            "call_id",
+                            "value",
+                        ]
+                        .contains(&key.as_str())
                     })
+                    && result["bytes"].as_u64().is_some() == result.get("bytes").is_some()
                     && serde_json::to_vec(&result["value"])
                         .is_ok_and(|value| value.len() <= RESULT_BYTES)
             })
@@ -1649,6 +1657,19 @@ impl ModHost {
                 });
             }
         }
+    }
+
+    pub fn policy_owners(&self) -> Vec<String> {
+        self.loaded
+            .iter()
+            .filter(|(_, loaded)| {
+                self.policies.contains(&loaded.selection.path)
+                    || loaded.registrations.interceptors.iter().any(|interceptor| {
+                        interceptor.required && granted(loaded, &interceptor.pattern, "model_send")
+                    })
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     pub fn send_policy(&self) -> Option<SendPolicy> {

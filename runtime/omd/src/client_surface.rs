@@ -1050,7 +1050,11 @@ pub fn call_classified(
         notify(Observed::Mirrored {
             caller: caller.to_owned(),
             operation: operation.to_owned(),
-            arguments,
+            arguments: if operation == "terminal.blit" {
+                unpacked(arguments)
+            } else {
+                arguments
+            },
             pixels: pixels.get().cloned(),
         });
     }
@@ -1267,7 +1271,7 @@ pub fn notice_request(arguments: &Value) -> Result<NoticeRequest<'_>, String> {
 
 pub const BLIT_FRAME: Duration = Duration::from_millis(16);
 pub const BLIT_QUEUE_UPDATES: usize = 32;
-pub const BLIT_QUEUE_BYTES: usize = 256 * 1024;
+pub const BLIT_CALL_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlitCell {
@@ -1305,6 +1309,7 @@ struct WireBlit {
     key: String,
     rect: Option<BlitRect>,
     cells: Option<Vec<WireCell>>,
+    packed: Option<String>,
     image: Option<WireImage>,
     pixels: Option<crate::process_raster::PixelSource>,
 }
@@ -1329,7 +1334,6 @@ pub enum BlitContent {
 pub struct Blit {
     pub key: String,
     pub content: BlitContent,
-    pub bytes: usize,
 }
 
 pub const IMAGE_PIXELS: u32 = 4096;
@@ -1420,7 +1424,7 @@ impl Blit {
     ) -> Result<Self, BlitError> {
         if let BlitContent::Source(source) = &self.content {
             let pixels = snapshot(source)?;
-            self.bytes = pixels.source.byte_len()?;
+            pixels.source.byte_len()?;
             self.content = BlitContent::Pixels(pixels);
         }
         if let BlitContent::Encoded { media_type, base64 } = &self.content {
@@ -1450,6 +1454,85 @@ impl Blit {
     }
 }
 
+enum Glyphs {
+    Cells(Vec<WireCell>),
+    Packed(String),
+}
+
+pub const PACKED_DEFAULT: u32 = 0x0100_0000;
+pub const PACKED_INDEXED: u32 = 0x0200_0000;
+
+fn packed_color(value: u32) -> Result<Option<crate::ModColor>, ()> {
+    let [blue, green, red, tag] = value.to_le_bytes();
+    match (tag, value & 0x00ff_ffff) {
+        (0, _) => Ok(Some(crate::ModColor::Rgb(red, green, blue))),
+        (1, 0) => Ok(None),
+        (2, index) if index <= 0xff => Ok(Some(crate::ModColor::Indexed(blue))),
+        _ => Err(()),
+    }
+}
+
+/// Little-endian `[code point, fg, bg]` u32 triplets, row by row; colors are `0x00RRGGBB`, `PACKED_DEFAULT` or `PACKED_INDEXED | index`.
+pub fn unpack(packed: &str, count: usize) -> Result<Vec<BlitCell>, String> {
+    let invalid = |detail: String| format!("terminal_blit_packed_invalid: {detail}");
+    let bytes = STANDARD
+        .decode(packed)
+        .map_err(|_| invalid("bad base64".into()))?;
+    if bytes.len() != count * 12 {
+        return Err(invalid(format!(
+            "{} bytes for {count} cells, expected {}",
+            bytes.len(),
+            count * 12
+        )));
+    }
+    bytes
+        .chunks_exact(12)
+        .enumerate()
+        .map(|(index, cell)| {
+            let word = |at: usize| {
+                u32::from_le_bytes([cell[at], cell[at + 1], cell[at + 2], cell[at + 3]])
+            };
+            let point = word(0);
+            let symbol = char::from_u32(point)
+                .filter(|glyph| unicode_width::UnicodeWidthChar::width(*glyph) == Some(1))
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "cell {index} code point {point:#x} is not one printable column"
+                    ))
+                })?;
+            let color = |at: usize| {
+                packed_color(word(at))
+                    .map_err(|_| invalid(format!("cell {index} color {:#010x}", word(at))))
+            };
+            Ok(BlitCell {
+                symbol: symbol.to_string(),
+                fg: color(4)?,
+                bg: color(8)?,
+            })
+        })
+        .collect()
+}
+
+pub fn unpacked(mut arguments: Value) -> Value {
+    let count = arguments["rect"]["width"].as_u64().unwrap_or(0)
+        * arguments["rect"]["height"].as_u64().unwrap_or(0);
+    let cells = arguments
+        .get("packed")
+        .and_then(Value::as_str)
+        .and_then(|packed| unpack(packed, usize::try_from(count).ok()?).ok());
+    if let (Some(cells), Some(fields)) = (cells, arguments.as_object_mut()) {
+        fields.remove("packed");
+        fields.insert(
+            "cells".into(),
+            cells
+                .into_iter()
+                .map(|cell| serde_json::json!([cell.symbol, cell.fg, cell.bg]))
+                .collect(),
+        );
+    }
+    arguments
+}
+
 /// `terminal.blit` arguments checked against the caller's raster `owner` and `size`; glyph width is the renderer's.
 pub fn blit_request(
     caller: &str,
@@ -1457,16 +1540,21 @@ pub fn blit_request(
     size: Option<(u16, u16)>,
     arguments: &Value,
 ) -> Result<Blit, BlitError> {
-    let bytes = arguments.to_string().len();
-    if bytes > BLIT_QUEUE_BYTES {
+    if arguments.to_string().len() > BLIT_CALL_BYTES {
         return Err("terminal_blit_too_large".into());
     }
     let blit: WireBlit =
         serde_json::from_value(arguments.clone()).map_err(|_| "terminal_blit_invalid")?;
-    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.image, blit.pixels) {
-        (Some(rect), Some(cells), None, None) => (Some((rect, cells)), None, None),
-        (None, None, Some(image), None) => (None, Some(image), None),
-        (None, None, None, Some(pixels)) => (None, None, Some(pixels)),
+    let (rect, image, pixels) = match (blit.rect, blit.cells, blit.packed, blit.image, blit.pixels)
+    {
+        (Some(rect), Some(cells), None, None, None) => {
+            (Some((rect, Glyphs::Cells(cells))), None, None)
+        }
+        (Some(rect), None, Some(packed), None, None) => {
+            (Some((rect, Glyphs::Packed(packed))), None, None)
+        }
+        (None, None, None, Some(image), None) => (None, Some(image), None),
+        (None, None, None, None, Some(pixels)) => (None, None, Some(pixels)),
         _ => return Err("terminal_blit_invalid".into()),
     };
     match owner {
@@ -1478,28 +1566,32 @@ pub fn blit_request(
         (Some((rect, cells)), _) => {
             let (width, height) =
                 size.ok_or_else(|| BlitError::retryable("terminal_blit_unknown"))?;
+            let count = usize::from(rect.width) * usize::from(rect.height);
             if rect.width == 0
                 || rect.height == 0
                 || u32::from(rect.x) + u32::from(rect.width) > u32::from(width)
                 || u32::from(rect.y) + u32::from(rect.height) > u32::from(height)
-                || cells.len() != usize::from(rect.width) * usize::from(rect.height)
             {
                 return Err("terminal_blit_invalid".into());
             }
-            let cells = cells
-                .into_iter()
-                .map(|cell| {
-                    let (symbol, fg, bg) = match cell {
-                        WireCell::Glyph(symbol) => (symbol, None, None),
-                        WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
-                    };
-                    (!symbol.is_empty()
-                        && symbol.len() <= 16
-                        && !symbol.chars().any(char::is_control))
-                    .then_some(BlitCell { symbol, fg, bg })
-                })
-                .collect::<Option<Vec<_>>>()
-                .ok_or("terminal_blit_invalid")?;
+            let cells = match cells {
+                Glyphs::Packed(packed) => unpack(&packed, count)?,
+                Glyphs::Cells(cells) if cells.len() == count => cells
+                    .into_iter()
+                    .map(|cell| {
+                        let (symbol, fg, bg) = match cell {
+                            WireCell::Glyph(symbol) => (symbol, None, None),
+                            WireCell::Styled(symbol, fg, bg) => (symbol, fg, bg),
+                        };
+                        (!symbol.is_empty()
+                            && symbol.len() <= 16
+                            && !symbol.chars().any(char::is_control))
+                        .then_some(BlitCell { symbol, fg, bg })
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or("terminal_blit_invalid")?,
+                Glyphs::Cells(_) => return Err("terminal_blit_invalid".into()),
+            };
             BlitContent::Cells { rect, cells }
         }
         (None, Some(image)) => BlitContent::Encoded {
@@ -1511,7 +1603,6 @@ pub fn blit_request(
     Ok(Blit {
         key: blit.key,
         content,
-        bytes,
     })
 }
 

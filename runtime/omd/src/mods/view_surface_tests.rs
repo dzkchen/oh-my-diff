@@ -114,6 +114,66 @@ fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() 
 }
 
 #[test]
+fn layout_leaf_titles_are_bounded_visible_text_on_sites_and_the_transcript() {
+    let layout = |site: Value, transcript: Value, composer: Value| {
+        json!({"layout": {"split": "horizontal", "children": [site,
+            {"split": "vertical", "children": [transcript, composer]}]}})
+    };
+    let (site, transcript, composer) = (
+        json!({"content": "site:a/b"}),
+        json!({"content": "transcript"}),
+        json!({"content": "composer"}),
+    );
+    let titled = |leaf: &Value, title: &str| {
+        let mut leaf = leaf.clone();
+        leaf["title"] = json!(title);
+        leaf
+    };
+    for valid in [
+        layout(
+            titled(&site, "Changes"),
+            titled(&transcript, "Chat"),
+            composer.clone(),
+        ),
+        layout(titled(&site, ""), titled(&transcript, ""), composer.clone()),
+        layout(
+            titled(&site, &"é".repeat(32)),
+            transcript.clone(),
+            composer.clone(),
+        ),
+    ] {
+        assert!(view(valid.clone()).is_ok(), "{valid}");
+        assert!(ModViewPatch::parse(valid).is_ok());
+    }
+    for invalid in [
+        layout(
+            titled(&site, &"x".repeat(65)),
+            transcript.clone(),
+            composer.clone(),
+        ),
+        layout(
+            titled(&site, "a\u{1b}[31m"),
+            transcript.clone(),
+            composer.clone(),
+        ),
+        layout(
+            site.clone(),
+            titled(&transcript, "line\nbreak"),
+            composer.clone(),
+        ),
+        layout(
+            site.clone(),
+            transcript.clone(),
+            titled(&composer, "Prompt"),
+        ),
+        layout(site.clone(), transcript.clone(), titled(&composer, "")),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+        assert!(ModViewPatch::parse(invalid).is_err());
+    }
+}
+
+#[test]
 fn patches_claim_layout_once() {
     let mut target = ModView::default();
     let mut claims = BTreeMap::new();
@@ -199,4 +259,61 @@ fn a_wrap_encloses_a_replacement_composed_after_it() {
     let sidebar = serde_json::to_value(&target.sites["sidebar"]).unwrap();
     assert_eq!(sidebar["mode"], "replace");
     assert_eq!(sidebar["components"][0]["children"][0]["id"], "tree");
+}
+
+#[test]
+fn key_contexts_are_bounded_and_compose_with_their_owner() {
+    let site = json!({"when": {"focus": ["site", "a/b"], "composer": "empty"}, "keys": {
+        "h": {"region": "left"}, "1": {"region": 1}, "?": {"action": {"help": true}, "label": "Keys"},
+        "Shift+Tab": {"region": "previous"}, "Enter": {"command": "open", "args": "x"}, "x": {"command": "other:run"}}});
+    let chat = json!({"when": {"focus": "chat"}, "keys": {"Alt+1": {"region": "a/b"}}});
+    let parsed = view(json!({"key_contexts": [site.clone(), chat.clone()],
+        "sites": {"a/b": {"components": [{"type": "document", "id": "d", "label": "D", "keys": "all"}]}}}))
+    .unwrap();
+    assert_eq!(
+        parsed.key_contexts[0].keys["?"].label.as_deref(),
+        Some("Keys")
+    );
+    let ModComponent::Document { keys, .. } = &parsed.sites["a/b"].components[0] else {
+        panic!("document");
+    };
+    assert_eq!(*keys, ModKeys::All);
+    let context =
+        |keys: Value| json!({"key_contexts": [{"when": {"focus": "site"}, "keys": keys}]});
+    for invalid in [
+        json!({"key_contexts": [{"when": {"focus": "chat"}, "keys": {"h": {"region": 1}}}]}),
+        json!({"key_contexts": [{"keys": {"Tab": {"region": "next"}}}]}),
+        json!({"key_contexts": [{"when": {"focus": "nowhere"}, "keys": {"F5": {"region": 1}}}]}),
+        json!({"key_contexts": [{"when": {"composer": "full"}, "keys": {"F5": {"region": 1}}}]}),
+        json!({"key_contexts": [{"when": {"focus": "site"}, "keys": {}}]}),
+        context(json!({"h": {"region": "sideways"}})),
+        context(json!({"h": {"region": 13}})),
+        context(json!({"h": {"help": false}})),
+        context(json!({"h": {"action": {"help": true}, "label": ""}})),
+        context(json!({"Ctrl+c": {"help": true}})),
+        context(json!({"Esc": {"help": true}})),
+        context(json!({"hh": {"help": true}})),
+        json!({"key_contexts": [{"when": {"focus": "site"}, "owner": "a", "keys": {"h": {"help": true}}}]}),
+        json!({"key_contexts": vec![chat.clone(); 9]}),
+        context(Value::Object(
+            (b'a'..=b'z')
+                .chain(b'0'..=b'6')
+                .map(|key| (char::from(key).to_string(), json!({"help": true})))
+                .collect(),
+        )),
+    ] {
+        assert!(ModViewPatch::parse(invalid.clone()).is_err(), "{invalid}");
+    }
+    let mut target = ModView::default();
+    let mut claims = BTreeMap::new();
+    ModViewPatch::parse(json!({"key_contexts": [site]}))
+        .unwrap()
+        .apply(&mut target, &mut claims, "first", "idle")
+        .unwrap();
+    let composed = &target.key_contexts[0];
+    assert_eq!(composed.owner, "first");
+    assert!(
+        matches!(&composed.keys["Enter"].action, ModKeyAction::Command { command, .. } if command == "first:open")
+    );
+    assert!(!composed.keys.contains_key("x"));
 }

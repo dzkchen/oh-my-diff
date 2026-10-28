@@ -88,7 +88,11 @@ Interceptors of these surfaces skip their own mod's calls like every other surfa
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
 starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`) and must be `true`.
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be `true`.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
+  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
+  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
+  package must budget model-visible outputs itself, or every long output reaches the model whole.
 - The package must list `codex_config_v1` in `required_features`.
 - Anything else fails inspection with `invalid_codex_config`.
 

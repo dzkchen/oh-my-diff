@@ -643,7 +643,7 @@ def rollback(args, root, bin_dir, current):
     if not current or not previous:
         fail("No previous installation is available for rollback.")
     upstream = Path(upstream_binary(args, current)["path"])
-    status(current, upstream, bin_dir)
+    status(previous, upstream, bin_dir)
     check_links(root, bin_dir)
     journaled(root, None, args.session)
     atomic_symlink(root / "previous", current)
@@ -685,7 +685,9 @@ def uninstall(args, root, bin_dir, current):
             remove_generation(generation, upstream, bin_dir, "--keep-broker")
         except (OSError, ValueError) as error:
             failures.append(f"{generation.name}: {error}")
-    (root / "previous").unlink(missing_ok=True)
+    kept = (root / "previous").resolve()
+    if not failures or not kept.is_dir() or removing(kept):
+        (root / "previous").unlink(missing_ok=True)
     if failures:
         fail(f"Could not remove older installations; the current one is untouched, fix these and retry: {'; '.join(failures)}")
     write_json(update_dir(root) / "journal.json", {"uninstall": current.name, "bin_dir": str(bin_dir)})

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { callback } from '../../../tests/mod_runner.mjs';
 
@@ -179,4 +180,17 @@ test('sensitive path policy asks before shell reads, ignores case, covers parent
   const started = Date.now();
   assert.equal(approval(`cat ${'/'.repeat(80000)}x`), null);
   assert.ok(Date.now() - started < 1000);
+});
+
+test('/privacy allow fingerprints the value exactly as typed, keeping inner runs of whitespace', () => {
+  const writes = [];
+  const allowed = text => run('command', 'privacy', `allow ${text}`, { host: call => {
+    assert.equal(call.operation, 'settings.write');
+    writes.push(call.arguments.values.exempt.at(-1));
+    return {};
+  } });
+  allowed('  John  Smith\t');
+  allowed('John\tSmith');
+  const digest = value => `sha256:${createHash('sha256').update(value).digest('hex').slice(0, 16)}`;
+  assert.deepEqual(writes, [digest('John  Smith'), digest('John\tSmith')]);
 });

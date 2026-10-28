@@ -12,8 +12,10 @@ pub const IMAGE_BYTES: usize = 8 * 1024 * 1024;
 pub const SVG_BYTES: usize = 1024 * 1024;
 pub const BLOB_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 pub const BLOB_ENTRIES: usize = 4096;
-pub const ROTATING_RECORDS: usize = 256;
-const ROTATING_KEEP: usize = 192;
+pub const ROTATING_RECORDS: usize = 1024;
+const ROTATING_KEEP: usize = 768;
+const PRUNE_WRITES: u32 = 16;
+const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn svg(bytes: &[u8]) -> Result<(), &'static str> {
     use quick_xml::events::Event;
@@ -152,34 +154,92 @@ impl ResourceStore<'_> {
     }
 }
 
-fn prune_rotating(directory: &std::path::Path) -> io::Result<()> {
-    let mut records = fs::read_dir(directory)?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|e| e == "json"))
-        .map(|entry| Ok((entry.metadata()?.modified()?, entry.path())))
-        .collect::<io::Result<Vec<_>>>()?;
-    if records.len() <= ROTATING_RECORDS {
+fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
+    let (mut records, mut bins, mut total) = (Vec::new(), Vec::new(), 0u64);
+    for entry in fs::read_dir(directory)?.filter_map(Result::ok) {
+        let metadata = entry.metadata()?;
+        match entry.path().extension().and_then(|e| e.to_str()) {
+            Some("json") => records.push((metadata.modified()?, entry.path())),
+            Some("bin") => {
+                total += metadata.len();
+                bins.push((metadata.modified()?, entry.path(), metadata.len()));
+            }
+            _ => {}
+        }
+    }
+    if records.len() <= ROTATING_RECORDS && total <= limit {
         return Ok(());
     }
     records.sort();
-    let (evicted, kept) = records.split_at(records.len() - ROTATING_KEEP);
-    let blob = |path: &std::path::Path| {
-        fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|record| record["payload"]["blob"].as_str().map(str::to_owned))
-    };
-    let live = kept
+    let blobs = records
         .iter()
-        .filter_map(|(_, path)| blob(path))
-        .collect::<std::collections::BTreeSet<_>>();
-    for (_, path) in evicted {
-        if let Some(digest) = blob(path).filter(|digest| !live.contains(digest)) {
-            let _ = fs::remove_file(directory.join(format!("{digest}.bin")));
+        .map(|(_, path)| {
+            fs::read(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|record| record["payload"]["blob"].as_str().map(str::to_owned))
+        })
+        .collect::<Vec<_>>();
+    let mut live = std::collections::BTreeMap::<&str, usize>::new();
+    for digest in blobs.iter().flatten() {
+        *live.entry(digest).or_default() += 1;
+    }
+    // Only blobs that records hold count against the limit: evicting records cannot free the rest, which go once settled.
+    let mut held = 0u64;
+    if let Some((newest, _)) = records.last() {
+        let settled = std::time::SystemTime::now() - ORPHAN_GRACE;
+        for (modified, path, size) in bins {
+            let digest = path.file_stem().and_then(|stem| stem.to_str());
+            if digest.is_some_and(|digest| live.contains_key(digest)) {
+                held += size;
+            } else if modified < *newest && modified < settled {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    let by_count = if records.len() > ROTATING_RECORDS {
+        records.len() - ROTATING_KEEP
+    } else {
+        0
+    };
+    for (index, (_, path)) in records.iter().enumerate().take(records.len() - 1) {
+        if index >= by_count && held <= limit {
+            break;
+        }
+        if let Some(digest) = &blobs[index]
+            && let Some(users) = live.get_mut(digest.as_str())
+        {
+            *users -= 1;
+            if *users == 0 {
+                let blob = directory.join(format!("{digest}.bin"));
+                let size = fs::metadata(&blob).map_or(0, |metadata| metadata.len());
+                if fs::remove_file(&blob).is_ok() {
+                    held = held.saturating_sub(size);
+                }
+            }
         }
         let _ = fs::remove_file(path);
     }
     Ok(())
+}
+
+// A sweep stats every file in the directory, so a process sweeps on its first write to one and then every PRUNE_WRITES writes or 1/16 of the byte limit.
+fn prune_due(directory: &std::path::Path, bytes: usize) -> bool {
+    static SINCE: std::sync::Mutex<std::collections::BTreeMap<PathBuf, (u32, u64)>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
+    let mut since = SINCE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (writes, written) = since
+        .entry(directory.to_owned())
+        .or_insert((PRUNE_WRITES - 1, 0));
+    *writes += 1;
+    *written += bytes as u64;
+    let due = *writes >= PRUNE_WRITES || *written >= BLOB_TOTAL_BYTES / 16;
+    if due {
+        (*writes, *written) = (0, 0);
+    }
+    due
 }
 
 impl ResourceStore<'_> {
@@ -331,7 +391,9 @@ impl ResourceStore<'_> {
         )?;
         let sha256 = hash(&record);
         crate::fsio::write_if_changed(&directory.join(format!("{sha256}.json")), &record)?;
-        prune_rotating(&directory)?;
+        if prune_due(&directory, text.len()) {
+            prune_rotating(&directory, BLOB_TOTAL_BYTES)?;
+        }
         Ok(crate::resource_data::ResourceRef {
             reference: sha256.clone(),
             sha256,

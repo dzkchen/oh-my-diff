@@ -1562,13 +1562,39 @@ impl ResponseObserver for Accounts {
             .map(|(_, events)| events)
     }
 
-    fn policed(&self) -> bool {
-        self.runtime.lock().ok().is_some_and(|installed| {
-            installed.as_ref().is_some_and(|(_, required)| {
-                required
-                    .lock()
-                    .map_or(true, |required| required.contains(&"model_send"))
-            })
+    fn police_unary(&self, thread: Option<&str>, body: &mut Value) -> Result<(), TransportError> {
+        let Some(mods) = self.mods() else {
+            return Ok(());
+        };
+        let thread = thread.unwrap_or_default();
+        let account = self
+            .by_thread
+            .lock()
+            .map_err(|_| denied("account lock poisoned"))?
+            .get(thread)
+            .cloned();
+        let request_id = self.request_id();
+        self.police(&mods, account.as_ref(), thread, &request_id, 1, body)
+            .map(drop)
+    }
+
+    fn policed(&self) -> Option<String> {
+        let installed = self.runtime.lock().ok()?;
+        let (mods, required) = installed.as_ref()?;
+        if !required
+            .lock()
+            .map_or(true, |required| required.contains(&"model_send"))
+        {
+            return None;
+        }
+        let owners = mods
+            .try_lock()
+            .map(|mods| mods.policy_owners().join(", "))
+            .unwrap_or_default();
+        Some(if owners.is_empty() {
+            "an enabled mod".into()
+        } else {
+            owners
         })
     }
 

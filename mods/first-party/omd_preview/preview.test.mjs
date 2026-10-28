@@ -126,6 +126,9 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     unborn = null;
     assert.match(command('list').value.display, /Latest \*\*answer\*\*.*\n2\. Earlier answer/);
     assert.match(command('missing.md').value.display, /^No file missing\.md/);
+    assert.equal(command('--inline docs/my  report.md').value.display, 'No file docs/my  report.md in the workspace');
+    writeFileSync(join(repository, 'docs/my  report.md'), 'spaced');
+    assert.equal(command('docs/my  report.md --inline').state.inline.text, 'spaced');
 
     const watched = command('docs/a.md --watch');
     assert.deepEqual(watching(repository).watch, ['docs/a.md']);
@@ -286,7 +289,7 @@ test('preview replaces a planted page link and refuses a linked output directory
   }
 });
 
-test('inline file previews read a bounded prefix and refuse content whose JSON escaping exceeds the callback budget', () => {
+test('inline file previews read a bounded prefix and refuse a file with no printable text', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-inline-')));
   try {
     writeFileSync(join(repository, 'big.txt'), 'x'.repeat(200_000));
@@ -295,9 +298,15 @@ test('inline file previews read a bounded prefix and refuse content whose JSON e
     const command = text => invoke(repository, null, 'command', text, 'preview');
     const big = command('big.txt --inline');
     assert.equal(big.state.inline.text, 'x'.repeat(4_000));
-    assert.equal(command('quotes.diff --inline').state.inline.text, '"'.repeat(48_000));
+    const quotes = command('quotes.diff --inline');
+    assert.ok(quotes.state.inline.text.length > 25_000 && JSON.stringify(quotes.state.inline.text).length <= 60_000);
+    assert.match(quotes.value.display, /^Showing only the start inline/);
+    writeFileSync(join(repository, 'lock.diff'), Array.from({ length: 12_000 }, (_, index) => `+${index}`).join('\n'));
+    const lock = command('lock.diff --inline');
+    assert.equal(lock.state.inline.text.split('\n').length, 2_000);
+    assert.match(lock.value.display, /^Showing only the start inline/);
     const control = command('control.diff --inline');
-    assert.match(control.value.display, /host_result_limit/);
+    assert.match(control.value.display, /no printable text/);
     assert.equal(control.state, null);
     writeFileSync(join(repository, 'snow.md'), '雪'.repeat(2_000));
     assert.equal(command('snow.md --inline').state.inline.text, '雪'.repeat(1_333));

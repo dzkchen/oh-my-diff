@@ -272,6 +272,12 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     let base = json!({"schema": 1, "deny": ["denied"], "capabilities": ["interception"], "packages": [
         entry("guard", &guard, &guard_sha, json!({"settings": {"mode": "strict"}}))]});
     admin.administer(base.clone(), "alice");
+    std::fs::create_dir_all(store.root().join("settings")).unwrap();
+    std::fs::write(
+        store.root().join("settings/guard.json"),
+        r#"{"mode":"open"}"#,
+    )
+    .unwrap();
     let host = admin.host("alice");
     assert_eq!(active(&host), ["guard@1.0.0", "plain@1.0.0"]);
     assert!(
@@ -295,6 +301,10 @@ fn administrator_controls_override_user_and_project_selections_with_provenance()
     assert_eq!(
         row("guard", "managed")["settings_origin"],
         json!({"mode": "managed"})
+    );
+    assert_eq!(
+        row("guard", "managed")["settings_file"]["status"],
+        "ignored"
     );
     assert_eq!(
         row("plain", "user")["settings_origin"],

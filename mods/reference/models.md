@@ -267,7 +267,8 @@ The input is one page:
 - `request_id`, `attempt`, `scope`, `provider`, `route` and `model`.
 - `page` and `pages` (1-based).
 - `cached`.
-- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text`, except structural fields
+- `segments`: the non-empty string leaves of `instructions`, `input`, `tools` and `text` (and `prompt`, `images`
+  and `traces` in image and memory summarization requests), except structural fields
   (`type`, `id`, `call_id`, `status`, `role`, `name`, `namespace`, `detail`, item metadata).
 - `opaque` and `opaque_total`.
 
@@ -276,7 +277,7 @@ Each segment is `{id, kind, role, editable, text, bytes, sha256}`:
 - `id` is the JSON pointer (`/input/3/content/0/text`).
 - `kind` is the content kind: `agents_md.instructions`, `user.text`, or `message.<role>` without one,
   `instructions`, `tool_call.arguments`, `tool_call.input`, `tool_output`, `reasoning`, `tool_spec`,
-  `output_schema` or the item type.
+  `output_schema`, `image.prompt`, `memory` or the item type.
 - `bytes` is the UTF-8 size.
 
 | Page limit | Value |
@@ -335,9 +336,11 @@ enabled, every request is refused (`request_policy_unavailable`) unless that mod
 required interceptor selecting `model_send`, including after a rejected selection, failed activation, fault or
 failed reload.
 
-- While a required `model_send` interceptor or a declared policy exists, transports that cannot pass the stage are
-  refused (`request_policy_unsupported_transport`): realtime calls and their websockets, image generation, web
-  search and memory summarization; Responses websockets are always off under OMD.
+- Image generation and edits and memory summarization pass the stage too (input images arrive as `opaque`).
+  Web search is not policed: it sends recent conversation text and its queries as they are.
+- While a required `model_send` interceptor or a declared policy exists, realtime calls and their websockets are
+  refused (`request_policy_unsupported_transport`, naming the endpoint and the mods whose policy blocks it);
+  Responses websockets are always off under OMD.
 - Disable the mod in `/mods` or `/omd` to send again (only the administrator can disable a managed policy).
 - Status `request_policy_unavailable` names the reason every request is being refused, or is `null`.
 - Without `model_send` interceptors or declared policies the stage does not run and the body is untouched.
@@ -474,7 +477,7 @@ none starts paid work implicitly.
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the callback waits in place, holding no
   runtime lock, and the wait does not count as own time; cancellation wakes it and ends the callback.
-- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 128 host calls.
+- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 512 host calls.
 - `api.time.after(key, delay_ms, handler)` and `api.time.every(key, interval_ms, handler)` register during
   activation (16 ms to 24 h) and return `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`.

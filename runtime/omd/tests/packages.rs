@@ -704,7 +704,7 @@ fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
     git(&repository, &["config", "user.name", "Fixture"]);
     let store = store(&temp);
     let mut refusals = Vec::new();
-    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+    for (file, limit) in [("main.ts", 524_288), ("mod.json", 8192)] {
         let path = package.join(file);
         let mut bytes = std::fs::read(&path).unwrap();
         bytes.resize(4 << 20, b'\n');
@@ -1317,12 +1317,12 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["capabilities"] = json!(["commands"]);
         value["entrypoint"] = json!("big.ts");
     });
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_288]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_289]).unwrap();
     assert!(
         refusal(&store, request(&package, &["commands"]))
-            .contains("file_limit: big.ts exceeds 131072 bytes")
+            .contains("file_limit: big.ts exceeds 524288 bytes")
     );
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();

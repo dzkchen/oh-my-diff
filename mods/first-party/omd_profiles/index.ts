@@ -25,7 +25,7 @@ export default function activate(api: ModAPI) {
   const store = (patch: Partial<Saved>) => {
     const next = { ...saved(), ...patch };
     api.state.set(next as unknown as Json);
-    api.host.tryCall('events.publish', { channel: 'routes', data: { current: next.current, pending: next.pending, notice: next.notice } });
+    api.host.tryCall('events.publish', { channel: 'routes', data: { profiles: next.accounts.slice(0, MODELS).map(({ name, model, billing, available }) => ({ name, model, billing, available })), current: next.current, pending: next.pending, notice: next.notice } });
   };
   const shared = (key: string) => {
     const got = api.host.tryCall('store.get', { key, scope: 'user' });
@@ -406,9 +406,10 @@ export default function activate(api: ModAPI) {
     if (op === 'add') return { display: begin(label, extra, url) };
     if (op === 'remove' && label) return { display: remove(label) };
     if (op === 'refresh' && label) {
+      const target = String(value ?? '').trim().slice(op.length).trim();
       const credentials = api.host.tryCall('credentials.list', null);
-      const credential = (credentials.ok ? credentials.value : []).find(item => item.label === label || item.id === label);
-      if (!credential) return { display: `Unknown credential ${label}` };
+      const credential = (credentials.ok ? credentials.value : []).find(item => item.label === target || item.id === target);
+      if (!credential) return { display: `Unknown credential ${target}` };
       const done = api.host.tryCall('credentials.request', { action: 'refresh', profile: credential.id });
       return { display: done.ok ? `Refresh ${done.value.status} for ${credential.label}.` : done.error };
     }

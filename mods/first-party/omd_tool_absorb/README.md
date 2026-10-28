@@ -45,8 +45,8 @@ duplicate reads were skipped and which host call ran each read.
 - Each read still runs through Codex with its own call ID, permissions, approvals, sandbox, accounting and result
   record, and the model gets each read's own output and success.
 - Distinct reads are never merged: merged reads run one after another, so merging them would only add latency.
-- A merged step holds about 128 KB of output. A read whose output doesn't fit still runs, and the model is told to
-  run it again on its own. A single read's output is cut at 48 KB, and the cut is marked so the model can read the
+- A merged step holds about 1 MB of output. A read whose output doesn't fit still runs, and the model is told to
+  run it again on its own. A single read's output is cut at 256 KB, and the cut is marked so the model can read the
   rest.
 - A duplicate read is answered with a pointer to the first one's output rather than a second copy; a duplicate of a
   read whose output didn't fit or that couldn't run gets that read's note.

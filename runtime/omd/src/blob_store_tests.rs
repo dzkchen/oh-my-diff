@@ -56,6 +56,37 @@ fn text_evidence_repairs_a_truncated_rotating_blob() {
 }
 
 #[test]
+fn rotating_evidence_is_bounded_by_total_bytes() {
+    with_store(|store| {
+        let directory = store.rotating_directory().unwrap();
+        let orphan = directory.join(format!("{}.bin", "d".repeat(64)));
+        fs::write(&orphan, [0; 30]).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&orphan)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * ORPHAN_GRACE)
+            .unwrap();
+        let fresh = directory.join(format!("{}.bin", "e".repeat(64)));
+        fs::write(&fresh, [0; 1]).unwrap();
+        let references = [("1", "b"), ("2", "a"), ("3", "b"), ("4", "c")].map(|(label, letter)| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            store
+                .text_evidence(label, &letter.repeat(10))
+                .unwrap()
+                .reference
+        });
+        prune_rotating(&directory, 26).unwrap();
+        let kept =
+            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
+        assert!(!orphan.exists() && fresh.exists() && !kept("a").exists());
+        assert!(kept("b").exists() && kept("c").exists());
+        assert!(!directory.join(format!("{}.json", references[0])).exists());
+        assert!(directory.join(format!("{}.json", references[2])).exists());
+    });
+}
+
+#[test]
 fn put_blob_survives_a_stale_temporary_and_repairs_a_truncated_blob() {
     with_store(|store| {
         let digest = hash(b"hello");
@@ -70,6 +101,37 @@ fn put_blob_survives_a_stale_temporary_and_repairs_a_truncated_blob() {
         assert_eq!(store.put_blob(b"hello").unwrap(), digest);
         assert_eq!(store.blob(&digest).unwrap(), b"hello");
     });
+}
+
+#[test]
+fn unsettled_orphans_never_evict_records() {
+    with_store(|store| {
+        let directory = store.rotating_directory().unwrap();
+        let references = ["a", "b", "c"].map(|letter| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            store
+                .text_evidence(letter, &letter.repeat(10))
+                .unwrap()
+                .reference
+        });
+        fs::write(directory.join(format!("{}.bin", "f".repeat(64))), [0; 100]).unwrap();
+        prune_rotating(&directory, 40).unwrap();
+        for reference in references {
+            assert!(directory.join(format!("{reference}.json")).exists());
+        }
+    });
+}
+
+#[test]
+fn a_process_sweeps_a_directory_first_then_every_sixteen_writes_or_large_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let due = |bytes| prune_due(directory.path(), bytes);
+    assert!(due(1));
+    assert_eq!(
+        (0..16).map(|_| due(1)).collect::<Vec<_>>(),
+        [vec![false; 15], vec![true]].concat()
+    );
+    assert!(due(BLOB_TOTAL_BYTES as usize / 16));
 }
 
 #[test]

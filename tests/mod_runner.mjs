@@ -28,6 +28,9 @@ const host = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url)
 const table = name => host.match(new RegExp(`pub const ${name}: &\\[[^\\]]*\\] = &\\[([\\s\\S]*?)\\];`))[1];
 const pairs = name => Object.fromEntries([...table(name).matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
 const names = name => [...table(name).matchAll(/"([a-z_]+)"/g)].map(match => match[1]);
+const constant = name => Number(host.match(new RegExp(`pub const ${name}: usize = ([\\d_]+);`))[1].replaceAll('_', ''));
+const HOST_RECEIPT_BYTES = constant('HOST_RECEIPT_BYTES');
+const MAX_HOST_CALLS = constant('MAX_HOST_CALLS');
 
 export const surface = {
   events: pairs('MOD_EVENTS'),
@@ -106,21 +109,18 @@ function close(worker) {
 export function runnerSync(request) {
   const worker = take(request);
   try {
-    writeSync(worker.input, JSON.stringify({ surface, ...request }) + '\n');
+    writeSync(worker.input, JSON.stringify({ surface, max_host_calls: MAX_HOST_CALLS, ...request }) + '\n');
     return frame(worker);
   } finally {
     close(worker);
   }
 }
 
-const HOST_RECEIPT_BYTES = 131_072;
-const MAX_HOST_CALLS = 128;
-
 export function callback(request, host, receipts = [], { capture = error => !error.crash && !(error instanceof AssertionError) } = {}) {
   const worker = take(request);
   let spent = Buffer.byteLength(JSON.stringify(receipts));
   try {
-    writeSync(worker.input, JSON.stringify({ surface, ...request, receipts, interactive: true }) + '\n');
+    writeSync(worker.input, JSON.stringify({ surface, max_host_calls: MAX_HOST_CALLS, ...request, receipts, interactive: true }) + '\n');
     for (;;) {
       const output = frame(worker);
       if (!('call' in output)) return output;

@@ -359,6 +359,8 @@ Runs `check`, and while its value differs from `until` advances virtual time by 
 
 ### Pointer and client steps
 
+- A `terminal_interact` `key` runs the view's `keybindings` entry, else the first `key_contexts` binding for that key
+  (offline steps have no focus).
 - `terminal_interact` also takes `pointer: {column, row, half?, action, button?}` with `component`. The mounting mod
   receives `component_event {kind: 'pointer'}` with `origin: 'user'`, only for a `box`, `image` or `raster` mounted
   with `pointer: true` (`offline_terminal_component_not_pointer`). Adding `client: ID` delivers it as that attached
