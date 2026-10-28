@@ -20,7 +20,7 @@ Each item in the view carries:
 - the byte size
 - the `images` count
 
-The view holds the newest items, at most 2048, that fit the callback's 1 MiB runner request, in order and keyed by
+The view holds the newest items, at most 2048, that fit the callback's 4 MiB runner request, in order and keyed by
 their original `index`.
 
 ### History edit rules

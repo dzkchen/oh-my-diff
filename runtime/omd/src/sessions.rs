@@ -1,5 +1,5 @@
 use crate::mods::{FileStamp, file_stamp};
-use crate::resource_data::{PAGE_BYTES, hash, redact, token};
+use crate::resource_data::{hash, redact, token};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,6 +8,7 @@ use std::io::{self, BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+const PAGE_BYTES: usize = 16_384;
 const SOURCE_BYTES: usize = 32 * 1024 * 1024;
 const HEAD_BYTES: u64 = 1024 * 1024;
 const SCAN_FILES: usize = 4096;

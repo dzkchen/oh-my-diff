@@ -17,5 +17,12 @@
   "plugins/omd-code-execution/.codex-plugin/plugin.json",
   "plugins/omd-code-execution/kernels/bun.mjs",
   "plugins/omd-code-execution/kernels/python.py",
-  "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md"
+  "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md",
+  "plugins/omd-output-budget/.codex-plugin/omd.json",
+  "plugins/omd-output-budget/.codex-plugin/plugin.json",
+  "plugins/omd-output-budget/README.md",
+  "plugins/omd-output-budget/mod/budget.ts",
+  "plugins/omd-output-budget/mod/index.ts",
+  "plugins/omd-output-budget/mod/mod.json",
+  "plugins/omd-output-budget/skills/omd-output-budget/SKILL.md"
 ]

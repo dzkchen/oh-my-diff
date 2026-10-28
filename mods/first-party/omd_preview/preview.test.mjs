@@ -286,7 +286,7 @@ test('preview replaces a planted page link and refuses a linked output directory
   }
 });
 
-test('inline file previews read a bounded prefix and refuse content whose JSON escaping exceeds the callback budget', () => {
+test('inline file previews read a bounded prefix and refuse a file with no printable text', () => {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-inline-')));
   try {
     writeFileSync(join(repository, 'big.txt'), 'x'.repeat(200_000));
@@ -297,7 +297,7 @@ test('inline file previews read a bounded prefix and refuse content whose JSON e
     assert.equal(big.state.inline.text, 'x'.repeat(4_000));
     assert.equal(command('quotes.diff --inline').state.inline.text, '"'.repeat(48_000));
     const control = command('control.diff --inline');
-    assert.match(control.value.display, /host_result_limit/);
+    assert.match(control.value.display, /no printable text/);
     assert.equal(control.state, null);
     writeFileSync(join(repository, 'snow.md'), '雪'.repeat(2_000));
     assert.equal(command('snow.md --inline').state.inline.text, '雪'.repeat(1_333));

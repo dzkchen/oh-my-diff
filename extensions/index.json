@@ -123,6 +123,22 @@
       "support_status": "experimental"
     },
     {
+      "id": "omd_monitor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "capability": "Event-driven monitors: subscribe once to a background command, file change or GitHub run or deployment and get one bounded correlated message instead of polling",
+      "source": "mods/first-party/omd_monitor",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.164.0; OMD 1.2.0; mod API 1.0.0; autonomous_turns_v1, unrestricted_process_v1, workspace_watch_key_v1, turn_activity_v1; GitHub monitors need an installed, logged-in gh",
+      "tested_versions": [
+        "Codex 0.164.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0"
+      ],
+      "support_status": "experimental"
+    },
+    {
       "id": "omd_continue",
       "version": "1.0.0",
       "extension_type": "mod",
@@ -352,6 +368,29 @@
         {
           "extension_type": "skill",
           "path": "skills/omd-artifact-reading"
+        }
+      ]
+    },
+    {
+      "id": "omd-output-budget",
+      "version": "1.0.0",
+      "extension_type": "plugin",
+      "capability": "Keeps large shell and tool results out of the context: bounded excerpts that keep exit status and failure lines, full outputs kept by content hash, paged reads, ranked search and documentation fetch",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-output-budget",
+      "license": "MIT",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.164.0 and OMD 1.2.0; mod API 1.0.0; tool_original_v1, continuation_middleware_v1, store_thread_v1; the optional mod component needs explicit trust and grants",
+      "tested_versions": [
+        "Codex 0.164.0",
+        "OMD 1.2.0 pre-release (offline checks)",
+        "mod API 1.0.0",
+        "plugin 1.0.0"
+      ],
+      "support_status": "experimental",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-output-budget"
         }
       ]
     },

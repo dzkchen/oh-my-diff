@@ -1,0 +1,4 @@
+[[profile.default.overrides]]
+# Fills the 1 MB markdown cache budget, which takes about a minute in a debug build.
+filter = 'package(codex-tui) & test(=mod_ui::tests::markdown_cache_is_bounded_by_the_size_of_its_lines_not_its_source)'
+slow-timeout = { period = "1m", terminate-after = 5 }

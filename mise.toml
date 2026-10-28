@@ -1,5 +1,6 @@
 [tools]
 git-cliff = "2.14.2"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.150"
 node = "24.22.1"
 
 [tasks."mods:check"]
