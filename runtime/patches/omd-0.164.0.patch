@@ -104868,7 +104868,7 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..739051a33923118cc668bea4b5253a6709c3426d
+index 0000000000000000000000000000000000000000..78d9349d963ee9681299e55fae77c092894349bd
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,260 @@
@@ -105015,6 +105015,7 @@ index 0000000000000000000000000000000000000000..739051a33923118cc668bea4b5253a67
 +pub use mods::ModCommandOutcome;
 +pub use mods::ModComponent;
 +pub use mods::ModComponentAction;
++pub use mods::ModComposerWhen;
 +pub use mods::ModConfiguration;
 +pub use mods::ModDensity;
 +pub use mods::ModDirection;
@@ -105028,11 +105029,9 @@ index 0000000000000000000000000000000000000000..739051a33923118cc668bea4b5253a67
 +pub use mods::ModIcons;
 +pub use mods::ModInstallRequest;
 +pub use mods::ModInterceptor;
-+pub use mods::ModComposerWhen;
 +pub use mods::ModKeyAction;
 +pub use mods::ModKeyContext;
 +pub use mods::ModKeys;
-+pub use mods::ModRegion;
 +pub use mods::ModLayout;
 +pub use mods::ModLayoutLeaf;
 +pub use mods::ModLayoutSplit;
@@ -105054,6 +105053,7 @@ index 0000000000000000000000000000000000000000..739051a33923118cc668bea4b5253a67
 +pub use mods::ModPeerAccess;
 +pub use mods::ModPolicyScope;
 +pub use mods::ModRange;
++pub use mods::ModRegion;
 +pub use mods::ModRenderSite;
 +pub use mods::ModScreenAnchor;
 +pub use mods::ModSelectOption;
