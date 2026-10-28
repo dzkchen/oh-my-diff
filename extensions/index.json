@@ -269,9 +269,9 @@
     },
     {
       "id": "omd_frecency",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "extension_type": "mod",
-      "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
+      "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts, Git status and recent commits",
       "source": "mods/first-party/omd_frecency",
       "license": "MIT",
       "maintainer": "Oh My Diff",
