@@ -4,7 +4,7 @@ Copyright (c) 2026 David Chen
 Oh My Diff is licensed under the MIT License (see LICENSE), except for the
 OpenAI Codex patch set and the crates that build inside the Codex workspace:
 runtime/patches/, runtime/omd/ and runtime/native/. These modify and extend
-OpenAI Codex rust-v0.164.0 and are licensed under the Apache License,
+OpenAI Codex rust-v0.165.0 and are licensed under the Apache License,
 Version 2.0 (see LICENSE-APACHE). The ports in mods/ports/token_weather and
 mods/ports/blast_radius adapt Apache-2.0 code from Anthropic's
 claude-code-playground and are licensed under the Apache License, Version 2.0, too.

@@ -16,7 +16,7 @@ function session(settings = {}, prompt = 'accepted', beforePut = () => {}) {
   const host = ({ operation, arguments: args }) => {
     const store = stores[args?.scope ?? 'repository'];
     switch (operation) {
-      case 'session.info': return { thread_id: 'thread-1', root: '/repo', cwd: '/repo', codex_version: '0.164.0', model: null, provider: 'openai', route: null, turns_started: 0 };
+      case 'session.info': return { thread_id: 'thread-1', root: '/repo', cwd: '/repo', codex_version: '0.165.0', model: null, provider: 'openai', route: null, turns_started: 0 };
       case 'store.get': return store[args.key] ?? null;
       case 'store.put': {
         beforePut(args);
