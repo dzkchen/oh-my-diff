@@ -77,7 +77,7 @@ test('warm renders and continuation replays restore post-activation atoms', () =
   const result = spawnSync(runner, [], {
     input: [request, request, suspended, { ...suspended, receipts: [receipt] }].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000,
   });
-  const replies = result.stdout.trim().split('\n').map(JSON.parse);
+  const replies = result.stdout.replace('{"ready":true}\n', '').trim().split('\n').map(JSON.parse);
   assert.equal(replies.length, 4);
   assert.equal(replies[0].value.result.value, 1);
   assert.equal(replies[1].value.result.value, 1);
@@ -129,7 +129,7 @@ test('component module steps deliver input, ticks and one post without host auth
     filename: 'fixture.ts', capabilities: ['terminal'], state: null, settings: {}, surface, event: 'component', name: 's', serve: true, payload: { instance: 's', now: 0, events: [] } };
   const slowSteps = spawnSync(runner, [], {
     input: Array(4).fill(JSON.stringify(slow) + '\n').join(''), encoding: 'utf8', timeout: 5000,
-  }).stdout.trim().split('\n').map(JSON.parse);
+  }).stdout.replace('{"ready":true}\n', '').trim().split('\n').map(JSON.parse);
   assert.deepEqual(slowSteps.map(reply => reply.error ?? null), [null, null, null, 'Error: component_overrun: s']);
 });
 test('a pinned component runner reads the state and UI state of the step it serves', () => {
@@ -138,7 +138,7 @@ test('a pinned component runner reads the state and UI state of the step it serv
   const serve = (state, uiState) => JSON.stringify({ name: 'c', payload: probe.payload, receipts: [], state, ui_state: uiState });
   const texts = spawnSync(runner, [], {
     input: [JSON.stringify(probe), serve({ n: 2 }, { open: 2 }), serve(null, null)].join('\n') + '\n', encoding: 'utf8', timeout: 5000,
-  }).stdout.trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
+  }).stdout.replace('{"ready":true}\n', '').trim().split('\n').map(line => JSON.parse(line).value.tree[0].text);
   assert.deepEqual(texts, ['[{"n":1},{"open":1}]', '[{"n":2},{"open":2}]', '[null,null]']);
 });
 test('entrypoints import declared assets by relative path and report them', () => {

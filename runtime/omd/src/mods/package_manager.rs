@@ -2139,6 +2139,7 @@ impl ModStore {
             "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
         process::evaluate(
             &request,
+            None,
             std::time::Duration::from_secs(1),
             &|| true,
             &mut |_| Err(failure("host_operation_unavailable")),

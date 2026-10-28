@@ -15,7 +15,21 @@ const UNSET = '-';
 const kept = (item: Pick<PackageState, 'id' | 'required'>) => item.id === SELF || item.required;
 const labelOf = (name: string, property?: Property) => property?.title ?? name.replace(/_/g, ' ');
 const word = (value: string) => /^\S{1,128}$/.test(value);
-const numeric = new Intl.Collator(undefined, { numeric: true }).compare;
+// No Intl.Collator: a runner's first one loads ICU data (~5 ms), which every first /mods paid.
+const compare = (a: string, b: string) => {
+  const [x, y] = [a.toLowerCase(), b.toLowerCase()];
+  return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+};
+const runs = (value: string) => value.match(/\d+|\D+/g) ?? [];
+const numeric = (a: string, b: string) => {
+  const [x, y] = [runs(a), runs(b)];
+  for (let index = 0; index < Math.max(x.length, y.length); index++) {
+    const [p = '', q = ''] = [x[index], y[index]];
+    const order = /^\d/.test(p) && /^\d/.test(q) ? Math.sign(Number(p) - Number(q)) : compare(p, q);
+    if (order) return order;
+  }
+  return 0;
+};
 const newer = (version: string, than: string) => {
   const [core, pre = ''] = version.split(/-(.*)/s), [base, basePre = ''] = than.split(/-(.*)/s);
   return (numeric(core, base) || (!pre === !basePre ? numeric(pre, basePre) : pre ? -1 : 1)) > 0;
@@ -28,7 +42,6 @@ const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Setti
 const GROUPS = ['Needs attention', 'On', 'Off'];
 
 export default function activate(api: ModAPI) {
-  const compare = new Intl.Collator().compare;
   const encoder = new TextEncoder();
   const saved = (): Saved => ({ ...EMPTY, ...(api.uiState.get() as Partial<Saved> | null ?? {}) });
   const remembered = (): Remembered => (api.state.get() as Remembered | null) ?? {};

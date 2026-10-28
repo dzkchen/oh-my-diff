@@ -47,6 +47,9 @@ thread_local! {
     static LIVE: Cell<i32> = const { Cell::new(0) };
     static GRAPH: RefCell<Graph> = RefCell::new(Graph::default());
     static CACHE: RefCell<(HashMap<String, Compiled>, VecDeque<String>, usize)> = RefCell::new(Default::default());
+    /// Modules the host offered for the next callback, and those compiled fresh for it to keep (only when it offered).
+    static OFFERED: RefCell<Option<Map<String, Value>>> = const { RefCell::new(None) };
+    static COMPILED: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
 }
 
 fn read_line() -> Result<String, &'static str> {
@@ -354,7 +357,26 @@ fn compile<'s>(
             .get(&key)
             .map(|entry| (entry.code.clone(), entry.data.clone()))
     });
-    let (code, data) = match cached {
+    let offered = OFFERED.with_borrow(Option::is_some).then(|| {
+        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, key.as_bytes())
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    });
+    let stored = match (&cached, &offered) {
+        (None, Some(name)) => OFFERED.with_borrow(|offered| {
+            use base64::Engine as _;
+            let entry = offered.as_ref()?.get(name)?;
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(entry["data"].as_str()?)
+                .ok()?;
+            Some((entry["code"].as_str()?.to_owned(), data))
+        }),
+        _ => None,
+    };
+    let from_store = cached.is_none() && stored.is_some();
+    let (code, data) = match cached.or(stored) {
         Some(entry) => entry,
         None if typescript => match strip(source, identifier) {
             Ok(code) => (code, Vec::new()),
@@ -431,6 +453,9 @@ fn compile<'s>(
         };
         let cache = module.get_unbound_module_script(scope).create_code_cache();
         if let Some(cache) = cache {
+            if let Some(name) = offered {
+                keep(name, &code, &cache);
+            }
             remember(key, code, cache.to_vec());
         }
         module
@@ -440,16 +465,46 @@ fn compile<'s>(
             Some(&origin),
             v8::script_compiler::CachedData::new(&data),
         );
-        v8::script_compiler::compile_module2(
+        let module = v8::script_compiler::compile_module2(
             scope,
             &mut source,
             v8::script_compiler::CompileOptions::ConsumeCodeCache,
             v8::script_compiler::NoCacheReason::NoReason,
-        )?
+        )?;
+        // V8 compiled the source itself when it rejected the data (another V8 build or flags): replace the entry.
+        let rejected = source.get_cached_data().is_some_and(|data| data.rejected());
+        if rejected && let Some(cache) = module.get_unbound_module_script(scope).create_code_cache()
+        {
+            if let Some(name) = offered {
+                keep(name, &code, &cache);
+            }
+            remember(key, code, cache.to_vec());
+        } else if !rejected && from_store {
+            remember(key, code, data);
+        }
+        module
     };
     let global = v8::Global::new(scope, module);
     GRAPH.with_borrow_mut(|graph| graph.modules.push((global, identifier.to_owned())));
     Some(module)
+}
+
+fn keep(name: String, code: &str, data: &[u8]) {
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD.encode(data);
+    COMPILED.with_borrow_mut(|compiled| {
+        compiled.push(serde_json::json!({"code_cache": {"key": name, "code": code, "data": data}}));
+    });
+}
+
+/// Reports modules compiled fresh to the host that offered a cache; an entry that would pass the output limit with its newline is not kept.
+fn report_compiled() {
+    for frame in COMPILED.take() {
+        let line = frame.to_string();
+        if line.len() < OUTPUT_LIMIT && !write_out(&(line + "\n")) {
+            std::process::exit(1);
+        }
+    }
 }
 
 fn remember(key: String, code: String, data: Vec<u8>) {
@@ -818,6 +873,7 @@ fn callback<'s>(
         return Err(Some(error(scope, "output_limit")));
     }
     let result = result.to_rust_string_lossy(scope);
+    report_compiled();
     let reuse = request["reuse"] == true;
     if request["serve"] != true {
         LIVE.set(0);
@@ -977,6 +1033,10 @@ fn main() {
     let watchdog = Watchdog::start(isolate.thread_safe_handle());
     let mut generation = 1;
     let mut spare = prepare(&mut isolate, generation);
+    // The host's callback budget starts here, so a slow process start (macOS scans a freshly written runner) does not spend it.
+    if !write_out("{\"ready\":true}\n") {
+        std::process::exit(1);
+    }
     let mut kept: Option<Map<String, Value>> = None;
     loop {
         let mut line = match read_line() {
@@ -993,6 +1053,16 @@ fn main() {
             eprintln!("SyntaxError: invalid runner request");
             std::process::exit(1);
         };
+        // A host with a code cache sends the modules it holds on their own line before the request.
+        if let Some(offered) = request
+            .as_object_mut()
+            .filter(|fields| fields.len() == 1)
+            .and_then(|fields| fields.get_mut("code_cache"))
+            .and_then(Value::as_object_mut)
+        {
+            OFFERED.set(Some(std::mem::take(offered)));
+            continue;
+        }
         if let Some(names) = request["kept"].as_array().cloned() {
             let Some(fields) = &mut kept else { break };
             fields.retain(|field, _| names.iter().any(|name| name == field));
@@ -1013,7 +1083,10 @@ fn main() {
         };
         LIVE.set(prepared.generation);
         let reuse = request["reuse"] == true;
-        match run(&mut isolate, prepared, &request, &line, &watchdog) {
+        let ran = run(&mut isolate, prepared, &request, &line, &watchdog);
+        OFFERED.set(None);
+        COMPILED.take();
+        match ran {
             Ok(Some(output)) => {
                 if !write_out(&output) {
                     std::process::exit(1);
