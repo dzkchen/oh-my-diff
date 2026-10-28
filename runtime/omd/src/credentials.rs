@@ -198,6 +198,7 @@ impl CredentialProfiles {
             let temporary = self
                 .root
                 .join(format!(".profiles.json.{}", std::process::id()));
+            let _ = fs::remove_file(&temporary);
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -310,7 +311,9 @@ impl CredentialProfiles {
         if !text(label, 64) || !origin(origin_url) || !text(owner, 128) {
             return Err(failure("credential_profile_invalid"));
         }
-        self.insert(label, "secret", None, Some(origin_url), Some(owner))
+        let origin_url =
+            url_origin(origin_url).ok_or_else(|| failure("credential_profile_invalid"))?;
+        self.insert(label, "secret", None, Some(&origin_url), Some(owner))
     }
 
     fn insert(

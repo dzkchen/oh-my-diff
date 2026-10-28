@@ -109,7 +109,7 @@
       },
       "max_no_progress_calls": {
         "title": "Stop after stalled calls",
-        "description": "How many workflow calls in a row may make no progress before it stops (0 to 32); 0 means no limit",
+        "description": "How many times the lead may repeat the same tool call with the same result, with no checkpoint progress, before the task pauses (0 to 32); 0 means no limit",
         "type": "number",
         "default": 0
       }

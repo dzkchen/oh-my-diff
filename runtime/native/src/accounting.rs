@@ -1318,6 +1318,7 @@ impl ResponseObserver for Accounts {
                 url = route.url;
             }
         }
+        let routed = url.clone();
         if url.is_empty() {
             url = request.url.clone();
         }
@@ -1337,7 +1338,7 @@ impl ResponseObserver for Accounts {
                 &account.repository_identity,
                 &account.provider,
                 &account.model,
-                &account.url,
+                &routed,
                 rates.included_subscription,
             ) {
                 return Err(denied("worker authorization revoked or changed"));
@@ -2040,7 +2041,7 @@ impl Attempt {
             self.required,
         )?
         else {
-            // Registrations change only at reload, so the rest of this response needs no checks.
+            // No interceptor until reload, or an unrequired one skipped as busy: the rest of this response passes through.
             self.mods = None;
             return Ok(None);
         };

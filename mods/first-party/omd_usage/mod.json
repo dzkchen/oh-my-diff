@@ -11,7 +11,7 @@
   "capabilities": ["agents", "commands", "store", "terminal", "events", "model", "lifecycle", "middleware", "threads", "config", "account", "inventory"],
   "subscriptions": {
     "channels": ["omd_usage/refresh"],
-    "app": ["account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
+    "app": ["account/updated", "account/rateLimits/updated", "thread/settings/updated", "thread/tokenUsage/updated", "thread/reverted", "turn/plan/updated"]
   },
   "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "store_thread_v1", "state_scopes_v1", "events_v1", "app_v1", "model_turn_interception_v1", "ui_controls_v1"] },
   "settings_schema": {

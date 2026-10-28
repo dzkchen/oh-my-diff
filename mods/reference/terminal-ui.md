@@ -26,7 +26,7 @@ component instance. `e` is `{component, id, surface, viewport: {columns, rows}, 
 - hide: return `{tree: []}`.
 
 Trees hold `box`, `line`, `text`, `markdown`, `code`, `diff`, `list` and `native` components (64 components, depth
-6, unique ids, 64 KiB); the native node appears at most once. Hooks compose as one continuation chain in
+6, unique ids, 256 KiB); the native node appears at most once. Hooks compose as one continuation chain in
 interceptor order, so unrelated wrappers nest, and each hook sees the props the hook before it passed on.
 
 ### Render components
@@ -366,7 +366,7 @@ input, or a due `every: {ms, tick}` tick.
 - `pointer(state, {kind: 'pointer', column, row, action, button})` receives pointer events over the region with
   `pointer: true`, consecutive moves coalesced.
 - `view(state, ui)` returns a render tree (`box` without style, `line`, `text`, `markdown`, `code`, `diff`, `list`;
-  at most 64 components, depth 6, 64 KiB).
+  at most 64 components, depth 6, 256 KiB).
 
 `ui` is `{columns, rows, props, post(data)}`, where `rows` is the node's `height` and 0 when it has none (auto
 height). `post` hands the mod's `component_post` hooks `{component, module, data}` at most once per frame (a later

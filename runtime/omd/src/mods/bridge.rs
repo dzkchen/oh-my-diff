@@ -74,7 +74,7 @@ impl ModHostCall {
             "terminal.pty" => Ok("pty"),
             "model.complete" | "model.fork" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
-            "tools.invoke" | "tools.check" => Ok("interception"),
+            "tools.invoke" | "tools.check" | "tools.original" => Ok("interception"),
             "composer.read" | "composer.write" | "composer.suggest" => Ok("composer"),
             "prompts.consent" | "prompts.submit" | "prompts.status" | "prompts.revoke" => {
                 Ok("composer")
@@ -193,7 +193,7 @@ fn metadata(loaded: &Loaded) -> (Value, String) {
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
         "package": {"id": loaded.package.id, "version": loaded.package.version},
         "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
-        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
+        "hook_budget_ms": loaded.package.hook_budget_ms,"max_host_calls": MAX_HOST_CALLS,"environment":loaded.package.environment});
     request["field_policies"] = ModHost::field_policies();
     request["surface"] = json!({
         "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),

@@ -89,7 +89,7 @@ Any other `OMD_MODE` value is rejected.
 
 ### Host call transport budget
 
-Host call arguments and results share a 128 KiB transport budget per callback.
+Host call arguments and results share a 1 MiB transport budget per callback.
 
 - A result that would exceed the remaining budget becomes a `host_result_limit` error the mod can catch; the
   operation has still run.

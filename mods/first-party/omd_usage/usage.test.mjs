@@ -88,6 +88,12 @@ test('quota windows stay with the account that reported them and only Codex sets
   assert.match(text, /Cursor account 30d: 40% used/);
   assert.match(text, /Codex account Extra-usage credits: balance 5/);
   assert.doesNotMatch(text, /unlimited/);
+  const handled = [...usageMod.source.matchAll(/method === '([^']+)'/g)].map(match => match[1]);
+  const { subscriptions } = JSON.parse(readFileSync(new URL('mod.json', import.meta.url), 'utf8'));
+  assert.deepEqual(handled.filter(method => !subscriptions.app.includes(method)), []);
+  const sample = (used, at) => ({ scope: 'codex', minutes: 300, used, resets: NOW + 3_600_000, at, seen: at });
+  state.hud.samples = [sample(90, NOW - 3_600_000), sample(30, NOW)];
+  assert.match(dialog(state).text, /projection ~0% at reset/);
 });
 
 const billed = (id, usd, patch = {}) => response(id, { cost: { microusd: null, basis: 'unpriced' }, usage: { input_tokens: 10_000, output_tokens: 500, omd_reported_cost: { usd, basis: 'provider_billed' } }, ...patch });
@@ -134,4 +140,6 @@ test('the budget counts spend that left the rolling window or settled late, warn
   assert.deepEqual([settled.state.hud.owed, settled.state.hud.shed], [[], 9]);
   assert.equal(notices(settled.calls).length, 1);
   assert.equal(call(usageMod, { event: 'model_response', payload: { ...pending, cost: { microusd: 9_000_000, basis: 'settled' } }, state: settled.state, settings }).state.hud.shed, 9);
+  const budget = value => call(usageMod, { event: 'command', name: 'budget', payload: value, state: null, settings: {} }).calls.map(item => item.operation);
+  assert.deepEqual([budget('Infinity'), budget('5')], [[], ['settings.write']]);
 });

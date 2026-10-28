@@ -10,6 +10,7 @@ const USAGE = 'usage: /profile [list | next | use NAME | add [chatgpt|claude|cur
 const KINDS = [['chatgpt', 'ChatGPT account'], ['claude', 'Claude account'], ['cursor', 'Cursor account'], ['api_key', 'OpenAI API key'],
   ['anthropic', 'Anthropic API key'], ['provider', 'Other provider (URL)']];
 const ACCOUNT = /^[a-z][a-z0-9_-]{0,23}$/;
+const MODELS = 16;
 const NODE_MISSING = 'Node.js was not found on PATH. Install it (brew install node, or from nodejs.org), restart OMD, then try again.';
 const PANEL = { command: 'omd_profiles:profile', args: 'panel' };
 const PROVIDERS: Record<string, { label: string; family: string; command: string; prefix: string }> = {
@@ -65,7 +66,7 @@ export default function activate(api: ModAPI) {
     if (sidecar?.running && !stale) return;
     if (status.ok) api.host.tryCall('providers.unregister', { id: PROVIDER });
     if (api.host.tryCall('providers.register', { id: PROVIDER }).ok) {
-      api.host.tryCall('providers.models', { provider: PROVIDER, name: 'OMD profiles', models: owned(saved().accounts).slice(0, 16).map(modelFor) });
+      api.host.tryCall('providers.models', { provider: PROVIDER, name: 'OMD profiles', models: owned(saved().accounts).slice(0, MODELS).map(modelFor) });
     }
   };
 
@@ -135,7 +136,8 @@ export default function activate(api: ModAPI) {
     const account = accounts.find(item => item.name === current);
     if (method !== 'account/rateLimits/updated' || !account) return;
     const limits = (params as Record<string, any> | null)?.rateLimits ?? {};
-    if ((limits.limitId ?? 'codex') !== (PROVIDERS[account.provider]?.family ?? 'codex')) return;
+    const family = account.profile ? account.profile.kind === 'chatgpt' ? 'codex' : null : PROVIDERS[account.provider]?.family ?? 'codex';
+    if ((limits.limitId ?? 'codex') !== family) return;
     const seen: Window[] = ['primary', 'secondary'].map(name => limits[name]).filter(slot => typeof slot?.usedPercent === 'number')
       .map(slot => ({ minutes: typeof slot.windowDurationMins === 'number' ? slot.windowDurationMins : null, used: Math.round(slot.usedPercent),
         resets: typeof slot.resetsAt === 'number' ? (slot.resetsAt < 1e12 ? slot.resetsAt * 1000 : slot.resetsAt) : null }));
@@ -144,9 +146,9 @@ export default function activate(api: ModAPI) {
     const quota = remember(all => { all[account.name] = { windows: seen, at: Date.now() }; });
     api.state.set({ ...saved(), seen: { profile: account.name, windows: key }, ...quota ? { quota } : {} } as unknown as Json);
   });
-  api.intercept('model_request', (event, next) => {
-    const { notice, pending } = saved();
-    return notice || pending ? { deny: notice ?? `Profile selection pending: ${pending}` } : next(event);
+  api.intercept('model_request', { match: { scope: { kind: 'main' } } }, (event, next) => {
+    const { notice } = saved();
+    return notice && !event.scope.agent_id ? { deny: notice } : next(event);
   });
   api.on('terminal', () => {
     const { accounts, current, notice, pending, ours, quota } = saved();
@@ -223,7 +225,9 @@ export default function activate(api: ModAPI) {
     if (!answer.ok || answer.value.status !== 'accepted') return 'Profiles unchanged.';
     const run = setup(['session'], JSON.stringify({ profiles, allowance }));
     if ('error' in run) return `Profiles unchanged: ${run.error}`;
-    return adopt((JSON.parse(run.stdout) as { profiles: Profile[] }).profiles, done);
+    let adopted: unknown;
+    try { adopted = (JSON.parse(run.stdout) as { profiles?: unknown }).profiles; } catch { adopted = null; }
+    return Array.isArray(adopted) ? adopt(adopted as Profile[], done) : 'Profiles unchanged: setup returned unreadable output.';
   };
   const adopt = (profiles: Profile[], done: string) => {
     const { accounts, current } = saved();
@@ -249,6 +253,7 @@ export default function activate(api: ModAPI) {
     const profiles = owned(accounts);
     if (!NAME.test(name)) return 'Profile names use lowercase letters, digits, _ or - (at most 32).';
     if (accounts.some(account => account.name === name)) return `Profile ${name} already exists.`;
+    if (profiles.length >= MODELS) return `At most ${MODELS} profiles fit in /model; remove one first.`;
     if (kindName === 'provider' && !origin(url)) return 'The endpoint must be an https URL.';
     const endpoint = kindName === 'provider' ? url : URLS[kindName];
     const credentialKind = kindName === 'provider' || kindName === 'anthropic' ? 'provider' : kindName;

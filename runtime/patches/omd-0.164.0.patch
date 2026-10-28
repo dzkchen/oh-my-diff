@@ -27001,7 +27001,7 @@ index 903df019f91e63a2e9dab600638e969662aed384..cf7e51391abd976d56be9737d633d6d9
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f26edfbd71 100644
+index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1f78950b98b6d082a36ccd9b4c37ca5cf6a8cf81 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -27028,7 +27028,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,212 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,214 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -27231,8 +27231,10 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
 +            })
 +            .await;
 +        if let Some(replacement) = replacement {
-+            return (replacement.len() <= codex_extension_api::tool_output_limit(text.len()))
-+                .then_some(replacement);
++            let original_bytes = replacement.original_bytes.max(text.len());
++            return (replacement.text.len()
++                <= codex_extension_api::tool_output_limit(original_bytes))
++            .then_some(replacement.text);
 +        }
 +    }
 +    None
@@ -27241,7 +27243,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +319,33 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +321,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -27276,7 +27278,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +353,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +355,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -27285,7 +27287,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
      )
      .await;
  }
-@@ -133,10 +373,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +375,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -27299,7 +27301,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +387,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +389,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -27308,7 +27310,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,6 +401,8 @@ async fn notify_tool_finish_parts(
+@@ -156,6 +403,8 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -27317,7 +27319,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
              })
              .await;
      }
-@@ -169,6 +416,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +418,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -28225,10 +28227,10 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..d2b63bbcdf4a3bd50c5a4c8e53681acd
  }
 
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1d593794e 100644
+index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..08b0af5a1d81feff6d7056458f026dedea7aba6b 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -842,3 +842,167 @@ fn test_invocation(
+@@ -842,3 +842,174 @@ fn test_invocation(
          },
      }
  }
@@ -28338,20 +28340,26 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1
 +}
 +
 +struct OutputReplacer {
-+    replacement: Option<String>,
++    replacement: Option<(String, usize)>,
 +}
 +
 +impl codex_extension_api::ToolOutputContributor for OutputReplacer {
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: codex_extension_api::ToolOutputInput<'a>,
-+    ) -> codex_extension_api::ExtensionFuture<'a, Option<String>> {
++    ) -> codex_extension_api::ExtensionFuture<'a, Option<codex_extension_api::ToolOutputReplacement>>
++    {
 +        Box::pin(async move {
 +            assert_eq!(
 +                (input.call_id, input.text, input.success),
 +                ("out-call", "ok", true)
 +            );
-+            self.replacement.clone()
++            self.replacement.clone().map(|(text, original_bytes)| {
++                codex_extension_api::ToolOutputReplacement {
++                    text,
++                    original_bytes,
++                }
++            })
 +        })
 +    }
 +}
@@ -28360,8 +28368,9 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1
 +async fn tool_output_contributor_replaces_model_visible_text_within_limit() {
 +    let oversize = "x".repeat(codex_extension_api::tool_output_limit("ok".len()) + 1);
 +    for (replacement, expected) in [
-+        (Some("short".to_string()), "short"),
-+        (Some(oversize), "ok"),
++        (Some(("short".to_string(), 0)), "short"),
++        (Some((oversize.clone(), 2)), "ok"),
++        (Some((oversize.clone(), oversize.len())), oversize.as_str()),
 +        (None, "ok"),
 +    ] {
 +        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
@@ -29853,7 +29862,7 @@ index d933738616189c8e8f5a65cf9d2336f18bd7d1f8..857e8752e1190857abda6d1f047baf7a
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f1080e2d6dda 100644
+index dc95f991a4e6e30d45c0404e2486991d6e745d05..b6b74bd5dfe02eb1cb1dd57e41318d6c87e12efe 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -15,17 +15,22 @@ use codex_tools::ToolExecutor;
@@ -29887,7 +29896,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  pub use thread_lifecycle::ThreadIdleCause;
  pub use thread_lifecycle::ThreadIdleInput;
  pub use thread_lifecycle::ThreadOriginator;
-@@ -48,25 +54,53 @@ pub use thread_lifecycle::ThreadReadyInput;
+@@ -48,25 +54,54 @@ pub use thread_lifecycle::ThreadReadyInput;
  pub use thread_lifecycle::ThreadResumeInput;
  pub use thread_lifecycle::ThreadStartInput;
  pub use thread_lifecycle::ThreadStopInput;
@@ -29908,6 +29917,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
 +pub use tool_lifecycle::ToolInterception;
  pub use tool_lifecycle::ToolLifecycleFuture;
 +pub use tool_lifecycle::ToolOutputInput;
++pub use tool_lifecycle::ToolOutputReplacement;
  pub use tool_lifecycle::ToolStartInput;
  pub use tool_lifecycle::ToolTimingBoundary;
  pub use tool_lifecycle::ToolTimingInput;
@@ -29941,7 +29951,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  pub use world_state::PreviousWorldStateSection;
  pub use world_state::RenderedWorldStateFragment;
  pub use world_state::WorldStateContributionInput;
-@@ -255,6 +289,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -255,6 +290,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -29956,7 +29966,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called before the host drops the completed turn runtime and turn store.
      /// The callback completes before the host emits the turn-complete event.
      fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
-@@ -280,6 +322,98 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -280,6 +323,98 @@ pub trait TurnLifecycleContributor: Send + Sync {
              let _input = input;
          })
      }
@@ -30055,7 +30065,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  }
 
  /// Extension contribution that can add turn-local model input.
-@@ -306,6 +440,16 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -306,6 +441,16 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
@@ -30072,7 +30082,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -413,10 +557,26 @@ pub trait ToolContributor: Send + Sync {
+@@ -413,10 +558,26 @@ pub trait ToolContributor: Send + Sync {
  /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
  /// and hooks for policy that changes tool payloads.
  pub trait ToolLifecycleContributor: Send + Sync {
@@ -30099,7 +30109,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -433,6 +593,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -433,6 +594,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -30111,7 +30121,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -463,6 +628,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -463,6 +629,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
      }
  }
 
@@ -30237,7 +30247,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        _input: ToolOutputInput<'a>,
-+    ) -> ExtensionFuture<'a, Option<String>> {
++    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
 +        Box::pin(std::future::ready(None))
 +    }
 +}
@@ -30271,7 +30281,7 @@ index b614d536f6318d8c50520d0995c96906b826deaf..63f6a4b60471aad8c642f1947d97ef41
  pub struct ThreadStartInput<'a, C> {
      /// Host configuration visible at thread start.
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722e6824378 100644
+index 21633a185a345b48521b667d8bbbd87802f6fb87..344178be34eb6975e283e6f303232bc44d4075b6 100644
 --- a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 @@ -19,6 +19,17 @@ use crate::ExtensionData;
@@ -30308,7 +30318,7 @@ index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722
  /// Input supplied after an MCP server responds, before the host reports completion.
  pub struct McpToolResultInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -194,6 +214,19 @@ pub struct McpToolResultInput<'a> {
+@@ -194,6 +214,25 @@ pub struct McpToolResultInput<'a> {
      pub result: &'a mut CallToolResult,
  }
 
@@ -30325,10 +30335,16 @@ index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722
 +    pub value: Option<&'a serde_json::Value>,
 +}
 +
++/// `original_bytes` is the size of the output the text replaces, which a re-run call can grow.
++pub struct ToolOutputReplacement {
++    pub text: String,
++    pub original_bytes: usize,
++}
++
  /// Input supplied when the host finishes executing one tool call.
  pub struct ToolFinishInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -212,6 +245,10 @@ pub struct ToolFinishInput<'a> {
+@@ -212,6 +251,10 @@ pub struct ToolFinishInput<'a> {
      pub source: ToolCallSource,
      /// Host-observed result of the tool call.
      pub outcome: ToolCallOutcome,
@@ -30531,7 +30547,7 @@ index c6c7571de526e67815e9993ae745b8925b5be1d4..5fe40fe0610998e9582f93d0c5169031
 +    pub thread_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44db23f796 100644
+index eabf26998b69b93aa8734558217079fa95ae0ec2..13888084015fa6534d1c76d38e5c1b4972e2370a 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -11,6 +11,8 @@ mod user_instructions;
@@ -30610,7 +30626,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::ThreadIdleCause;
  pub use contributors::ThreadIdleInput;
  pub use contributors::ThreadLifecycleContributor;
-@@ -89,16 +120,34 @@ pub use contributors::ThreadResumeInput;
+@@ -89,16 +120,35 @@ pub use contributors::ThreadResumeInput;
  pub use contributors::ThreadStartInput;
  pub use contributors::ThreadStopInput;
  pub use contributors::TokenUsageContributor;
@@ -30632,6 +30648,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::ToolLifecycleFuture;
 +pub use contributors::ToolOutputContributor;
 +pub use contributors::ToolOutputInput;
++pub use contributors::ToolOutputReplacement;
 +pub use contributors::ToolSpecAdjustment;
 +pub use contributors::ToolSpecContributor;
 +pub use contributors::ToolSpecView;
@@ -30645,7 +30662,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::TurnErrorInput;
  pub use contributors::TurnInputContext;
  pub use contributors::TurnInputContributor;
-@@ -108,8 +157,11 @@ pub use contributors::TurnLifecycleContributor;
+@@ -108,8 +158,11 @@ pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStartPhase;
  pub use contributors::TurnStopInput;
@@ -52525,10 +52542,10 @@ index 0000000000000000000000000000000000000000..de07b069546c30022dcdd1dc71f5babe
 +tiny_http = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b69398b81aae
+index 0000000000000000000000000000000000000000..2598b7ce9da739abb386fcacca9e9084d5e014bb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,2323 @@
+@@ -0,0 +1,2324 @@
 +use crate::mods::intercept::settled_by;
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
@@ -53849,6 +53866,7 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +                url = route.url;
 +            }
 +        }
++        let routed = url.clone();
 +        if url.is_empty() {
 +            url = request.url.clone();
 +        }
@@ -53868,7 +53886,7 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +                &account.repository_identity,
 +                &account.provider,
 +                &account.model,
-+                &account.url,
++                &routed,
 +                rates.included_subscription,
 +            ) {
 +                return Err(denied("worker authorization revoked or changed"));
@@ -54571,7 +54589,7 @@ index 0000000000000000000000000000000000000000..b911c2162589543baa0068e23689b693
 +            self.required,
 +        )?
 +        else {
-+            // Registrations change only at reload, so the rest of this response needs no checks.
++            // No interceptor until reload, or an unrequired one skipped as busy: the rest of this response passes through.
 +            self.mods = None;
 +            return Ok(None);
 +        };
@@ -61589,10 +61607,10 @@ index 0000000000000000000000000000000000000000..18dd09fdc3565f0e22c91c2399259d41
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c544f6b3c8
+index 0000000000000000000000000000000000000000..f89064192ee261a82a20cad9025cd7132d6c31c1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,2545 @@
+@@ -0,0 +1,2563 @@
 +#[cfg(target_os = "macos")]
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +#[cfg(target_os = "macos")]
@@ -61840,6 +61858,7 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +    unrestricted: bool,
 +    sender: mpsc::SyncSender<WriteRequest>,
 +    receiver: mpsc::Receiver<io::Result<Value>>,
++    queued: Arc<std::sync::atomic::AtomicUsize>,
 +    /// Received past one exchange's limit or after its output; the next exchange returns it first.
 +    pending: Option<io::Result<Value>>,
 +    /// When an exchange first saw the leader exited; its readers get one second from then to finish.
@@ -61887,7 +61906,8 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 +
 +fn kill_group_if_alive(group: u32, reaped: &Mutex<bool>) {
-+    if !*reaped.lock().unwrap_or_else(PoisonError::into_inner) {
++    let reaped = reaped.lock().unwrap_or_else(PoisonError::into_inner);
++    if !*reaped {
 +        let _ = kill_process_group(group);
 +    }
 +}
@@ -62044,7 +62064,8 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +
 +/// Small enough that a chunk of control bytes, six bytes each once escaped, fits one exchange.
 +const RAW_READ_BYTES: usize = 8_000;
-+const EXCHANGE_BYTES: usize = 48 * 1024;
++const EXCHANGE_BYTES: usize = 256 * 1024;
++const QUEUED_BYTES: usize = 32 * 1024 * 1024;
 +
 +type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;
 +
@@ -62647,6 +62668,7 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +                        });
 +                    }
 +                    let (sender, receiver) = mpsc::sync_channel(128);
++                    let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 +                    let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
 +                    let group = child.id();
 +                    let reaped = Arc::new(Mutex::new(false));
@@ -62744,6 +62766,7 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +                        let (notifier, owner, session) =
 +                            (notifier.clone(), owner.clone(), session.clone());
 +                        let reader_reaped = Arc::clone(&reaped);
++                        let queued = Arc::clone(&queued);
 +                        std::thread::spawn(move || {
 +                            loop {
 +                                let result = next();
@@ -62764,12 +62787,20 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +                                {
 +                                    break;
 +                                }
-+                                let bytes = match (&result, notify_output) {
-+                                    (Ok(message), true) => {
-+                                        serde_json::to_vec(message).ok().map(|bytes| bytes.len())
-+                                    }
-+                                    _ => None,
-+                                };
++                                let size = result.as_ref().map_or(0, |message| {
++                                    serde_json::to_vec(message).map_or(0, |bytes| bytes.len())
++                                });
++                                while queued.load(std::sync::atomic::Ordering::Acquire) != 0
++                                    && queued.load(std::sync::atomic::Ordering::Acquire) + size
++                                        > QUEUED_BYTES
++                                    && !*reader_reaped
++                                        .lock()
++                                        .unwrap_or_else(PoisonError::into_inner)
++                                {
++                                    std::thread::sleep(Duration::from_millis(5));
++                                }
++                                queued.fetch_add(size, std::sync::atomic::Ordering::AcqRel);
++                                let bytes = (result.is_ok() && notify_output).then_some(size);
 +                                if sender.send(result).is_err() || terminal {
 +                                    alive.store(false, std::sync::atomic::Ordering::Release);
 +                                    if announced.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -62803,6 +62834,7 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +                        unrestricted: unrestricted.is_some(),
 +                        sender: writer_sender,
 +                        receiver,
++                        queued,
 +                        pending: None,
 +                        exited_at: None,
 +                        stdin: input.stdin.is_none(),
@@ -62945,6 +62977,9 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +                                break;
 +                            }
 +                            bytes += size + 1;
++                            process
++                                .queued
++                                .fetch_sub(size, std::sync::atomic::Ordering::AcqRel);
 +                            messages.push(message);
 +                        }
 +                        Ok(Err(error)) if !messages.is_empty() => {
@@ -64073,6 +64108,7 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +            unrestricted: false,
 +            sender: mpsc::sync_channel(1).0,
 +            receiver: mpsc::sync_channel(1).1,
++            queued: Default::default(),
 +            pending: None,
 +            exited_at: None,
 +            stdin: true,
@@ -64140,10 +64176,10 @@ index 0000000000000000000000000000000000000000..ee0b8a4797c3c388635d101d312b09c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8719c7658bef076eba9ad3c9e05ec9daaba3ded7
+index 0000000000000000000000000000000000000000..fdd69ea69d493ac08e119726da6c474dc243936c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,2525 @@
+@@ -0,0 +1,2538 @@
 +pub(crate) mod access;
 +mod agents;
 +mod autonomy;
@@ -65204,12 +65240,18 @@ index 0000000000000000000000000000000000000000..8719c7658bef076eba9ad3c9e05ec9da
 +        }
 +        config.permissions.sandbox_denied_paths = denied;
 +        config.model_provider.supports_websockets = false;
-+        if self
-+            .codex_config
-+            .lock()
-+            .is_ok_and(|keys| keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN))
-+        {
-+            config.update_plan_enabled = true;
++        if let Ok(keys) = self.codex_config.lock() {
++            if keys.contains(codex_omd::CODEX_CONFIG_UPDATE_PLAN) {
++                config.update_plan_enabled = true;
++            }
++            if keys.contains(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE) {
++                config.tool_output_token_limit = Some(
++                    config
++                        .tool_output_token_limit
++                        .unwrap_or_default()
++                        .max(codex_omd::RAISED_TOOL_OUTPUT_TOKENS),
++                );
++            }
 +        }
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
@@ -66405,9 +66447,16 @@ index 0000000000000000000000000000000000000000..8719c7658bef076eba9ad3c9e05ec9da
 +                        invoked.remove(&call_id);
 +                    }
 +                    let outcome = outcome.map_err(std::io::Error::other)?;
++                    let bytes = outcome.output.len();
++                    if let Ok(mut originals) = core.expansion.originals.lock()
++                        && let Some(text) =
++                            originals.get_mut(&(thread_id.to_string(), base_call.clone()))
++                    {
++                        *text = Arc::from(outcome.output.as_str());
++                    }
 +                    let (output, truncated) = expansion::bounded_output(outcome.output);
 +                    return Ok(
-+                        json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),
++                        json!({"output": output, "success": outcome.success, "truncated": truncated, "bytes": bytes, "call_id": call_id}),
 +                    );
 +                };
 +                first
@@ -71092,10 +71141,10 @@ index 0000000000000000000000000000000000000000..b0ae0b215b80570801c94480610335f4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9bde1e1d54
+index 0000000000000000000000000000000000000000..260a0a05ae88c14ca8f4975d621042cd9d9081ce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,837 @@
+@@ -0,0 +1,840 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -71154,6 +71203,7 @@ index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9b
 +    "tools.undefine",
 +    "tools.invoke",
 +    "tools.check",
++    "tools.original",
 +    "events.schedule",
 +    "events.cancel",
 +];
@@ -71193,6 +71243,7 @@ index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9b
 +    core: std::sync::OnceLock<std::sync::Weak<Core>>,
 +    pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
 +    pub(super) invoked: Mutex<BTreeMap<String, String>>,
++    pub(super) originals: Mutex<BTreeMap<(String, String), Arc<str>>>,
 +    pub(super) invocations: AtomicU64,
 +    pub(super) definitions: Mutex<Vec<codex_omd::ModAgentDefinition>>,
 +    pub(super) agent_offers: Mutex<Option<bool>>,
@@ -71515,15 +71566,15 @@ index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9b
 +    static SERIALIZED: bool;
 +    /// Set while running work an attached client caused; its surface calls carry `remote`.
 +    pub(crate) static REMOTE: bool;
++    /// Set while serving host calls of a tool call's interceptor chain, to that call id.
++    pub(super) static CHAIN_CALL: String;
 +}
 +
-+pub(super) const TOOL_RESULT_BYTES: usize = 48 * 1024;
-+
 +pub(super) fn bounded_output(mut output: String) -> (String, bool) {
-+    if output.len() <= TOOL_RESULT_BYTES {
++    if output.len() <= codex_omd::TOOL_OUTPUT_BYTES {
 +        return (output, false);
 +    }
-+    output.truncate(output.floor_char_boundary(TOOL_RESULT_BYTES));
++    output.truncate(output.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES));
 +    (output, true)
 +}
 +
@@ -71612,6 +71663,7 @@ index 0000000000000000000000000000000000000000..f7d61c723d419679a2568ce9bcea5d9b
 +        "routes.select" => select_route(lead, caller.id, request.arguments),
 +        "tools.list" => tool_specs::list(core, lead),
 +        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
++        "tools.original" => tool_output::stored(core, lead, caller, request.arguments).await,
 +        "tools.define" | "tools.undefine" => {
 +            let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +            if request.operation == "tools.define" {
@@ -73527,22 +73579,22 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8259b16ba
+index 0000000000000000000000000000000000000000..701dea1f7e504beb78e26b1c0e0c3ba0af4c8262
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,323 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
++use codex_extension_api::ToolOutputReplacement;
 +
 +use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 +
-+const HEAD_BYTES: usize = 48 * 1024;
 +const TAIL_BYTES: usize = 16 * 1024;
 +const APPEND_BYTES: usize = 4096;
 +
 +fn bounded(text: &str) -> &str {
-+    &text[..text.floor_char_boundary(HEAD_BYTES)]
++    &text[..text.floor_char_boundary(codex_omd::TOOL_OUTPUT_BYTES)]
 +}
 +
 +async fn original(
@@ -73550,7 +73602,7 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +    owner: &str,
 +    source: &str,
 +    call_id: &str,
-+    text: &str,
++    text: Arc<str>,
 +) -> Result<Value, String> {
 +    let scope = lead.session.data.0.clone();
 +    let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
@@ -73560,7 +73612,7 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +    };
 +    let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
 +    let (owner, source) = (owner.to_owned(), source.to_owned());
-+    let (label, text) = (format!("tool_output:{call_id}"), text.to_owned());
++    let label = format!("tool_output:{call_id}");
 +    tokio::task::spawn_blocking(move || {
 +        let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
 +        if scope.is_none() {
@@ -73581,6 +73633,68 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +    })
 +    .await
 +    .map_err(|error| error.to_string())?
++}
++
++pub(super) async fn stored(
++    core: &Core,
++    lead: &Lead,
++    caller: &Caller<'_>,
++    arguments: Value,
++) -> Result<Value, String> {
++    #[derive(serde::Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Input {
++        call_id: String,
++    }
++    let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
++    let text = expansion::CHAIN_CALL
++        .try_with(|chain| chain.clone())
++        .ok()
++        .filter(|chain| *chain == input.call_id)
++        .and_then(|call_id| {
++            core.expansion
++                .originals
++                .lock()
++                .ok()?
++                .get(&(lead.thread.to_string(), call_id))
++                .cloned()
++        })
++        .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
++    let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
++    Ok(
++        json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
++        "bytes": text.len()}),
++    )
++}
++
++pub(super) struct Stash<'a> {
++    originals: &'a Mutex<BTreeMap<(String, String), Arc<str>>>,
++    key: (String, String),
++}
++
++impl<'a> Stash<'a> {
++    pub(super) fn new(
++        originals: &'a Mutex<BTreeMap<(String, String), Arc<str>>>,
++        key: (String, String),
++        text: Arc<str>,
++    ) -> Self {
++        if let Ok(mut originals) = originals.lock() {
++            originals.insert(key.clone(), text);
++        }
++        Self { originals, key }
++    }
++
++    fn latest(&self) -> Option<Arc<str>> {
++        self.originals.lock().ok()?.get(&self.key).cloned()
++    }
++}
++
++impl Drop for Stash<'_> {
++    fn drop(&mut self) {
++        if let Ok(mut originals) = self.originals.lock() {
++            originals.remove(&self.key);
++        }
++    }
 +}
 +
 +fn append(value: Value) -> Result<Option<String>, String> {
@@ -73609,7 +73723,7 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: ToolOutputInput<'a>,
-+    ) -> ExtensionFuture<'a, Option<String>> {
++    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
 +        Box::pin(async move {
 +            let diagnostic = |message: String| {
 +                self.views
@@ -73617,17 +73731,33 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +            };
 +            let head = bounded(input.text);
 +            let mut executed = json!({"output": head, "success": input.success,
-+                "truncated": input.text.len() > HEAD_BYTES});
++                "truncated": input.text.len() > codex_omd::TOOL_OUTPUT_BYTES, "bytes": input.text.len()});
 +            if let Some(value) = input.value
 +                && serde_json::to_vec(value).is_ok_and(|bytes| {
-+                    bytes.len() <= 32_768 && head.len() + bytes.len() <= HEAD_BYTES
++                    bytes.len() <= 32_768
++                        && head.len() + bytes.len() <= codex_omd::TOOL_OUTPUT_BYTES
 +                })
 +            {
 +                executed["value"] = value.clone();
 +            }
 +            let mut text = None;
 +            let mut replaced_by = "feedback".to_owned();
-+            match self.resume(input.call_id, Ok(executed.clone())).await {
++            let stash = self
++                .pending
++                .lock()
++                .is_ok_and(|pending| pending.contains_key(input.call_id))
++                .then(|| {
++                    Stash::new(
++                        &self.expansion.originals,
++                        (
++                            thread_id(input.thread_store).unwrap_or_default(),
++                            input.call_id.to_owned(),
++                        ),
++                        Arc::from(input.text),
++                    )
++                });
++            let resumed = self.resume(input.call_id, Ok(executed.clone())).await;
++            match resumed {
 +                Some(Ok(chain))
 +                    if chain.result.get("deny").is_some()
 +                        || chain.result["output"] != executed["output"] =>
@@ -73647,8 +73777,24 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +                }
 +                _ => {}
 +            }
++            let latest = stash.as_ref().and_then(Stash::latest);
++            let original_text = latest.as_deref().unwrap_or(input.text);
++            let original_bytes = original_text.len();
++            let replaced = |text: Option<String>| {
++                text.map(|text| ToolOutputReplacement {
++                    text,
++                    original_bytes,
++                })
++            };
++            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(original_bytes);
++            if text.as_ref().is_some_and(|text| text.len() > limit) {
++                diagnostic(format!(
++                    "{replaced_by}: replacement over the {limit}-byte limit dropped"
++                ));
++                text = None;
++            }
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
-+                return text;
++                return replaced(text);
 +            };
 +            if text.is_some() && replaced_by != "intercept" {
 +                let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
@@ -73662,9 +73808,10 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +                .await
 +                .ok()
 +                .flatten();
++                let kept = latest.clone().unwrap_or_else(|| Arc::from(input.text));
 +                if let Some(source) = source
 +                    && let Err(error) =
-+                        original(&lead, &replaced_by, &source, input.call_id, input.text).await
++                        original(&lead, &replaced_by, &source, input.call_id, kept).await
 +                {
 +                    diagnostic(format!("{replaced_by}: original unavailable: {error}"));
 +                }
@@ -73676,11 +73823,11 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +                        &lead,
 +                        input.call_id,
 +                        &replaced_by,
-+                        input.text,
++                        original_text,
 +                        text,
 +                    );
 +                }
-+                return text;
++                return replaced(text);
 +            }
 +            let runtime = self.runtime.clone();
 +            let observers = tokio::task::spawn_blocking(move || {
@@ -73708,7 +73855,7 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +                json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
 +                    "arguments": arguments, "success": input.success,
 +                    "text": bounded(text),
-+                    "tail": (text.len() > HEAD_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
++                    "tail": (text.len() > codex_omd::TOOL_OUTPUT_BYTES).then(|| &text[text.ceil_char_boundary(text.len() - TAIL_BYTES)..]),
 +                    "bytes": text.len()})
 +            };
 +            let mut appended = String::new();
@@ -73751,11 +73898,11 @@ index 0000000000000000000000000000000000000000..7c601dbd3e1c179d74c68a855adbb9a8
 +                    &lead,
 +                    input.call_id,
 +                    &replaced_by,
-+                    input.text,
++                    original_text,
 +                    text,
 +                );
 +            }
-+            text
++            replaced(text)
 +        })
 +    }
 +}
@@ -73973,10 +74120,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d69e6c1acc
+index 0000000000000000000000000000000000000000..5245d0a833b466e41de2b6f405278e12dedf0718
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4406 @@
+@@ -0,0 +1,4742 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -74939,11 +75086,17 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +    assert_eq!(
 +        mods.replace_tool_output(output("call-1", "hello world"))
 +            .await
++            .map(|r| r.text)
 +            .as_deref(),
 +        Some("trimmed 11 read a.txt\n\nlint: provider_not_registered_or_stopped")
 +    );
 +    mods.intercept_tool(start("call-2", &READ)).await.unwrap();
-+    assert_eq!(mods.replace_tool_output(output("call-2", "ok")).await, None);
++    assert_eq!(
++        mods.replace_tool_output(output("call-2", "ok"))
++            .await
++            .map(|r| r.text),
++        None
++    );
 +    assert_eq!(
 +        mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
 +        ToolInterception::Respond {
@@ -75057,6 +75210,10 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +        &'a self,
 +        request: codex_extension_api::ToolInvocationRequest,
 +    ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolInvocationOutcome, String>> {
++        let output = match request.arguments["output_bytes"].as_u64() {
++            Some(bytes) => "z".repeat(bytes as usize),
++            None => "second attempt".into(),
++        };
 +        self.0.lock().unwrap().push((
 +            request.call_id,
 +            request.tool,
@@ -75065,7 +75222,7 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +        ));
 +        Box::pin(std::future::ready(Ok(
 +            codex_extension_api::ToolInvocationOutcome {
-+                output: "second attempt".into(),
++                output,
 +                success: true,
 +            },
 +        )))
@@ -75095,9 +75252,9 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +    let Some(fixture) = fixture(&[
 +        Package {
 +            id: "retry",
-+            capabilities: &["interception"],
++            capabilities: &["interception", "store"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'grown' } }, async (e, next) => {\n    await next(e);\n    return next({ ...e, arguments: { output_bytes: 100000 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
 +        },
 +        Package {
 +            id: "probe",
@@ -75164,8 +75321,37 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            text: "first attempt failed",
 +            value: None,
 +        })
-+        .await;
-+    assert_eq!(replaced.as_deref(), Some("second attempt"));
++        .await
++        .map(|r| r.text);
++    assert_eq!(
++        replaced.as_deref(),
++        Some("second attempt 14 14"),
++        "a retry reports its own complete length and original"
++    );
++    static GROWN: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("grown"));
++    assert_eq!(
++        mods.intercept_tool(start("call-grown", &GROWN))
++            .await
++            .unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let grown = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-grown",
++            tool_name: &GROWN,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: false,
++            text: "failed",
++            value: None,
++        })
++        .await
++        .map(|r| (r.text.len(), r.original_bytes));
++    assert_eq!(grown, Some((100_000, 100_000)));
 +    static CODED: std::sync::LazyLock<ToolName> =
 +        std::sync::LazyLock::new(|| ToolName::plain("coded"));
 +    assert_eq!(
@@ -75188,9 +75374,10 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            text: "Exit code: 0\nOutput:\nx",
 +            value: Some(&structured),
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
-+    let long = "y".repeat(48 * 1024 - 8);
++    let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
 +    assert_eq!(
 +        mods.intercept_tool(start("call-coded-long", &CODED))
 +            .await
@@ -75210,20 +75397,29 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            text: &long,
 +            value: Some(&structured),
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(
 +        omitted.as_deref(),
 +        Some("null"),
-+        "a value that would push one result past 48 KiB is left out"
++        "a value that would push one result past 256 KiB is left out"
 +    );
 +    assert_eq!(
 +        invoker.0.lock().unwrap().clone(),
-+        vec![(
-+            "call-1:retry1".to_owned(),
-+            "flaky".to_owned(),
-+            json!({"path": "a.txt", "attempt": 2}),
-+            false
-+        )]
++        vec![
++            (
++                "call-1:retry1".to_owned(),
++                "flaky".to_owned(),
++                json!({"path": "a.txt", "attempt": 2}),
++                false
++            ),
++            (
++                "call-grown:retry1".to_owned(),
++                "grown".to_owned(),
++                json!({"output_bytes": 100000}),
++                false
++            )
++        ]
 +    );
 +    assert!(fixture.core.expansion.invoked.lock().unwrap().is_empty());
 +    fixture
@@ -75249,7 +75445,7 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            value: None
 +        }
 +    );
-+    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
++    assert_eq!(invoker.0.lock().unwrap()[2].0, "mod-probe-0");
 +    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
 +    delivery::publish(
 +        &fixture.core,
@@ -75262,7 +75458,7 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +    let calls = invoker.0.lock().unwrap().clone();
 +    assert_eq!(
 +        calls.iter().map(|call| call.3).collect::<Vec<_>>(),
-+        [false, false, true],
++        [false, false, false, true],
 +        "only calls outside a running tool wait for the turn's tool gate"
 +    );
 +    let chain = codex_omd::intercept_shared(
@@ -75293,6 +75489,253 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +        return;
 +    };
 +    assert!(!fixture.core.expansion.tool_output_active());
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
++    let Some(fixture) = fixture(&[Package {
++        id: "keeper",
++        capabilities: &["interception", "store"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    const result = await next(e);\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...result, output: JSON.stringify({ seen: result.output.length, truncated: result.truncated, bytes: result.bytes, original }) };\n  });\n  api.intercept('tool', { match: { tool: 'early' } }, async (e, next) => {\n    const before = api.host.tryCall('tools.original', { call_id: e.call_id });\n    const result = await next(e);\n    return { ...result, output: before.error };\n  });\n  api.intercept('tool', { match: { tool: 'answered' } }, e => ({ output: api.host.tryCall('tools.original', { call_id: e.call_id }).error, success: true }));\n}\n",
++    }]) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let mods = mods(&fixture.core);
++    let (session_store, thread_store, turn_store) = (
++        ExtensionData::new("session".to_owned()),
++        ExtensionData::new("thread".to_owned()),
++        ExtensionData::new("turn".to_owned()),
++    );
++    thread_store.insert(fixture.lead.clone());
++    let payload = codex_tools::ToolPayload::Function {
++        arguments: r#"{"path":"a.txt"}"#.to_owned(),
++    };
++    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
++        session_store: &session_store,
++        thread_store: &thread_store,
++        turn_store: &turn_store,
++        turn_id: "turn-1",
++        root_turn_id: None,
++        call_id,
++        originating_item_id: None,
++        tool_name: tool,
++        mcp_tool: None,
++        permissions: Box::pin(async { None }),
++        payload: &payload,
++        conversation_history: Arc::new(NoHistory),
++        source: codex_extension_api::ToolCallSource::Direct,
++    };
++    static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
++    static EARLY: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("early"));
++    static ANSWERED: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("answered"));
++    let output = |call_id: &'static str, tool: &'static ToolName, text: &'static str| {
++        codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id,
++            tool_name: tool,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: true,
++            text,
++            value: None,
++        }
++    };
++    let complete: String = (0..30_000).map(|row| format!("row {row:05}\n")).collect();
++    let complete: &'static str = Box::leak(complete.into_boxed_str());
++    assert!(complete.len() > codex_omd::TOOL_OUTPUT_BYTES);
++    assert_eq!(
++        mods.intercept_tool(start("call-big", &BIG)).await.unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let replaced = mods
++        .replace_tool_output(output("call-big", &BIG, complete))
++        .await
++        .map(|r| r.text)
++        .expect("the interceptor replaces the output");
++    let report: Value = serde_json::from_str(&replaced).unwrap();
++    assert_eq!(report["seen"], codex_omd::TOOL_OUTPUT_BYTES);
++    assert_eq!(report["truncated"], true);
++    assert_eq!(report["bytes"], complete.len());
++    assert_eq!(report["original"]["bytes"], complete.len());
++    assert_eq!(
++        report["original"]["sha256"],
++        codex_omd::resource_data::hash(complete.as_bytes())
++    );
++    assert!(
++        fixture.core.expansion.originals.lock().unwrap().is_empty(),
++        "the stash ends with the chain"
++    );
++    let source = fixture
++        .core
++        .runtime
++        .lock()
++        .unwrap()
++        .grants("keeper")
++        .unwrap()
++        .source_sha256;
++    let mut scope = fixture.lead.session.data.0.lock().unwrap();
++    let hosts = scope.as_mut().unwrap();
++    let (mut paged, mut cursor, mut pages) = (String::new(), 0, 0);
++    loop {
++        let page = hosts
++            .call(
++                "keeper",
++                &source,
++                "evidence.read",
++                json!({"reference": report["original"]["reference"], "cursor": cursor, "max_bytes": 65_536}),
++                || true,
++            )
++            .unwrap();
++        let text = page["text"].as_str().unwrap();
++        assert!(text.len() <= 65_536);
++        paged.push_str(text);
++        pages += 1;
++        match page["cursor"].as_u64() {
++            Some(next) => cursor = next,
++            None => break,
++        }
++    }
++    drop(scope);
++    assert_eq!(paged, complete);
++    assert_eq!(pages, complete.len().div_ceil(65_536));
++    mods.intercept_tool(start("call-early", &EARLY))
++        .await
++        .unwrap();
++    let early = mods
++        .replace_tool_output(output("call-early", &EARLY, "native"))
++        .await
++        .map(|r| r.text)
++        .expect("the interceptor reports the error");
++    assert!(early.starts_with("tool_original_unavailable"), "{early}");
++    let ToolInterception::Respond {
++        output: answered, ..
++    } = mods
++        .intercept_tool(start("call-answered", &ANSWERED))
++        .await
++        .unwrap()
++    else {
++        panic!("the answered call must respond");
++    };
++    assert!(
++        answered.starts_with("tool_original_unavailable"),
++        "{answered}"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn tools_original_is_readable_only_from_the_calls_own_chain() {
++    let Some(fixture) = fixture(&[Package {
++        id: "keeper",
++        capabilities: &["interception", "store"],
++        manifest: Value::Null,
++        source: "export default function () {}\n",
++    }]) else {
++        return;
++    };
++    let (core, lead) = (&fixture.core, &fixture.lead);
++    let thread = lead.thread.to_string();
++    core.expansion
++        .originals
++        .lock()
++        .unwrap()
++        .insert((thread, "victim".into()), Arc::from("secret"));
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let read = |asked: &'static str| {
++        let (caller, cancelled) = (caller(core, "keeper"), cancelled.clone());
++        let request = ModHostCall {
++            operation: "tools.original".into(),
++            arguments: json!({"call_id": asked}),
++        };
++        async move { dispatch(core, lead, &caller, request, &cancelled).await }
++    };
++    assert!(
++        read("victim")
++            .await
++            .unwrap_err()
++            .starts_with("tool_original_unavailable"),
++        "an event outside any chain reads nothing"
++    );
++    assert!(
++        CHAIN_CALL
++            .scope("other".into(), read("victim"))
++            .await
++            .unwrap_err()
++            .starts_with("tool_original_unavailable"),
++        "another call's chain reads nothing"
++    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
++    let Some(fixture) = fixture(&[Package {
++        id: "huge",
++        capabilities: &["interception"],
++        manifest: Value::Null,
++        source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'big' } }, async (e, next) => {\n    await next(e);\n    return { output: 'z'.repeat(70000), success: true };\n  });\n}\n",
++    }]) else {
++        return;
++    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
++    let mods = mods(&fixture.core);
++    let (session_store, thread_store, turn_store) = (
++        ExtensionData::new("session".to_owned()),
++        ExtensionData::new("thread".to_owned()),
++        ExtensionData::new("turn".to_owned()),
++    );
++    thread_store.insert(fixture.lead.clone());
++    let payload = codex_tools::ToolPayload::Function {
++        arguments: "{}".to_owned(),
++    };
++    static BIG: std::sync::LazyLock<ToolName> = std::sync::LazyLock::new(|| ToolName::plain("big"));
++    mods.intercept_tool(ToolStartInput {
++        session_store: &session_store,
++        thread_store: &thread_store,
++        turn_store: &turn_store,
++        turn_id: "turn-1",
++        root_turn_id: None,
++        call_id: "call-huge",
++        originating_item_id: None,
++        tool_name: &BIG,
++        mcp_tool: None,
++        permissions: Box::pin(async { None }),
++        payload: &payload,
++        conversation_history: Arc::new(NoHistory),
++        source: codex_extension_api::ToolCallSource::Direct,
++    })
++    .await
++    .unwrap();
++    let replaced = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-huge",
++            tool_name: &BIG,
++            arguments: Some("{}"),
++            success: true,
++            text: "native",
++            value: None,
++        })
++        .await
++        .map(|r| r.text);
++    assert_eq!(replaced, None);
++    assert!(
++        mods.views
++            .published()
++            .unwrap()
++            .diagnostics
++            .iter()
++            .any(|line| line.contains("huge") && line.contains("limit dropped"))
++    );
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -77156,7 +77599,8 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            text: r#"{"agent_id":"child","nickname":null}"#,
 +            value: None,
 +        })
-+        .await,
++        .await
++        .map(|r| r.text),
 +        None
 +    );
 +    let denied = mods
@@ -78383,12 +78827,51 @@ index 0000000000000000000000000000000000000000..f78e5d835b106285344393c71d5bd8d6
 +            .collect::<Vec<_>>()
 +    );
 +}
++
++#[tokio::test]
++async fn thread_config_raises_the_tool_output_limit_only_when_a_package_asks() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let mut config = codex_core::config::ConfigBuilder::default()
++        .codex_home(fixture._dir.path().join("codex"))
++        .harness_overrides(codex_core::config::ConfigOverrides {
++            cwd: Some(fixture.lead.host.repository.clone()),
++            ..Default::default()
++        })
++        .loader_overrides(codex_core::config::LoaderOverrides::without_managed_config_for_tests())
++        .build()
++        .await
++        .unwrap();
++    let mods = mods(&fixture.core);
++    let prepare = |config: &mut codex_core::config::Config| {
++        codex_extension_api::ConfigContributor::prepare_thread_config(&mods, config, None, None)
++            .unwrap();
++    };
++    config.tool_output_token_limit = Some(777);
++    prepare(&mut config);
++    assert_eq!(config.tool_output_token_limit, Some(777));
++    fixture
++        .core
++        .codex_config
++        .lock()
++        .unwrap()
++        .insert(codex_omd::CODEX_CONFIG_TOOL_OUTPUT_RAISE.to_owned());
++    prepare(&mut config);
++    assert_eq!(
++        config.tool_output_token_limit,
++        Some(codex_omd::RAISED_TOOL_OUTPUT_TOKENS)
++    );
++    config.tool_output_token_limit = Some(200_000);
++    prepare(&mut config);
++    assert_eq!(config.tool_output_token_limit, Some(200_000));
++}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f3616bf60
+index 0000000000000000000000000000000000000000..cff66227c8648dd6c3937e4fb116a6f3ade5b7fb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,266 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -78413,6 +78896,9 @@ index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f
 +    };
 +    let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
 +    let (flag, thread) = (cancelled.clone(), lead.thread.to_string());
++    let call_id = (surface == "tool")
++        .then(|| origin["call_id"].as_str().map(str::to_owned))
++        .flatten();
 +    let handle = tokio::task::spawn_blocking(move || {
 +        let _thread = codex_omd::StateThread::enter(Some(thread));
 +        let active = || !flag.load(Ordering::Acquire);
@@ -78472,7 +78958,7 @@ index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f
 +        } else {
 +            generation
 +        };
-+        let value = operations::dispatch(
++        let dispatched = operations::dispatch(
 +            &core,
 +            &lead,
 +            Caller {
@@ -78486,8 +78972,11 @@ index 0000000000000000000000000000000000000000..2b3fb7621f9736841bb55986115f912f
 +            None,
 +            call.request,
 +            &cancelled,
-+        )
-+        .await;
++        );
++        let value = match &call_id {
++            Some(id) => expansion::CHAIN_CALL.scope(id.clone(), dispatched).await,
++            None => dispatched.await,
++        };
 +        let _ = call.reply.send(value.map_err(std::io::Error::other));
 +    }
 +    let result = handle.await.map_err(|error| error.to_string())?;
@@ -84668,7 +85157,7 @@ index 0000000000000000000000000000000000000000..9e13ca29890c55e27e0575423e702837
 +v8 = { workspace = true, features = ["v8_enable_sandbox"] }
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a25476557
+index 0000000000000000000000000000000000000000..e8e1a6070ac142c40eabbe0025c5bd199a5582f2
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
 @@ -0,0 +1,887 @@
@@ -85012,7 +85501,7 @@ index 0000000000000000000000000000000000000000..81d454081bfc6e2536257461047b565a
 +    origin: { value: deepFreeze(origin) },
 +    signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
 +    trace: { get: () => trace },
-+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 128 - calls.length); } }) },
++    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, request.max_host_calls - calls.length); } }) },
 +    is: { value: pattern => surfaces(pattern).includes(name) },
 +  });
 +  if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -87692,7 +88181,7 @@ index 0000000000000000000000000000000000000000..782b9faae4eeff2303e7b46dda2dcfc0
 +  calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
 diff --git a/codex-rs/omd/runner/src/main.rs b/codex-rs/omd/runner/src/main.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..84fd09dd5246cebc5535147c4a326d80f66d4d00
+index 0000000000000000000000000000000000000000..89b3597d9fdb2fbf655bbfcf7e7af399aaf027ce
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/main.rs
 @@ -0,0 +1,1035 @@
@@ -87716,8 +88205,8 @@ index 0000000000000000000000000000000000000000..84fd09dd5246cebc5535147c4a326d80
 +const BOOTSTRAP: &str = include_str!("bootstrap.js");
 +const DISPATCH: &str = include_str!("dispatch.js");
 +const STEP: &str = include_str!("step.js");
-+const INPUT_LIMIT: usize = 1_048_576;
-+const OUTPUT_LIMIT: usize = 262_144;
++const INPUT_LIMIT: usize = 4_194_304;
++const OUTPUT_LIMIT: usize = 1_048_576;
 +const CACHE_LIMIT: usize = 1_048_576;
 +const HEAP_LIMIT: usize = 64 << 20;
 +const FLAGS: &str = "--single-threaded --no-lazy --disallow-code-generation-from-strings --no-maglev --no-turbolev \
@@ -88752,10 +89241,10 @@ index 0000000000000000000000000000000000000000..ad5f898f3b768a805a06d0f816c6082d
 +};
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..346034fc75578b024e74d90622936982fa0a77fb
+index 0000000000000000000000000000000000000000..2e2ef7d9597032c85a89dd4d33544f9da8d54ae7
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1544 @@
+@@ -0,0 +1,1545 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -89919,6 +90408,7 @@ index 0000000000000000000000000000000000000000..346034fc75578b024e74d90622936982
 +            .ok_or_else(|| denied("unknown request"))?;
 +        if attempt.status == "unknown"
 +            || attempt.settled_microusd.is_some()
++            || attempt.provider_billed
 +            || !raw_usage.is_object()
 +        {
 +            return Err(denied("request settled or invalid raw usage"));
@@ -94252,10 +94742,10 @@ index 0000000000000000000000000000000000000000..6c0dcaee446fcb94f5f0a1450832f2b5
 +}
 diff --git a/codex-rs/omd/src/blob_store.rs b/codex-rs/omd/src/blob_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8da841768
+index 0000000000000000000000000000000000000000..20d7d695d359af7ad43af6e0701694a2a8e309bd
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store.rs
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,432 @@
 +use crate::resource_data::{ResourceStore, hash};
 +use base64::Engine;
 +use base64::engine::general_purpose::STANDARD;
@@ -94270,8 +94760,9 @@ index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8
 +pub const SVG_BYTES: usize = 1024 * 1024;
 +pub const BLOB_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 +pub const BLOB_ENTRIES: usize = 4096;
-+pub const ROTATING_RECORDS: usize = 256;
-+const ROTATING_KEEP: usize = 192;
++pub const ROTATING_RECORDS: usize = 1024;
++const ROTATING_KEEP: usize = 768;
++const ORPHAN_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
 +
 +fn svg(bytes: &[u8]) -> Result<(), &'static str> {
 +    use quick_xml::events::Event;
@@ -94446,30 +94937,69 @@ index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8
 +    }
 +}
 +
-+fn prune_rotating(directory: &std::path::Path) -> io::Result<()> {
-+    let mut records = fs::read_dir(directory)?
-+        .filter_map(Result::ok)
-+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "json"))
-+        .map(|entry| Ok((entry.metadata()?.modified()?, entry.path())))
-+        .collect::<io::Result<Vec<_>>>()?;
-+    if records.len() <= ROTATING_RECORDS {
++fn prune_rotating(directory: &std::path::Path, limit: u64) -> io::Result<()> {
++    let (mut records, mut bins, mut total) = (Vec::new(), Vec::new(), 0u64);
++    for entry in fs::read_dir(directory)?.filter_map(Result::ok) {
++        let metadata = entry.metadata()?;
++        match entry.path().extension().and_then(|e| e.to_str()) {
++            Some("json") => records.push((metadata.modified()?, entry.path())),
++            Some("bin") => {
++                total += metadata.len();
++                bins.push((metadata.modified()?, entry.path(), metadata.len()));
++            }
++            _ => {}
++        }
++    }
++    if records.len() <= ROTATING_RECORDS && total <= limit {
 +        return Ok(());
 +    }
 +    records.sort();
-+    let (evicted, kept) = records.split_at(records.len() - ROTATING_KEEP);
-+    let blob = |path: &std::path::Path| {
-+        fs::read(path)
-+            .ok()
-+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-+            .and_then(|record| record["payload"]["blob"].as_str().map(str::to_owned))
-+    };
-+    let live = kept
++    let blobs = records
 +        .iter()
-+        .filter_map(|(_, path)| blob(path))
-+        .collect::<std::collections::BTreeSet<_>>();
-+    for (_, path) in evicted {
-+        if let Some(digest) = blob(path).filter(|digest| !live.contains(digest)) {
-+            let _ = fs::remove_file(directory.join(format!("{digest}.bin")));
++        .map(|(_, path)| {
++            fs::read(path)
++                .ok()
++                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
++                .and_then(|record| record["payload"]["blob"].as_str().map(str::to_owned))
++        })
++        .collect::<Vec<_>>();
++    let mut live = std::collections::BTreeMap::<&str, usize>::new();
++    for digest in blobs.iter().flatten() {
++        *live.entry(digest).or_default() += 1;
++    }
++    if let Some((newest, _)) = records.last() {
++        let settled = std::time::SystemTime::now() - ORPHAN_GRACE;
++        for (modified, path, size) in bins {
++            let digest = path.file_stem().and_then(|stem| stem.to_str());
++            if modified < *newest
++                && modified < settled
++                && digest.is_none_or(|digest| !live.contains_key(digest))
++                && fs::remove_file(&path).is_ok()
++            {
++                total -= size;
++            }
++        }
++    }
++    let by_count = if records.len() > ROTATING_RECORDS {
++        records.len() - ROTATING_KEEP
++    } else {
++        0
++    };
++    for (index, (_, path)) in records.iter().enumerate().take(records.len() - 1) {
++        if index >= by_count && total <= limit {
++            break;
++        }
++        if let Some(digest) = &blobs[index]
++            && let Some(users) = live.get_mut(digest.as_str())
++        {
++            *users -= 1;
++            if *users == 0 {
++                let blob = directory.join(format!("{digest}.bin"));
++                let size = fs::metadata(&blob).map_or(0, |metadata| metadata.len());
++                if fs::remove_file(&blob).is_ok() {
++                    total -= size;
++                }
++            }
 +        }
 +        let _ = fs::remove_file(path);
 +    }
@@ -94637,7 +95167,7 @@ index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8
 +        )?;
 +        let sha256 = hash(&record);
 +        write_new(&directory.join(format!("{sha256}.json")), &record)?;
-+        prune_rotating(&directory)?;
++        prune_rotating(&directory, BLOB_TOTAL_BYTES)?;
 +        Ok(crate::resource_data::ResourceRef {
 +            reference: sha256.clone(),
 +            sha256,
@@ -94650,10 +95180,10 @@ index 0000000000000000000000000000000000000000..1bae06f6c4a259bcb4b12ef6d16f8ea8
 +mod tests;
 diff --git a/codex-rs/omd/src/blob_store_tests.rs b/codex-rs/omd/src/blob_store_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de868a697d
+index 0000000000000000000000000000000000000000..5835dad988f96e08767ec07efeec86562294bb46
 --- /dev/null
 +++ b/codex-rs/omd/src/blob_store_tests.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +use crate::resource_data::ResourceBinding;
 +
@@ -94708,6 +95238,37 @@ index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de
 +        fs::write(&path, b"he").unwrap();
 +        store.text_evidence("log", "hello").unwrap();
 +        assert_eq!(store.blob(&digest).unwrap(), b"hello");
++    });
++}
++
++#[test]
++fn rotating_evidence_is_bounded_by_total_bytes() {
++    with_store(|store| {
++        let directory = store.rotating_directory().unwrap();
++        let orphan = directory.join(format!("{}.bin", "d".repeat(64)));
++        fs::write(&orphan, [0; 30]).unwrap();
++        fs::File::options()
++            .write(true)
++            .open(&orphan)
++            .unwrap()
++            .set_modified(std::time::SystemTime::now() - 2 * ORPHAN_GRACE)
++            .unwrap();
++        let fresh = directory.join(format!("{}.bin", "e".repeat(64)));
++        fs::write(&fresh, [0; 1]).unwrap();
++        let references = [("1", "b"), ("2", "a"), ("3", "b"), ("4", "c")].map(|(label, letter)| {
++            std::thread::sleep(std::time::Duration::from_millis(20));
++            store
++                .text_evidence(label, &letter.repeat(10))
++                .unwrap()
++                .reference
++        });
++        prune_rotating(&directory, 26).unwrap();
++        let kept =
++            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
++        assert!(!orphan.exists() && fresh.exists() && !kept("a").exists());
++        assert!(kept("b").exists() && kept("c").exists());
++        assert!(!directory.join(format!("{}.json", references[0])).exists());
++        assert!(directory.join(format!("{}.json", references[2])).exists());
 +    });
 +}
 +
@@ -94870,10 +95431,10 @@ index 0000000000000000000000000000000000000000..5bd9362b039d68797595080b7a8cf0de
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0204d53be8bdf3db8cc51a6058822f59cea789d4
+index 0000000000000000000000000000000000000000..11a3766ee7d17928879fe81ed049d81c69db9921
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1032 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -95203,7 +95764,10 @@ index 0000000000000000000000000000000000000000..0204d53be8bdf3db8cc51a6058822f59
 +}
 +
 +pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
-+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
++    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++    let serial = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
++    let _ = fs::remove_file(&temporary);
 +    let mut file = fs::OpenOptions::new()
 +        .write(true)
 +        .create_new(true)
@@ -95361,6 +95925,10 @@ index 0000000000000000000000000000000000000000..0204d53be8bdf3db8cc51a6058822f59
 +                "{field}-{}.json",
 +                sha256(path.as_os_str().as_encoded_bytes())
 +            ));
++            let _state = self
++                .state
++                .lock()
++                .map_err(|_| failure("authority_state_poisoned"))?;
 +            match read_json(&record, Value::Null)? {
 +                Value::Null => write_private(&record, &json!(uid))?,
 +                owner if owner != json!(uid) => return Err(failure(refused)),
@@ -95901,10 +96469,10 @@ index 0000000000000000000000000000000000000000..0204d53be8bdf3db8cc51a6058822f59
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddb0f30033dd5f1fe99736b979d883641803b6ac
+index 0000000000000000000000000000000000000000..092cde218289f8628a40894ffda18a77d8b8eddc
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,425 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -96314,6 +96882,21 @@ index 0000000000000000000000000000000000000000..ddb0f30033dd5f1fe99736b979d88364
 +        error(client.call("grants.get", json!({"store": store}))),
 +        "authority_directory_invalid"
 +    );
++}
++
++#[test]
++fn concurrent_private_writes_to_one_path_all_succeed() {
++    let directory = tempfile::tempdir().unwrap();
++    let path = Arc::new(directory.path().join("owner.json"));
++    let writers: Vec<_> = (0..8)
++        .map(|writer| {
++            let path = path.clone();
++            std::thread::spawn(move || {
++                (0..50).all(|_| write_private(&path, &json!(writer)).is_ok())
++            })
++        })
++        .collect();
++    assert!(writers.into_iter().all(|writer| writer.join().unwrap()));
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
@@ -100052,10 +100635,10 @@ index 0000000000000000000000000000000000000000..1d73fbb2a027b866880496fcc83570b5
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..21b6babe600191ba1ce9fc229fd9d6915a53f67d
+index 0000000000000000000000000000000000000000..5eabebed70c7dbf5f7eb443313e10400dee9de30
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,570 @@
+@@ -0,0 +1,573 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -100256,6 +100839,7 @@ index 0000000000000000000000000000000000000000..21b6babe600191ba1ce9fc229fd9d691
 +            let temporary = self
 +                .root
 +                .join(format!(".profiles.json.{}", std::process::id()));
++            let _ = fs::remove_file(&temporary);
 +            let mut file = fs::OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
@@ -100368,7 +100952,9 @@ index 0000000000000000000000000000000000000000..21b6babe600191ba1ce9fc229fd9d691
 +        if !text(label, 64) || !origin(origin_url) || !text(owner, 128) {
 +            return Err(failure("credential_profile_invalid"));
 +        }
-+        self.insert(label, "secret", None, Some(origin_url), Some(owner))
++        let origin_url =
++            url_origin(origin_url).ok_or_else(|| failure("credential_profile_invalid"))?;
++        self.insert(label, "secret", None, Some(&origin_url), Some(owner))
 +    }
 +
 +    fn insert(
@@ -100628,10 +101214,10 @@ index 0000000000000000000000000000000000000000..21b6babe600191ba1ce9fc229fd9d691
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e6f0b8476d7513917cfac8da1ac7bd0fbfd7d2ca
+index 0000000000000000000000000000000000000000..64d28ee59f68767cd2d3b8ac869a0401efa7c0a2
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,238 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
@@ -100789,6 +101375,19 @@ index 0000000000000000000000000000000000000000..e6f0b8476d7513917cfac8da1ac7bd0f
 +            .secret(&secret.id, "https://example.com", Some("vault"))
 +            .is_err()
 +    );
++    let default_port = profiles
++        .create_secret("plain", "https://example.com:443", "vault")
++        .unwrap();
++    profiles
++        .store_secret(&default_port.id, "swordfish")
++        .unwrap();
++    assert_eq!(
++        profiles
++            .secret(&default_port.id, "https://example.com", Some("vault"))
++            .unwrap()
++            .token,
++        "swordfish"
++    );
 +}
 +
 +#[test]
@@ -100859,10 +101458,10 @@ index 0000000000000000000000000000000000000000..e6f0b8476d7513917cfac8da1ac7bd0f
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..70a58f2bab15c060e5c777344b25836348e927aa
+index 0000000000000000000000000000000000000000..3a8d8a22d2850ee4d592587bafbef09b230ca28b
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,444 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -100877,7 +101476,7 @@ index 0000000000000000000000000000000000000000..70a58f2bab15c060e5c777344b258363
 +use std::path::PathBuf;
 +
 +pub const KEY_BYTES: usize = 256;
-+pub const VALUE_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
++pub const VALUE_BYTES: usize = 65_536;
 +pub const SCOPE_BYTES: usize = 16 * 1024 * 1024;
 +pub const KEY_LIMIT: usize = 4096;
 +const LIST_LIMIT: usize = 256;
@@ -101167,6 +101766,7 @@ index 0000000000000000000000000000000000000000..70a58f2bab15c060e5c777344b258363
 +                return Err(failure("store_quota"));
 +            }
 +            let temporary = directory.join(format!(".store.json.{}", std::process::id()));
++            let _ = fs::remove_file(&temporary);
 +            let mut file = fs::OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
@@ -102302,7 +102902,7 @@ index 0000000000000000000000000000000000000000..4faadf4798f2d3d2f1eed4399fe867fc
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1e023461cc6e0915a33137d6ff4151a1d166efe
+index 0000000000000000000000000000000000000000..62e645ff706fc718bf281c1d738e589cda20236f
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
 @@ -0,0 +1,1792 @@
@@ -102366,8 +102966,8 @@ index 0000000000000000000000000000000000000000..a1e023461cc6e0915a33137d6ff4151a
 +pub const EXEC_DEFAULT_TIMEOUT_MS: u64 = 10_000;
 +pub const EXEC_MAX_TIMEOUT_MS: u64 = 120_000;
 +pub const EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
-+pub const EXEC_INLINE_STDOUT_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
-+pub const EXEC_INLINE_STDERR_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 8;
++pub const EXEC_INLINE_STDOUT_BYTES: usize = 65_536;
++pub const EXEC_INLINE_STDERR_BYTES: usize = 16_384;
 +pub const EXEC_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
 +pub const EXEC_ARTIFACT_PAGE_BYTES: usize = 16 * 1024;
 +const EXEC_ARTIFACT_STORE_BYTES: u64 = 64 * 1024 * 1024;
@@ -104233,10 +104833,10 @@ index 0000000000000000000000000000000000000000..9628a2002a85839b224e6e67ac1a938c
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f760f7e621d5e7d7b482f7aa526a10db26d003c8
+index 0000000000000000000000000000000000000000..5dfb1c3be5ced26f19d8dc1b87bfaa01b92bbe14
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,254 @@
+@@ -0,0 +1,256 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -104338,11 +104938,11 @@ index 0000000000000000000000000000000000000000..f760f7e621d5e7d7b482f7aa526a10db
 +pub use workspace::workspace_path;
 +
 +pub use mods::AUTHORITY_CAPABILITIES;
++pub use mods::CODEX_CONFIG_TOOL_OUTPUT_RAISE;
 +pub use mods::CODEX_CONFIG_UPDATE_PLAN;
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::DELEGABLE_APPROVAL_KINDS;
 +pub use mods::FileStamp;
-+pub use mods::HOST_RECEIPT_BYTES;
 +pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 +pub use mods::MANAGED_POLICY_FILE;
 +pub use mods::MANAGED_POLICY_KEY;
@@ -104442,9 +105042,11 @@ index 0000000000000000000000000000000000000000..f760f7e621d5e7d7b482f7aa526a10db
 +pub use mods::PERSIST_CHUNK_BYTES;
 +pub use mods::PERSIST_WITHHELD;
 +pub use mods::PersistedRewrite;
++pub use mods::RAISED_TOOL_OUTPUT_TOKENS;
 +pub use mods::SUPPORTED_MOD_APIS;
 +pub use mods::SendPolicy;
 +pub use mods::StateThread;
++pub use mods::TOOL_OUTPUT_BYTES;
 +pub use mods::Trust;
 +pub use mods::access_receipt;
 +pub use mods::activation_failures;
@@ -106128,10 +106730,10 @@ index 0000000000000000000000000000000000000000..c66282accd452ed6070675d45ab7ceff
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226a7d47096
+index 0000000000000000000000000000000000000000..ea9ad893d1405ce2411126e9cb3cfd846d501bb8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,6242 @@
+@@ -0,0 +1,6247 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -106385,8 +106987,8 @@ index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226
 +    }
 +}
 +
-+pub const HOST_RECEIPT_BYTES: usize = 131_072;
-+pub const MAX_HOST_CALLS: usize = 128;
++pub const HOST_RECEIPT_BYTES: usize = 1_048_576;
++pub const MAX_HOST_CALLS: usize = 512;
 +
 +pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 +pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -106492,6 +107094,7 @@ index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226
 +    "route_reload_v1",
 +    "route_write_v1",
 +    "power_hold_v1",
++    "tool_original_v1",
 +    "builtins_features_v1",
 +    "terminal_tabs_v1",
 +    "terminal_inline_sites_v1",
@@ -106630,6 +107233,7 @@ index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226
 +    "tools.define",
 +    "tools.invoke",
 +    "tools.check",
++    "tools.original",
 +    "tools.undefine",
 +    "events.schedule",
 +    "events.cancel",
@@ -107534,7 +108138,10 @@ index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226
 +}
 +
 +pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
-+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
++pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
++const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
++pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
++pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -110562,8 +111169,8 @@ index 0000000000000000000000000000000000000000..82349396a2315660f54eb9eab13c8226
 +
 +    fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
 +        let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
-+        if registrations.tools.len() > 16
-+            || registrations.commands.len() > 16
++        if registrations.tools.len() > 32
++            || registrations.commands.len() > 32
 +            || registrations.events.len() > MOD_EVENTS.len()
 +            || ((!registrations.tools.is_empty() || registrations.dynamic_tools) && !has("tools"))
 +            || (!registrations.commands.is_empty() && !has("commands"))
@@ -113483,7 +114090,7 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc984865158ff1683
+index 0000000000000000000000000000000000000000..b3c2344d5c6876dc4ebc5eef3b5a79675a2d1962
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,436 @@
@@ -113563,7 +114170,7 @@ index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc9848651
 +            "terminal.pty" => Ok("pty"),
 +            "model.complete" | "model.fork" => Ok("agents"),
 +            "tools.define" | "tools.undefine" => Ok("tools"),
-+            "tools.invoke" | "tools.check" => Ok("interception"),
++            "tools.invoke" | "tools.check" | "tools.original" => Ok("interception"),
 +            "composer.read" | "composer.write" | "composer.suggest" => Ok("composer"),
 +            "prompts.consent" | "prompts.submit" | "prompts.status" | "prompts.revoke" => {
 +                Ok("composer")
@@ -113682,7 +114289,7 @@ index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc9848651
 +        "entrypoint_sha256": digest(loaded.source.as_bytes()),
 +        "package": {"id": loaded.package.id, "version": loaded.package.version},
 +        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
-+        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
++        "hook_budget_ms": loaded.package.hook_budget_ms,"max_host_calls": MAX_HOST_CALLS,"environment":loaded.package.environment});
 +    request["field_policies"] = ModHost::field_policies();
 +    request["surface"] = json!({
 +        "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
@@ -113925,10 +114532,10 @@ index 0000000000000000000000000000000000000000..921b7b63381b7e6c1f3c349bc9848651
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2d9106ccb
+index 0000000000000000000000000000000000000000..8225e582ccfd2a51439392c4b698f14e1cdd413a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,1967 @@
+@@ -0,0 +1,1975 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -114541,12 +115148,20 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +            deny || object.is_some_and(|object| {
 +                result["output"]
 +                    .as_str()
-+                    .is_some_and(|output| output.len() <= RESULT_BYTES)
++                    .is_some_and(|output| output.len() <= crate::TOOL_OUTPUT_BYTES)
 +                    && result["success"].is_boolean()
 +                    && object.keys().all(|key| {
-+                        ["output", "success", "truncated", "call_id", "value"]
-+                            .contains(&key.as_str())
++                        [
++                            "output",
++                            "success",
++                            "truncated",
++                            "bytes",
++                            "call_id",
++                            "value",
++                        ]
++                        .contains(&key.as_str())
 +                    })
++                    && result["bytes"].as_u64().is_some() == result.get("bytes").is_some()
 +                    && serde_json::to_vec(&result["value"])
 +                        .is_ok_and(|value| value.len() <= RESULT_BYTES)
 +            })
@@ -115898,10 +116513,10 @@ index 0000000000000000000000000000000000000000..ba84a4d930d8ed0f327491bd25e018a2
 +}
 diff --git a/codex-rs/omd/src/mods/operation_schema.json b/codex-rs/omd/src/mods/operation_schema.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..29acdeaee951927e86b01a3f424bd051eb3107fb
+index 0000000000000000000000000000000000000000..83e535fed2250e8307c6bacfeb0847b5ea4ebe29
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/operation_schema.json
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,226 @@
 +{
 +  "operations": {
 +    "exec.run": {"arguments":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdin":{"type":"string"},"timeout_ms":{"type":"number"},"max_output_bytes":{"type":"number"},"output_artifact":{"anyOf":[{"const":false},{"const":true}]},"write":{"anyOf":[{"const":false},{"const":true}]},"network":{"anyOf":[{"const":"none"},{"const":"loopback"}]},"unix_sockets":{"type":"array","items":{"type":"string"}},"snapshot":{"$ref":"#/$defs/1"},"guards":{"type":"array","items":{"type":"object","properties":{"program":{"type":"string"},"sha256":{"type":"string"},"argv":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"env":{"$ref":"#/$defs/0"},"stdout_sha256":{"type":"string"}},"required":["program","stdout_sha256"]}},"required_access":{"type":"object","properties":{"write":{"type":"array","items":{"type":"string"}}},"required":["write"]},"exclusive_workspace":{"type":"string"},"sandbox":{"const":"none"}},"required":["program"]},"result":{"allOf":[{"type":"object","properties":{"exit_code":{"anyOf":[{"type":"null"},{"type":"number"}]},"signal":{"anyOf":[{"type":"null"},{"type":"string"}]},"stdout":{"type":"string"},"stdout_sha256":{"type":"string"},"stdout_bytes":{"type":"number"},"output_artifact":{"$ref":"#/$defs/2"},"stderr":{"type":"string"},"stdout_truncated":{"type":"boolean"},"stdout_preview_truncated":{"type":"boolean"},"stderr_truncated":{"type":"boolean"},"stderr_preview_truncated":{"type":"boolean"},"timed_out":{"type":"boolean"},"duration_ms":{"type":"number"},"program":{"$ref":"#/$defs/3"},"guards_verified":{"type":"number"}},"required":["exit_code","signal","stdout","stdout_sha256","stdout_bytes","output_artifact","stderr","stdout_truncated","stdout_preview_truncated","stderr_truncated","stderr_preview_truncated","timed_out","duration_ms","program","guards_verified"]},{"type":"object","properties":{"candidate_sha256":{"type":"string"},"evidence":{"$ref":"#/$defs/1"}},"required":[]}]}},
@@ -115984,6 +116599,7 @@ index 0000000000000000000000000000000000000000..29acdeaee951927e86b01a3f424bd051
 +    "tools.list": {"arguments":{"type":"null"},"result":{"type":"object","properties":{"thread_id":{"type":"string"},"tools":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"kind":{"anyOf":[{"const":"mcp"},{"const":"builtin"},{"const":"extension"},{"const":"dynamic"}]},"server":{"anyOf":[{"type":"null"},{"type":"string"}]},"original":{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"freeform":{"type":"boolean"}},"required":["description","parameters","freeform"]},"effective":{"anyOf":[{"type":"null"},{"type":"object","properties":{"description":{"type":"string"},"parameters":{},"deferred":{"type":"boolean"}},"required":["description","parameters","deferred"]}]}},"required":["name","kind","server","original","effective"]}}},"required":["thread_id","tools"]}},
 +    "tools.invoke": {"arguments":{"$ref":"#/$defs/63"},"result":{"type":"object","properties":{"call_id":{"type":"string"},"output":{"type":"string"},"success":{"type":"boolean"},"truncated":{"type":"boolean"}},"required":["call_id","output","success","truncated"]}},
 +    "tools.check": {"arguments":{"$ref":"#/$defs/63"},"result":{"type":"object","properties":{"decision":{"anyOf":[{"const":"allow"},{"const":"ask"},{"const":"deny"}]},"reason":{"anyOf":[{"type":"null"},{"type":"string"}]},"authority":{"anyOf":[{"const":"host"},{"const":"mod"}]}},"required":["decision","reason","authority"]}},
++    "tools.original": {"arguments":{"type":"object","properties":{"call_id":{"type":"string"}},"required":["call_id"]},"result":{"type":"object","properties":{"reference":{"$ref":"#/$defs/1"},"sha256":{"type":"string"},"bytes":{"type":"number"}},"required":["reference","sha256","bytes"]}},
 +    "credentials.list": {"arguments":{"type":"null"},"result":{"type":"array","items":{"$ref":"#/$defs/65"}}},
 +    "credentials.request": {"arguments":{"anyOf":[{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"anyOf":[{"const":"chatgpt"},{"const":"api_key"}]},"label":{"type":"string"},"provider":{"type":"string"}},"required":["action","kind","label"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"provider"},"label":{"type":"string"},"provider":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"const":"enroll"},"kind":{"const":"secret"},"label":{"type":"string"},"origin":{"type":"string"}},"required":["action","kind","label","origin"]},{"type":"object","properties":{"action":{"anyOf":[{"const":"remove"},{"const":"refresh"}]},"profile":{"type":"string"}},"required":["action","profile"]}]},"result":{"type":"object","properties":{"status":{"anyOf":[{"const":"completed"},{"const":"declined"}]},"profile":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/65"}]}},"required":["status","profile"]}},
 +    "routes.select": {"arguments":{"type":"object","properties":{"route":{"type":"string"},"scope":{"anyOf":[{"const":"thread"},{"const":"next_request"}]}},"required":["route","scope"]},"result":{"type":"object","properties":{"route":{"$ref":"#/$defs/33"},"effective_at":{"const":"next_request"}},"required":["route","effective_at"]}},
@@ -116419,10 +117035,10 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc96554c3944ab
+index 0000000000000000000000000000000000000000..a9576fc20581c073f20f81e3abf82fd6ea1cb25f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,2916 @@
+@@ -0,0 +1,2912 @@
 +use super::*;
 +use serde_json::Map;
 +use std::io::Read;
@@ -118540,14 +119156,14 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +            }
 +            return Err(failure("lifecycle_script_not_trusted"));
 +        }
-+        let inspected = store::package(&package.path);
++        let inspected = store::package_lifecycle(&package.path, event);
 +        if event == "uninstall" {
 +            match &inspected {
-+                Ok((_, _, integrity)) if integrity == &package.integrity => {}
++                Ok((_, integrity, _)) if integrity == &package.integrity => {}
 +                _ => return Ok(()),
 +            }
 +        }
-+        let (manifest, _, integrity) = inspected?;
++        let (manifest, integrity, source) = inspected?;
 +        if integrity != package.integrity {
 +            return Err(failure("package_integrity_failure"));
 +        }
@@ -118555,17 +119171,13 @@ index 0000000000000000000000000000000000000000..e819c78afa548f79dfa62a97e6bc9655
 +            .lifecycle
 +            .get(event)
 +            .ok_or_else(|| failure("lifecycle_script_missing"))?;
-+        let source = String::from_utf8(store::package_read(
-+            &package.path,
-+            script,
-+            store::PACKAGE_FILE_LIMIT,
-+        )?)
-+        .map_err(failure)?;
++        let source = String::from_utf8(source.ok_or_else(|| failure("lifecycle_script_missing"))?)
++            .map_err(failure)?;
 +        self.verified_runner()?;
 +        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
 +            "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
 +                "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
-+            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
++            "hook_budget_ms":1000,"max_host_calls":MAX_HOST_CALLS,"receipts":[],"field_policies":{},"virtual_time_ms":null});
 +        process::evaluate(
 +            &request,
 +            std::time::Duration::from_secs(1),
@@ -120369,10 +120981,10 @@ index 0000000000000000000000000000000000000000..d857ab935658103c7dae9ee2050c4756
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e986baaf4
+index 0000000000000000000000000000000000000000..c2c146ac02c6a8e9728768e4df323d55bf2fa351
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
-@@ -0,0 +1,742 @@
+@@ -0,0 +1,746 @@
 +use super::Result;
 +use super::failure;
 +use serde_json::Value;
@@ -120430,6 +121042,7 @@ index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e
 +type Spares = (Vec<Child>, Option<Instant>);
 +
 +static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
++const RESULT_LINE_BYTES: usize = 1_048_576;
 +const BUSY_RUNNERS: usize = 3;
 +const IDLE_AFTER: Duration = Duration::from_secs(5);
 +
@@ -120586,7 +121199,7 @@ index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e
 +    warm.map_or_else(spawn, Ok)
 +}
 +
-+pub(super) const INPUT_LIMIT: usize = 1_048_576;
++pub(super) const INPUT_LIMIT: usize = 4_194_304;
 +
 +fn request_line(request: &impl serde::Serialize) -> Result<Vec<u8>> {
 +    let mut bytes = serde_json::to_vec(request)?;
@@ -120630,7 +121243,10 @@ index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e
 +        let mut stdout = BufReader::new(stdout);
 +        loop {
 +            let mut line = Vec::new();
-+            match (&mut stdout).take(262_145).read_until(b'\n', &mut line) {
++            match (&mut stdout)
++                .take(RESULT_LINE_BYTES as u64 + 1)
++                .read_until(b'\n', &mut line)
++            {
 +                Ok(0) | Err(_) => break,
 +                Ok(_) => {
 +                    if sender.send(line).is_err() {
@@ -120665,7 +121281,7 @@ index 0000000000000000000000000000000000000000..14b42856153d825f73136943738ac94e
 +            Err(mpsc::RecvTimeoutError::Timeout) => break Err(failure("callback_timeout")),
 +            Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(None),
 +        };
-+        if line.len() > 262_144 {
++        if line.len() > RESULT_LINE_BYTES {
 +            break Err(failure("output_limit"));
 +        }
 +        let frame = match serde_json::from_slice::<Value>(&line) {
@@ -121470,7 +122086,7 @@ index 0000000000000000000000000000000000000000..a3ca0d4663d9242e74f963208edfd242
 +}
 diff --git a/codex-rs/omd/src/mods/render.rs b/codex-rs/omd/src/mods/render.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f3e2b1152f7a25454d166de02cc8209d518c5c01
+index 0000000000000000000000000000000000000000..f6d50f9bf363611fa0a53af2d52869d7ef4ad9d3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/render.rs
 @@ -0,0 +1,287 @@
@@ -121478,7 +122094,7 @@ index 0000000000000000000000000000000000000000..f3e2b1152f7a25454d166de02cc8209d
 +use std::os::unix::fs::MetadataExt;
 +
 +const CACHE_LIMIT: usize = 512;
-+const TREE_BYTES: usize = 65_536;
++const TREE_BYTES: usize = 262_144;
 +
 +pub const MOD_RENDER_COMPONENTS: &[(&str, &[&str])] = &[
 +    ("user_message", &[]),
@@ -121612,7 +122228,7 @@ index 0000000000000000000000000000000000000000..f3e2b1152f7a25454d166de02cc8209d
 +    Ok(value)
 +}
 +
-+/// A component module step's tree must parse, pass the render checks, stay under 64 KiB and not draw the native component.
++/// A component module step's tree must parse, pass the render checks, stay under 256 KiB and not draw the native component.
 +pub(super) fn checked_tree(step: &Value) -> Result<()> {
 +    let tree = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
 +        .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
@@ -121621,7 +122237,7 @@ index 0000000000000000000000000000000000000000..f3e2b1152f7a25454d166de02cc8209d
 +            .iter()
 +            .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
 +            || serde_json::to_vec(&step["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
-+        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
++        .then(|| "the tree draws the native component or exceeds 256 KiB".to_owned())
 +    }) {
 +        return Err(failure(format!("invalid_component_tree: {reason}")));
 +    }
@@ -122105,10 +122721,10 @@ index 0000000000000000000000000000000000000000..606f8350c621351624959680b283650c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18023b5864
+index 0000000000000000000000000000000000000000..240747c661ddef90562c4a1761dac876bcfa314e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,1575 @@
+@@ -0,0 +1,1590 @@
 +use super::FileStamp;
 +use super::ModConfiguration;
 +use super::ModPackage;
@@ -122444,14 +123060,22 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +}
 +
 +pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
-+    let (package, source, hash, _, _) = inspect_package(path, false)?;
++    let (package, source, hash, _, _, _) = inspect_package(path, false, None)?;
 +    Ok((package, source, hash))
++}
++
++pub(super) fn package_lifecycle(
++    path: &Path,
++    event: &str,
++) -> Result<(ModPackage, String, Option<Vec<u8>>)> {
++    let (package, _, hash, _, _, script) = inspect_package(path, false, Some(event))?;
++    Ok((package, hash, script))
 +}
 +
 +pub(super) fn package_with_assets(
 +    path: &Path,
 +) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
-+    let (package, source, hash, assets, _) = inspect_package(path, true)?;
++    let (package, source, hash, assets, _, _) = inspect_package(path, true, None)?;
 +    Ok((package, source, hash, assets))
 +}
 +
@@ -122473,7 +123097,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +}
 +
 +fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
-+    let (package, _, hash, _, files) = inspect_package(path, false)?;
++    let (package, _, hash, _, files, _) = inspect_package(path, false, None)?;
 +    let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
 +    if verified.len() >= 256 {
 +        verified.clear();
@@ -122499,9 +123123,14 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +    String,
 +    BTreeMap<String, String>,
 +    Vec<(PathBuf, FileStamp)>,
++    Option<Vec<u8>>,
 +);
 +
-+fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
++fn inspect_package(
++    path: &Path,
++    collect_assets: bool,
++    lifecycle: Option<&str>,
++) -> Result<InspectedPackage> {
 +    if !path.is_absolute() || path.canonicalize()? != path {
 +        return Err(failure("canonical_package_path_required"));
 +    }
@@ -122522,20 +123151,25 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +    hash.update(package.entrypoint.as_bytes());
 +    hash.update([0]);
 +    hash.update(&source);
++    let mut captured = None;
 +    for (event, script) in &package.lifecycle {
 +        hash.update([0]);
 +        hash.update(event.as_bytes());
 +        hash.update([0]);
 +        hash.update(script.as_bytes());
 +        hash.update([0]);
-+        hash.update(read_file(script)?);
++        let content = read_file(script)?;
++        hash.update(&content);
++        if lifecycle == Some(event.as_str()) {
++            captured = Some(content);
++        }
 +    }
 +    let mut assets = BTreeMap::new();
 +    let mut text = source.len();
 +    for asset in &package.assets {
 +        let content = read_file(asset)?;
 +        text += std::str::from_utf8(&content).map_or(0, str::len);
-+        if text > 256 * 1024 {
++        if text > 1024 * 1024 {
 +            return Err(failure(format!("package_text_input_limit: {}", package.id)));
 +        }
 +        hash.update([0]);
@@ -122552,6 +123186,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +        format!("{:x}", hash.finalize()),
 +        assets,
 +        files,
++        captured,
 +    ))
 +}
 +
@@ -122561,8 +123196,8 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +    user: Option<String>,
 +}
 +
-+pub(super) const STATE_LIMIT: usize = 196_608;
-+pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
++pub(super) const STATE_LIMIT: usize = 524_288;
++pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 +const SECURITY_EVENTS: &str = "security-events.jsonl";
 +const SECURITY_EVENT_LIMIT: usize = 65_536;
 +
@@ -122822,7 +123457,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +            "mods.json" => brokered_grants(&self.root)?,
 +            _ => None,
 +        };
-+        let Some((mut generation, current)) = brokered else {
++        let Some((generation, current)) = brokered else {
 +            return self.write_staged(name, &bytes, || Ok(()));
 +        };
 +        let selected = value["mods"]
@@ -122837,30 +123472,25 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +            .filter(|grant| selected_record(grant) && !current.contains(*grant))
 +            .cloned()
 +            .collect::<BTreeSet<_>>();
-+        self.write_staged(name, &bytes, || {
-+            if !added.is_empty() {
-+                let granted = current.union(&added).collect::<BTreeSet<_>>();
-+                generation = crate::broker::authorized(
-+                    "grants.put",
-+                    json!({"store": self.root, "generation": generation, "grants": granted}),
-+                )?["generation"]
-+                    .as_u64()
-+                    .unwrap_or_default();
-+            }
-+            Ok(())
-+        })?;
 +        let kept = current
 +            .union(&added)
 +            .filter(|grant| selected_record(grant))
 +            .cloned()
 +            .collect::<BTreeSet<_>>();
-+        if kept.len() != current.len() + added.len() {
-+            let _ = crate::broker::call(
-+                "grants.put",
-+                json!({"store": self.root, "generation": generation, "grants": kept}),
-+            );
-+        }
-+        Ok(())
++        self.write_staged(name, &bytes, || {
++            if kept != current {
++                let put = if added.is_empty() {
++                    crate::broker::call
++                } else {
++                    crate::broker::authorized
++                };
++                put(
++                    "grants.put",
++                    json!({"store": self.root, "generation": generation, "grants": kept}),
++                )?;
++            }
++            Ok(())
++        })
 +    }
 +
 +    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -122886,6 +123516,7 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +        let temporary = self
 +            .root
 +            .join(format!(".{name}.{}.tmp", std::process::id()));
++        let _ = std::fs::remove_file(&temporary);
 +        let mut file = OpenOptions::new()
 +            .create_new(true)
 +            .write(true)
@@ -123686,14 +124317,14 @@ index 0000000000000000000000000000000000000000..0a57552168baddba280e489e20744f18
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..14f663dd0d568d04ebb40ce05d70792a31cea605
+index 0000000000000000000000000000000000000000..e8b34a8f427905287a475aee813f1ca2ab42fa03
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
 @@ -0,0 +1,2201 @@
 +use super::*;
 +
-+pub const MOD_KEY_LIMIT: usize = 12;
-+pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
++pub const MOD_KEY_LIMIT: usize = 24;
++pub const MOD_COMPOSED_KEY_LIMIT: usize = 128;
 +pub const MOD_COMPONENT_LIMIT: usize = 64;
 +pub const MOD_TEXT_BYTES: usize = 49_152;
 +
@@ -125600,7 +126231,7 @@ index 0000000000000000000000000000000000000000..14f663dd0d568d04ebb40ce05d70792a
 +                "surface_styles",
 +                !valid_surface_styles(&patch.surface_styles),
 +            ),
-+            ("size", serde_json::to_vec(&patch)?.len() > 65_536),
++            ("size", serde_json::to_vec(&patch)?.len() > 262_144),
 +        ]
 +        .into_iter()
 +        .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
@@ -125767,7 +126398,7 @@ index 0000000000000000000000000000000000000000..14f663dd0d568d04ebb40ce05d70792a
 +        }
 +    }
 +
-+    /// Each mod's view or patch keeps 12 keys; the view composed from every mod may hold more.
++    /// Each mod's view or patch keeps 24 keys; the view composed from every mod may hold more.
 +    fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
 +        let view: Self = serde_json::from_value(value)?;
 +        let invalid = [
@@ -125836,7 +126467,7 @@ index 0000000000000000000000000000000000000000..14f663dd0d568d04ebb40ce05d70792a
 +                "surface_styles",
 +                !valid_surface_styles(&view.surface_styles),
 +            ),
-+            ("size", serde_json::to_vec(&view)?.len() > 262_144),
++            ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
 +        ]
 +        .into_iter()
 +        .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
@@ -129675,7 +130306,7 @@ index 0000000000000000000000000000000000000000..c1f5c12542ce890d42bf0d90a3244e46
 +}
 diff --git a/codex-rs/omd/src/resource_data.rs b/codex-rs/omd/src/resource_data.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..22b27ab5601996b5be5f3525c4fda3df916938a0
+index 0000000000000000000000000000000000000000..df89ef37cbc8b649399be24551b2b63ed85ebc98
 --- /dev/null
 +++ b/codex-rs/omd/src/resource_data.rs
 @@ -0,0 +1,372 @@
@@ -129689,7 +130320,7 @@ index 0000000000000000000000000000000000000000..22b27ab5601996b5be5f3525c4fda3df
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::{Path, PathBuf};
 +
-+pub const PAGE_BYTES: usize = 16_384;
++pub const PAGE_BYTES: usize = 65_536;
 +pub const SNAPSHOT_BYTES: usize = 262_144;
 +
 +pub fn hash(bytes: &[u8]) -> String {
@@ -130953,12 +131584,12 @@ index 0000000000000000000000000000000000000000..c0fb9b5855e53c3664add8366c3878da
 +}
 diff --git a/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2e9619bb85f1a90104892d3104998fba839ff56
+index 0000000000000000000000000000000000000000..50769aa14462dd35cf7e1e2bbc731e05db358b3d
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,749 @@
+@@ -0,0 +1,750 @@
 +use crate::mods::{FileStamp, file_stamp};
-+use crate::resource_data::{PAGE_BYTES, hash, redact, token};
++use crate::resource_data::{hash, redact, token};
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Map, Value, json};
 +use std::collections::{BTreeMap, BTreeSet};
@@ -130967,6 +131598,7 @@ index 0000000000000000000000000000000000000000..a2e9619bb85f1a90104892d3104998fb
 +use std::path::{Path, PathBuf};
 +use std::sync::{Arc, Mutex};
 +
++const PAGE_BYTES: usize = 16_384;
 +const SOURCE_BYTES: usize = 32 * 1024 * 1024;
 +const HEAD_BYTES: u64 = 1024 * 1024;
 +const SCAN_FILES: usize = 4096;
@@ -134177,10 +134809,10 @@ index 0000000000000000000000000000000000000000..6531a6ad6f21a8018898d3f6ac1780b6
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c048170cc51e8a16a7ad43b03a4136266c6bdb2d
+index 0000000000000000000000000000000000000000..86225d31bf4141a6af4e10a9131348de1eb962ad
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,216 @@
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -134290,6 +134922,18 @@ index 0000000000000000000000000000000000000000..c048170cc51e8a16a7ad43b03a413626
 +    task.admit("worker", "openai", "gpt-5.6-sol", 50).unwrap();
 +    assert!(task.admit("worker", "openai", "gpt-5.6-sol", 0).is_err());
 +    assert_eq!(task.remaining().unwrap().1, 1);
++    assert_eq!(task.remaining().unwrap().2, 40);
++}
++
++#[test]
++fn provider_billed_requests_settle_only_through_the_provider() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), dir.path().join("task")).unwrap();
++    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
++    let admission = task.admit("lead", "openai", "gpt-5.6-sol", 60).unwrap();
++    task.dispatch(&admission, || Ok(())).unwrap();
++    task.settle_reported(&admission, None, None).unwrap();
++    assert!(task.settle(&admission, json!({}), 0).is_err());
 +    assert_eq!(task.remaining().unwrap().2, 40);
 +}
 +
@@ -138327,10 +138971,10 @@ index 0000000000000000000000000000000000000000..17a278f1f7dbf4f236b957482adc11ae
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4de3b96f4
+index 0000000000000000000000000000000000000000..afa8ab60752cfe99b7789f738f604a6fba419739
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,4796 @@
+@@ -0,0 +1,4802 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -138727,7 +139371,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +        Value::Null
 +    );
 +    assert!(
-+        invoke(&mut one, "threaded", "fill", json!(200_000))
++        invoke(&mut one, "threaded", "fill", json!(600_000))
 +            .unwrap_err()
 +            .to_string()
 +            .contains("state_limit")
@@ -139365,7 +140009,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +            "run",
 +            json!("large"),
 +            || true,
-+            |_| Ok(json!({"text": "x".repeat(140_000)})),
++            |_| Ok(json!({"text": "x".repeat(1_100_000)})),
 +        )
 +        .unwrap_err();
 +    assert!(
@@ -139383,7 +140027,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +            || true,
 +            |_| {
 +                calls += 1;
-+                Ok(json!({"text": "x".repeat(70_000)}))
++                Ok(json!({"text": "x".repeat(600_000)}))
 +            },
 +        )
 +        .unwrap_err();
@@ -139404,7 +140048,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +            |_| {
 +                calls += 1;
 +                Ok(if calls == 1 {
-+                    json!({"text": "x".repeat(140_000)})
++                    json!({"text": "x".repeat(1_100_000)})
 +                } else {
 +                    json!("recovered")
 +                })
@@ -140898,6 +141542,11 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +        json!({"codex_config":{"tools.update_plan.enabled":true},"compatibility":feature["compatibility"]}),
 +    );
 +    trust(&store, &planner, &[]);
++    let budgeter = write(
++        "budgeter",
++        json!({"codex_config":{"tool_output_token_limit.raise":true},"compatibility":feature["compatibility"]}),
++    );
++    trust(&store, &budgeter, &[]);
 +    for (directory, extra) in [
 +        (
 +            "unlisted",
@@ -140926,7 +141575,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +    let published = runtime.codex_config();
 +    assert_eq!(
 +        published.lock().unwrap().iter().collect::<Vec<_>>(),
-+        ["tools.update_plan.enabled"]
++        ["tool_output_token_limit.raise", "tools.update_plan.enabled"]
 +    );
 +    let planner_status = runtime.status()["mods"]
 +        .as_array()
@@ -140937,6 +141586,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +        .clone();
 +    assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
 +    store.enable(&planner, false).unwrap();
++    store.enable(&budgeter, false).unwrap();
 +    runtime.reload().unwrap();
 +    assert!(published.lock().unwrap().is_empty());
 +}
@@ -143129,7 +143779,7 @@ index 0000000000000000000000000000000000000000..de847865cf66f447460e88c3b4d79ea4
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bbdf30188590b50a2b8ac3c135422b0b85b83c56
+index 0000000000000000000000000000000000000000..0757ef3e89ed183582565eecc688dd511303f4bf
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,1649 @@
@@ -143833,7 +144483,7 @@ index 0000000000000000000000000000000000000000..bbdf30188590b50a2b8ac3c135422b0b
 +    git(&repository, &["config", "user.name", "Fixture"]);
 +    let store = store(&temp);
 +    let mut refusals = Vec::new();
-+    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
++    for (file, limit) in [("main.ts", 524_288), ("mod.json", 8192)] {
 +        let path = package.join(file);
 +        let mut bytes = std::fs::read(&path).unwrap();
 +        bytes.resize(4 << 20, b'\n');
@@ -144446,12 +145096,12 @@ index 0000000000000000000000000000000000000000..bbdf30188590b50a2b8ac3c135422b0b
 +        value["capabilities"] = json!(["commands"]);
 +        value["entrypoint"] = json!("big.ts");
 +    });
-+    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
++    std::fs::write(package.join("big.ts"), vec![b'/'; 524_288]).unwrap();
 +    assert!(ModStore::inspect_package(&package).is_ok());
-+    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
++    std::fs::write(package.join("big.ts"), vec![b'/'; 524_289]).unwrap();
 +    assert!(
 +        refusal(&store, request(&package, &["commands"]))
-+            .contains("file_limit: big.ts exceeds 131072 bytes")
++            .contains("file_limit: big.ts exceeds 524288 bytes")
 +    );
 +    std::fs::remove_file(package.join("big.ts")).unwrap();
 +    std::fs::create_dir(package.join("big.ts")).unwrap();
@@ -149580,7 +150230,7 @@ index 0000000000000000000000000000000000000000..09b7a26fcac15a7e585a93741e4c727a
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cadc87eaee3
+index 0000000000000000000000000000000000000000..53d9a3053162cecd7bffccd9ae9aae03fe39c0bd
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
 @@ -0,0 +1,2178 @@
@@ -149606,7 +150256,7 @@ index 0000000000000000000000000000000000000000..f511e6d7b0d683850be5fda700984cad
 +    let mut truncated = false;
 +    if let Some(text) = text.as_mut() {
 +        // Reserve both receipt envelopes and the text repeated in terminal.copy arguments.
-+        let limit = codex_omd::HOST_RECEIPT_BYTES / 2 - 256;
++        let limit = 65_536 - 256;
 +        let (mut end, mut encoded) = (0, 2);
 +        for character in text.chars() {
 +            let bytes = match character {
@@ -152515,10 +153165,10 @@ index 0000000000000000000000000000000000000000..f58dbf131fc5cff28c9379679733a1b5
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod_panel.rs b/codex-rs/tui/src/bottom_pane/mod_panel.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f904ca11fac83082949a1059c54605f4f103437
+index 0000000000000000000000000000000000000000..ec9b00130b9eafb934bea97c3ace050cbf317cb3
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/mod_panel.rs
-@@ -0,0 +1,892 @@
+@@ -0,0 +1,889 @@
 +use super::BottomPaneView;
 +use super::CancellationEvent;
 +use super::ListSelectionView;
@@ -152910,10 +153560,7 @@ index 0000000000000000000000000000000000000000..6f904ca11fac83082949a1059c54605f
 +    }
 +
 +    fn searching<R>(&mut self, step: impl FnOnce(&mut ListSelectionView) -> R) -> R {
-+        let searched = self
-+            .picker
-+            .search_query()
-+            .map(|_| self.state().selected);
++        let searched = self.picker.search_query().map(|_| self.state().selected);
 +        let result = step(&mut self.picker);
 +        if let Some(selected) = searched.filter(|_| self.picker.search_query().is_none()) {
 +            if !self.used_query {
@@ -154897,10 +155544,10 @@ index 0000000000000000000000000000000000000000..ca69813ad6ed79feef849f32dde0a74b
 +mod tests;
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..73b902b4c0a364c19f3c48fc0fa47f0c6e501d3c
+index 0000000000000000000000000000000000000000..0cf710e0311cb9ba3353cd3666f6fd91ee6380b0
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions_tests.rs
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,88 @@
 +use super::*;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
@@ -154984,7 +155631,10 @@ index 0000000000000000000000000000000000000000..73b902b4c0a364c19f3c48fc0fa47f0c
 +        .iter()
 +        .map(|span| span.content.as_ref())
 +        .collect::<String>();
-+    assert!(text.contains("q back") && text.ends_with("/ to search"), "{text}");
++    assert!(
++        text.contains("q back") && text.ends_with("/ to search"),
++        "{text}"
++    );
 +}
 diff --git a/codex-rs/tui/src/keymap_overlay.rs b/codex-rs/tui/src/keymap_overlay.rs
 new file mode 100644
