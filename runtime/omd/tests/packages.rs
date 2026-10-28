@@ -532,6 +532,12 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 
     let store = store_with_node(&temp);
+    std::fs::create_dir(root.join("store").join(format!(
+        ".repository-{}.{}.tmp",
+        &revision[..12],
+        std::process::id()
+    )))
+    .unwrap();
     let source = ModPackageSource::Repository {
         repository: repository.canonicalize().unwrap().display().to_string(),
         revision: revision.clone(),
@@ -698,7 +704,7 @@ fn repository_blobs_are_refused_while_reading_past_the_package_limits() {
     git(&repository, &["config", "user.name", "Fixture"]);
     let store = store(&temp);
     let mut refusals = Vec::new();
-    for (file, limit) in [("main.ts", 131_072), ("mod.json", 8192)] {
+    for (file, limit) in [("main.ts", 524_288), ("mod.json", 8192)] {
         let path = package.join(file);
         let mut bytes = std::fs::read(&path).unwrap();
         bytes.resize(4 << 20, b'\n');
@@ -1311,12 +1317,12 @@ fn adversarial_local_packages_cannot_escape_escalate_or_forge_approval() {
         value["capabilities"] = json!(["commands"]);
         value["entrypoint"] = json!("big.ts");
     });
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_072]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_288]).unwrap();
     assert!(ModStore::inspect_package(&package).is_ok());
-    std::fs::write(package.join("big.ts"), vec![b'/'; 131_073]).unwrap();
+    std::fs::write(package.join("big.ts"), vec![b'/'; 524_289]).unwrap();
     assert!(
         refusal(&store, request(&package, &["commands"]))
-            .contains("file_limit: big.ts exceeds 131072 bytes")
+            .contains("file_limit: big.ts exceeds 524288 bytes")
     );
     std::fs::remove_file(package.join("big.ts")).unwrap();
     std::fs::create_dir(package.join("big.ts")).unwrap();
@@ -1500,6 +1506,33 @@ fn edit_manifest(package: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
 fn install(store: &ModStore, request: ModInstallRequest) -> codex_omd::ModPackageLock {
     let plan = store.package_plan(request.clone()).unwrap();
     store.package_apply(request, &plan.confirmation).unwrap()
+}
+
+#[test]
+fn staging_sweeps_only_leftovers_older_than_an_hour() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let store = store(&temp);
+    let data = root.join("store");
+    let cache = data.join("package-cache/fixture");
+    let leftover = |path: PathBuf, age: u64| {
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age))
+            .unwrap();
+        path
+    };
+    let old_npm = leftover(data.join(".npm-0123456789ab.old.tmp"), 7200);
+    let old_cache = leftover(cache.join(".sha256-old.old.tmp"), 7200);
+    let fresh = leftover(data.join(".repository-0123456789ab.new.tmp"), 0);
+    let unrelated = leftover(data.join("kept.tmp"), 7200);
+    install(&store, request(&package, &["exec"]));
+    assert!(!old_npm.exists());
+    assert!(!old_cache.exists());
+    assert!(fresh.exists());
+    assert!(unrelated.exists());
 }
 
 #[test]

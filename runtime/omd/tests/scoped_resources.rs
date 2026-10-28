@@ -88,4 +88,12 @@ fn immutable_resources_bind_owner_repository_thread_generation_and_bytes() {
             .to_string()
             .contains("integrity")
     );
+    assert_eq!(
+        store.save("turn", json!({"text":"hello 世界"})).unwrap(),
+        reference
+    );
+    assert_eq!(
+        store.load(&reference, "turn").unwrap()["text"],
+        "hello 世界"
+    );
 }

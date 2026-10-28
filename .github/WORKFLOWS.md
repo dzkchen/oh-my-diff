@@ -36,9 +36,9 @@ month for GitHub Actions updates. There are no dependency license or scheduled v
 - `test` sets up the pinned Codex tree, applies and re-syncs the patch, and fails if the result differs from the
   checkout. It then runs native tests, Clippy on patched paths, Rustfmt, native ownership, lock drift and mod type
   checks. One upstream test, `filtered_host_additional_permissions`, is excluded as a known baseline failure. The
-  `codex-core` integration suite is advisory for a release and required for a nightly; two upstream tests that fail
-  after the rest of the suite in one process run in their own. Jobs work under `/Users/runner/omd`, not `/tmp`,
-  which a sandboxed command may write.
+  `codex-core` integration suite is advisory for a release and required for a nightly. Tests run in parallel under
+  `cargo nextest` with upstream's `.config/nextest.toml` and the overrides in `.github/nextest.toml`, one process
+  per test with one retry; doc tests run under `cargo test`. Jobs work under `/Users/runner/omd`, not `/tmp`, which a sandboxed command may write.
 - `build` builds and signs the release host binaries in parallel with `test`.
 - `package` takes those binaries, runs mod tests, Python tests, mod-host scenarios and client acceptance, then packs
   one archive for both profiles and tests install, reinstall, uninstall and recovery.

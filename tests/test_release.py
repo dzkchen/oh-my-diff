@@ -54,6 +54,24 @@ class ReleaseTests(unittest.TestCase):
                 self.assertNotIn("#100", str(failure.exception))
                 self.assertIn("broken link README.md: docs/html.md", str(failure.exception))
 
+    def test_reference_must_be_the_topic_pages_in_index_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "reference").mkdir()
+            (root / "reference/README.md").write_text("| [A](a.md) | first |\n| [B](b.md) | second |\n")
+            (root / "reference/a.md").write_text("# A\n\nalpha [x](b.md#y)\n")
+            (root / "reference/b.md").write_text("# B\n\nbeta\n")
+            reference = root / "REFERENCE.md"
+            with mock.patch.object(release, "REFERENCE", reference):
+                reference.write_text("# Mod API reference\n\n## A\n\nalpha [x](#y)\n\n## B\n\nbeta\n")
+                self.assertIsNone(release.reference_drift())
+                reference.write_text("# Mod API reference\n\n## B\n\nbeta\n\n## A\n\nalpha [x](#y)\n")
+                self.assertIn("reference/a.md", release.reference_drift())
+                reference.write_text("# Mod API reference\n\n## A\n\nalpha [x](#y)\n\n## B\n\nbeta\n\nstale\n")
+                self.assertIn("has 5 lines after the topic pages begin", release.reference_drift())
+                (root / "reference/c.md").write_text("# C\n")
+                self.assertEqual(release.reference_drift(), "mods/reference/README.md does not list c.md")
+
     def test_refresh_merges_main_and_adds_new_commits_after_the_curated_text(self):
         with tempfile.TemporaryDirectory() as temporary:
             origin, root = Path(temporary) / "origin.git", Path(temporary) / "work"

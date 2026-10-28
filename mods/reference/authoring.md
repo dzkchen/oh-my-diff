@@ -219,7 +219,7 @@ A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules
 - A relative import of `./row.tsx` becomes `./row.ts` in the output.
 - List the compiled name in `mod.json` `assets` (`"row.ts"`). The host accepts only `.ts`, `.mjs` and `.json` assets,
   and `package` ships only the compiled files, never the `.tsx`.
-- The 128 KiB package file limit applies to each compiled file.
+- The 512 KiB package file limit applies to each compiled file.
 - A hand-written `.ts` beside a `.tsx` fails with `jsx_entrypoint_conflict`.
 
 ### Elements and children

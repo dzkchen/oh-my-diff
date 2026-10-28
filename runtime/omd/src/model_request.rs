@@ -680,7 +680,15 @@ const SEND_PROTECTED_KINDS: &[&str] = &[
     "collaboration_mode.",
     "guardian.",
 ];
-const SEND_FIELDS: &[&str] = &["instructions", "input", "tools", "text"];
+const SEND_FIELDS: &[&str] = &[
+    "instructions",
+    "input",
+    "tools",
+    "text",
+    "prompt",
+    "images",
+    "traces",
+];
 const STRUCTURAL_KEYS: &[&str] = &[
     "type",
     "id",
@@ -802,6 +810,8 @@ fn classify(request: &Value, id: &str) -> (String, String, bool) {
         ["instructions"] => ("instructions".into(), "system".into(), true),
         ["tools", ..] => ("tool_spec".into(), "system".into(), false),
         ["text", ..] => ("output_schema".into(), "system".into(), false),
+        ["prompt"] => ("image.prompt".into(), "user".into(), true),
+        ["traces", ..] => ("memory".into(), "user".into(), true),
         ["input", index, rest @ ..] => {
             let item = &request["input"][index.parse::<usize>().unwrap_or(usize::MAX)];
             let kind = item["type"].as_str().unwrap_or("item");

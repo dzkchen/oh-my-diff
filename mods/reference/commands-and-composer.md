@@ -88,7 +88,11 @@ Interceptors of these surfaces skip their own mod's calls like every other surfa
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
 starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`) and must be `true`.
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be `true`.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
+  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
+  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
+  package must budget model-visible outputs itself, or every long output reaches the model whole.
 - The package must list `codex_config_v1` in `required_features`.
 - Anything else fails inspection with `invalid_codex_config`.
 
@@ -186,7 +190,9 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 `api.intercept('composer_edit', …)` sees every mod write and native fill before it reaches the draft: `{source:
 'mod' | 'paste' | 'history' | 'completion', caller, revision, edit}`. Handlers may change only `edit.text` or
 answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
-so they get no host operations.
+so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
+50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way.
 
 ### `composer_key` interceptor
 
@@ -219,7 +225,8 @@ Handlers answer:
 - `{focus: id}` to move focus to another of their own components (or `null` to release it);
 - `{scroll: n}` to clamp the offset.
 
-They run while the terminal handles the gesture, so they get no host operations.
+They run while the terminal handles the gesture, so they get no host operations. The whole chain, including any wait
+for a runtime busy with another callback, gets 50 ms; when that runs out the change applies unchanged.
 
 ### Submitted drafts and `prompt_expanded`
 

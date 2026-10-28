@@ -95,6 +95,30 @@ test('cancelling at any point before the CLI starts never launches it and leaves
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('a CLI that hangs before its request or while acknowledging history replay is stopped at the deadline with its whole process group', async () => {
+  const root = await fakeCli('#!/bin/sh\nsleep 60 &\necho $! > "$(dirname "$0")/grandchild"\necho $$ > "$(dirname "$0")/child"\nwait\n');
+  const alive = async name => {
+    const pid = Number(await readFile(join(root, name), 'utf8'));
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try { process.kill(pid, 0); } catch { return false; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return true;
+  };
+  try {
+    const history = translateRequest({ ...prompt, input: [...prompt.input, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] }, ...prompt.input] }, model);
+    assert.ok(history.frames.length > 1);
+    for (const translated of [null, history]) {
+      const started = Date.now();
+      const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 1000 }).then(() => null, failure => failure);
+      assert.equal(error?.code, 'claude_upstream_incomplete');
+      assert.match(error.message, /did not finish within .* minutes \(it never sent its request\).*Retry the request/);
+      assert.ok(Date.now() - started < 5000);
+      for (const name of ['child', 'grandchild']) assert.equal(await alive(name), false, name);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('Claude stream capture preserves UTF-8 across network chunks', () => {
   const capture = new Capture();
   const events = [

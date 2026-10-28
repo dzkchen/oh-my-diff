@@ -17,7 +17,7 @@ The protocol-named transports are removed.
 
 ### `process.exchange`
 
-`process.exchange` returns messages until the next one would push the encoded `messages` past 48 KiB (at most 64,
+`process.exchange` returns messages until the next one would push the encoded `messages` past 256 KiB (at most 64,
 and always at least one), so a result fits a callback's receipt budget; the rest stays queued for the next call.
 
 Once the process exits, its readers get one second to deliver what it wrote. Output queued by then is returned

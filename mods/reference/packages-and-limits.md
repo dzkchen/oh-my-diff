@@ -134,7 +134,7 @@ and example through the real host and reports any it refuses.
 
 ### Registration limits
 
-- At most 16 tools and 16 commands per mod.
+- At most 32 tools and 32 commands per mod.
 - Commands are invoked as `/<id>:<name>`; the bare `/<name>` works only when no built-in command or other mod uses
   that name.
 - Mod ids use `a-z`, `0-9` and `_` up to 24 bytes and never equal the host `origin.caller` labels `model`,
@@ -145,8 +145,8 @@ and example through the real host and reports any it refuses.
 
 Keybindings:
 
-- Each mod's view or patch has at most 12 keybindings.
-- The view composed from every mod has at most 64, and a key bound by two mods rejects the later mod's patch.
+- Each mod's view or patch has at most 24 keybindings.
+- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
 
 Components:
 
@@ -167,7 +167,7 @@ Text sizes:
 - `text`, `code`, `markdown`, `diff` and `document` are at most 49,152 bytes. The terminal keeps recent markdown
   renders, so a large `markdown` costs its parse, about 1 ms per KiB, only when its text or width changes; stream
   into `code` or `text`.
-- A view or patch is at most 64 KiB of JSON and the composed view 256 KiB. Those JSON limits still apply to
+- A view or patch is at most 256 KiB of JSON and the composed view 1 MiB. Those JSON limits still apply to
   text-heavy views, and escaping can double a text (`\n`, `"` and `\` take two bytes), so clip long text on its
   `JSON.stringify` size rather than its 48 KiB length.
 - Text fields refuse control characters except newlines where a field is multi-line.
@@ -179,9 +179,11 @@ reports the composed view's diagnostics under `terminal`.
 ### Input and focus
 
 - A dialog focuses its first item when it opens, or the control it `autofocus`es.
-- Tab and Shift+Tab cycle focus. Up and Down move within a list, multiselect, document or scrolled pane and, at its
-  first or last row (or on any other control), focus the previous or next control; entering a list from above
-  starts at its first row, from below at its last; key panes and terminals are reached only with Tab or a click.
+- Tab and Shift+Tab cycle focus while a dialog shows or a control has focus; otherwise they stay the composer's, and
+  a click, a `hotkey`, `autofocus` or a `{focus}` keybinding focuses a control first. Up and Down move within a
+  list, multiselect, document or scrolled pane and, at its first or last row (or on any other control), focus the
+  previous or next control; entering a list from above starts at its first row, from below at its last; key panes
+  and terminals are reached with Tab once a control has focus, a click or a `{focus}` keybinding.
   Left and Right change a `select`.
 - While a dialog shows or a control has focus, held arrow, page, Home, End, Backspace, Delete and character keys
   repeat; Enter, Space, Tab and Esc act once per press, and a held key never fires a hotkey or view binding.

@@ -52,7 +52,7 @@ Write mode needs `web_search = "disabled"` in the session. Claude sessions don't
 - Models are the ones your plan offers, read from the installed CLI at login; at most 16 are listed.
 - Plan usage shows no charge. Console usage is billed by Anthropic; each request's cost (the CLI's list-price figure) counts against your OMD budget and allowance alerts.
 - A request for a model other than the selected one is refused.
-- Each request starts a fresh CLI process, adding a fraction of a second.
+- Each request starts a fresh CLI process, adding a fraction of a second. A CLI that has not finished 30 minutes after starting (for example one that never sends its request) is stopped with its child processes and the request fails with `claude_upstream_incomplete`; retry it, and if it repeats check `/claude` or update the CLI.
 - Earlier reasoning isn't sent back to Claude. Images are forwarded.
 - After a switch to Claude, an OpenAI compaction summary is first rewritten as plain text by OpenAI (one OpenAI request; if it fails, Claude continues without that summary and a warning shows); OpenAI's encrypted reasoning isn't sent.
 - A prompt over the model's context window is refused (`context_length_exceeded`).

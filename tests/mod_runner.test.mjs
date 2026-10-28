@@ -271,7 +271,7 @@ test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   const looping = 'const e = { toString() { for (;;) {} } }; Object.defineProperty(e, "stack", { get() { for (;;) {} } }); throw e;';
   assert.match(run(`export default () => { ${looping} }`, { hook_budget_ms: 300 }).error, /timed out after 300ms/);
-  assert.match(run('export default api => api.command("large", () => "x".repeat(270000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
+  assert.match(run('export default api => api.command("large", () => "x".repeat(1100000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
 });
 test('lifecycle events and interceptors require their capabilities', () => {
   const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];
@@ -288,6 +288,8 @@ test('lifecycle events and interceptors require their capabilities', () => {
   const replayed = run(source, { ...extra, receipts: [{ call: suspended.host_call, value: { result: { text: 'hi!' }, trace: [] } }] });
   assert.deepEqual(replayed.value, { result: { text: 'hi!' } });
   assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
+  const budget = 'export default api => api.intercept("input", (e, next) => ({ text: String(next.budget.hostCalls) }))';
+  assert.deepEqual(run(budget, { ...extra, max_host_calls: 7 }).value, { result: { text: '7' } });
 });
 test('classic hooks map onto native events and interceptors with glob and negated matchers', () => {
   const source = `export default api => {

@@ -40,11 +40,14 @@ pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
+pub use view::ModComposerWhen;
 pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
 pub use view::ModKeyAction;
+pub use view::ModKeyContext;
+pub use view::ModKeys;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
@@ -56,6 +59,7 @@ pub use view::ModOverlayClip;
 pub use view::ModPaint;
 pub use view::ModPanel;
 pub use view::ModRange;
+pub use view::ModRegion;
 pub use view::ModRenderSite;
 pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
@@ -125,6 +129,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::credentials::url_origin;
+
+use packages::SETTINGS_FILE_EXTENSIONS;
+use packages::SettingsFile;
 
 pub use package_manager::ModInstallRequest;
 pub use package_manager::ModPackageGrant;
@@ -256,8 +263,8 @@ impl InvocationScope {
     }
 }
 
-pub const HOST_RECEIPT_BYTES: usize = 131_072;
-pub const MAX_HOST_CALLS: usize = 128;
+pub const HOST_RECEIPT_BYTES: usize = 1_048_576;
+pub const MAX_HOST_CALLS: usize = 512;
 
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -363,6 +370,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "route_reload_v1",
     "route_write_v1",
     "power_hold_v1",
+    "tool_original_v1",
     "builtins_features_v1",
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
@@ -392,6 +400,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "composer_key_v1",
     "completion_tokens_v1",
     "mention_read_v1",
+    "settings_file_v1",
+    "terminal_focus_v1",
+    "terminal_layout_title_v1",
+    "terminal_raster_packed_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -500,6 +512,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "tools.define",
     "tools.invoke",
     "tools.check",
+    "tools.original",
     "tools.undefine",
     "events.schedule",
     "events.cancel",
@@ -903,6 +916,104 @@ fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
         loaded.error = Some(error.to_string());
     }
     Ok(())
+}
+
+/// Why activation refuses `selection` of the inspected `package`: `Err` when the selection is invalid, `Ok(Some(_))` when only administrator policy refuses it.
+fn selection_verdict(
+    selection: &ModSelection,
+    package: &ModPackage,
+    sha256: &str,
+    administered: bool,
+    grants: Option<&BTreeSet<String>>,
+    managed: Option<&ManagedPolicy>,
+) -> Result<Option<String>> {
+    if !administered
+        && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
+    {
+        return Err(failure(format!(
+            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
+            selection.scope
+        )));
+    }
+    if !administered
+        && grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
+    {
+        return Err(failure(format!(
+            "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
+            selection.path.display()
+        )));
+    }
+    if sha256 != selection.sha256 {
+        return Err(failure(if administered {
+            format!(
+                "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
+                package.id
+            )
+        } else {
+            format!(
+                "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                package.id
+            )
+        }));
+    }
+    if package
+        .capabilities
+        .iter()
+        .any(|capability| !selection.capabilities.contains(capability))
+        || selection
+            .capabilities
+            .iter()
+            .any(|capability| !MOD_CAPABILITIES.contains(&capability.as_str()))
+    {
+        return Err(failure(format!("capability_denied: {}", package.id)));
+    }
+    check_secret_environment(package, &selection.secret_environment)?;
+    validate_settings(package, &selection.settings)?;
+    Ok(managed.filter(|_| !administered).and_then(|policy| {
+        policy.refusal(
+            &package.id,
+            &package.capabilities,
+            store::authenticated_source(selection, &package.id, grants).as_deref(),
+        )
+    }))
+}
+
+/// Scope precedence over valid enabled `(id, selection)` candidates: `None` wins its mod ID, otherwise why it loses.
+fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<String>> {
+    let rank = |scope: &str| match scope {
+        MANAGED_SCOPE => 2,
+        "project" => 1,
+        _ => 0,
+    };
+    candidates
+        .iter()
+        .map(|(id, selection)| {
+            let rivals = candidates.iter().filter(|(other, _)| other == id);
+            let top = rivals
+                .clone()
+                .map(|(_, rival)| rank(&rival.scope))
+                .max()
+                .unwrap_or_default();
+            let winners = rivals
+                .filter(|(_, rival)| rank(&rival.scope) == top)
+                .map(|(_, rival)| rival)
+                .collect::<Vec<_>>();
+            if rank(&selection.scope) < top {
+                Some(format!(
+                    "shadowed_by_{}_scope: {}",
+                    winners[0].scope,
+                    winners[0].path.display()
+                ))
+            } else if winners.len() > 1 {
+                Some(format!(
+                    "mod_conflict: {id} is enabled twice in the {} scope",
+                    selection.scope
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Non-mod `origin.caller` labels, which a mod ID must never equal.
@@ -1453,7 +1564,10 @@ pub struct ModPackage {
 }
 
 pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
-const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
+pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
+pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
+pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -2313,14 +2427,24 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
-    let path = store.selection_status()?["selections"]
+    let status = store.selection_status()?;
+    let selection = status["selections"]
         .as_array()
         .into_iter()
         .flatten()
         .find(|selection| selection["id"] == id && selection["effective"] == true)
-        .and_then(|selection| selection["path"].as_str().map(PathBuf::from))
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
-    let settings = store.merge_settings(&path, values)?;
+    let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
+    if let Some(name) = values
+        .keys()
+        .find(|name| selection["settings_origin"][name.as_str()] == "file")
+    {
+        return Err(failure(format!("setting_set_by_file: {name}")));
+    }
+    let mut settings = store.merge_settings(&path, values)?;
+    if let Some(file) = selection["file_settings"].as_object() {
+        settings.extend(file.clone());
+    }
     let (package, _, _) = store::package(&path)?;
     Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 }
@@ -2639,6 +2763,7 @@ struct Loaded {
     unused_grants: Vec<String>,
     unused_environment: Vec<String>,
     withheld: Vec<String>,
+    settings_file: SettingsFile,
     error: Option<String>,
     telemetry: ModTelemetry,
 }
@@ -2725,16 +2850,41 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
-/// The returned stamp is `None` if the file changed during the read.
+type ConfigurationStamp = (FileStamp, Vec<(std::ffi::OsString, FileStamp)>);
+
+fn configuration_stamps(root: &Path) -> Option<ConfigurationStamp> {
+    let mut settings: Vec<_> = std::fs::read_dir(root.join("settings"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            Path::new(&entry.file_name())
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| SETTINGS_FILE_EXTENSIONS.contains(&extension))
+        })
+        .filter_map(|entry| Some((entry.file_name(), file_stamp(&entry.metadata().ok()?))))
+        .collect();
+    settings.sort();
+    Some((configuration_stamp(&root.join("mods.json"))?, settings))
+}
+
 fn read_configuration(
-    path: &Path,
-    stamp: Option<FileStamp>,
-) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
-    let bytes = store::read(path, 65_536);
-    let sha256 = digest(bytes.as_deref().unwrap_or_default());
+    root: &Path,
+    stamp: Option<ConfigurationStamp>,
+) -> (Option<ConfigurationStamp>, String, Result<Vec<u8>>) {
+    let bytes = store::read(&root.join("mods.json"), 65_536);
+    let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
+    for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
+        let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
+        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
+        hashed.extend(digest(&content).as_bytes());
+    }
     (
-        stamp.filter(|_| configuration_stamp(path) == stamp),
-        sha256,
+        stamp
+            .clone()
+            .filter(|_| configuration_stamps(root) == stamp),
+        digest(&hashed),
         bytes,
     )
 }
@@ -2770,6 +2920,44 @@ mod reload_tests {
         std::fs::rename(&path, &moved).unwrap();
         std::os::unix::fs::symlink(&moved, &path).unwrap();
         assert!(host.refresh_authority().is_err());
+    }
+
+    #[test]
+    fn callback_authority_checks_reuse_the_cached_authority() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let package = base.join("hello");
+        std::fs::create_dir(&package).unwrap();
+        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "hello",
+            "version": "1.0.0", "api": MOD_API_VERSION, "state_version": 1, "capabilities": ["commands"],
+            "license": "Apache-2.0", "provenance": {"maintainer": "Fixture", "source": "fixture"}})).unwrap()).unwrap();
+        std::fs::write(
+            package.join("index.ts"),
+            "export default api => api.command('hello', () => 'hi')",
+        )
+        .unwrap();
+        let store = ModStore::create(base.join("store")).unwrap();
+        let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(package.clone(), &sha256, vec!["commands".into()], "user")
+            .unwrap();
+        store.enable(&package, true).unwrap();
+        let policy = base.join("policy.json");
+        std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
+        let mut host = ModHost::open(base.join("store")).unwrap();
+        let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
+        host.set_managed_policy(policy, owner, "alice").unwrap();
+        let loaded = host.loaded["hello"].clone();
+        host.check_callback_authority(&loaded).unwrap();
+        let reads = store::READS.get();
+        for _ in 0..100 {
+            host.brokered.as_mut().unwrap().0 = Instant::now();
+            host.check_callback_authority(&loaded).unwrap();
+        }
+        assert_eq!(store::READS.get(), reads);
     }
 
     #[test]
@@ -2939,7 +3127,7 @@ pub struct ModHost {
     store: ModStore,
     generation: u64,
     configuration_sha256: String,
-    configuration_stamp: Option<FileStamp>,
+    configuration_stamp: Option<ConfigurationStamp>,
     /// The configuration whose timed-out inspections were already retried once.
     inspect_retried: String,
     /// A pending retry and the leniency (`initial`) of the reload it repeats.
@@ -2965,7 +3153,7 @@ pub struct ModHost {
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
-    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
+    callback_configuration: Mutex<Option<(ConfigurationStamp, String, Arc<ModConfiguration>)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3697,10 +3885,10 @@ impl ModHost {
         self.inspect_retry = None;
     }
 
-    fn current(&self, stamp: Option<FileStamp>) -> bool {
+    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
         !self.inspect_retry_due()
             && stamp.is_some()
-            && stamp == self.configuration_stamp
+            && *stamp == self.configuration_stamp
             && self
                 .brokered
                 .as_ref()
@@ -3714,7 +3902,7 @@ impl ModHost {
     }
 
     pub fn refresh_due(&self) -> bool {
-        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
+        !self.current(&configuration_stamps(&self.store.root))
     }
 
     fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
@@ -3722,35 +3910,29 @@ impl ModHost {
             return Err(failure("callback_cancelled"));
         }
         let path = self.store.root.join("mods.json");
-        let stamp = configuration_stamp(&path);
-        if self.current(stamp) {
+        let stamp = configuration_stamps(&self.store.root);
+        if self.current(&stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
-        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
-        let (brokered, managed, deployment) = match self.authority(&sha256) {
+        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
+        let authority = match self.authority(&sha256) {
             Ok(authority) => authority,
             Err(error) => {
                 self.fail_closed(format!("authority_unavailable: {error}"));
                 return Err(error);
             }
         };
+        let hash = self.authority_hash(&sha256, &authority);
+        let (brokered, managed, deployment) = authority;
         let (deployment, unreadable) = match deployment {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let hash = format!(
-            "{sha256}:{}:{}:{}:{}",
-            brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed
-                .as_ref()
-                .map_or("", |managed| managed.sha256.as_str()),
-            deployment.generation,
-            self.project.as_deref().unwrap_or(Path::new("")).display()
-        );
         let retrying = hash == self.configuration_sha256;
         if retrying && !self.inspect_retry_due() {
-            self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
+            self.configuration_stamp = stamp
+                .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
             return Ok(false);
         }
         let configured = bytes
@@ -3866,13 +4048,16 @@ impl ModHost {
         let seeded = std::mem::take(&mut self.seeded);
         let mut next = BTreeMap::new();
         let mut inspections = Vec::new();
-        for (id, (selection, package, source)) in selected {
+        for (id, (mut selection, package, source)) in selected {
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
+            let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
+            selection.settings.extend(file_settings);
             // An unchanged trusted selection and adapter keep their inspection; another host's also needs the state it ran with.
             let unchanged = |previous: &&Loaded| {
                 previous.error.is_none()
+                    && previous.settings_file == settings_file
                     && previous.adapter.as_ref()
                         == package
                             .adapter
@@ -3950,6 +4135,7 @@ impl ModHost {
                 unused_grants: Vec::new(),
                 unused_environment: Vec::new(),
                 withheld: Vec::new(),
+                settings_file,
                 error: None,
                 telemetry: ModTelemetry::default(),
             };
@@ -3984,8 +4170,9 @@ impl ModHost {
                         self.inspect_retry =
                             (self.inspect_retried != hash).then(|| (initial, Instant::now()));
                         self.inspect_retried.clone_from(&hash);
-                        self.configuration_stamp =
-                            stamp.filter(|_| configuration_stamp(&path) == stamp);
+                        self.configuration_stamp = stamp.clone().filter(|stamp| {
+                            configuration_stamps(&self.store.root).as_ref() == Some(stamp)
+                        });
                     }
                     fail(lenient, &mut loaded, error)?;
                 }
@@ -4067,7 +4254,8 @@ impl ModHost {
             self.inspect_retried.clone_from(&hash);
         }
         self.configuration_sha256 = hash;
-        self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
+        self.configuration_stamp =
+            stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
         let key = (self.store.root.clone(), self.project.clone());
         let mut inspected: BTreeMap<_, _> = self
             .loaded
@@ -4228,6 +4416,21 @@ impl ModHost {
         Ok(authority)
     }
 
+    fn authority_hash(&self, configuration_sha256: &str, authority: &Authority) -> String {
+        let (brokered, managed, deployment) = authority;
+        format!(
+            "{configuration_sha256}:{}:{}:{}:{}",
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed
+                .as_ref()
+                .map_or("", |managed| managed.sha256.as_str()),
+            deployment
+                .as_ref()
+                .map_or(0, |deployment| deployment.generation),
+            self.project.as_deref().unwrap_or(Path::new("")).display()
+        )
+    }
+
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
         self.store.set_managed_policy(file, owner, user);
         self.brokered = None;
@@ -4274,125 +4477,61 @@ impl ModHost {
         rejected: &mut Vec<ModRejection>,
         inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
-        let rank = |scope: &str| match scope {
-            MANAGED_SCOPE => 2,
-            "project" => 1,
-            _ => 0,
-        };
-        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
+        let mut valid = Vec::new();
         for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
-            let administered = index < administered;
             let mut inspected = None;
-            let loaded = (|| {
-                if !administered
-                    && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
-                {
-                    return Err(failure(format!(
-                        "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
-                        selection.scope
-                    )));
-                }
-                if !administered
-                    && grants
-                        .is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
-                {
-                    return Err(failure(format!(
-                        "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
-                        selection.path.display()
-                    )));
-                }
-                let (package, source, hash) = inspect(&selection.path)?;
+            let verdict = inspect(&selection.path).and_then(|(package, source, sha256)| {
                 inspected = Some(package.id.clone());
-                if hash != selection.sha256 {
-                    return Err(failure(if administered {
-                        format!(
-                            "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
-                            package.id
-                        )
-                    } else {
-                        format!(
-                            "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                            package.id
-                        )
-                    }));
-                }
-                let granted: BTreeSet<_> = selection.capabilities.iter().collect();
-                if package.capabilities.iter().any(|c| !granted.contains(c))
-                    || selection
-                        .capabilities
-                        .iter()
-                        .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
-                {
-                    return Err(failure(format!("capability_denied: {}", package.id)));
-                }
-                check_secret_environment(&package, &selection.secret_environment)?;
-                validate_settings(&package, &selection.settings)?;
-                Ok((package, source))
-            })();
-            let (package, source) = match loaded {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    reject(
-                        initial,
-                        rejected,
-                        selection,
-                        inspected.as_deref(),
-                        error.to_string(),
-                    )?;
-                    continue;
-                }
-            };
-            let id = package.id.clone();
-            // Policy refusals apply on every reload: the user cannot repair them.
-            if !administered
-                && let Some(reason) = managed.and_then(|policy| {
-                    policy.refusal(
-                        &id,
-                        &package.capabilities,
-                        store::authenticated_source(selection, &id, grants).as_deref(),
-                    )
-                })
-            {
-                rejected.push(ModRejection {
+                let refusal = selection_verdict(
+                    selection,
+                    &package,
+                    &sha256,
+                    index < administered,
+                    grants,
+                    managed,
+                )?;
+                Ok((refusal, package, source))
+            });
+            match verdict {
+                Ok((None, package, source)) => valid.push((selection, package, source)),
+                // Policy refusals apply on every reload: the user cannot repair them.
+                Ok((Some(reason), package, _)) => rejected.push(ModRejection {
                     path: selection.path.clone(),
-                    id: Some(id),
+                    id: Some(package.id),
                     scope: selection.scope.clone(),
                     reason,
-                });
-                continue;
+                }),
+                Err(error) => reject(
+                    initial,
+                    rejected,
+                    selection,
+                    inspected.as_deref(),
+                    error.to_string(),
+                )?,
             }
-            let Some((previous, ..)) = selected.get(&id) else {
-                selected.insert(id, (selection.clone(), package, source));
-                continue;
-            };
-            if previous.scope != selection.scope {
-                let (loser, winner) = if rank(&selection.scope) > rank(&previous.scope) {
-                    let (previous, ..) = selected
-                        .insert(id.clone(), (selection.clone(), package, source))
-                        .expect("checked above");
-                    (previous, selection.clone())
-                } else {
-                    (selection.clone(), previous.clone())
-                };
-                rejected.push(ModRejection {
-                    path: loser.path,
-                    id: Some(id),
-                    scope: loser.scope,
-                    reason: format!(
-                        "shadowed_by_{}_scope: {}",
-                        winner.scope,
-                        winner.path.display()
-                    ),
-                });
-                continue;
+        }
+        let ranked = precedence(
+            &valid
+                .iter()
+                .map(|(selection, package, _)| (package.id.as_str(), *selection))
+                .collect::<Vec<_>>(),
+        );
+        let mut selected = BTreeMap::new();
+        for ((selection, package, source), loss) in valid.into_iter().zip(ranked) {
+            match loss {
+                None => {
+                    selected.insert(package.id.clone(), (selection.clone(), package, source));
+                }
+                Some(reason) if reason.starts_with("mod_conflict") => {
+                    reject(initial, rejected, selection, Some(&package.id), reason)?
+                }
+                Some(reason) => rejected.push(ModRejection {
+                    path: selection.path.clone(),
+                    id: Some(package.id),
+                    scope: selection.scope.clone(),
+                    reason,
+                }),
             }
-            let reason = format!(
-                "mod_conflict: {id} is enabled twice in the {} scope",
-                selection.scope
-            );
-            let (previous, ..) = selected.remove(&id).expect("checked above");
-            reject(initial, rejected, &previous, Some(&id), reason.clone())?;
-            reject(initial, rejected, selection, Some(&id), reason)?;
         }
         Ok(selected)
     }
@@ -4644,8 +4783,8 @@ impl ModHost {
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
-        if registrations.tools.len() > 16
-            || registrations.commands.len() > 16
+        if registrations.tools.len() > 32
+            || registrations.commands.len() > 32
             || registrations.events.len() > MOD_EVENTS.len()
             || ((!registrations.tools.is_empty() || registrations.dynamic_tools) && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
@@ -5023,19 +5162,16 @@ impl ModHost {
         )
     }
 
-    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
-        let managed = self.store.managed()?;
-        let brokered = store::brokered_grants(&self.store.root)?;
-        let deployment = if managed.is_some() {
-            self.store.managed_deployment()?
-        } else {
-            policy::ManagedDeployment::default()
-        };
+    fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
+        let (configuration_sha256, configuration) = self.callback_configuration();
+        let authority = self.authority(&configuration_sha256)?;
+        let hash = self.authority_hash(&configuration_sha256, &authority);
+        let (brokered, managed, deployment) = authority;
         let mut selections = match &managed {
             Some(managed) => {
                 managed
                     .selections(
-                        &deployment,
+                        &deployment.unwrap_or_default(),
                         &self.store.managed_user(),
                         self.project.as_deref(),
                     )
@@ -5048,19 +5184,11 @@ impl ModHost {
             .tier_selections
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
-        let (configuration_sha256, configuration) = self.callback_configuration();
-        let hash = format!(
-            "{}:{}:{}:{}:{}",
-            configuration_sha256,
-            brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed
-                .as_ref()
-                .map_or("", |managed| managed.sha256.as_str()),
-            deployment.generation,
-            self.project.as_deref().unwrap_or(Path::new("")).display()
-        );
         // An unchanged authority inventory cannot introduce a different precedence winner.
         let unchanged = hash == self.configuration_sha256;
+        if !unchanged {
+            self.configuration_stamp = None;
+        }
         match configuration {
             Ok(config) if config.schema == 1 => selections.extend(
                 config
@@ -5105,17 +5233,18 @@ impl ModHost {
 
     fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
         let path = self.store.root.join("mods.json");
-        let stamp = configuration_stamp(&path);
+        let stamp = configuration_stamps(&self.store.root);
         let mut cached = self
             .callback_configuration
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
-            && stamp == *cached_stamp
+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) =
+            (&stamp, cached.as_ref())
+            && stamp == cached_stamp
         {
             return (sha256.clone(), Ok(configuration.clone()));
         }
-        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
         let configuration = bytes
             .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
             .map(Arc::new);
@@ -5929,6 +6058,13 @@ impl ModHost {
         let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
         for (id, result) in results {
+            if let Some(error) = self
+                .loaded
+                .get(&id)
+                .and_then(|loaded| loaded.settings_file.error.as_ref())
+            {
+                diagnostics.push(format!("{id}: settings_file_invalid: {error}"));
+            }
             let parsed = match result {
                 Ok(value) if value.is_null() => {
                     self.valid_views.remove(&id);
@@ -6546,6 +6682,7 @@ impl ModHost {
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
                 "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
+                status["settings_file"] = json!(m.settings_file);
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,

@@ -504,34 +504,13 @@ impl ContractSelection {
     }
 
     pub fn write(&self, path: &std::path::Path) -> std::io::Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
         self.validate().map_err(std::io::Error::other)?;
         let bytes = serde_json::to_vec_pretty(self)?;
         let parent = path
             .parent()
             .ok_or_else(|| std::io::Error::other("contract selection needs a parent directory"))?;
         std::fs::create_dir_all(parent)?;
-        let temporary = parent.join(format!(
-            ".contract-selection.{}.{:x}.tmp",
-            std::process::id(),
-            Sha256::digest(&bytes)
-        ));
-        let result = (|| {
-            let mut file = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&temporary)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            std::fs::rename(&temporary, path)?;
-            std::fs::File::open(parent)?.sync_all()
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        result
+        crate::fsio::write_bytes(path, &bytes, crate::fsio::Durability::Durable)
     }
 }
 

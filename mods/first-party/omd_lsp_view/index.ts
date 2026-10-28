@@ -107,12 +107,14 @@ export default function activate(api: ModAPI) {
   });
   api.on('terminal', () => {
     const { view: current, servers, open } = saved();
-    const serverCards: TerminalComponent[] = open ? [{ type: 'pane', id: 'omd_lsp_view_servers', label: 'Language servers, /lsp servers hides', title: 'Language servers', style: { direction: 'row' as const, gap: 2 }, children: servers.length ? servers.map((entry, index): TerminalComponent => ({
+    const serverCards: TerminalComponent[] = open ? [{ type: 'pane', id: 'omd_lsp_view_servers', label: 'Language servers, /lsp servers hides', title: 'Language servers', style: { direction: 'row' as const, gap: 2 }, children: servers.length ? servers.map((entry, index): TerminalComponent => {
+      const degraded = entry.server && entry.reason.startsWith('degraded:');
+      return {
       type: 'box', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, children: [
-        { type: 'line', id: `omd_lsp_view_server_${index}_name`, label: `${entry.adapter} status`, spans: [{ text: entry.adapter, bold: true }, { text: entry.server ? ` ${entry.server}` : ` ${entry.reason.replace(/_/g, ' ') || entry.status}`, tone: entry.errors.length ? 'failure' : entry.status === 'stale' ? 'attention' : entry.server ? 'success' : 'muted' }] },
+        { type: 'line', id: `omd_lsp_view_server_${index}_name`, label: `${entry.adapter} status`, spans: [{ text: entry.adapter, bold: true }, { text: visible(entry.server ? ` ${entry.server}${degraded ? ` · ${entry.reason.replace(/_/g, ' ')}` : ''}` : ` ${entry.reason.replace(/_/g, ' ') || entry.status}`, 200), tone: entry.errors.length ? 'failure' : entry.status === 'stale' || degraded ? 'attention' : entry.server ? 'success' : 'muted' }] },
         ...(entry.server ? [{ type: 'text' as const, id: `omd_lsp_view_server_${index}_count`, label: 'Documents and errors', text: `${entry.documents} open · ${entry.count ?? entry.errors.length} errors`, tone: 'muted' as const }] : []),
         ...entry.errors.slice(0, 3).map((error, line): TerminalComponent => ({ type: 'text', id: `omd_lsp_view_server_${index}_${line}`, label: 'Diagnostic', text: error, tone: 'failure' })),
-      ] })) : [{ type: 'text' as const, id: 'omd_lsp_view_server_none', label: 'No language servers', text: 'No server running; /lsp open PATH starts one', tone: 'muted' as const }] }] : [];
+      ] }; }) : [{ type: 'text' as const, id: 'omd_lsp_view_server_none', label: 'No language servers', text: 'No server running; /lsp open PATH starts one', tone: 'muted' as const }] }] : [];
     const prompt = (cards: TerminalComponent[]) => cards.length ? { above_composer: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, ...cards] } } : {};
     if (!current) return open ? { sites: prompt(serverCards) } : null;
     const id = (name: string) => `omd_lsp_view_${name}_${current.revision}`;
@@ -122,7 +124,7 @@ export default function activate(api: ModAPI) {
     const components: TerminalComponent[] = [
       { type: 'text', id: id('status'), label: 'Status', text: where || current.message || `${current.items.length} results`, tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },
       ...(excerpt ? [
-        { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text: visible(text, 1000) }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
+        { type: 'document' as const, id: id('excerpt'), label: visible(excerpt.path, 128), lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text: visible(text, 1000) }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
         ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: rows(own, 'failure'), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
       ] : [
         ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: clip(current.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ''), 32_768, true) }] }] : []),
@@ -138,7 +140,8 @@ export default function activate(api: ModAPI) {
         { type: 'button', id: id('close'), label: 'Close code intelligence', text: 'Close', action: { command: 'omd_lsp_view:lsp', args: 'close' } },
       ] },
     ];
-    return current.pane ? { sites: prompt([{ type: 'box', id: 'omd_lsp_view_pinned', label: 'Code intelligence, /lsp pane unpins', title: visible(current.title, 128), style: { border: 'rounded', padding: [0, 1] }, children: components }, ...serverCards]) }
+    const first = excerpt ? (own.length ? id('errors') : id('editor')) : current.items.length ? id('items') : current.text ? id('text') : id('close');
+    return current.pane ? { keybindings: { 'Alt+l': { focus: first } }, sites: prompt([{ type: 'box', id: 'omd_lsp_view_pinned', label: 'Code intelligence, Alt+l focuses, /lsp pane unpins', title: visible(current.title, 128), style: { border: 'rounded', padding: [0, 1] }, children: components }, ...serverCards]) }
       : { sites: { ...prompt(serverCards), dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: visible(current.title, 128), children: components }, { type: 'slot' }] } } };
   });
 }

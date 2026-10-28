@@ -1754,15 +1754,11 @@ impl ModStore {
                 if actual.trim() != revision {
                     return Err(failure("repository_revision_mismatch"));
                 }
-                let staging = self.root.join(format!(
-                    ".repository-{}.{}.tmp",
-                    &revision[..12],
-                    std::process::id()
-                ));
-                if staging.exists() {
-                    return Err(failure("stale_repository_staging_directory"));
-                }
-                std::fs::create_dir(&staging)?;
+                let staging = tempfile::Builder::new()
+                    .prefix(&format!(".repository-{}.", &revision[..12]))
+                    .suffix(".tmp")
+                    .tempdir_in(&self.root)?
+                    .keep();
                 let result = (|| {
                     let prefix = if subdirectory.is_empty() {
                         String::new()
@@ -1968,15 +1964,11 @@ impl ModStore {
                 "npm_integrity_changed: the registry now serves different content",
             ));
         }
-        let staging = self.root.join(format!(
-            ".npm-{}.{}.tmp",
-            &digest(expected.as_bytes())[..12],
-            std::process::id()
-        ));
-        if staging.exists() {
-            return Err(failure("stale_npm_staging_directory"));
-        }
-        std::fs::create_dir(&staging)?;
+        let staging = tempfile::Builder::new()
+            .prefix(&format!(".npm-{}.", &digest(expected.as_bytes())[..12]))
+            .suffix(".tmp")
+            .tempdir_in(&self.root)?
+            .keep();
         let result = (|| {
             let archive = npm_fetch(
                 tarball,
@@ -2071,8 +2063,13 @@ impl ModStore {
             }
             return Ok(destination);
         }
-        let staging = base.join(format!(".{integrity}.{}.tmp", std::process::id()));
-        std::fs::create_dir(&staging)?;
+        sweep_staging(&self.root);
+        sweep_staging(&base);
+        let staging = tempfile::Builder::new()
+            .prefix(&format!(".{integrity}."))
+            .suffix(".tmp")
+            .tempdir_in(&base)?
+            .keep();
         let result = (|| {
             copy_file(source, &staging, "mod.json", 8192)?;
             copy_file(
@@ -2136,7 +2133,7 @@ impl ModStore {
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
-            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
+            "hook_budget_ms":1000,"max_host_calls":MAX_HOST_CALLS,"receipts":[],"field_policies":{},"virtual_time_ms":null});
         process::evaluate(
             &request,
             None,
@@ -2156,6 +2153,26 @@ fn lifecycle_refused(id: &str) -> std::io::Error {
     failure(format!(
         "managed_lifecycle_requires_approval: {id} runs install scripts; install it interactively"
     ))
+}
+
+fn sweep_staging(directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.')
+            && name.ends_with(".tmp")
+            && entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified < cutoff)
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {

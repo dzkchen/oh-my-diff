@@ -99,6 +99,10 @@ test('a large directory index is read in pages and stays inside the UI state lim
   assert.equal(opened.ui.catalog.length, 120, opened.ui.catalogError);
   assert.equal(opened.ui.catalog.at(-1).id, 'omd_package_119');
   assert.ok(operations(opened).filter(operation => operation === 'packages.index').length > 1);
+  const heavy = packages.map(item => ({ ...item, support: 's'.repeat(1_000) }));
+  const crowded = invoke('', { 'packages.index': ({ cursor = '0', limit }) => ({ packages: heavy.slice(Number(cursor), Number(cursor) + limit), cursor: String(Number(cursor) + limit) }) });
+  assert.ok(crowded.ui.catalog.length >= 50 && crowded.ui.catalog.length < 120, `${crowded.ui.catalog.length}`);
+  assert.ok(Buffer.byteLength(JSON.stringify(crowded.ui)) <= 65_536);
 });
 
 test('a required mod stays on and the directory offers installed mods only as updates', () => {

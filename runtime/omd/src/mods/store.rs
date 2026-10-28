@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -442,7 +441,7 @@ fn inspect_package(
     for asset in &package.assets {
         let content = read_file(asset)?;
         text += std::str::from_utf8(&content).map_or(0, str::len);
-        if text > 256 * 1024 {
+        if text > 1024 * 1024 {
             return Err(failure(format!("package_text_input_limit: {}", package.id)));
         }
         hash.update([0]);
@@ -469,8 +468,8 @@ pub struct ModStore {
     user: Option<String>,
 }
 
-pub(super) const STATE_LIMIT: usize = 196_608;
-pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
+pub(super) const STATE_LIMIT: usize = 524_288;
+pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
@@ -537,7 +536,11 @@ fn write_directory_state(
     if &directory_state(directory, name, version)? != previous {
         return Err(failure("state_conflict: reload before retry"));
     }
-    replace_directory_file(directory, name, &stored_state(version, value)?)
+    crate::fsio::write_bytes(
+        &directory.join(name),
+        &stored_state(version, value)?,
+        crate::fsio::Durability::Ordered,
+    )
 }
 
 fn stored_state(version: u32, value: &Value) -> Result<Vec<u8>> {
@@ -578,47 +581,13 @@ pub(super) fn migrate_directory_state(
     if read(&path, STATE_LIMIT as u64)? != bytes {
         return directory_state(directory, name, version);
     }
-    replace_directory_file(
-        directory,
-        &format!("{name}-backup-{}", digest(&bytes)),
+    crate::fsio::write_bytes(
+        &directory.join(format!("{name}-backup-{}", digest(&bytes))),
         &bytes,
+        crate::fsio::Durability::Ordered,
     )?;
-    replace_directory_file(directory, name, &migrated)?;
+    crate::fsio::write_bytes(&path, &migrated, crate::fsio::Durability::Ordered)?;
     Ok(value)
-}
-
-/// Mod state needs crash consistency, not durability: a write barrier orders the data before the atomic rename.
-fn flush_state(file: &File) -> Result<()> {
-    use std::os::fd::AsRawFd;
-    #[cfg(target_os = "macos")]
-    // SAFETY: `file` owns an open descriptor for the duration of the call.
-    let status = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) };
-    #[cfg(not(target_os = "macos"))]
-    // SAFETY: `file` owns an open descriptor for the duration of the call.
-    let status = unsafe { libc::fsync(file.as_raw_fd()) };
-    match status {
-        -1 => Err(std::io::Error::last_os_error()),
-        _ => Ok(()),
-    }
-}
-
-fn replace_directory_file(directory: &Path, name: &str, bytes: &[u8]) -> Result<()> {
-    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
-    let _ = std::fs::remove_file(&temporary);
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        flush_state(&file)?;
-        std::fs::rename(&temporary, directory.join(name))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
 }
 
 impl ModStore {
@@ -799,35 +768,16 @@ impl ModStore {
         if bytes.len() > limit {
             return Err(failure("state_or_configuration_limit"));
         }
-        let path = self.root.join(name);
-        let temporary = self
-            .root
-            .join(format!(".{name}.{}.tmp", std::process::id()));
-        let _ = std::fs::remove_file(&temporary);
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        let state = name.starts_with("state-");
-        let result = (|| {
-            file.write_all(bytes)?;
-            if state {
-                flush_state(&file)?;
+        crate::fsio::write_bytes_before(
+            &self.root.join(name),
+            bytes,
+            if name.starts_with("state-") {
+                crate::fsio::Durability::Ordered
             } else {
-                file.sync_all()?;
-            }
-            commit()?;
-            std::fs::rename(&temporary, &path)?;
-            if state {
-                return Ok(());
-            }
-            File::open(&self.root)?.sync_all()
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary);
-        }
-        result
+                crate::fsio::Durability::Durable
+            },
+            commit,
+        )
     }
 
     pub fn configuration(&self) -> Result<ModConfiguration> {
@@ -968,7 +918,7 @@ impl ModStore {
             pending = unsynced;
         }
         let mut selections: Vec<Value> = Vec::new();
-        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
+        let mut valid = Vec::new();
         let mut inspections = entries
             .iter()
             .map(|selection| reused_package(&selection.path).map(Ok))
@@ -1017,6 +967,8 @@ impl ModStore {
         {
             let administered = index < administered;
             let mut settings_origin = BTreeMap::new();
+            let mut settings_file = Value::Null;
+            let mut file_settings = BTreeMap::new();
             let (mut id, error, environment) = match inspected {
                 Ok((manifest, integrity)) => {
                     if let Some(manifests) = manifests.as_mut() {
@@ -1035,55 +987,38 @@ impl ModStore {
                         .flatten()
                         .filter(|(_, property)| property.get("default").is_some())
                         .map(|(key, _)| key);
-                    for key in selection.settings.keys().chain(defaults) {
-                        let origin = match selection.settings.contains_key(key) {
-                            false => "default",
-                            true if administered => "managed",
-                            true => "user",
+                    let file;
+                    (file, file_settings) = self.settings_file(&manifest, selection);
+                    settings_file = json!(file);
+                    for key in selection
+                        .settings
+                        .keys()
+                        .chain(file_settings.keys())
+                        .chain(defaults)
+                    {
+                        let origin = if file_settings.contains_key(key) {
+                            "file"
+                        } else if !selection.settings.contains_key(key) {
+                            "default"
+                        } else if administered {
+                            "managed"
+                        } else {
+                            "user"
                         };
                         settings_origin.insert(key.clone(), origin);
                     }
-                    let source = authenticated_source(
-                        selection,
-                        &manifest.id,
-                        brokered.as_ref().map(|(_, grants)| grants),
-                    );
                     let error = if integrity != selection.sha256 {
                         Some("source_changed: inspect and trust the new digest".to_owned())
-                    } else if !administered
-                        && (!super::MOD_SCOPES.contains(&selection.scope.as_str())
-                            || selection.tier.is_some())
-                    {
-                        Some(format!(
-                            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
-                            selection.scope
-                        ))
-                    } else if let Some(refusal) = managed
-                        .as_ref()
-                        .filter(|_| !administered)
-                        .and_then(|managed| {
-                            managed.policy.refusal(
-                                &manifest.id,
-                                &manifest.capabilities,
-                                source.as_deref(),
-                            )
-                        })
-                    {
-                        Some(refusal)
-                    } else if manifest
-                        .capabilities
-                        .iter()
-                        .any(|capability| !selection.capabilities.contains(capability))
-                        || selection.capabilities.iter().any(|capability| {
-                            !super::MOD_CAPABILITIES.contains(&capability.as_str())
-                        })
-                    {
-                        Some("capability_denied".to_owned())
                     } else {
-                        super::check_secret_environment(&manifest, &selection.secret_environment)
-                            .and_then(|()| super::validate_settings(&manifest, &selection.settings))
-                            .err()
-                            .map(|error| error.to_string())
+                        super::selection_verdict(
+                            selection,
+                            &manifest,
+                            &integrity,
+                            administered,
+                            brokered.as_ref().map(|(_, grants)| grants),
+                            managed.as_ref().map(|managed| &managed.policy),
+                        )
+                        .unwrap_or_else(|error| Some(error.to_string()))
                     };
                     (Some(manifest.id), error, manifest.exec_environment)
                 }
@@ -1105,12 +1040,11 @@ impl ModStore {
                 .as_ref()
                 .and_then(|id| lock.packages.get(id))
                 .is_some_and(|item| item.path == selection.path && item.scope == selection.scope);
-            let index = selections.len();
             if selection.enabled
                 && error.is_none()
                 && let Some(id) = &id
             {
-                groups.entry(id.clone()).or_default().push(index);
+                valid.push((selections.len(), id.clone()));
             }
             selections.push(json!({
                 "id": id,
@@ -1121,6 +1055,8 @@ impl ModStore {
                 "required": selection.required,
                 "packaged": packaged,
                 "settings_origin": settings_origin,
+                "settings_file": settings_file,
+                "file_settings": file_settings,
                 "sha256": selection.sha256,
                 "capabilities": selection.capabilities,
                 "exec_environment": environment,
@@ -1144,44 +1080,18 @@ impl ModStore {
                 "reason": "managed_pending_sync"}),
             );
         }
-        let rank = |scope: &Value| match scope.as_str() {
-            Some(super::MANAGED_SCOPE) => 2,
-            Some("project") => 1,
-            _ => 0,
-        };
-        for indices in groups.values() {
-            let top = indices
+        let ranked = super::precedence(
+            &valid
                 .iter()
-                .map(|index| rank(&selections[*index]["scope"]))
-                .max()
-                .unwrap_or_default();
-            let candidates = indices
-                .iter()
-                .copied()
-                .filter(|index| rank(&selections[*index]["scope"]) == top)
-                .collect::<Vec<_>>();
-            let shadow = format!(
-                "shadowed_by_{}_scope",
-                selections[candidates[0]]["scope"]
-                    .as_str()
-                    .unwrap_or_default()
-            );
-            if candidates.len() != 1 {
-                for index in indices {
-                    selections[*index]["reason"] = if candidates.contains(index) {
-                        json!("duplicate_scope_conflict")
-                    } else {
-                        json!(format!("{shadow}_conflict"))
-                    };
-                }
-                continue;
-            }
-            let winner = candidates[0];
-            selections[winner]["effective"] = json!(true);
-            selections[winner]["reason"] = json!("selected");
-            for index in indices.iter().copied().filter(|index| *index != winner) {
-                selections[index]["reason"] = json!(shadow);
-            }
+                .map(|(index, id)| (id.as_str(), &entries[*index]))
+                .collect::<Vec<_>>(),
+        );
+        for ((index, _), loss) in valid.iter().zip(ranked) {
+            selections[*index]["effective"] = json!(loss.is_none());
+            selections[*index]["reason"] = json!(match &loss {
+                Some(reason) => reason.split(':').next().unwrap_or_default(),
+                None => "selected",
+            });
         }
         Ok(json!({
             "revision": configuration.revision,

@@ -32,7 +32,7 @@ host-operation provenance when a consumer calls it.
 ## Callback budgets and the clock
 
 The host answers each host call, including `next` and `time.sleep`, inside the running callback, so a callback runs
-once and makes at most 128 host calls. Offline runners without an interactive host replay the callback once per
+once and makes at most 512 host calls. Offline runners without an interactive host replay the callback once per
 host call instead.
 
 `Date.now()` and `new Date()` return the callback's start time, advanced only by each `time.sleep`'s `slept_ms`,

@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callback } from '../../../tests/mod_runner.mjs';
+import { callback, runnerSync } from '../../../tests/mod_runner.mjs';
 import { toolTable, chatRequest, anthropicRequest, breakpoint, Emitter, chatEvents, anthropicEvents } from './router.mjs';
 import { origin, profileEntry } from './profiles.ts';
 
@@ -676,4 +676,39 @@ test('the port hand-off shows a foreign holder neither the local token nor the r
     for (const child of children) child.kill();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('the /model picker lists the profiles this mod publishes on its routes channel', () => {
+  const published = [];
+  const producer = callback({ ...request, state: null, event: 'start', payload: {} }, ({ operation, arguments: args }) => {
+    if (operation === 'events.publish') return published.push(args) && { delivered: 1, dropped: 0 };
+    return { 'packages.list': installed, 'session.info': { thread_id: 'thread-1', provider: 'omd_profiles', model: 'work' }, 'store.get': null,
+      'routes.list': [route('work', 'included_subscription'), route('paid', 'metered')] }[operation];
+  });
+  assert.equal(producer.error, undefined);
+  const data = published.find(item => item.channel === 'routes').data;
+  const folder = new URL('../omd_model_picker/', import.meta.url);
+  const picker = JSON.parse(readFileSync(new URL('mod.json', folder), 'utf8'));
+  const base = { source: readFileSync(new URL('index.ts', folder), 'utf8'), filename: fileURLToPath(new URL('index.ts', folder)), entrypoint: 'index.ts',
+    api: picker.api, capabilities: picker.capabilities, settings: { layout: 'compact', brand: 'oh my diff' }, hook_budget_ms: 10000 };
+  const consumed = runnerSync({ ...base, state: null, event: 'channel', payload: { channel: 'omd_profiles/routes', data } });
+  assert.equal(consumed.error, undefined);
+  const input = { component: 'list', viewport: { columns: 100, rows: 40 }, props: { view_id: 'model', title: 'Choose model', subtitle: null, selected: 0,
+    items: [{ order: 0, label: 'model', description: '', current: true, disabled: false }] } };
+  const rendered = runnerSync({ ...base, state: consumed.state, event: 'intercept', name: '0', payload: { surface: 'render', input, original: input, origin: { caller: 'engine' } } });
+  assert.equal(rendered.error, undefined);
+  const texts = rendered.value.result.tree.filter(component => component.id?.startsWith('omd_picker_profile_')).map(component => component.text);
+  assert.deepEqual(texts, ['● work · work', '○ paid · paid · paid']);
+});
+
+test('/profile refresh addresses a credential whose label holds spaces', () => {
+  const label = 'GitHub (status line)';
+  const calls = [];
+  const refreshed = callback({ ...request, state: null, event: 'command', name: 'profile', payload: `refresh  ${label} ` }, ({ operation, arguments: args }) => {
+    calls.push({ operation, args });
+    return { 'credentials.list': [{ id: 'cred-gh', label, kind: 'secret', status: 'ready' }], 'credentials.request': { status: 'completed' } }[operation];
+  });
+  assert.equal(refreshed.error, undefined);
+  assert.deepEqual(calls.find(call => call.operation === 'credentials.request')?.args, { action: 'refresh', profile: 'cred-gh' });
+  assert.equal(refreshed.value.display, `Refresh completed for ${label}.`);
 });

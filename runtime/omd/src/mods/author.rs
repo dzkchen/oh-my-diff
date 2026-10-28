@@ -847,6 +847,11 @@ impl ModHost {
                         parsed
                             .keybindings
                             .get(key)
+                            .or_else(|| {
+                                parsed.key_contexts.iter().find_map(|context| {
+                                    context.keys.get(key).map(|binding| &binding.action)
+                                })
+                            })
                             .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?,
                     )?
                 };

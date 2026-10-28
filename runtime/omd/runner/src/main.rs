@@ -18,8 +18,8 @@ use std::time::Instant;
 const BOOTSTRAP: &str = include_str!("bootstrap.js");
 const DISPATCH: &str = include_str!("dispatch.js");
 const STEP: &str = include_str!("step.js");
-const INPUT_LIMIT: usize = 1_048_576;
-const OUTPUT_LIMIT: usize = 262_144;
+const INPUT_LIMIT: usize = 4_194_304;
+const OUTPUT_LIMIT: usize = 1_048_576;
 const CACHE_LIMIT: usize = 1_048_576;
 const HEAP_LIMIT: usize = 64 << 20;
 const FLAGS: &str = "--single-threaded --no-lazy --disallow-code-generation-from-strings --no-maglev --no-turbolev \

@@ -450,8 +450,10 @@ export default function activate(api: ModAPI) {
   };
 
   api.command('privacy', value => {
-    const [verb = '', ...rest] = String(value ?? '').trim().split(/\s+/);
-    if (verb === 'allow' && rest.length) return allow(rest.join(' '));
+    const text = String(value ?? '').trim();
+    const verb = /^\S*/.exec(text)![0];
+    const rest = text.slice(verb.length).trim();
+    if (verb === 'allow' && rest) return allow(rest);
     if (verb && verb !== 'status') return { display: 'Usage: /privacy [status] or /privacy allow PLACEHOLDER_ID|VALUE' };
     const config = configure(api.settings);
     const saved = load();

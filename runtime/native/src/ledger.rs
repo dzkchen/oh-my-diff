@@ -41,12 +41,12 @@ pub(crate) fn open(
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let task = Task::create(limits, directory.clone()).map_err(|e| e.to_string())?;
-            persist(
-                &directory,
-                "identity.json",
+            write_bytes(
+                &directory.join("identity.json"),
                 &serde_json::to_vec(&identity).map_err(|e| e.to_string())?,
-                false,
-            )?;
+                Durability::Volatile,
+            )
+            .map_err(|e| e.to_string())?;
             Ok(task)
         }
         Err(error) => Err(error.to_string()),

@@ -55,7 +55,7 @@ and weekly windows for ChatGPT and Claude accounts, and plan usage for Cursor ac
 | `/profile list` | Print the profiles. |
 | `/profile add` | Pick an account kind and sign in or enter its key (see above). |
 | `/profile remove NAME` | Remove a profile and, if no other profile uses it, its sign-in. Claude and Cursor accounts are removed with `/claude remove` and `/cursor remove`. |
-| `/profile refresh NAME` | Refresh a credential's sign-in. |
+| `/profile refresh NAME` | Refresh a credential's sign-in; `NAME` is its label or id and may contain spaces. |
 
 ## Needs and limits
 
