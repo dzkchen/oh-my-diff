@@ -70,6 +70,7 @@ Not installed with OMD+, and may change or go away. Install one yourself with `o
 | Mod | What it does | What it needs |
 | --- | --- | --- |
 | `omd_awake` | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
+| `omd_monitor` | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
 
 ## What mods cost
 
@@ -101,7 +102,7 @@ More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
 ## Plugins
 
-OMD+ stages three Codex plugins: `omd-anchored-edit`, `omd-artifact-reading` and `omd-code-execution`. They are
+OMD+ stages four Codex plugins: `omd-anchored-edit`, `omd-artifact-reading`, `omd-code-execution` and `omd-output-budget`. They are
 installed on disk but inert until you add them with `codex plugin add`; see [plugins/README.md](../plugins/README.md).
 OMD Core stages none.
 

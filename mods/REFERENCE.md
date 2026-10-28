@@ -38,9 +38,20 @@ Examples of experimental surfaces (the conformance registry, `mods/conformance/c
   (`terminal_focus_v1`).
 - Layout leaf `title` (`terminal_layout_title_v1`).
 - Power holds: the `power` grant, `power.hold` and `power.release` (`power_hold_v1`), added after 1.0.0.
+- `tools.original` (`tool_original_v1`), added after 1.0.0.
 
 Not provided: closure-based client modules, vendor kill switches, raw secret access, hosted mobile or desktop clients,
 rich children inside buttons (a button uses its typed `text`), audio, telemetry and pane drag.
+
+### Migration notes
+
+- Host calls per callback rise from 128 to 512 (`budget.hostCalls` starts at 512). The raise is additive: a mod that
+  counted calls or stayed under 128 keeps working. The other limits raised with it (the callback transport budget,
+  `process.exchange` and tool interceptor output, `api.state`, package files, view JSON, evidence pages and
+  registrations per mod) only admit more than before, with two visible changes: `evidence.read` without `max_bytes`
+  returns pages of up to 64 KiB instead of 16 KiB, and a `tool` replacement the model cannot take (over 64 KiB and
+  longer than the original, which for a retried call is the latest attempt's output) is dropped with a diagnostic
+  after the chain instead of being refused inside it. Either way the original output stands.
 
 ## Contents
 
@@ -155,7 +166,7 @@ Any other `OMD_MODE` value is rejected.
 
 #### Host call transport budget
 
-Host call arguments and results share a 128 KiB transport budget per callback.
+Host call arguments and results share a 1 MiB transport budget per callback.
 
 - A result that would exceed the remaining budget becomes a `host_result_limit` error the mod can catch; the
   operation has still run.
@@ -204,7 +215,7 @@ Capabilities name authority classes. A call or registration outside the package'
 | `composer` | `composer.read`, `composer.write`, `composer.suggest`, `prompts.*`, the `composer` event, the `composer_edit` and `composer_key` interceptors, `api.completion` and the `completion` replacement |
 | `packages` | `packages.list`, `packages.index`, `packages.preview`, `packages.apply`, `packages.reload`, `routes.add`, `routes.write`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
-| `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
+| `interception` | `tool` interceptors, `tools.invoke`, `tools.check`, `tools.original` (`tool_original_v1`) and the `tool_batch` replacement |
 | `input` | `input` and `mention` interceptors |
 | `middleware` | `host_operation`, `model_request` and `response_stream` interceptors and the middleware events |
 | `commands` | `api.command`, `command_list` and `command` interceptors, `settings.write` for the mod itself |
@@ -598,8 +609,8 @@ own source to a sandboxed `exec.run` process without relying on a workspace copy
 | --- | --- |
 | Assets declared per package | at most 16 |
 | `mod.json` | at most 8 KiB |
-| Each other package file | at most 128 KiB (`file_limit` names the file) |
-| Entrypoint and declared text together | at most 256 KiB per callback (`package_text_input_limit`) |
+| Each other package file | at most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | at most 1 MiB per callback (`package_text_input_limit`) |
 
 A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
 
@@ -724,7 +735,7 @@ the complete namespace or resets it without running any mod code.
 #### `evidence.write` and `evidence.read`
 
 `evidence.write {media_type, content, label?}` stores content-addressed evidence and returns a `ResourceRef`;
-`evidence.read` reads it back in bounded pages.
+`evidence.read {reference, cursor?, max_bytes?}` reads it back in pages of at most 64 KiB (`max_bytes` 1 to 65,536, by default the maximum).
 
 #### `api.state` compare-and-swap
 
@@ -740,7 +751,7 @@ fails with the transient `state_conflict`, because an operation that already ran
 
 The location of `api.state` follows the manifest's `state_scope` (`state_scopes_v1`).
 
-- `"store"` (the default) keeps one state of at most 192 KiB in the mod store, shared by every OMD process that
+- `"store"` (the default) keeps one state of at most 512 KiB in the mod store, shared by every OMD process that
   uses that store.
 - `"thread"` keeps one state per session thread and selection scope, so a project copy cannot inherit a same-ID
   user copy's state. It forks with the thread and is removed when the thread is deleted. Routing and compaction
@@ -755,7 +766,7 @@ Mods never run with the home directory or filesystem root as the session directo
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
 fails with `state_thread_unavailable`; in the TUI, a slash command typed before the session's thread exists runs once
-it does. A callback result, including its state, stays within 256 KiB.
+it does. A callback result, including its state, stays within 1 MiB.
 
 #### `state_version` migration of thread and checkout state
 
@@ -1388,7 +1399,7 @@ none starts paid work implicitly.
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the callback waits in place, holding no
   runtime lock, and the wait does not count as own time; cancellation wakes it and ends the callback.
-- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 128 host calls.
+- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 512 host calls.
 - `api.time.after(key, delay_ms, handler)` and `api.time.every(key, interval_ms, handler)` register during
   activation (16 ms to 24 h) and return `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`.
@@ -2138,7 +2149,7 @@ executor. Only the listed fields may change:
 
 | Surface | Replaceable | `next` resolves to | A handler may return |
 | --- | --- | --- | --- |
-| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 64 KiB, an answer without calling `next`, or `{deny}` |
+| `tool` | `tool`, `arguments` | `{output, success, truncated, bytes}` | that result, a changed `{output, success}` of at most 256 KiB (the model sees at most 64 KiB, or the original's length if larger; a longer replacement is dropped with a diagnostic and the original stands), an answer without calling `next`, or `{deny}` |
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route` (one of `routes`), `effort`, `sections` | `{route, effort, cache}` | what `next` returned, `{deny}`, or a synthetic `{response}` without calling `next` |
@@ -2165,9 +2176,10 @@ shape.
 
 - Native, MCP (retarget by the model-visible name, such as `mcp__server__tool`), mod, subagent, code-mode and
   batched calls all pass through the same chain with their own call IDs.
-- Output beyond 48 KiB arrives truncated with `truncated: true`.
+- Output beyond 256 KiB arrives truncated with `truncated: true`; `next` also resolves with the output's complete `bytes`, and
+  [`tools.original`](#toolsoriginal-tool_original_v1) keeps the complete text as evidence.
 - For a code-mode call, `next` also resolves with `value` when a mod intercepting `tool` requires `code_mode_values_v1`, the structured result the cell receives (omitted above
-  32 KiB or when it and `output` together exceed 48 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
+  32 KiB or when it and `output` together exceed 256 KiB), and an answer given without calling `next` may carry `value` (at most 64 KiB) for the cell instead of
   `output` (`code_mode_values_v1`). The model and every other caller see `output`. A `value` returned after `next`
   ran is ignored: the cell keeps the executed result.
 - A tool or host-operation answer runs nothing: the host records the answering mod as `answered_by` on
@@ -2254,6 +2266,19 @@ interceptors, tool and output callbacks, timers and channel events that run mean
 A tool interceptor can hold a call for a person with `terminal.prompt`. The wait does not count against its budget;
 cancelling the call stops the wait, and a later answer is discarded.
 
+#### `tools.original` (`tool_original_v1`)
+
+`tools.original {call_id}` keeps the complete output of a call whose result is passing through a `tool` interceptor
+chain as the mod's own evidence, up to 16 MiB (`blob_too_large` beyond), and returns `{reference, sha256, bytes}`. `reference` is a
+`ResourceRef` to read with `evidence.read` in pages of at most 64 KiB, `sha256` hashes the complete text and `bytes` is its length.
+Call it after `await next(e)` in the same callback with the input's `call_id`: the `output` a handler sees is cut at 256 KiB,
+and `next` resolves with the complete length as `bytes` so the handler can tell. It needs `interception`.
+
+It fails with `tool_original_unavailable` when the call's result is not in a chain, such as before `next` has
+resolved, after the callback ended, for a call an interceptor answered without running it, or for an unknown call.
+A retried call (`:retryN`) yields its latest attempt's original, and that `next` also resolves with `bytes`. Only a host call made from inside that call's own `tool` chain can read it; a timer, another event or another call's chain gets `tool_original_unavailable`.
+The evidence is the mod's rotating evidence (the newest 1,024 records per mod and repository are kept, older ones are dropped down to 768, and the oldest go first while the directory's blobs exceed 256 MiB).
+
 #### Handler failures and skipped interceptors
 
 A handler that throws, times out or returns an invalid result before calling `next` is skipped and the chain
@@ -2291,7 +2316,7 @@ chain against queued engine results (`{"error":...}` rejects) and returns it wit
 `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at most 4 KiB, 16 KiB per call in total,
 added after any interceptor result at any output size.
 
-- Handlers receive the first 48 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
+- Handlers receive the first 256 KiB as `text`, the last 16 KiB as `tail` when the output is longer, and the total
   `bytes`.
 - Image and audio items appear as `[image]` and `[audio]` markers.
 - Tool-output callbacks may call every host operation their grants allow in lifecycle events, such as
@@ -2303,7 +2328,8 @@ added after any interceptor result at any output size.
 mod registered. The merged call runs through ordinary admission and approvals, and results fan out by call id: the
 merged tool returns an object keyed by call id whose values are the output text. A merge with
 `success_per_call: true` (`tool_batch_success_v1`) instead reads each value that is exactly `{output, success}` as
-that call's output and own success flag; any other value stays text.
+that call's output and own success flag; any other value stays text. `tool` interceptors see the merged call with
+call ID `<batch id>-merge-<index>` and that `batch` position.
 
 #### `intercept('tool_specs')`
 
@@ -2371,7 +2397,7 @@ The protocol-named transports are removed.
 
 #### `process.exchange`
 
-`process.exchange` returns messages until the next one would push the encoded `messages` past 48 KiB (at most 64,
+`process.exchange` returns messages until the next one would push the encoded `messages` past 256 KiB (at most 64,
 and always at least one), so a result fits a callback's receipt budget; the rest stays queued for the next call.
 
 Once the process exits, its readers get one second to deliver what it wrote. Output queued by then is returned
@@ -2764,7 +2790,7 @@ Each item in the view carries:
 - the byte size
 - the `images` count
 
-The view holds the newest items, at most 2048, that fit the callback's 1 MiB runner request, in order and keyed by
+The view holds the newest items, at most 2048, that fit the callback's 4 MiB runner request, in order and keyed by
 their original `index`.
 
 #### History edit rules
@@ -3077,7 +3103,11 @@ Interceptors of these surfaces skip their own mod's calls like every other surfa
 A manifest's `codex_config` turns on Codex features the package depends on, for every lead thread the session
 starts, resumes or forks while the package is active: `{"codex_config": {"tools.update_plan.enabled": true}}`.
 
-- Keys come from a closed host allowlist (`tools.update_plan.enabled`) and must be `true`.
+- Keys come from a closed host allowlist (`tools.update_plan.enabled`, `tool_output_token_limit.raise`) and must be `true`.
+- `tool_output_token_limit.raise` sets the thread's `tool_output_token_limit` to at least 65,536 tokens (about 256 KiB),
+  keeping a larger configured value. `exec_command` and `write_stdin` still default to 10,000 tokens unless the call
+  sets a larger `max_output_tokens`, which a `tool` interceptor can do. It makes no output smaller or safer: the
+  package must budget model-visible outputs itself, or every long output reaches the model whole.
 - The package must list `codex_config_v1` in `required_features`.
 - Anything else fails inspection with `invalid_codex_config`.
 
@@ -3281,7 +3311,7 @@ component instance. `e` is `{component, id, surface, viewport: {columns, rows}, 
 - hide: return `{tree: []}`.
 
 Trees hold `box`, `line`, `text`, `markdown`, `code`, `diff`, `list` and `native` components (64 components, depth
-6, unique ids, 64 KiB); the native node appears at most once. Hooks compose as one continuation chain in
+6, unique ids, 256 KiB); the native node appears at most once. Hooks compose as one continuation chain in
 interceptor order, so unrelated wrappers nest, and each hook sees the props the hook before it passed on.
 
 #### Render components
@@ -3667,7 +3697,7 @@ input, or a due `every: {ms, tick}` tick.
 - `pointer(state, {kind: 'pointer', column, row, action, button})` receives pointer events over the region with
   `pointer: true`, consecutive moves coalesced.
 - `view(state, ui)` returns a render tree (`box` without style, `line`, `text`, `markdown`, `code`, `diff`, `list`;
-  at most 64 components, depth 6, 64 KiB).
+  at most 64 components, depth 6, 256 KiB).
 
 `ui` is `{columns, rows, props, post(data)}`, where `rows` is the node's `height` and 0 when it has none (auto
 height). `post` hands the mod's `component_post` hooks `{component, module, data}` at most once per frame (a later
@@ -3712,7 +3742,7 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 
 ##### `raster` component
 
-`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–200 × 1–40 cells that shows
+`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–512 × 1–256 cells that shows
 `alt` until its first frame and clips to the component's width.
 
 - An omitted `width` fills the region's width.
@@ -3729,16 +3759,33 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 id). `cells` lists the rect's cells row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
 null.
 
+`terminal.blit {key, rect, packed}` (`terminal_raster_packed_v1`) passes the same cells as base64 of `rect.width ×
+rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
+
+- A code point is one printable column (no controls, combining marks or wide characters).
+- A color is `0x00RRGGBB`, `0x01000000` for the theme default or `0x02000000 | index` for a 0–255 palette color;
+  under `NO_COLOR` every cell draws in the default colors.
+- A cell takes 16 bytes of base64, about half a colored JSON cell, and the host decodes it without a JSON tree. The
+  runner has no `btoa`, so encode with a small helper such as the one in the `raster_wave` example.
+- A callback's host calls share its 128 KiB receipt budget, so one callback blits about 8,000 packed cells (160 × 48)
+  or 4,500 colored JSON cells. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
+  change.
+- External clients receive `packed` updates as `cells`.
+
 | Error | When |
 | --- | --- |
 | `terminal_blit_not_owned` | The raster is another mod's. |
 | `terminal_blit_unknown` | The terminal has not received the raster in a view yet, such as one returned by the same callback. |
 | `terminal_blit_too_large` | One call is over 256 KiB. |
 | `terminal_blit_limit` | A blit to a 17th key. |
+| `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell, or has a code point or color outside the rules above; the message names the cell. |
 
-Updates queue per raster and apply one per 16 ms frame, so a timer tick can enqueue an animation. At 32 queued
-updates or 256 KiB the call returns `{status: 'backpressure', retry_after_ms}` instead of `{frame, queued,
-frame_ms}`.
+Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells
+overwriting earlier ones, so one timer tick can draw a frame in several calls. The call returns `{frame, queued,
+frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged after it). Merged
+cells never take more than the raster, so the call returns `{status: 'backpressure', retry_after_ms: 250}` only while
+a pending frame stays undrawn for four ticks (an inactive tab or unplaced layout). Image and pixel frames keep the
+pacing below.
 
 ##### `terminal.blit` images
 
@@ -3749,14 +3796,14 @@ cells by the same rule and renderers as `image` (Kitty placeholders, iTerm2 inli
 
 - The newest frame replaces the previous one, a cells blit replaces the frame and a frame replaces the cells.
 - It is never stored as a resource, so prefer it to a new `image` resource per frame (which exhausts the record
-  quota) or to cells (about 200 × 80 effective pixels).
+  quota) or to cells (two effective pixels a cell).
 - External clients whose renderer `formats` include the media type receive the frame as sent, other clients with
   `cells` receive half-block cells.
 
 | Error | When |
 | --- | --- |
 | `terminal_blit_image_invalid` | A wrong media type, bad base64 or an image that does not decode within 4096 px per side. |
-| `terminal_blit_invalid` | Both or neither of `image` and `rect`/`cells` are passed. |
+| `terminal_blit_invalid` | Not exactly one of `cells`, `packed`, `image` and `pixels` is passed. |
 
 Both refuse before queueing.
 
@@ -3880,7 +3927,7 @@ with `other`. It returns `{status: 'accepted', values, other?}` or `declined` wh
 
 ##### `terminal.blit`
 
-`terminal.blit {key, rect, cells}` (`terminal_raster_v1`, experimental) queues a raster update, described in
+`terminal.blit {key, rect, cells | packed}` (`terminal_raster_v1`, experimental) queues a raster update, described in
 [Raster, pointer and overlays](#raster-pointer-and-overlays-terminal_raster_v1).
 
 ##### `terminal.pane` and `terminal.panes`
@@ -4551,7 +4598,7 @@ and example through the real host and reports any it refuses.
 
 #### Registration limits
 
-- At most 16 tools and 16 commands per mod.
+- At most 32 tools and 32 commands per mod.
 - Commands are invoked as `/<id>:<name>`; the bare `/<name>` works only when no built-in command or other mod uses
   that name.
 - Mod ids use `a-z`, `0-9` and `_` up to 24 bytes and never equal the host `origin.caller` labels `model`,
@@ -4562,8 +4609,8 @@ and example through the real host and reports any it refuses.
 
 Keybindings:
 
-- Each mod's view or patch has at most 12 keybindings.
-- The view composed from every mod has at most 64, and a key bound by two mods rejects the later mod's patch.
+- Each mod's view or patch has at most 24 keybindings.
+- The view composed from every mod has at most 128, and a key bound by two mods rejects the later mod's patch.
 
 Components:
 
@@ -4584,7 +4631,7 @@ Text sizes:
 - `text`, `code`, `markdown`, `diff` and `document` are at most 49,152 bytes. The terminal keeps recent markdown
   renders, so a large `markdown` costs its parse, about 1 ms per KiB, only when its text or width changes; stream
   into `code` or `text`.
-- A view or patch is at most 64 KiB of JSON and the composed view 256 KiB. Those JSON limits still apply to
+- A view or patch is at most 256 KiB of JSON and the composed view 1 MiB. Those JSON limits still apply to
   text-heavy views, and escaping can double a text (`\n`, `"` and `\` take two bytes), so clip long text on its
   `JSON.stringify` size rather than its 48 KiB length.
 - Text fields refuse control characters except newlines where a field is multi-line.
@@ -4960,7 +5007,7 @@ A `.tsx` file in any subdirectory is an asset source too (skipping `node_modules
 - A relative import of `./row.tsx` becomes `./row.ts` in the output.
 - List the compiled name in `mod.json` `assets` (`"row.ts"`). The host accepts only `.ts`, `.mjs` and `.json` assets,
   and `package` ships only the compiled files, never the `.tsx`.
-- The 128 KiB package file limit applies to each compiled file.
+- The 512 KiB package file limit applies to each compiled file.
 - A hand-written `.ts` beside a `.tsx` fails with `jsx_entrypoint_conflict`.
 
 #### Elements and children
@@ -5439,7 +5486,7 @@ host-operation provenance when a consumer calls it.
 ### Callback budgets and the clock
 
 The host answers each host call, including `next` and `time.sleep`, inside the running callback, so a callback runs
-once and makes at most 128 host calls. Offline runners without an interactive host replay the callback once per
+once and makes at most 512 host calls. Offline runners without an interactive host replay the callback once per
 host call instead.
 
 `Date.now()` and `new Date()` return the callback's start time, advanced only by each `time.sleep`'s `slept_ms`,

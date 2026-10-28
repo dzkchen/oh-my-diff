@@ -365,6 +365,7 @@ export default function activate(api: ModAPI): void {
     if (channel !== `${api.package.id}/login`) return;
     if (running()) return void say('A Claude login is already running; finish it or wait for it to end', true);
     const { billing, account } = data as Row;
+    if (typeof account !== 'string' || !ACCOUNT.test(account) || account === 'api') return void say('Claude login did not start: invalid account name', true);
     const mod = account === 'default' ? '' : installed();
     if (mod === null) return void say('Claude setup could not find the installed mod; enable it in /mods and try again', true);
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });

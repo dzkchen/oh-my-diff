@@ -184,7 +184,7 @@ export type TerminalComponent =
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean | 'all' }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number; pointer?: boolean }
-  /** A keyed canvas of `width`×`height` cells drawn by `terminal.blit`; `alt` shows until the first frame. */
+  /** A keyed canvas of `width`×`height` cells (up to 512×256) drawn by `terminal.blit`; `alt` shows until the first frame. */
   | { type: 'raster'; id: string; label: string; alt: string; width?: number; height?: number; pointer?: boolean }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
   /** A region drawn by the mod's `api.component(module, ...)`; `keys` takes focus on click or Tab, `pointer` sends pointer events. */
@@ -412,7 +412,7 @@ export interface HostOperations {
   'process.which': { arguments: { names: string[]; sandbox?: 'none' }; result: { found: { name: string; path: string; sha256: string }[] } };
   /** Raster input is thread-scoped, bounded to 128 messages/256 KiB, and stops the process on overflow or a two-second blocked write. `pixels` needs `raster` and the `raster_pixels_v1` feature. */
   'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string | null>; framing?: 'content-length' | 'ndjson' | 'raw'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none'; raster?: string; keys?: string; pixels?: boolean; stdin?: 'null' }; result: { session: string; running: true } };
-  /** One call returns messages until the next would push their encoded size past 48 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
+  /** One call returns messages until the next would push their encoded size past 256 KiB (at most 64, at least one); the rest stays queued. Under `raw` framing, `send` holds strings and `messages` are `ProcessChunk`s. */
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -441,6 +441,8 @@ export interface HostOperations {
   'tools.list': { arguments: null; result: ToolInventory };
   'tools.invoke': { arguments: ToolCall; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
   'tools.check': { arguments: ToolCall; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
+  /** Requires tool_original_v1: stores the complete original output of a call in a `tool` interceptor chain as the mod's evidence; call it after `await next(e)` (`tool_original_unavailable` otherwise). */
+  'tools.original': { arguments: { call_id: string }; result: { reference: ResourceRef; sha256: string; bytes: number } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -487,8 +489,8 @@ export interface HostOperations {
   'terminal.panel': { arguments: TerminalPanel; result: { shown: true } };
   'terminal.notice': { arguments: { text: string; kind?: 'info' | 'warning' | 'error'; placement?: 'toast' | 'status'; ttl_ms?: number; id?: string; clear?: false } | { id: string; placement?: 'toast' | 'status'; clear: true } | { text: string; kind?: 'info' | 'warning' | 'error'; placement: 'transcript'; audience?: 'user' | 'model'; tool_call_id?: string };
     result: { shown: true; model?: boolean } | { cleared: boolean } };
-  /** The `pixels` form needs the `raster_pixels_v1` feature. */
-  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
+  /** The `pixels` form needs the `raster_pixels_v1` feature and `packed` the `terminal_raster_packed_v1` feature: base64 of little-endian u32 `[codePoint, fg, bg]` per cell, colors `0x00RRGGBB`, `0x01000000` (theme default) or `0x02000000 | index`. */
+  'terminal.blit': { arguments: { key: string; rect: { x: number; y: number; width: number; height: number }; cells: TerminalCell[] } | { key: string; rect: { x: number; y: number; width: number; height: number }; packed: string } | { key: string; image: { media_type: 'image/png' | 'image/jpeg'; base64: string } } | { key: string; pixels: { source: string; format: 'rgb' | 'rgba'; width: number; height: number; sequence: number } };
     result: { frame: number; queued: number; frame_ms: number } | { status: 'backpressure'; retry_after_ms: number } };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   /** `route` names a configured worker route the mod may use, or `lead` for the thread's lead route when it lists the mod in `mods`. */
@@ -570,7 +572,7 @@ export type AdmissionPackage = { id: string; version: string; sha256: string; so
 export type ToolSpecEntry = { name: string; description: string; parameters: Json | null; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
+  tool: { input: ToolCall & { call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; bytes?: number; call_id?: string; value?: Json }; answer: { output: string; success: boolean; value?: Json } | { deny: string } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; namespace: string; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   command_list: { input: { commands: CommandRow[] }; result: { commands: CommandRow[] }; answer: never };

@@ -357,6 +357,14 @@ else if (argv[0] === 'auth') {
     assert.deepEqual(JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8')).accounts.map(account => account.name), ['default', 'work']);
     assert.match(setup('stray', 'api', join(root, 'elsewhere')).stderr, /claude_account_directory_outside_store/);
     await assert.rejects(stat(join(store, 'routes/claude/accounts/stray')));
+    const together = await Promise.all(['p', 'q'].map(name => new Promise(done => {
+      const child = spawn(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), name, 'api', join(store, `routes/claude/accounts/${name}`)],
+        { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: 'ignore' });
+      child.on('close', done);
+    })));
+    assert.deepEqual(together, [0, 0]);
+    assert.deepEqual(JSON.parse(await readFile(join(store, 'routes/claude/route.json'), 'utf8')).accounts.map(account => account.name).sort(), ['default', 'p', 'q', 'work']);
+    for (const name of ['p', 'q']) assert.equal(setup(name, 'remove').status, 0);
     const removed = setup('work', 'remove');
     assert.equal(removed.status, 0, removed.stderr);
     assert.deepEqual((await host()).routes.map(route => route.name), ['claude']);
@@ -469,6 +477,7 @@ test('login runs as a background process that says the sign-in link once and rep
   assert.deepEqual(code(output.state).calls.find(call => call.operation === 'process.exchange').arguments, { session, wait_ms: 0, send: ['abc\n'] });
   for (const waiting of [code(null), code(output.state, false)]) assert.equal(waiting.calls.some(call => call.operation === 'process.exchange' && call.arguments.send), false);
   assert.equal(channel('login', { billing: 'api' }, output.state).calls.some(call => call.operation === 'process.start'), false);
+  for (const account of [undefined, '../x', 'api']) assert.equal(channel('login', { billing: 'api', account }, null).calls.some(call => call.operation === 'process.start'), false);
   const entry = started => ({ billing: 'api', out: '', shown: false, started });
   const crashed = { claude_login_1_old: entry(clock - 31 * 60_000), claude_login_2_other: entry(clock) };
   const second = channel('login', { billing: 'subscription', account: 'default' }, { login: { ...output.state.login, ...crashed } }, false, '77-1700000000001');

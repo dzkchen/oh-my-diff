@@ -139,7 +139,7 @@ export default function activate(api: ModAPI) {
       const first = period[0];
       const horizon = Math.max(300000, (current.minutes ?? 0) * 6000);
       const rate = period.length > 1 && current.at - first.at >= horizon ? (current.used - first.used) / (current.at - first.at) : null;
-      const projected = rate !== null && current.resets !== null && !passed ? Math.round(current.used + rate * (current.resets - now)) : null;
+      const projected = rate !== null && current.resets !== null && !passed ? Math.max(0, Math.round(current.used + rate * (current.resets - now))) : null;
       return { name: `${account(current.scope)} ${windowName(current.minutes)}`, current, passed, projected, samples: period.length, spanned: current.at - first.at };
     }).sort((a, b) => a.current.scope.localeCompare(b.current.scope) || (a.current.minutes ?? 0) - (b.current.minutes ?? 0));
   };
@@ -315,7 +315,7 @@ export default function activate(api: ModAPI) {
   };
   api.command('budget', value => {
     const amount = String(value ?? '').trim();
-    return amount !== '' && Number(amount) >= 0 ? write({ budget_usd: Number(amount) }, Number(amount) ? `Soft budget ${usd(Number(amount))}` : 'Soft budget removed')
+    return amount !== '' && Number.isFinite(Number(amount)) && Number(amount) >= 0 ? write({ budget_usd: Number(amount) }, Number(amount) ? `Soft budget ${usd(Number(amount))}` : 'Soft budget removed')
       : { display: `usage: /omd_usage:budget USD (0 removes it; now ${budget === null ? 'none' : usd(budget)})` };
   }, { description: 'Set a soft spending budget in USD for warnings only (0 removes it)' });
   api.command('categories', value => {

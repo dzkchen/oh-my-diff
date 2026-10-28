@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "50dd5b2b85fb949929cda22080e632709c29ffdc471186bba61826a2bb2ef7d9"
+    "sha256": "f78fafb5021fa07f1558e7bec6ead89484eb8f2405f80c0010d83f418c386203"
   },
   "plugins": {
     "omd-anchored-edit": {
@@ -31,14 +31,22 @@
         "skill"
       ],
       "mod_required": false
+    },
+    "omd-output-budget": {
+      "version": "1.0.0",
+      "extension_types": [
+        "plugin",
+        "skill"
+      ],
+      "mod_required": false
     }
   },
   "files": {
-    ".agents/plugins/marketplace.json": "04b95b0e31386e9e08964a840210aced7a9b3191d56f3e1262944d6dd08a9d03",
-    "plugins/omd-anchored-edit/.codex-plugin/omd.json": "4bbef6f272777f8a74bfb2f83edb3ac5f005780cd5d88fe0c49f66b46942da24",
+    ".agents/plugins/marketplace.json": "5f3aa3d497f99f4af7a84b38b4ee1f1cc68f69db1a3a5fa623eac1a1480edbf8",
+    "plugins/omd-anchored-edit/.codex-plugin/omd.json": "238b2873c3cd936118d71db84dee7dc6c248c59c45e7c22848abc148823ba2e9",
     "plugins/omd-anchored-edit/.codex-plugin/plugin.json": "9db0f6a6a44bd389e9cd45d54c6581a0c01f7c52d67d722910a4b91a48c1ed13",
     "plugins/omd-anchored-edit/README.md": "d757cbf718b37e60ff3d8c052dbaf9107a8d0d0f1b88f96b2f6cd528e18af79a",
-    "plugins/omd-anchored-edit/mod/index.ts": "6bd5d24a3c4879fa375e9f766863916af8543f89881e29d893dfc048cc88e926",
+    "plugins/omd-anchored-edit/mod/index.ts": "935e4b97633e618732308796f2c8cfc1c680098ecdc50ef314be1103a9a939b7",
     "plugins/omd-anchored-edit/mod/mod.json": "d0e800d5614b56e5ad97fe00acfc15dcc423e2aec66bed970bf321ed4454ff85",
     "plugins/omd-anchored-edit/skills/omd-anchored-edit/SKILL.md": "9a1fcb82de5db7bc9179e4b7383150c160f3757f3031cfa3d9d115cf7ffc9ae6",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "3a9a9b180044c7bf3641b205f24b2f48191c626772314d0731345006050c11b6",
@@ -52,6 +60,13 @@
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "aa223c67dc91727f7438e8381748a149516bc4de3fad4987be8ca08da0746425",
     "plugins/omd-code-execution/kernels/bun.mjs": "2dd608e4d3274ef6e50cc6d130d7576be0b47ad6431d3229e52153d665f28b39",
     "plugins/omd-code-execution/kernels/python.py": "7e1d638bf3da282fe9b6870f15c9ee61e172dd3edd4caae146290becf0084bc2",
-    "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "b77bb900ba2977c99bd2d9c7a7ac8c26c2d67925322d4f81102e4d180b7c407a"
+    "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "b77bb900ba2977c99bd2d9c7a7ac8c26c2d67925322d4f81102e4d180b7c407a",
+    "plugins/omd-output-budget/.codex-plugin/omd.json": "f1dad2fe8b53221d7fc226b81278d2f58796ce99272fa3b4251e870a88bfdabe",
+    "plugins/omd-output-budget/.codex-plugin/plugin.json": "20d4254569b8a1f74b34e71ab803bbfdf5a4be56401d8907a4ac7c0fafb2fbec",
+    "plugins/omd-output-budget/README.md": "c7696ac4ca57ca108a494b335e19fb0d91facc184b5fa3aca806673fee2c85f7",
+    "plugins/omd-output-budget/mod/budget.ts": "69335a65d3225069b64caa0d071b91ba6ff4bf7d20ffee2e7b0c99fee510ec59",
+    "plugins/omd-output-budget/mod/index.ts": "2d636be1e9eb214d68aa9af0c654f3cf7b1933cb3eac11ede941cd9bb4689206",
+    "plugins/omd-output-budget/mod/mod.json": "46b2d6661d6b88e2c5c2bec21c4a30dc20dae8ad8ebf76ac46258f7604ee8f1b",
+    "plugins/omd-output-budget/skills/omd-output-budget/SKILL.md": "b39704bfa570f8d30e0c2d4d2bbdecaee35f86eb3c0c1708cb4faf8bb7ef3e1c"
   }
 }

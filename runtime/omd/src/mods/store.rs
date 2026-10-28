@@ -333,14 +333,22 @@ pub(super) fn refuse_second_copy(
 }
 
 pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
-    let (package, source, hash, _, _) = inspect_package(path, false)?;
+    let (package, source, hash, _, _, _) = inspect_package(path, false, None)?;
     Ok((package, source, hash))
+}
+
+pub(super) fn package_lifecycle(
+    path: &Path,
+    event: &str,
+) -> Result<(ModPackage, String, Option<Vec<u8>>)> {
+    let (package, _, hash, _, _, script) = inspect_package(path, false, Some(event))?;
+    Ok((package, hash, script))
 }
 
 pub(super) fn package_with_assets(
     path: &Path,
 ) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
-    let (package, source, hash, assets, _) = inspect_package(path, true)?;
+    let (package, source, hash, assets, _, _) = inspect_package(path, true, None)?;
     Ok((package, source, hash, assets))
 }
 
@@ -362,7 +370,7 @@ pub(super) fn verified_package(path: &Path) -> Result<(ModPackage, String)> {
 }
 
 fn inspect_verified(path: &Path) -> Result<(ModPackage, String)> {
-    let (package, _, hash, _, files) = inspect_package(path, false)?;
+    let (package, _, hash, _, files, _) = inspect_package(path, false, None)?;
     let mut verified = VERIFIED_PACKAGES.lock().map_err(failure)?;
     if verified.len() >= 256 {
         verified.clear();
@@ -388,9 +396,14 @@ type InspectedPackage = (
     String,
     BTreeMap<String, String>,
     Vec<(PathBuf, FileStamp)>,
+    Option<Vec<u8>>,
 );
 
-fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage> {
+fn inspect_package(
+    path: &Path,
+    collect_assets: bool,
+    lifecycle: Option<&str>,
+) -> Result<InspectedPackage> {
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
@@ -411,20 +424,25 @@ fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage
     hash.update(package.entrypoint.as_bytes());
     hash.update([0]);
     hash.update(&source);
+    let mut captured = None;
     for (event, script) in &package.lifecycle {
         hash.update([0]);
         hash.update(event.as_bytes());
         hash.update([0]);
         hash.update(script.as_bytes());
         hash.update([0]);
-        hash.update(read_file(script)?);
+        let content = read_file(script)?;
+        hash.update(&content);
+        if lifecycle == Some(event.as_str()) {
+            captured = Some(content);
+        }
     }
     let mut assets = BTreeMap::new();
     let mut text = source.len();
     for asset in &package.assets {
         let content = read_file(asset)?;
         text += std::str::from_utf8(&content).map_or(0, str::len);
-        if text > 256 * 1024 {
+        if text > 1024 * 1024 {
             return Err(failure(format!("package_text_input_limit: {}", package.id)));
         }
         hash.update([0]);
@@ -441,6 +459,7 @@ fn inspect_package(path: &Path, collect_assets: bool) -> Result<InspectedPackage
         format!("{:x}", hash.finalize()),
         assets,
         files,
+        captured,
     ))
 }
 
@@ -450,8 +469,8 @@ pub struct ModStore {
     user: Option<String>,
 }
 
-pub(super) const STATE_LIMIT: usize = 196_608;
-pub(super) const PACKAGE_FILE_LIMIT: u64 = 131_072;
+pub(super) const STATE_LIMIT: usize = 524_288;
+pub(super) const PACKAGE_FILE_LIMIT: u64 = 524_288;
 const SECURITY_EVENTS: &str = "security-events.jsonl";
 const SECURITY_EVENT_LIMIT: usize = 65_536;
 
@@ -711,7 +730,7 @@ impl ModStore {
             "mods.json" => brokered_grants(&self.root)?,
             _ => None,
         };
-        let Some((mut generation, current)) = brokered else {
+        let Some((generation, current)) = brokered else {
             return self.write_staged(name, &bytes, || Ok(()));
         };
         let selected = value["mods"]
@@ -726,30 +745,25 @@ impl ModStore {
             .filter(|grant| selected_record(grant) && !current.contains(*grant))
             .cloned()
             .collect::<BTreeSet<_>>();
-        self.write_staged(name, &bytes, || {
-            if !added.is_empty() {
-                let granted = current.union(&added).collect::<BTreeSet<_>>();
-                generation = crate::broker::authorized(
-                    "grants.put",
-                    json!({"store": self.root, "generation": generation, "grants": granted}),
-                )?["generation"]
-                    .as_u64()
-                    .unwrap_or_default();
-            }
-            Ok(())
-        })?;
         let kept = current
             .union(&added)
             .filter(|grant| selected_record(grant))
             .cloned()
             .collect::<BTreeSet<_>>();
-        if kept.len() != current.len() + added.len() {
-            let _ = crate::broker::call(
-                "grants.put",
-                json!({"store": self.root, "generation": generation, "grants": kept}),
-            );
-        }
-        Ok(())
+        self.write_staged(name, &bytes, || {
+            if kept != current {
+                let put = if added.is_empty() {
+                    crate::broker::call
+                } else {
+                    crate::broker::authorized
+                };
+                put(
+                    "grants.put",
+                    json!({"store": self.root, "generation": generation, "grants": kept}),
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -775,6 +789,7 @@ impl ModStore {
         let temporary = self
             .root
             .join(format!(".{name}.{}.tmp", std::process::id()));
+        let _ = std::fs::remove_file(&temporary);
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)

@@ -1,7 +1,7 @@
 use super::*;
 
-pub const MOD_KEY_LIMIT: usize = 12;
-pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
+pub const MOD_KEY_LIMIT: usize = 24;
+pub const MOD_COMPOSED_KEY_LIMIT: usize = 128;
 pub const MOD_COMPONENT_LIMIT: usize = 64;
 pub const MOD_TEXT_BYTES: usize = 49_152;
 
@@ -1766,8 +1766,8 @@ impl ModComponent {
             } => {
                 identified(id, label, ids)
                     && visible(alt, 256)
-                    && width.is_none_or(|width| (1..=200).contains(&width))
-                    && height.is_none_or(|height| (1..=40).contains(&height))
+                    && width.is_none_or(|width| (1..=512).contains(&width))
+                    && height.is_none_or(|height| (1..=256).contains(&height))
             }
             Self::Module {
                 id,
@@ -2140,7 +2140,7 @@ impl ModViewPatch {
                 "surface_styles",
                 !valid_surface_styles(&patch.surface_styles),
             ),
-            ("size", serde_json::to_vec(&patch)?.len() > 65_536),
+            ("size", serde_json::to_vec(&patch)?.len() > 262_144),
         ]
         .into_iter()
         .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
@@ -2345,7 +2345,7 @@ impl ModView {
         }
     }
 
-    /// Each mod's view or patch keeps 12 keys; the view composed from every mod may hold more.
+    /// Each mod's view or patch keeps 24 keys; the view composed from every mod may hold more.
     fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
         let view: Self = serde_json::from_value(value)?;
         let invalid = [
@@ -2412,7 +2412,7 @@ impl ModView {
                 "surface_styles",
                 !valid_surface_styles(&view.surface_styles),
             ),
-            ("size", serde_json::to_vec(&view)?.len() > 262_144),
+            ("size", serde_json::to_vec(&view)?.len() > 1_048_576),
         ]
         .into_iter()
         .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))

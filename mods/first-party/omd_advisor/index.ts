@@ -44,7 +44,7 @@ async function fingerprint(value: string): Promise<string> {
 
 function brief(evidence: Record<string, unknown>): string {
   const head = { turn_id: evidence.turn_id, workspace_sha256: evidence.workspace_sha256 };
-  const records = Array.isArray(evidence.records) ? evidence.records : [];
+  const records = (Array.isArray(evidence.records) ? evidence.records : []).map(record => object(record) && typeof record.text === 'string' ? { ...record, text: redact(record.text) } : record);
   const render = (kept: unknown[]) => JSON.stringify({ ...head, omitted_older_records: records.length - kept.length, records: kept });
   const kept: unknown[] = [];
   for (let index = records.length - 1; index >= 0 && kept.length < 16 && bytes(render([records[index], ...kept])) <= 6000; index--) kept.unshift(records[index]);
@@ -269,9 +269,7 @@ export default function activate(api: ModAPI) {
     let parsed: unknown = null;
     if (loaded.ok) try { parsed = JSON.parse(loaded.text); } catch { parsed = null; }
     if (!object(parsed) || parsed.turn_id !== event.turn_id || (parsed.workspace_sha256 !== null && !bounded(parsed.workspace_sha256, 64))) return keep({ ...settled, status: 'unreviewed', reason: safe(loaded.ok ? 'malformed_evidence' : loaded.error) });
-    const excerpt = JSON.parse(brief(parsed)) as { records: Record<string, unknown>[] };
-    excerpt.records = excerpt.records.map(record => typeof record.text === 'string' ? { ...record, text: redact(record.text) } : record);
-    const text = JSON.stringify(excerpt);
+    const text = brief(parsed);
     if (spoken(text).reduce((total, record) => total + record.text.length, 0) < 200) return keep({ ...settled, status: 'quiet', reason: 'too little visible output to observe', candidate: parsed.workspace_sha256 ?? '' });
     const request = api.host.tryCall('agents.spawn', { role: 'advisor', route, evidence: event.evidence, workspace: 'read_only', tools: [], prompt: `${OBSERVE}\nExcerpt of turn ${event.turn_id}:\n${text}` });
     if (!request.ok) return keep({ ...settled, status: 'unavailable', reason: safe(request.error) });

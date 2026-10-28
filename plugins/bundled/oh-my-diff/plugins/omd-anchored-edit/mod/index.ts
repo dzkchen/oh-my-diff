@@ -8,7 +8,7 @@ const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const RADIUS = 16;
 const MAX_BYTES = 96_000;
 const MAX_OUTPUT = 60_000;
-const RECEIPT_BUDGET = 131_072 - 2_048;
+const RECEIPT_BUDGET = 1_048_576 - 2_048;
 const FALLBACK = 'use the ordinary patch tool';
 const OPS = ['replace', 'delete', 'insert_before', 'insert_after', 'append', 'prepend'];
 

@@ -258,8 +258,8 @@ impl InvocationScope {
     }
 }
 
-pub const HOST_RECEIPT_BYTES: usize = 131_072;
-pub const MAX_HOST_CALLS: usize = 128;
+pub const HOST_RECEIPT_BYTES: usize = 1_048_576;
+pub const MAX_HOST_CALLS: usize = 512;
 
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -365,6 +365,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "route_reload_v1",
     "route_write_v1",
     "power_hold_v1",
+    "tool_original_v1",
     "builtins_features_v1",
     "terminal_tabs_v1",
     "terminal_inline_sites_v1",
@@ -397,6 +398,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "settings_file_v1",
     "terminal_focus_v1",
     "terminal_layout_title_v1",
+    "terminal_raster_packed_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -505,6 +507,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "tools.define",
     "tools.invoke",
     "tools.check",
+    "tools.original",
     "tools.undefine",
     "events.schedule",
     "events.cancel",
@@ -1409,7 +1412,10 @@ pub struct ModPackage {
 }
 
 pub const CODEX_CONFIG_UPDATE_PLAN: &str = "tools.update_plan.enabled";
-const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN];
+pub const CODEX_CONFIG_TOOL_OUTPUT_RAISE: &str = "tool_output_token_limit.raise";
+const CODEX_CONFIG_KEYS: &[&str] = &[CODEX_CONFIG_UPDATE_PLAN, CODEX_CONFIG_TOOL_OUTPUT_RAISE];
+pub const RAISED_TOOL_OUTPUT_TOKENS: usize = 65_536;
+pub const TOOL_OUTPUT_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -4479,8 +4485,8 @@ impl ModHost {
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
-        if registrations.tools.len() > 16
-            || registrations.commands.len() > 16
+        if registrations.tools.len() > 32
+            || registrations.commands.len() > 32
             || registrations.events.len() > MOD_EVENTS.len()
             || ((!registrations.tools.is_empty() || registrations.dynamic_tools) && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))

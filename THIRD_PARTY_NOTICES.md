@@ -6,6 +6,8 @@ OMD first-party packages and the ports in `mods/ports` that adapt or reimplement
 | --- | --- | --- | --- | --- | --- |
 | `omd-anchored-edit` hashline anchors | [@d3ara1n/pi-hashline-edit](https://github.com/d3ara1n/pi-extensions) | d3ara1n | 0.7.1 | MIT (declared in package metadata; no license text published) | `LINE#HASH` format, line-number hash and bounded relocation reimplemented over the OMD mod API |
 | `omd-anchored-edit` search and atomic batches | [pi-hashline-edit-pro](https://github.com/YuGiMob/pi-hashline-edit-pro) | RimuruW and Yugimob | 4.4.4 | MIT | Anchored search and all-or-nothing batch behavior adapted; reimplemented |
+| `omd-output-budget` bounded output, kept outputs and search | [context-mode](https://github.com/mksglu/context-mode) | mksglu | 1.0.169 | Elastic-2.0 | Bounded excerpts, full outputs kept by content hash, ranked search over them and fetch-and-index for docs reimplemented as behavior only; no code copied |
+| `omd-output-budget` kept session outputs | [@moyai/pi-session-hoarder](https://github.com/moyai-ai/pi-session-hoarder) | moyai-ai | 0.2.0 | Apache-2.0 | Hash-addressed retention of full outputs reimplemented as behavior only; no code copied |
 | `omd_advisor` on-demand and triggered advice | [pi-advisor-flow](https://github.com/philipbrembeck/pi-advisor) | Philip Brembeck | 0.9.0 | MIT | Ask tool, command, failure/loop triggers, prompt principles and secret patterns adapted; reimplemented |
 | `omd_lsp_sync` post-edit diagnostics | [pi-lens](https://github.com/apmantza/pi-lens) | Apostolos Mantzaris | 4.3.0 | MIT | Introduced/resolved diagnostic feedback after writes adapted; reimplemented |
 | `omd_preview` `/preview` | [pi-markdown-preview](https://github.com/omaclaren/pi-markdown-preview) | Oliver MacLaren | 0.19.1 | MIT | Preview behavior reimplemented with an OMD renderer; no code copied |
@@ -19,8 +21,8 @@ OMD first-party packages and the ports in `mods/ports` that adapt or reimplement
 | `omd_mini` | [OpenCode mini mode](https://opencode.ai/v2/docs/cli/) | Anomaly and the OpenCode contributors | v2 CLI docs | MIT | Scrollback-first mini presentation reimplemented over the OMD mod API; no code copied |
 | `omd_programmable_context` | [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) | Prime Intellect | `e75f59efc6f7` | No license declared | REPL context variables and the refine skill's evidence-linked harness changes reimplemented as behavior only; no code copied |
 | `burn_meter` | [burn-meter](https://github.com/OneWave-AI/claude-code-mods/tree/e6da26ca36a88eec3be25605d30fa20f2c1c0cec/burn-meter) | OneWave AI | 0.1.0 | MIT | Spend fire bar, food comparisons, plan bars, per-turn chart, lifetime total and threshold notices reimplemented over the OMD mod API |
-| `token_weather` | [token-weather](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/token-weather) | Claude Code DevRel | 0.1.0 | Apache-2.0 | Context-window weather line and per-turn chart reimplemented over the OMD mod API |
-| `blast_radius` | [blast-radius](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/blast-radius) | Claude Code DevRel | 0.1.0 | Apache-2.0 | Risky-command matching, read-only measurement and the Proceed/Cancel hold reimplemented over the OMD mod API |
+| `token_weather` | [token-weather](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/token-weather) | Claude Code DevRel | 0.1.0 | Apache-2.0 | Context-window weather line and per-turn chart adapted over the OMD mod API; see [claude-code-playground](#claude-code-playground) |
+| `blast_radius` | [blast-radius](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods/blast-radius) | Claude Code DevRel | 0.1.0 | Apache-2.0 | Risky-command matching, read-only measurement and the Proceed/Cancel hold adapted over the OMD mod API; see [claude-code-playground](#claude-code-playground) |
 
 ## pi-hashline-edit-pro
 
@@ -255,3 +257,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## claude-code-playground
+
+`token_weather` and `blast_radius` adapt code from
+[claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/e9ab132d4575390ecbadfc54649712432b1a3351/claude-code/mods)
+by Anthropic PBC, licensed under the Apache License, Version 2.0; the full text is in [LICENSE-APACHE](LICENSE-APACHE).
+The ports are modified to run over the OMD mod API, as each port's README describes. Upstream publishes no NOTICE file.

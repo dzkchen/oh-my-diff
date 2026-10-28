@@ -110,7 +110,7 @@ function consultHost(overrides = {}) {
 const consultOptions = settings => ({ ...advisorOptions, settings: { route: 'astra', ...settings }, state: null });
 const prompt = fixture => fixture.calls.find(call => call.operation === 'model.complete')?.arguments.prompt;
 
-test('advisor ask sends a bounded, redacted prompt limited to shared sources and skips the lead model', () => {
+test('advisor prompts and review briefs are redacted, ask is bounded and limited to shared sources and skips the lead model', () => {
   const full = consultHost();
   const answer = invoke({ question: 'Is the parser fix safe?', draft: 'x'.repeat(4000), files: ['src/a.ts', '../etc/passwd'] }, full.host, { ...consultOptions({}), event: 'tool', name: 'ask' });
   assert.equal(answer.value, 'Verdict: sound');
@@ -125,6 +125,10 @@ test('advisor ask sends a bounded, redacted prompt limited to shared sources and
   const same = consultHost({ 'app.request': () => ({ thread: { model: 'advisor-model' } }) });
   assert.match(invoke({}, same.host, { ...consultOptions({}), event: 'tool', name: 'ask' }).value, /skipped.*advisor-model/);
   assert.equal(prompt(same), undefined);
+  const secret = { ...evidence, records: [{ item: 1, role: 'assistant', text: 'Set api_key=sk-live-123456 and the exact supporting concern from this turn.' }] };
+  const reviewing = advisorHost({}, secret);
+  const requested = invoke(completed, reviewing.host, advisorOptions).state;
+  assert.doesNotMatch(reviewing.calls.find(call => call.operation === 'agents.spawn').arguments.prompt + requested.brief, /sk-live/);
 });
 
 test('advisor without a route names the worker routes instead of calling a model', () => {
