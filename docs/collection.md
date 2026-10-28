@@ -58,6 +58,7 @@ OMD Core includes only the first three.
 | `omd_cursor` | Cursor models in `/model`, using your Cursor account; `/cursor` | A Cursor account, Node 22.18+ and `pnpm`; not yet verified on a live account |
 | `omd_tool_absorb` | Runs a read the model repeats in one response once, and reuses unchanged file reads in code mode; `/absorb` | |
 | `omd_tool_fix` | Fixes clear-cut malformed tool arguments before they fail and records each fix; `/toolfix` | |
+| `omd_workspace` | A tabbed dock beside the chat: numbered tabs for Git changes, a shell and other mods' panels, with resize and focus keys; `/workspace` | `git` on your `PATH` for the Changes panel |
 
 Each mod's README in [`mods/first-party`](../mods/first-party) lists its settings and limits.
 
@@ -69,6 +70,7 @@ Not installed with OMD+, and may change or go away. Install one yourself with `o
 | Mod | What it does | What it needs |
 | --- | --- | --- |
 | `omd_awake` | `/awake` replaces Codex's Prevent sleep while running: keeps the Mac awake while turns or subagents run, also with the lid closed, and lets it sleep once they finish | macOS; lid-closed needs the authority broker (`omd-package broker install`) |
+| `omd_monitor` | Monitors a background command, file change or GitHub run or deployment and sends one message when it finishes, fails or times out, so the agent doesn't poll; `/monitor` | GitHub monitors need `gh`, logged in, and `/monitor allow owner/repo` |
 
 ## What mods cost
 
@@ -100,7 +102,7 @@ More in the [`omd_profiles` README](../mods/first-party/omd_profiles/README.md).
 
 ## Plugins
 
-OMD+ stages three Codex plugins: `omd-anchored-edit`, `omd-artifact-reading` and `omd-code-execution`. They are
+OMD+ stages four Codex plugins: `omd-anchored-edit`, `omd-artifact-reading`, `omd-code-execution` and `omd-output-budget`. They are
 installed on disk but inert until you add them with `codex plugin add`; see [plugins/README.md](../plugins/README.md).
 OMD Core stages none.
 

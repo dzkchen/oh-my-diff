@@ -338,7 +338,7 @@ function intercept(event) {
     origin: { value: deepFreeze(origin) },
     signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
     trace: { get: () => trace },
-    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 128 - calls.length); } }) },
+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, request.max_host_calls - calls.length); } }) },
     is: { value: pattern => surfaces(pattern).includes(name) },
   });
   if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -629,6 +629,7 @@ const api = Object.freeze({
   } }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
+  settingsFile: Object.freeze(structuredCloneFallback(request.settings_file ?? { path: '', status: 'missing', error: null })),
   on(event, handler) {
     if (!activating) throw new Error('event_registration_outside_activation');
     const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;

@@ -2,7 +2,7 @@ use super::*;
 use std::os::unix::fs::MetadataExt;
 
 const CACHE_LIMIT: usize = 512;
-const TREE_BYTES: usize = 65_536;
+const TREE_BYTES: usize = 262_144;
 
 pub const MOD_RENDER_COMPONENTS: &[(&str, &[&str])] = &[
     ("user_message", &[]),
@@ -136,7 +136,7 @@ pub fn component_shared(
     Ok(value)
 }
 
-/// A component module step's tree must parse, pass the render checks, stay under 64 KiB and not draw the native component.
+/// A component module step's tree must parse, pass the render checks, stay under 256 KiB and not draw the native component.
 pub(super) fn checked_tree(step: &Value) -> Result<()> {
     let tree = serde_json::from_value::<Vec<ModComponent>>(step["tree"].clone())
         .map_err(|error| failure(format!("invalid_component_tree: {error}")))?;
@@ -145,7 +145,7 @@ pub(super) fn checked_tree(step: &Value) -> Result<()> {
             .iter()
             .any(|node| node.contains(&|node| matches!(node, ModComponent::Native { .. })))
             || serde_json::to_vec(&step["tree"]).map_or(true, |bytes| bytes.len() > TREE_BYTES))
-        .then(|| "the tree draws the native component or exceeds 64 KiB".to_owned())
+        .then(|| "the tree draws the native component or exceeds 256 KiB".to_owned())
     }) {
         return Err(failure(format!("invalid_component_tree: {reason}")));
     }

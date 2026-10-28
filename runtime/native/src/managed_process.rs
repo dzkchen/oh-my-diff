@@ -451,7 +451,7 @@ fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value>
 
 /// Small enough that a chunk of control bytes, six bytes each once escaped, fits one exchange.
 const RAW_READ_BYTES: usize = 8_000;
-const EXCHANGE_BYTES: usize = 48 * 1024;
+const EXCHANGE_BYTES: usize = 256 * 1024;
 const QUEUED_BYTES: usize = 32 * 1024 * 1024;
 
 type Reader = Box<dyn FnMut() -> io::Result<Value> + Send>;

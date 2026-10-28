@@ -8,7 +8,7 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-pub const PAGE_BYTES: usize = 16_384;
+pub const PAGE_BYTES: usize = 65_536;
 pub const SNAPSHOT_BYTES: usize = 262_144;
 
 pub fn hash(bytes: &[u8]) -> String {

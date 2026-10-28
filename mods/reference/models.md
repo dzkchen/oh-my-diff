@@ -477,7 +477,7 @@ none starts paid work implicitly.
 
 - `api.time.sleep(ms)` calls `time.sleep {ms}` (`events`, at most 60 s): the callback waits in place, holding no
   runtime lock, and the wait does not count as own time; cancellation wakes it and ends the callback.
-- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 128 host calls.
+- `api.time.wait(check, {interval_ms, timeout_ms})` polls `check` between sleeps within the 512 host calls.
 - `api.time.after(key, delay_ms, handler)` and `api.time.every(key, interval_ms, handler)` register during
   activation (16 ms to 24 h) and return `{start(), cancel()}` over `events.schedule`/`events.cancel` key
   `time:<key>`.

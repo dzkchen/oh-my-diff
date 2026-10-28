@@ -126,8 +126,8 @@ own source to a sandboxed `exec.run` process without relying on a workspace copy
 | --- | --- |
 | Assets declared per package | at most 16 |
 | `mod.json` | at most 8 KiB |
-| Each other package file | at most 128 KiB (`file_limit` names the file) |
-| Entrypoint and declared text together | at most 256 KiB per callback (`package_text_input_limit`) |
+| Each other package file | at most 512 KiB (`file_limit` names the file) |
+| Entrypoint and declared text together | at most 1 MiB per callback (`package_text_input_limit`) |
 
 A package over the per-callback text limit is refused by inspection, install and `omd-mod-author check`.
 
@@ -252,7 +252,7 @@ the complete namespace or resets it without running any mod code.
 ### `evidence.write` and `evidence.read`
 
 `evidence.write {media_type, content, label?}` stores content-addressed evidence and returns a `ResourceRef`;
-`evidence.read` reads it back in bounded pages.
+`evidence.read {reference, cursor?, max_bytes?}` reads it back in pages of at most 64 KiB (`max_bytes` 1 to 65,536, by default the maximum).
 
 ### `api.state` compare-and-swap
 
@@ -268,7 +268,7 @@ fails with the transient `state_conflict`, because an operation that already ran
 
 The location of `api.state` follows the manifest's `state_scope` (`state_scopes_v1`).
 
-- `"store"` (the default) keeps one state of at most 192 KiB in the mod store, shared by every OMD process that
+- `"store"` (the default) keeps one state of at most 512 KiB in the mod store, shared by every OMD process that
   uses that store.
 - `"thread"` keeps one state per session thread and selection scope, so a project copy cannot inherit a same-ID
   user copy's state. It forks with the thread and is removed when the thread is deleted. Routing and compaction
@@ -283,7 +283,7 @@ Mods never run with the home directory or filesystem root as the session directo
 notice in `/omd`. `omd-mod command STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
 given thread and the checkout of their working directory. A `thread` mod run from `omd-mod command` without `THREAD`
 fails with `state_thread_unavailable`; in the TUI, a slash command typed before the session's thread exists runs once
-it does. A callback result, including its state, stays within 256 KiB.
+it does. A callback result, including its state, stays within 1 MiB.
 
 ### `state_version` migration of thread and checkout state
 

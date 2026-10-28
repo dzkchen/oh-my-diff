@@ -71,7 +71,7 @@ test('the merged step runs each read once through the host, in order, keeping ea
   assert.match(value.c5.output, /did not run exec_command/);
   assert.deepEqual([value.c2.success, value.c5.success], [false, false]);
   assert.deepEqual(value.c6, value.c2, 'a duplicate of a read that did not fit gets its note, not a pointer');
-  assert.match(value.c7.output, /^Exit code: 0\nOutput:\ncat long\n.*cut at 48 KiB/s, 'a cut output says so');
+  assert.match(value.c7.output, /^Exit code: 0\nOutput:\ncat long\n.*cut at 256 KiB/s, 'a cut output says so');
   assert.deepEqual(Object.keys(value), ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
   assert.deepEqual(state.recent[0].invoked, { c0: 'mod-omd_tool_absorb-1', c1: 'mod-omd_tool_absorb-2', c7: 'mod-omd_tool_absorb-5' });
 });

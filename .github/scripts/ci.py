@@ -21,9 +21,6 @@ WORK = Path(os.environ.get("OMD_NIGHTLY_ROOT", "/private/tmp/omd-nightly"))
 TREE = "nightly"
 CRATES = ["codex-omd", "codex-omd-runner", "codex-omd-extension", "codex-tui", "codex-core-plugins", "codex-git-utils"]
 SOURCE_PATH = re.compile(r"--> ([^:\s]+):\d")
-# Upstream tests that pass alone but fail after the rest of `--test all` in one process.
-ISOLATED = ("suite::mcp_tool_cache::cached_mcp_startup_is_eager_for_root_and_lazy_for_subagents",
-            "suite::remote_models::empty_model_catalog_requires_explicit_model::without_explicit_model")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -185,21 +182,16 @@ def cargo_tests(suite):
         targets.discard(("--test", "all"))
     failed = False
     for index, flags in enumerate(sorted(targets)):
-        args = ["test", "--locked", "--no-fail-fast", *packages(names), *flags, "--message-format=json-render-diagnostics", "--", "--test-threads=1"]
+        if flags == ("--doc",):
+            args = ["test", "--locked", "--no-fail-fast", *packages(names), *flags, "--message-format=json-render-diagnostics", "--"]
+        else:
+            args = ["nextest", "run", "--locked", "--no-fail-fast", "--no-tests=pass", "--tool-config-file",
+                    f"omd:{build.ROOT / '.github/nextest.toml'}", *packages(names), *flags,
+                    "--cargo-message-format=json-render-diagnostics", "--"]
         if suite.startswith("core"):
             args += ["--skip", "shell_startup_credentials_are_brokered::filtered_host_additional_permissions"]
-        if suite == "core-integration":
-            args += [flag for name in ISOLATED for flag in ("--skip", name)]
         log = WORK / "logs" / f"{suite}-{index}.cargo.log"
-        status = build.cargo_run(work, log, args)
-        flaky = sorted(set(re.findall(r"^test (\S+) \.\.\. FAILED$", log.read_text(errors="replace"), re.M)))
-        if status and 0 < len(flaky) <= 5:
-            print(f"rerunning {', '.join(flaky)}")
-            status = build.cargo_run(work, log.with_suffix(".retry.log"), [*args, "--exact", *flaky])
-        failed |= status != 0
-        if suite == "core-integration":
-            isolated = [*args[:args.index("--")], "--", "--test-threads=1", "--exact", *ISOLATED]
-            failed |= build.cargo_run(work, log.with_suffix(".isolated.log"), isolated) != 0
+        failed |= build.cargo_run(work, log, args) != 0
         for line in log.read_text(errors="replace").splitlines():
             try:
                 item = json.loads(line)
