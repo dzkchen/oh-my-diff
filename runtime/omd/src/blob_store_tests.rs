@@ -56,6 +56,37 @@ fn text_evidence_repairs_a_truncated_rotating_blob() {
 }
 
 #[test]
+fn rotating_evidence_is_bounded_by_total_bytes() {
+    with_store(|store| {
+        let directory = store.rotating_directory().unwrap();
+        let orphan = directory.join(format!("{}.bin", "d".repeat(64)));
+        fs::write(&orphan, [0; 30]).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&orphan)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * ORPHAN_GRACE)
+            .unwrap();
+        let fresh = directory.join(format!("{}.bin", "e".repeat(64)));
+        fs::write(&fresh, [0; 1]).unwrap();
+        let references = [("1", "b"), ("2", "a"), ("3", "b"), ("4", "c")].map(|(label, letter)| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            store
+                .text_evidence(label, &letter.repeat(10))
+                .unwrap()
+                .reference
+        });
+        prune_rotating(&directory, 26).unwrap();
+        let kept =
+            |letter: &str| directory.join(format!("{}.bin", hash(letter.repeat(10).as_bytes())));
+        assert!(!orphan.exists() && fresh.exists() && !kept("a").exists());
+        assert!(kept("b").exists() && kept("c").exists());
+        assert!(!directory.join(format!("{}.json", references[0])).exists());
+        assert!(directory.join(format!("{}.json", references[2])).exists());
+    });
+}
+
+#[test]
 fn svg_evidence_is_gated() {
     with_store(|store| {
         let record = |svg: &str| {

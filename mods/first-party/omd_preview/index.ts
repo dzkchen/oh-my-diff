@@ -124,7 +124,8 @@ export default function activate(api: ModAPI) {
       const read = api.host.tryCall('exec.run', { program: 'head', argv: ['-c', String(bytes), '--', path], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return refuse(read.ok ? read.value.stderr.trim() || 'read failed' : read.error.split(':')[0]);
       const text = more ? read.value.stdout.replace(/\uFFFD$/, '') : read.value.stdout;
-      return text.includes('\uFFFD') ? refuse('not UTF-8 text') : show(path, kind, text, more);
+      if (text.includes('\uFFFD')) return refuse('not UTF-8 text');
+      return text && !clean(text).trim() ? refuse('no printable text') : show(path, kind, text, more);
     }
     const stored = watches(api.host.call('store.get', { key: 'watch' }));
     const watch = watched ? [...new Set([...stored.watch, path])] : stored.watch;

@@ -394,7 +394,7 @@ fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
         Value::Null
     );
     assert!(
-        invoke(&mut one, "threaded", "fill", json!(200_000))
+        invoke(&mut one, "threaded", "fill", json!(600_000))
             .unwrap_err()
             .to_string()
             .contains("state_limit")
@@ -1032,7 +1032,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             "run",
             json!("large"),
             || true,
-            |_| Ok(json!({"text": "x".repeat(140_000)})),
+            |_| Ok(json!({"text": "x".repeat(1_100_000)})),
         )
         .unwrap_err();
     assert!(
@@ -1050,7 +1050,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             || true,
             |_| {
                 calls += 1;
-                Ok(json!({"text": "x".repeat(70_000)}))
+                Ok(json!({"text": "x".repeat(600_000)}))
             },
         )
         .unwrap_err();
@@ -1071,7 +1071,7 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             |_| {
                 calls += 1;
                 Ok(if calls == 1 {
-                    json!({"text": "x".repeat(140_000)})
+                    json!({"text": "x".repeat(1_100_000)})
                 } else {
                     json!("recovered")
                 })
@@ -2565,6 +2565,11 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
         json!({"codex_config":{"tools.update_plan.enabled":true},"compatibility":feature["compatibility"]}),
     );
     trust(&store, &planner, &[]);
+    let budgeter = write(
+        "budgeter",
+        json!({"codex_config":{"tool_output_token_limit.raise":true},"compatibility":feature["compatibility"]}),
+    );
+    trust(&store, &budgeter, &[]);
     for (directory, extra) in [
         (
             "unlisted",
@@ -2593,7 +2598,7 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
     let published = runtime.codex_config();
     assert_eq!(
         published.lock().unwrap().iter().collect::<Vec<_>>(),
-        ["tools.update_plan.enabled"]
+        ["tool_output_token_limit.raise", "tools.update_plan.enabled"]
     );
     let planner_status = runtime.status()["mods"]
         .as_array()
@@ -2604,6 +2609,7 @@ fn codex_config_is_allowlisted_and_reported_for_active_mods() {
         .clone();
     assert_eq!(planner_status, json!({"tools.update_plan.enabled": true}));
     store.enable(&planner, false).unwrap();
+    store.enable(&budgeter, false).unwrap();
     runtime.reload().unwrap();
     assert!(published.lock().unwrap().is_empty());
 }

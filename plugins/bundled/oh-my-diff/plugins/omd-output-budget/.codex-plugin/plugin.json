@@ -1,0 +1,21 @@
+{
+  "name": "omd-output-budget",
+  "version": "1.0.0",
+  "description": "Keep large shell and tool results out of the model context with bounded excerpts, full outputs kept by hash, paged reads, ranked search and documentation fetch.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OMD Output Budget",
+    "shortDescription": "OMD Output Budget",
+    "longDescription": "Keep large shell and tool results out of the model context with bounded excerpts, full outputs kept by hash, paged reads, ranked search and documentation fetch.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": "Use OMD Output Budget for this repository"
+  },
+  "license": "MIT"
+}

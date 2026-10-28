@@ -147,6 +147,12 @@
       "why_mod": "Removes Codex's prevent_idle_sleep feature with the generic builtins control and holds host power leases from turn, timer and agent-inventory events behind /awake."
     },
     {
+      "path": "mods/first-party/omd_monitor",
+      "extension_type": "mod",
+      "role": "bundled",
+      "why_mod": "Live subscriptions across app notifications, workspace watches, timers and a managed adapter process, delivered by steering the running turn or queueing one turn; a hook or skill cannot hold them."
+    },
+    {
       "path": "mods/first-party/omd_continue",
       "extension_type": "mod",
       "role": "bundled",

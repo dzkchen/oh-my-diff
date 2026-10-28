@@ -2136,7 +2136,7 @@ impl ModStore {
         let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
-            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
+            "hook_budget_ms":1000,"max_host_calls":MAX_HOST_CALLS,"receipts":[],"field_policies":{},"virtual_time_ms":null});
         process::evaluate(
             &request,
             std::time::Duration::from_secs(1),
