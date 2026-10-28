@@ -164,7 +164,9 @@ fn read_version(
             }
             let after = input.metadata()?;
             if !same_file(&metadata, &after)? {
-                return Err(invalid(&format!("workspace file changed during read: {name}")));
+                return Err(invalid(&format!(
+                    "workspace file changed during read: {name}"
+                )));
             }
             Ok(Some((bytes, metadata.permissions())))
         }
@@ -474,7 +476,9 @@ impl WorkspaceIndex {
                 let hash = match cached.get(&name) {
                     Some((seen, hash)) if *seen == stamp => hash.clone(),
                     // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-                    _ if metadata.nlink() != 1 => content_hash(format!("hardlink:{stamp:?}").as_bytes()),
+                    _ if metadata.nlink() != 1 => {
+                        content_hash(format!("hardlink:{stamp:?}").as_bytes())
+                    }
                     _ => {
                         let (content, _) = read_version(repository, &name, max_bytes)?
                             .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -1165,8 +1169,13 @@ mod transaction_tests {
         let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
         assert_eq!(before.changed(&after).len(), 2);
         let paths = BTreeSet::from(["a.txt".into()]);
-        let error = Snapshot::capture(&root, &paths, 64).unwrap_err().to_string();
-        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
+        let error = Snapshot::capture(&root, &paths, 64)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("workspace hardlink rejected: a.txt "),
+            "{error}"
+        );
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([(
                 "a.txt".into(),
@@ -1176,7 +1185,10 @@ mod transaction_tests {
             ..Default::default()
         };
         let error = transaction.apply(&root, || true).unwrap_err().to_string();
-        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
+        assert!(
+            error.starts_with("workspace hardlink rejected: a.txt "),
+            "{error}"
+        );
         assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
     }
 

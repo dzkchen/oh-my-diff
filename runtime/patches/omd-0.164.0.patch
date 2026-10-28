@@ -132707,10 +132707,10 @@ index 0000000000000000000000000000000000000000..fe9f4ff31a9409f81d5f9b0c22140700
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5473fa19d
+index 0000000000000000000000000000000000000000..5d15ef25b06711d5f7bc85f3129cd7b552695cc5
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1371 @@
+@@ -0,0 +1,1383 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -132877,7 +132877,9 @@ index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5
 +            }
 +            let after = input.metadata()?;
 +            if !same_file(&metadata, &after)? {
-+                return Err(invalid(&format!("workspace file changed during read: {name}")));
++                return Err(invalid(&format!(
++                    "workspace file changed during read: {name}"
++                )));
 +            }
 +            Ok(Some((bytes, metadata.permissions())))
 +        }
@@ -133187,7 +133189,9 @@ index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5
 +                let hash = match cached.get(&name) {
 +                    Some((seen, hash)) if *seen == stamp => hash.clone(),
 +                    // A hardlink may share an inode with a file outside the repository, so only its identity is observed.
-+                    _ if metadata.nlink() != 1 => content_hash(format!("hardlink:{stamp:?}").as_bytes()),
++                    _ if metadata.nlink() != 1 => {
++                        content_hash(format!("hardlink:{stamp:?}").as_bytes())
++                    }
 +                    _ => {
 +                        let (content, _) = read_version(repository, &name, max_bytes)?
 +                            .ok_or_else(|| invalid("workspace file disappeared during index"))?;
@@ -133878,8 +133882,13 @@ index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5
 +        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
 +        assert_eq!(before.changed(&after).len(), 2);
 +        let paths = BTreeSet::from(["a.txt".into()]);
-+        let error = Snapshot::capture(&root, &paths, 64).unwrap_err().to_string();
-+        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
++        let error = Snapshot::capture(&root, &paths, 64)
++            .unwrap_err()
++            .to_string();
++        assert!(
++            error.starts_with("workspace hardlink rejected: a.txt "),
++            "{error}"
++        );
 +        let transaction = WorkspaceTransaction {
 +            expected: BTreeMap::from([(
 +                "a.txt".into(),
@@ -133889,7 +133898,10 @@ index 0000000000000000000000000000000000000000..1f30af32b186f1995763e094089591e5
 +            ..Default::default()
 +        };
 +        let error = transaction.apply(&root, || true).unwrap_err().to_string();
-+        assert!(error.starts_with("workspace hardlink rejected: a.txt "), "{error}");
++        assert!(
++            error.starts_with("workspace hardlink rejected: a.txt "),
++            "{error}"
++        );
 +        assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "two\n");
 +    }
 +
@@ -164115,13 +164127,13 @@ index 0000000000000000000000000000000000000000..a62aaf4b818d8c2b37c842143fa011d5
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..01b27ba08a2fdb847953c1e9a63f59da675285be
+index 0000000000000000000000000000000000000000..cb6db6c065746f981020791ceaaafd0e7e0afc4c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
 @@ -0,0 +1,1042 @@
 +use super::*;
-+use codex_omd::app_routes::InvocationContext;
 +use crate::test_support::PathBufExt;
++use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
 +
 +struct Echo;
