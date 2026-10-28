@@ -144,7 +144,9 @@ export default function activate(api: ModAPI) {
 ```
 
 The code reads settings from `api.settings`. A setting property may have only `type` (`boolean`, `number`,
-`string`, `array`, `object` or `null`), `enum` and `default`; `integer`, `minimum` and similar keys are refused.
+`string`, `array`, `object` or `null`), `enum`, `default`, `title` and `description`; `integer`, `minimum` and
+similar keys are refused.
+A user may also set them in `settings/<mod id>.json` (or `.yaml`) in the mod store; `api.settingsFile` has its path and status ([reference](../mods/REFERENCE.md#settings-file-settings_file_v1)).
 
 Where to look things up:
 

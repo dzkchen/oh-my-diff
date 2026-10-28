@@ -39,11 +39,14 @@ pub use view::ModColor;
 pub use view::ModCommandAction;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
+pub use view::ModComposerWhen;
 pub use view::ModDensity;
 pub use view::ModDirection;
 pub use view::ModFind;
 pub use view::ModIcons;
 pub use view::ModKeyAction;
+pub use view::ModKeyContext;
+pub use view::ModKeys;
 pub use view::ModLayout;
 pub use view::ModLayoutLeaf;
 pub use view::ModLayoutSplit;
@@ -55,6 +58,7 @@ pub use view::ModOverlayClip;
 pub use view::ModPaint;
 pub use view::ModPanel;
 pub use view::ModRange;
+pub use view::ModRegion;
 pub use view::ModRenderSite;
 pub use view::ModScreenAnchor;
 pub use view::ModSelectOption;
@@ -120,6 +124,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::credentials::url_origin;
+
+use packages::SETTINGS_FILE_EXTENSIONS;
+use packages::SettingsFile;
 
 pub use package_manager::ModInstallRequest;
 pub use package_manager::ModPackageGrant;
@@ -388,6 +395,9 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "composer_key_v1",
     "completion_tokens_v1",
     "mention_read_v1",
+    "settings_file_v1",
+    "terminal_focus_v1",
+    "terminal_layout_title_v1",
     "terminal_raster_packed_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
@@ -2265,14 +2275,24 @@ pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Valu
     let values = values
         .as_object()
         .ok_or_else(|| failure("settings_values_must_be_object"))?;
-    let path = store.selection_status()?["selections"]
+    let status = store.selection_status()?;
+    let selection = status["selections"]
         .as_array()
         .into_iter()
         .flatten()
         .find(|selection| selection["id"] == id && selection["effective"] == true)
-        .and_then(|selection| selection["path"].as_str().map(PathBuf::from))
         .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
-    let settings = store.merge_settings(&path, values)?;
+    let path = PathBuf::from(selection["path"].as_str().unwrap_or_default());
+    if let Some(name) = values
+        .keys()
+        .find(|name| selection["settings_origin"][name.as_str()] == "file")
+    {
+        return Err(failure(format!("setting_set_by_file: {name}")));
+    }
+    let mut settings = store.merge_settings(&path, values)?;
+    if let Some(file) = selection["file_settings"].as_object() {
+        settings.extend(file.clone());
+    }
     let (package, _, _) = store::package(&path)?;
     Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
 }
@@ -2587,6 +2607,7 @@ struct Loaded {
     unused_grants: Vec<String>,
     unused_environment: Vec<String>,
     withheld: Vec<String>,
+    settings_file: SettingsFile,
     error: Option<String>,
     telemetry: ModTelemetry,
 }
@@ -2667,16 +2688,41 @@ fn configuration_stamp(path: &Path) -> Option<FileStamp> {
         .map(|metadata| file_stamp(&metadata))
 }
 
-/// The returned stamp is `None` if the file changed during the read.
+type ConfigurationStamp = (FileStamp, Vec<(std::ffi::OsString, FileStamp)>);
+
+fn configuration_stamps(root: &Path) -> Option<ConfigurationStamp> {
+    let mut settings: Vec<_> = std::fs::read_dir(root.join("settings"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            Path::new(&entry.file_name())
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| SETTINGS_FILE_EXTENSIONS.contains(&extension))
+        })
+        .filter_map(|entry| Some((entry.file_name(), file_stamp(&entry.metadata().ok()?))))
+        .collect();
+    settings.sort();
+    Some((configuration_stamp(&root.join("mods.json"))?, settings))
+}
+
 fn read_configuration(
-    path: &Path,
-    stamp: Option<FileStamp>,
-) -> (Option<FileStamp>, String, Result<Vec<u8>>) {
-    let bytes = store::read(path, 65_536);
-    let sha256 = digest(bytes.as_deref().unwrap_or_default());
+    root: &Path,
+    stamp: Option<ConfigurationStamp>,
+) -> (Option<ConfigurationStamp>, String, Result<Vec<u8>>) {
+    let bytes = store::read(&root.join("mods.json"), 65_536);
+    let mut hashed = bytes.as_deref().unwrap_or_default().to_vec();
+    for (name, _) in stamp.iter().flat_map(|(_, settings)| settings) {
+        let content = store::read(&root.join("settings").join(name), 65_536).unwrap_or_default();
+        hashed.extend(digest(name.as_encoded_bytes()).as_bytes());
+        hashed.extend(digest(&content).as_bytes());
+    }
     (
-        stamp.filter(|_| configuration_stamp(path) == stamp),
-        sha256,
+        stamp
+            .clone()
+            .filter(|_| configuration_stamps(root) == stamp),
+        digest(&hashed),
         bytes,
     )
 }
@@ -2868,7 +2914,7 @@ pub struct ModHost {
     store: ModStore,
     generation: u64,
     configuration_sha256: String,
-    configuration_stamp: Option<FileStamp>,
+    configuration_stamp: Option<ConfigurationStamp>,
     ui_configuration: Option<(u64, String)>,
     selections: (usize, usize),
     loaded: BTreeMap<String, Loaded>,
@@ -2890,7 +2936,7 @@ pub struct ModHost {
     access: Vec<Value>,
     admissions: BTreeMap<String, std::result::Result<Vec<String>, String>>,
     brokered: Option<(Instant, String, Authority)>,
-    callback_configuration: Mutex<Option<(FileStamp, String, Arc<ModConfiguration>)>>,
+    callback_configuration: Mutex<Option<(ConfigurationStamp, String, Arc<ModConfiguration>)>>,
     required_surfaces: Arc<Mutex<Vec<&'static str>>>,
     intercepted_surfaces: Arc<Mutex<Vec<&'static str>>>,
     codex_config: Arc<Mutex<BTreeSet<String>>>,
@@ -3518,9 +3564,9 @@ impl ModHost {
         self.configuration_sha256.clear();
     }
 
-    fn current(&self, stamp: Option<FileStamp>) -> bool {
+    fn current(&self, stamp: &Option<ConfigurationStamp>) -> bool {
         stamp.is_some()
-            && stamp == self.configuration_stamp
+            && *stamp == self.configuration_stamp
             && self
                 .brokered
                 .as_ref()
@@ -3528,7 +3574,7 @@ impl ModHost {
     }
 
     pub fn refresh_due(&self) -> bool {
-        !self.current(configuration_stamp(&self.store.root.join("mods.json")))
+        !self.current(&configuration_stamps(&self.store.root))
     }
 
     fn reload_active(&mut self, active: &dyn Fn() -> bool) -> Result<bool> {
@@ -3536,12 +3582,12 @@ impl ModHost {
             return Err(failure("callback_cancelled"));
         }
         let path = self.store.root.join("mods.json");
-        let stamp = configuration_stamp(&path);
-        if self.current(stamp) {
+        let stamp = configuration_stamps(&self.store.root);
+        if self.current(&stamp) {
             return Ok(false);
         }
         self.configuration_stamp = None;
-        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
         let (brokered, managed, deployment) = match self.authority(&sha256) {
             Ok(authority) => authority,
             Err(error) => {
@@ -3563,7 +3609,8 @@ impl ModHost {
             self.project.as_deref().unwrap_or(Path::new("")).display()
         );
         if hash == self.configuration_sha256 {
-            self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
+            self.configuration_stamp = stamp
+                .filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
             return Ok(false);
         }
         let configured = bytes
@@ -3674,13 +3721,16 @@ impl ModHost {
         )?;
         let adapters = Self::adapters(&selected);
         let mut next = BTreeMap::new();
-        for (id, (selection, package, source)) in selected {
+        for (id, (mut selection, package, source)) in selected {
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
+            let (settings_file, file_settings) = self.store.settings_file(&package, &selection);
+            selection.settings.extend(file_settings);
             // An unchanged trusted selection and adapter keep their inspection; only changed mods run again.
             if let Some(previous) = self.loaded.get(&id).filter(|previous| {
                 previous.error.is_none()
+                    && previous.settings_file == settings_file
                     && previous.adapter.as_ref()
                         == package
                             .adapter
@@ -3744,6 +3794,7 @@ impl ModHost {
                 unused_grants: Vec::new(),
                 unused_environment: Vec::new(),
                 withheld: Vec::new(),
+                settings_file,
                 error: None,
                 telemetry: ModTelemetry::default(),
             };
@@ -3882,7 +3933,8 @@ impl ModHost {
         self.retain_environment();
         self.unserved = self.unserved_targets(&user);
         self.configuration_sha256 = hash;
-        self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
+        self.configuration_stamp =
+            stamp.filter(|stamp| configuration_stamps(&self.store.root).as_ref() == Some(stamp));
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
@@ -4823,17 +4875,18 @@ impl ModHost {
 
     fn callback_configuration(&self) -> (String, Result<Arc<ModConfiguration>>) {
         let path = self.store.root.join("mods.json");
-        let stamp = configuration_stamp(&path);
+        let stamp = configuration_stamps(&self.store.root);
         let mut cached = self
             .callback_configuration
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) = (stamp, cached.as_ref())
-            && stamp == *cached_stamp
+        if let (Some(stamp), Some((cached_stamp, sha256, configuration))) =
+            (&stamp, cached.as_ref())
+            && stamp == cached_stamp
         {
             return (sha256.clone(), Ok(configuration.clone()));
         }
-        let (stamp, sha256, bytes) = read_configuration(&path, stamp);
+        let (stamp, sha256, bytes) = read_configuration(&self.store.root, stamp);
         let configuration = bytes
             .and_then(|bytes| ModConfiguration::parse(&bytes, &path))
             .map(Arc::new);
@@ -5591,6 +5644,13 @@ impl ModHost {
         let mut conflicts = Vec::new();
         let mut diagnostics = Vec::new();
         for (id, result) in results {
+            if let Some(error) = self
+                .loaded
+                .get(&id)
+                .and_then(|loaded| loaded.settings_file.error.as_ref())
+            {
+                diagnostics.push(format!("{id}: settings_file_invalid: {error}"));
+            }
             let parsed = match result {
                 Ok(value) if value.is_null() => {
                     self.valid_views.remove(&id);
@@ -6208,6 +6268,7 @@ impl ModHost {
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
                 "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
+                status["settings_file"] = json!(m.settings_file);
                 status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
                     "http_access": m.package.http_access, "fs_access": m.package.fs_access, "mcp_servers": m.package.mcp_servers,
                     "policy": m.package.policy, "peer_access": m.package.peer_access,

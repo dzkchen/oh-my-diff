@@ -670,6 +670,28 @@
       "package_sha256": "2a5b7810ef7384bb4d5514ccc72d213c096245bc67c5af10b79a6e791472fc61",
       "source": "mods/first-party/omd_workflow",
       "version": "1.0.0"
+    },
+    "omd_workspace": {
+      "api": "1.0.0",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "exec",
+        "pty",
+        "services",
+        "lifecycle",
+        "inventory"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "9f26fa01671348be1dd9ada930996a2d7ab95d6d2a44df9ebda75d747c3fcc64",
+        "mod.json": "d3fbfcb8a23bd9b0a573e78ef9ce27c5ec16a33e1a786a4b234c1ecb93e0c8fe"
+      },
+      "id": "omd_workspace",
+      "package_sha256": "c0e62f89669c31b7a0ad41203334a0bb8eca091ec698b6fd5243f71a07797f7a",
+      "source": "mods/first-party/omd_workspace",
+      "version": "1.0.0"
     }
   },
   "product": "oh-my-diff-mods-v1",

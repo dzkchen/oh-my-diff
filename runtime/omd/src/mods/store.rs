@@ -995,6 +995,8 @@ impl ModStore {
         {
             let administered = index < administered;
             let mut settings_origin = BTreeMap::new();
+            let mut settings_file = Value::Null;
+            let mut file_settings = BTreeMap::new();
             let (mut id, error, environment) = match inspected {
                 Ok((manifest, integrity)) => {
                     if let Some(manifests) = manifests.as_mut() {
@@ -1013,11 +1015,23 @@ impl ModStore {
                         .flatten()
                         .filter(|(_, property)| property.get("default").is_some())
                         .map(|(key, _)| key);
-                    for key in selection.settings.keys().chain(defaults) {
-                        let origin = match selection.settings.contains_key(key) {
-                            false => "default",
-                            true if administered => "managed",
-                            true => "user",
+                    let file;
+                    (file, file_settings) = self.settings_file(&manifest, selection);
+                    settings_file = json!(file);
+                    for key in selection
+                        .settings
+                        .keys()
+                        .chain(file_settings.keys())
+                        .chain(defaults)
+                    {
+                        let origin = if file_settings.contains_key(key) {
+                            "file"
+                        } else if !selection.settings.contains_key(key) {
+                            "default"
+                        } else if administered {
+                            "managed"
+                        } else {
+                            "user"
                         };
                         settings_origin.insert(key.clone(), origin);
                     }
@@ -1099,6 +1113,8 @@ impl ModStore {
                 "required": selection.required,
                 "packaged": packaged,
                 "settings_origin": settings_origin,
+                "settings_file": settings_file,
+                "file_settings": file_settings,
                 "sha256": selection.sha256,
                 "capabilities": selection.capabilities,
                 "exec_environment": environment,
