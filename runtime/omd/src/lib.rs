@@ -12,6 +12,7 @@ pub mod data_store;
 pub mod drafts;
 pub mod event_bus;
 pub mod frame_metrics;
+pub mod fsio;
 pub mod history;
 pub mod host;
 pub mod mod_limits;

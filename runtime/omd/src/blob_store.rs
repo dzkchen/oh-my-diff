@@ -3,7 +3,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
@@ -152,42 +152,6 @@ impl ResourceStore<'_> {
     }
 }
 
-fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-    {
-        Ok(mut file) => file
-            .write_all(bytes)
-            .and_then(|()| file.sync_all())
-            .inspect_err(|_| {
-                let _ = fs::remove_file(path);
-            }),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if fs::read(path)? == bytes {
-                return Ok(());
-            }
-            static REPAIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let serial = REPAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)?;
-            file.write_all(bytes)
-                .and_then(|()| file.sync_all())
-                .and_then(|()| fs::rename(&temporary, path))
-                .inspect_err(|_| {
-                    let _ = fs::remove_file(&temporary);
-                })
-        }
-        Err(error) => Err(error),
-    }
-}
-
 fn prune_rotating(directory: &std::path::Path) -> io::Result<()> {
     let mut records = fs::read_dir(directory)?
         .filter_map(Result::ok)
@@ -235,34 +199,22 @@ impl ResourceStore<'_> {
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(directory.join(".blobs.lock"))?;
         lock.lock()?;
-        if path.try_exists()? {
-            return self.blob(&digest).map(|_| digest);
-        }
-        let (mut total, mut entries) = (0u64, 0usize);
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            if entry.path().extension().is_some_and(|e| e == "bin") {
-                entries += 1;
-                total = total.saturating_add(entry.metadata()?.len());
+        if !path.try_exists()? {
+            let (mut total, mut entries) = (0u64, 0usize);
+            for entry in fs::read_dir(&directory)? {
+                let entry = entry?;
+                if entry.path().extension().is_some_and(|e| e == "bin") {
+                    entries += 1;
+                    total = total.saturating_add(entry.metadata()?.len());
+                }
+            }
+            if entries >= BLOB_ENTRIES
+                || total.saturating_add(bytes.len() as u64) > BLOB_TOTAL_BYTES
+            {
+                return Err(io::Error::other("blob_store_quota"));
             }
         }
-        if entries >= BLOB_ENTRIES || total.saturating_add(bytes.len() as u64) > BLOB_TOTAL_BYTES {
-            return Err(io::Error::other("blob_store_quota"));
-        }
-        let temporary = directory.join(format!(".{digest}.{}", std::process::id()));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        if let Err(error) = file
-            .write_all(bytes)
-            .and_then(|()| file.sync_all())
-            .and_then(|()| fs::rename(&temporary, &path))
-        {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
+        crate::fsio::write_if_changed(&path, bytes)?;
         Ok(digest)
     }
 
@@ -372,13 +324,13 @@ impl ResourceStore<'_> {
         }
         let directory = self.rotating_directory()?;
         let blob = hash(text.as_bytes());
-        write_new(&directory.join(format!("{blob}.bin")), text.as_bytes())?;
+        crate::fsio::write_if_changed(&directory.join(format!("{blob}.bin")), text.as_bytes())?;
         let record = self.record(
             "evidence",
             json!({"media_type": "text/plain", "label": label, "blob": blob, "bytes": text.len()}),
         )?;
         let sha256 = hash(&record);
-        write_new(&directory.join(format!("{sha256}.json")), &record)?;
+        crate::fsio::write_if_changed(&directory.join(format!("{sha256}.json")), &record)?;
         prune_rotating(&directory)?;
         Ok(crate::resource_data::ResourceRef {
             reference: sha256.clone(),

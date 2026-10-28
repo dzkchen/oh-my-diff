@@ -201,10 +201,28 @@ class UpdateSelection(unittest.TestCase):
             (directory / "codex").write_text("#!/bin/sh\n")
             (directory / "codex").chmod(0o755)
         with patch.dict(os.environ, {"PATH": f"{upstream}:{bin_dir}"}):
-            warning = self.module.path_warning(bin_dir)
-        self.assertIn(str(upstream / "codex"), warning)
+            self.assertEqual(self.module.shadowing_codex(bin_dir), str(upstream / "codex"))
         with patch.dict(os.environ, {"PATH": f"{bin_dir}:{upstream}"}):
-            self.assertIsNone(self.module.path_warning(bin_dir))
+            self.assertIsNone(self.module.shadowing_codex(bin_dir))
+
+    def test_summary_says_codex_cannot_start_while_the_broker_is_unpinned(self):
+        result = {"profile_label": "OMD+", "version": "1.0.0", "bin_dir": str(self.root / "bin"), "moved_aside": [],
+                  "prune_failures": []}
+        def summary(**extra):
+            lines = []
+            with patch.object(self.module, "say", lambda line="": lines.append(line)):
+                self.module.installed(result | extra)
+            return "\n".join(lines)
+        healthy = summary(authority_broker="pinned the active and previous installations")
+        self.assertIn("(OMD+) is installed.", healthy)
+        self.assertIn("run codex", healthy)
+        broken = summary(authority_broker="failed: launchctl refused; run omd-package broker pin")
+        self.assertIn("can't start until the authority broker is pinned", broken)
+        self.assertIn("Fix      omd-package broker pin", broken)
+        self.assertNotIn("Start", broken)
+        shadowed = summary(codex_on_path="/opt/homebrew/bin/codex")
+        self.assertIn("codex on your PATH is /opt/homebrew/bin/codex", shadowed)
+        self.assertNotIn("Start", shadowed)
 
     def test_first_install_restores_launchers_after_partial_failure_and_interruption(self):
         for interrupted in (False, True):
@@ -584,6 +602,29 @@ class ProfilePrompt(unittest.TestCase):
                 os.write(leader, b"1\n")
         os.waitpid(pid, 0)
         self.assertIn(b"result=full", screen)
+
+    def test_prompt_asks_again_after_invalid_input_and_fails_at_end_of_input(self):
+        module = installer()
+        pid, leader = pty.fork()
+        if pid == 0:
+            try:
+                module.profile_choice(types.SimpleNamespace(profile=None))
+            except ValueError as error:
+                os.write(1, f"\nerror={error}\n".encode())
+            finally:
+                os._exit(0)
+        screen, answers, deadline = b"", [b"3\n", b"\x04"], time.monotonic() + 20
+        while b"error=" not in screen and time.monotonic() < deadline:
+            if select.select([leader], [], [], 0.5)[0]:
+                try:
+                    screen += os.read(leader, 4096)
+                except OSError:
+                    break
+            if answers and screen.endswith(b"Profile [1/2]: "):
+                os.write(leader, answers.pop(0))
+        os.waitpid(pid, 0)
+        self.assertEqual(screen.count(b"Profile [1/2]: "), 2)
+        self.assertIn(b"error=No profile was chosen", screen)
 
 
 if __name__ == "__main__":

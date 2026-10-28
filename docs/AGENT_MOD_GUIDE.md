@@ -255,7 +255,7 @@ omd-mod-author report /tmp/notes-store # declared versus used permissions
 omd-mod-author explain 'capability_denied: exec'
 ```
 
-Inside `codex`, a mod that fails shows in the Mod errors panel and in `/omd`. An activation error
+Inside `codex`, a mod that fails shows in the Mod errors card above the prompt and in `/omd`. An activation error
 `conflict: NAME` means `activate` registered the same command, handler, timer or component name twice.
 
 ## 7. Install, update and remove

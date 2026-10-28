@@ -67,7 +67,7 @@ pub fn apply(store: &Path, repository: &Path, write: &RouteWrite) -> Result<Valu
             "routes_write_changed: host.json changed after the confirmation; try again".into(),
         );
     }
-    crate::broker::write_private(&store.join("host.json"), &merged)
+    crate::fsio::write_private(&store.join("host.json"), &merged)
         .map_err(|error| error.to_string())?;
     let names = |key: &str, field: &str, owner: &str| {
         merged[key]

@@ -23,6 +23,13 @@ CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
+def shows(screen, phrase):
+    words = phrase.split()
+    pattern = r"\s*".join(map(re.escape, words))
+    pattern = (r"(?<!\w)" if re.match(r"\w", words[0]) else "") + pattern + (r"(?!\w)" if re.search(r"\w$", words[-1]) else "")
+    return re.search(pattern, screen) is not None
+
+
 def call(argv, cwd, env=None, check=True):
     result = subprocess.run([str(value) for value in argv], cwd=cwd, env=env, capture_output=True, text=True,
                             timeout=120, stdin=subprocess.DEVNULL)
@@ -138,15 +145,16 @@ class Session:
                 self.raw.extend(chunk)
 
     def text(self, offset=0):
-        return " ".join(CSI.sub(b"", OSC.sub(b"", bytes(self.raw[offset:]))).decode(errors="replace").split())
+        text = CSI.sub(lambda match: b"" if match[0].endswith(b"m") else b" ", OSC.sub(b"", bytes(self.raw[offset:])))
+        return " ".join(text.decode(errors="replace").split())
 
     def wait(self, phrase, seconds=20, offset=0):
         deadline = time.monotonic() + seconds
-        expected = ["".join(item.split()) for item in ((phrase,) if isinstance(phrase, str) else phrase)]
+        expected = (phrase,) if isinstance(phrase, str) else phrase
         while time.monotonic() < deadline:
             self.pump()
-            screen = "".join(self.text(offset).split())
-            if any(item in screen for item in expected):
+            screen = self.text(offset)
+            if any(shows(screen, item) for item in expected):
                 return True
             if self.process.poll() is not None:
                 return False

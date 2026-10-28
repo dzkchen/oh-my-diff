@@ -138,7 +138,8 @@ export default function activate(api: ModAPI) {
         { type: 'button', id: id('close'), label: 'Close code intelligence', text: 'Close', action: { command: 'omd_lsp_view:lsp', args: 'close' } },
       ] },
     ];
-    return current.pane ? { sites: prompt([{ type: 'box', id: 'omd_lsp_view_pinned', label: 'Code intelligence, /lsp pane unpins', title: visible(current.title, 128), style: { border: 'rounded', padding: [0, 1] }, children: components }, ...serverCards]) }
+    const first = excerpt ? (own.length ? id('errors') : id('editor')) : current.items.length ? id('items') : current.text ? id('text') : id('close');
+    return current.pane ? { keybindings: { 'Alt+l': { focus: first } }, sites: prompt([{ type: 'box', id: 'omd_lsp_view_pinned', label: 'Code intelligence, Alt+l focuses, /lsp pane unpins', title: visible(current.title, 128), style: { border: 'rounded', padding: [0, 1] }, children: components }, ...serverCards]) }
       : { sites: { ...prompt(serverCards), dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: visible(current.title, 128), children: components }, { type: 'slot' }] } } };
   });
 }

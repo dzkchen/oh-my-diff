@@ -32,8 +32,8 @@ It applies at your next message. `omd mods list` shows the result.
 | `omd_plan_removal` | Removes `/plan` and plan mode |
 | `omd_plan_panel` | Pins Codex's current plan above the prompt |
 | `omd_statusline` | A configurable status line; `/statusline` edits it |
-| `omd_idle_compact` | Compacts a large idle conversation just before the prompt cache expires |
-| `omd_auto_continue` | Safely declines or answers a prompt nobody answers within two minutes, so the turn continues |
+| `omd_idle_compact` | Compacts a large idle conversation just before the prompt cache expires. The summary loses detail, and a pending approval or question is cancelled |
+| `omd_auto_continue` | Declines an approval, or answers a question, that nobody answers within two minutes, so the turn continues |
 
 OMD Core includes only the first three.
 

@@ -1,3 +1,4 @@
+use crate::fsio::write_private;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -10,7 +11,6 @@ use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -324,26 +324,6 @@ pub struct Broker {
     root: PathBuf,
     pub(crate) power: PathBuf,
     state: Mutex<()>,
-}
-
-pub(crate) fn write_private(path: &Path, value: &Value) -> io::Result<()> {
-    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let serial = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temporary = path.with_extension(format!("{}.{serial}.tmp", std::process::id()));
-    let _ = fs::remove_file(&temporary);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temporary)?;
-    let written = file
-        .write_all(&serde_json::to_vec(value)?)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| fs::rename(&temporary, path));
-    if written.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    written
 }
 
 fn read_json(path: &Path, default: Value) -> io::Result<Value> {

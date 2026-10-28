@@ -532,6 +532,12 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     let revision = git_output(&repository, &["rev-parse", "HEAD"]);
 
     let store = store_with_node(&temp);
+    std::fs::create_dir(root.join("store").join(format!(
+        ".repository-{}.{}.tmp",
+        &revision[..12],
+        std::process::id()
+    )))
+    .unwrap();
     let source = ModPackageSource::Repository {
         repository: repository.canonicalize().unwrap().display().to_string(),
         revision: revision.clone(),
@@ -1500,6 +1506,33 @@ fn edit_manifest(package: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
 fn install(store: &ModStore, request: ModInstallRequest) -> codex_omd::ModPackageLock {
     let plan = store.package_plan(request.clone()).unwrap();
     store.package_apply(request, &plan.confirmation).unwrap()
+}
+
+#[test]
+fn staging_sweeps_only_leftovers_older_than_an_hour() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "fixture", "1.0.0", &["exec"], json!([]));
+    let store = store(&temp);
+    let data = root.join("store");
+    let cache = data.join("package-cache/fixture");
+    let leftover = |path: PathBuf, age: u64| {
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age))
+            .unwrap();
+        path
+    };
+    let old_npm = leftover(data.join(".npm-0123456789ab.old.tmp"), 7200);
+    let old_cache = leftover(cache.join(".sha256-old.old.tmp"), 7200);
+    let fresh = leftover(data.join(".repository-0123456789ab.new.tmp"), 0);
+    let unrelated = leftover(data.join("kept.tmp"), 7200);
+    install(&store, request(&package, &["exec"]));
+    assert!(!old_npm.exists());
+    assert!(!old_cache.exists());
+    assert!(fresh.exists());
+    assert!(unrelated.exists());
 }
 
 #[test]

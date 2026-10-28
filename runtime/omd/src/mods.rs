@@ -851,6 +851,104 @@ fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
     Ok(())
 }
 
+/// Why activation refuses `selection` of the inspected `package`: `Err` when the selection is invalid, `Ok(Some(_))` when only administrator policy refuses it.
+fn selection_verdict(
+    selection: &ModSelection,
+    package: &ModPackage,
+    sha256: &str,
+    administered: bool,
+    grants: Option<&BTreeSet<String>>,
+    managed: Option<&ManagedPolicy>,
+) -> Result<Option<String>> {
+    if !administered
+        && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
+    {
+        return Err(failure(format!(
+            "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
+            selection.scope
+        )));
+    }
+    if !administered
+        && grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
+    {
+        return Err(failure(format!(
+            "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
+            selection.path.display()
+        )));
+    }
+    if sha256 != selection.sha256 {
+        return Err(failure(if administered {
+            format!(
+                "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
+                package.id
+            )
+        } else {
+            format!(
+                "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                package.id
+            )
+        }));
+    }
+    if package
+        .capabilities
+        .iter()
+        .any(|capability| !selection.capabilities.contains(capability))
+        || selection
+            .capabilities
+            .iter()
+            .any(|capability| !MOD_CAPABILITIES.contains(&capability.as_str()))
+    {
+        return Err(failure(format!("capability_denied: {}", package.id)));
+    }
+    check_secret_environment(package, &selection.secret_environment)?;
+    validate_settings(package, &selection.settings)?;
+    Ok(managed.filter(|_| !administered).and_then(|policy| {
+        policy.refusal(
+            &package.id,
+            &package.capabilities,
+            store::authenticated_source(selection, &package.id, grants).as_deref(),
+        )
+    }))
+}
+
+/// Scope precedence over valid enabled `(id, selection)` candidates: `None` wins its mod ID, otherwise why it loses.
+fn precedence(candidates: &[(&str, &ModSelection)]) -> Vec<Option<String>> {
+    let rank = |scope: &str| match scope {
+        MANAGED_SCOPE => 2,
+        "project" => 1,
+        _ => 0,
+    };
+    candidates
+        .iter()
+        .map(|(id, selection)| {
+            let rivals = candidates.iter().filter(|(other, _)| other == id);
+            let top = rivals
+                .clone()
+                .map(|(_, rival)| rank(&rival.scope))
+                .max()
+                .unwrap_or_default();
+            let winners = rivals
+                .filter(|(_, rival)| rank(&rival.scope) == top)
+                .map(|(_, rival)| rival)
+                .collect::<Vec<_>>();
+            if rank(&selection.scope) < top {
+                Some(format!(
+                    "shadowed_by_{}_scope: {}",
+                    winners[0].scope,
+                    winners[0].path.display()
+                ))
+            } else if winners.len() > 1 {
+                Some(format!(
+                    "mod_conflict: {id} is enabled twice in the {} scope",
+                    selection.scope
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Non-mod `origin.caller` labels, which a mod ID must never equal.
 const HOST_CALLERS: [&str; 4] = ["model", "engine", "code_mode", "user"];
 
@@ -2709,6 +2807,44 @@ mod reload_tests {
     }
 
     #[test]
+    fn callback_authority_checks_reuse_the_cached_authority() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let package = base.join("hello");
+        std::fs::create_dir(&package).unwrap();
+        std::fs::write(package.join("mod.json"), serde_json::to_vec(&json!({"schema": 1, "id": "hello",
+            "version": "1.0.0", "api": MOD_API_VERSION, "state_version": 1, "capabilities": ["commands"],
+            "license": "Apache-2.0", "provenance": {"maintainer": "Fixture", "source": "fixture"}})).unwrap()).unwrap();
+        std::fs::write(
+            package.join("index.ts"),
+            "export default api => api.command('hello', () => 'hi')",
+        )
+        .unwrap();
+        let store = ModStore::create(base.join("store")).unwrap();
+        let sha256 = ModStore::inspect_package(&package).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(package.clone(), &sha256, vec!["commands".into()], "user")
+            .unwrap();
+        store.enable(&package, true).unwrap();
+        let policy = base.join("policy.json");
+        std::fs::write(&policy, br#"{"schema": 1}"#).unwrap();
+        let mut host = ModHost::open(base.join("store")).unwrap();
+        let owner = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&base).unwrap());
+        host.set_managed_policy(policy, owner, "alice").unwrap();
+        let loaded = host.loaded["hello"].clone();
+        host.check_callback_authority(&loaded).unwrap();
+        let reads = store::READS.get();
+        for _ in 0..100 {
+            host.brokered.as_mut().unwrap().0 = Instant::now();
+            host.check_callback_authority(&loaded).unwrap();
+        }
+        assert_eq!(store::READS.get(), reads);
+    }
+
+    #[test]
     fn renders_rejected_by_a_pending_reload_keep_the_last_view_without_a_diagnostic() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap().join("store");
@@ -3536,26 +3672,19 @@ impl ModHost {
         }
         self.configuration_stamp = None;
         let (stamp, sha256, bytes) = read_configuration(&path, stamp);
-        let (brokered, managed, deployment) = match self.authority(&sha256) {
+        let authority = match self.authority(&sha256) {
             Ok(authority) => authority,
             Err(error) => {
                 self.fail_closed(format!("authority_unavailable: {error}"));
                 return Err(error);
             }
         };
+        let hash = self.authority_hash(&sha256, &authority);
+        let (brokered, managed, deployment) = authority;
         let (deployment, unreadable) = match deployment {
             Ok(deployment) => (deployment, None),
             Err(error) => (policy::ManagedDeployment::default(), Some(error)),
         };
-        let hash = format!(
-            "{sha256}:{}:{}:{}:{}",
-            brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed
-                .as_ref()
-                .map_or("", |managed| managed.sha256.as_str()),
-            deployment.generation,
-            self.project.as_deref().unwrap_or(Path::new("")).display()
-        );
         if hash == self.configuration_sha256 {
             self.configuration_stamp = stamp.filter(|_| configuration_stamp(&path) == stamp);
             return Ok(false);
@@ -4011,6 +4140,21 @@ impl ModHost {
         Ok(authority)
     }
 
+    fn authority_hash(&self, configuration_sha256: &str, authority: &Authority) -> String {
+        let (brokered, managed, deployment) = authority;
+        format!(
+            "{configuration_sha256}:{}:{}:{}:{}",
+            brokered.as_ref().map_or(0, |(generation, _)| *generation),
+            managed
+                .as_ref()
+                .map_or("", |managed| managed.sha256.as_str()),
+            deployment
+                .as_ref()
+                .map_or(0, |deployment| deployment.generation),
+            self.project.as_deref().unwrap_or(Path::new("")).display()
+        )
+    }
+
     pub fn set_managed_policy(&mut self, file: PathBuf, owner: u32, user: &str) -> Result<bool> {
         self.store.set_managed_policy(file, owner, user);
         self.brokered = None;
@@ -4057,125 +4201,61 @@ impl ModHost {
         rejected: &mut Vec<ModRejection>,
         inspect: fn(&Path) -> Result<(ModPackage, String, String)>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
-        let rank = |scope: &str| match scope {
-            MANAGED_SCOPE => 2,
-            "project" => 1,
-            _ => 0,
-        };
-        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
+        let mut valid = Vec::new();
         for (index, selection) in selections.iter().enumerate().filter(|(_, m)| m.enabled) {
-            let administered = index < administered;
             let mut inspected = None;
-            let loaded = (|| {
-                if !administered
-                    && (!MOD_SCOPES.contains(&selection.scope.as_str()) || selection.tier.is_some())
-                {
-                    return Err(failure(format!(
-                        "unsupported_scope: {}; the managed scope and tiers come only from administrator policy",
-                        selection.scope
-                    )));
-                }
-                if !administered
-                    && grants
-                        .is_some_and(|grants| !grants.contains(&store::grant(&json!(selection))))
-                {
-                    return Err(failure(format!(
-                        "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
-                        selection.path.display()
-                    )));
-                }
-                let (package, source, hash) = inspect(&selection.path)?;
+            let verdict = inspect(&selection.path).and_then(|(package, source, sha256)| {
                 inspected = Some(package.id.clone());
-                if hash != selection.sha256 {
-                    return Err(failure(if administered {
-                        format!(
-                            "managed_content_stale: {} differs from the administrator-pinned sha256; run omd-mod package-sync",
-                            package.id
-                        )
-                    } else {
-                        format!(
-                            "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
-                            package.id
-                        )
-                    }));
-                }
-                let granted: BTreeSet<_> = selection.capabilities.iter().collect();
-                if package.capabilities.iter().any(|c| !granted.contains(c))
-                    || selection
-                        .capabilities
-                        .iter()
-                        .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
-                {
-                    return Err(failure(format!("capability_denied: {}", package.id)));
-                }
-                check_secret_environment(&package, &selection.secret_environment)?;
-                validate_settings(&package, &selection.settings)?;
-                Ok((package, source))
-            })();
-            let (package, source) = match loaded {
-                Ok(loaded) => loaded,
-                Err(error) => {
-                    reject(
-                        initial,
-                        rejected,
-                        selection,
-                        inspected.as_deref(),
-                        error.to_string(),
-                    )?;
-                    continue;
-                }
-            };
-            let id = package.id.clone();
-            // Policy refusals apply on every reload: the user cannot repair them.
-            if !administered
-                && let Some(reason) = managed.and_then(|policy| {
-                    policy.refusal(
-                        &id,
-                        &package.capabilities,
-                        store::authenticated_source(selection, &id, grants).as_deref(),
-                    )
-                })
-            {
-                rejected.push(ModRejection {
+                let refusal = selection_verdict(
+                    selection,
+                    &package,
+                    &sha256,
+                    index < administered,
+                    grants,
+                    managed,
+                )?;
+                Ok((refusal, package, source))
+            });
+            match verdict {
+                Ok((None, package, source)) => valid.push((selection, package, source)),
+                // Policy refusals apply on every reload: the user cannot repair them.
+                Ok((Some(reason), package, _)) => rejected.push(ModRejection {
                     path: selection.path.clone(),
-                    id: Some(id),
+                    id: Some(package.id),
                     scope: selection.scope.clone(),
                     reason,
-                });
-                continue;
+                }),
+                Err(error) => reject(
+                    initial,
+                    rejected,
+                    selection,
+                    inspected.as_deref(),
+                    error.to_string(),
+                )?,
             }
-            let Some((previous, ..)) = selected.get(&id) else {
-                selected.insert(id, (selection.clone(), package, source));
-                continue;
-            };
-            if previous.scope != selection.scope {
-                let (loser, winner) = if rank(&selection.scope) > rank(&previous.scope) {
-                    let (previous, ..) = selected
-                        .insert(id.clone(), (selection.clone(), package, source))
-                        .expect("checked above");
-                    (previous, selection.clone())
-                } else {
-                    (selection.clone(), previous.clone())
-                };
-                rejected.push(ModRejection {
-                    path: loser.path,
-                    id: Some(id),
-                    scope: loser.scope,
-                    reason: format!(
-                        "shadowed_by_{}_scope: {}",
-                        winner.scope,
-                        winner.path.display()
-                    ),
-                });
-                continue;
+        }
+        let ranked = precedence(
+            &valid
+                .iter()
+                .map(|(selection, package, _)| (package.id.as_str(), *selection))
+                .collect::<Vec<_>>(),
+        );
+        let mut selected = BTreeMap::new();
+        for ((selection, package, source), loss) in valid.into_iter().zip(ranked) {
+            match loss {
+                None => {
+                    selected.insert(package.id.clone(), (selection.clone(), package, source));
+                }
+                Some(reason) if reason.starts_with("mod_conflict") => {
+                    reject(initial, rejected, selection, Some(&package.id), reason)?
+                }
+                Some(reason) => rejected.push(ModRejection {
+                    path: selection.path.clone(),
+                    id: Some(package.id),
+                    scope: selection.scope.clone(),
+                    reason,
+                }),
             }
-            let reason = format!(
-                "mod_conflict: {id} is enabled twice in the {} scope",
-                selection.scope
-            );
-            let (previous, ..) = selected.remove(&id).expect("checked above");
-            reject(initial, rejected, &previous, Some(&id), reason.clone())?;
-            reject(initial, rejected, selection, Some(&id), reason)?;
         }
         Ok(selected)
     }
@@ -4735,19 +4815,16 @@ impl ModHost {
         )
     }
 
-    fn check_callback_authority(&self, loaded: &Loaded) -> Result<()> {
-        let managed = self.store.managed()?;
-        let brokered = store::brokered_grants(&self.store.root)?;
-        let deployment = if managed.is_some() {
-            self.store.managed_deployment()?
-        } else {
-            policy::ManagedDeployment::default()
-        };
+    fn check_callback_authority(&mut self, loaded: &Loaded) -> Result<()> {
+        let (configuration_sha256, configuration) = self.callback_configuration();
+        let authority = self.authority(&configuration_sha256)?;
+        let hash = self.authority_hash(&configuration_sha256, &authority);
+        let (brokered, managed, deployment) = authority;
         let mut selections = match &managed {
             Some(managed) => {
                 managed
                     .selections(
-                        &deployment,
+                        &deployment.unwrap_or_default(),
                         &self.store.managed_user(),
                         self.project.as_deref(),
                     )
@@ -4760,19 +4837,11 @@ impl ModHost {
             .tier_selections
             .get(&loaded.package.id)
             .unwrap_or(&loaded.selection);
-        let (configuration_sha256, configuration) = self.callback_configuration();
-        let hash = format!(
-            "{}:{}:{}:{}:{}",
-            configuration_sha256,
-            brokered.as_ref().map_or(0, |(generation, _)| *generation),
-            managed
-                .as_ref()
-                .map_or("", |managed| managed.sha256.as_str()),
-            deployment.generation,
-            self.project.as_deref().unwrap_or(Path::new("")).display()
-        );
         // An unchanged authority inventory cannot introduce a different precedence winner.
         let unchanged = hash == self.configuration_sha256;
+        if !unchanged {
+            self.configuration_stamp = None;
+        }
         match configuration {
             Ok(config) if config.schema == 1 => selections.extend(
                 config
