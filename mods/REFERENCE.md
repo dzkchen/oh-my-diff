@@ -3692,7 +3692,7 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 
 ##### `raster` component
 
-`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–200 × 1–40 cells that shows
+`{type: 'raster', id, label, alt, width?, height?, pointer?}` is a keyed canvas of 1–512 × 1–256 cells that shows
 `alt` until its first frame and clips to the component's width.
 
 - An omitted `width` fills the region's width.
@@ -3709,16 +3709,33 @@ turned off) the view renders again with the new `client`; a burst of changes ren
 id). `cells` lists the rect's cells row by row, each a one-cell glyph or `[glyph, fg, bg]` with theme colors or
 null.
 
+`terminal.blit {key, rect, packed}` (`terminal_raster_packed_v1`) passes the same cells as base64 of `rect.width ×
+rect.height` little-endian u32 triplets `[codePoint, fg, bg]`, row by row:
+
+- A code point is one printable column (no controls, combining marks or wide characters).
+- A color is `0x00RRGGBB`, `0x01000000` for the theme default or `0x02000000 | index` for a 0–255 palette color;
+  under `NO_COLOR` every cell draws in the default colors.
+- A cell takes 16 bytes of base64, about half a colored JSON cell, and the host decodes it without a JSON tree. The
+  runner has no `btoa`, so encode with a small helper such as the one in the `raster_wave` example.
+- A callback's host calls share its 128 KiB receipt budget, so one callback blits about 8,000 packed cells (160 × 48)
+  or 4,500 colored JSON cells. Timer ticks are 16 ms apart, so a larger raster should redraw only the cells that
+  change.
+- External clients receive `packed` updates as `cells`.
+
 | Error | When |
 | --- | --- |
 | `terminal_blit_not_owned` | The raster is another mod's. |
 | `terminal_blit_unknown` | The terminal has not received the raster in a view yet, such as one returned by the same callback. |
 | `terminal_blit_too_large` | One call is over 256 KiB. |
 | `terminal_blit_limit` | A blit to a 17th key. |
+| `terminal_blit_packed_invalid` | `packed` is not base64, is not 12 bytes a cell, or has a code point or color outside the rules above; the message names the cell. |
 
-Updates queue per raster and apply one per 16 ms frame, so a timer tick can enqueue an animation. At 32 queued
-updates or 256 KiB the call returns `{status: 'backpressure', retry_after_ms}` instead of `{frame, queued,
-frame_ms}`.
+Cells and packed updates that reach a raster before its next 16 ms frame merge into that frame, later cells
+overwriting earlier ones, so one timer tick can draw a frame in several calls. The call returns `{frame, queued,
+frame_ms}`: the frame the update shows in and the frames pending (a picture, then the cells merged after it). Merged
+cells never take more than the raster, so the call returns `{status: 'backpressure', retry_after_ms: 250}` only while
+a pending frame stays undrawn for four ticks (an inactive tab or unplaced layout). Image and pixel frames keep the
+pacing below.
 
 ##### `terminal.blit` images
 
@@ -3729,14 +3746,14 @@ cells by the same rule and renderers as `image` (Kitty placeholders, iTerm2 inli
 
 - The newest frame replaces the previous one, a cells blit replaces the frame and a frame replaces the cells.
 - It is never stored as a resource, so prefer it to a new `image` resource per frame (which exhausts the record
-  quota) or to cells (about 200 × 80 effective pixels).
+  quota) or to cells (two effective pixels a cell).
 - External clients whose renderer `formats` include the media type receive the frame as sent, other clients with
   `cells` receive half-block cells.
 
 | Error | When |
 | --- | --- |
 | `terminal_blit_image_invalid` | A wrong media type, bad base64 or an image that does not decode within 4096 px per side. |
-| `terminal_blit_invalid` | Both or neither of `image` and `rect`/`cells` are passed. |
+| `terminal_blit_invalid` | Not exactly one of `cells`, `packed`, `image` and `pixels` is passed. |
 
 Both refuse before queueing.
 
@@ -3859,7 +3876,7 @@ with `other`. It returns `{status: 'accepted', values, other?}` or `declined` wh
 
 ##### `terminal.blit`
 
-`terminal.blit {key, rect, cells}` (`terminal_raster_v1`, experimental) queues a raster update, described in
+`terminal.blit {key, rect, cells | packed}` (`terminal_raster_v1`, experimental) queues a raster update, described in
 [Raster, pointer and overlays](#raster-pointer-and-overlays-terminal_raster_v1).
 
 ##### `terminal.pane` and `terminal.panes`
