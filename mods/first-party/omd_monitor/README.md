@@ -6,7 +6,7 @@ A message looks like `[omd_monitor] m1 (process 4242) condition met: exited with
 
 ## Turn it on
 
-Experimental: OMD+ doesn't install it. Install it from Browse in `/mods`, or run:
+Experimental: OMD+ doesn't install it. Install it from the Available group in `/mods`, or run:
 
 ```sh
 omd install omd_monitor

@@ -9,6 +9,7 @@ const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
 const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
 const DELETION = /^\*\*\* Delete File: .*$/gm;
+// Must equal the host's error text (runtime/omd/src/workspace.rs), which is matched verbatim below.
 const INDEX_BOUNDS = 'workspace index exceeds bounds';
 const MENTION = /[\w@+.\/-]{1,240}\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
@@ -53,6 +54,7 @@ export default function activate(api: ModAPI) {
         else {
           const reason = event.reason ?? 'workspace_index_unavailable';
           s.status = 'synced';
+          // omd_lsp_view shows the `degraded:` prefix as a warning; keep both in step.
           s.reason = `${reason === INDEX_BOUNDS ? 'degraded' : 'resynced'}: ${reason}`;
         }
         save(s);

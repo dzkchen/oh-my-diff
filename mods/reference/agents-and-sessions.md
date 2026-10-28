@@ -29,7 +29,6 @@ A requirement names a receipt kind, a producer (`any`, `lead`, `host`, `integrat
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
 - With no selection nothing is gated.
 - An unavailable selection fails closed.
-- Old `workflow.json` selections are not imported.
 
 ### `receipts.submit`
 
@@ -115,7 +114,8 @@ still match; invalid state fails closed.
 ### `agents.spawn`
 
 ```ts
-agents.spawn {role, route, prompt, workspace?, tools?, evidence?, snapshot?, parent_history?}
+agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
+              resolution_context?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.

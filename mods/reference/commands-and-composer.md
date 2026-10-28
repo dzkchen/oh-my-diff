@@ -192,7 +192,8 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
 so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
 50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
-`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way.
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way. A policy or redaction
+interceptor must therefore be `required`: a busy optional one lets a paste or fill through unmodified.
 
 ### `composer_key` interceptor
 

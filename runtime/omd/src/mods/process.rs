@@ -1,4 +1,5 @@
 use super::Result;
+use super::code_cache::CacheRoot;
 use super::code_cache::CodeCache;
 use super::failure;
 use serde_json::Value;
@@ -561,7 +562,7 @@ fn warm_runner(key: &str, serve: bool) -> Result<Warm> {
 pub(super) fn evaluate_warm<R>(
     key: &str,
     request: &R,
-    cache_root: Option<&Path>,
+    cache_root: Option<&CacheRoot>,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,
@@ -768,7 +769,7 @@ fn process_failure(errors: &[u8]) -> std::io::Error {
 
 pub(super) fn evaluate<R>(
     request: &R,
-    cache: Option<&Path>,
+    cache: Option<&CacheRoot>,
     budget: Duration,
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(Value) -> Result<Value>,

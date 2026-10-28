@@ -185,6 +185,8 @@ lifecycle callback.
   boundary for slash commands.
 - If more than 64 unannounced changes accumulate, subscribers receive one `source: "rescan"`, `unavailable`
   notification instead.
+- A batch of more than 128 changed paths or 16,000 bytes of path names, or one with a path outside the read scope,
+  arrives as `unavailable` with `reason` `workspace_change_batch_limit` or `workspace_change_scope_unavailable`.
 - The host scans only while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports `unavailable`
   instead of partial coverage.
 
@@ -229,8 +231,8 @@ result.
 
 ### `store.*` operations
 
-`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default) or `user`
-scope.
+`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default), `user` or `thread`
+scope (see [Thread-scoped store and `resume`](credentials-and-threads.md#thread-scoped-store-and-resume)).
 
 - `put` and `delete` require the current `expected_revision` (`null` to create); a stale revision fails.
 - `reset` needs the current generation.
@@ -263,6 +265,10 @@ attempt's start, so `Date.now()` in arguments replays).
 
 If a retry asks for a different host call, it runs again fresh when every recorded call was read-only; otherwise it
 fails with the transient `state_conflict`, because an operation that already ran is never repeated.
+
+Each commit of `api.state` (and of thread and checkout state) is ordered by a write barrier rather than a full fsync: state
+survives a crash or quit in order, but the last commits can be lost on a power failure. `store.*` data and evidence are
+fully synced.
 
 ### `state_scope` (`state_scopes_v1`)
 
@@ -402,9 +408,9 @@ hashes. Only a selected mod that subscribes to it triggers the index scan.
 
 The independent example also shows a direct transaction for a mod tool.
 
-### The experimental `process` capability
+### Managed processes
 
-The experimental `process` capability grants `process.which`, `process.start`, `process.exchange`,
+The `exec` capability grants `process.which`, `process.start`, `process.exchange`,
 `process.status`, and `process.stop`. The host resolves an installed executable and its hash, verifies that
 identity at launch, and runs it in a read-only repository sandbox with restricted network access and a private
 scratch directory.

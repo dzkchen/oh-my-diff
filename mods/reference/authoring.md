@@ -7,7 +7,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 
 | Command | Result |
 | --- | --- |
-| `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
+| `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
@@ -19,7 +19,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
-| `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
+| `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
 
 ### Author toolchain
@@ -126,10 +126,10 @@ Negative tests:
 ### Scenario steps
 
 - Time and events: `invoke(mod, event, name, payload)`, `emit(event, payload)`, `advance(ms)`,
-  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`.
+  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`, `state(mod, {value})` (reads, or first writes, `api.state`).
 - Views and input: `mount(mod)`, `key(mod, name)`, `activate(mod, component)`, `input(mod, component, value)`,
   `select(mod, component, value)`, `pointer(mod, component, {column, row, action})` (with `{client}` for an attached
-  client's event).
+  client's event), `component(mod, module, {instance, props, columns, rows, events})` (steps an `api.component` module).
 - Clients: `attach(name, {renderer})`, `detach(id)`.
 - Interceptors: `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`.
 
@@ -279,7 +279,7 @@ Diagnostics explain how to narrow or explicitly approve authority, but tooling c
 ## Cost report
 
 `omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs`
-times (default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
+times (1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
 Name one of the package's commands, with an optional JSON payload, to time its callbacks too.
 
 | Field | Meaning |

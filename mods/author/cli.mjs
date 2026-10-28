@@ -29,6 +29,8 @@ const node = process.env.OMD_MOD_NODE || process.execPath;
 const publicExamples = sdkPackage.files.filter(file => file.startsWith('examples/')).map(file => file.slice('examples/'.length));
 
 const USAGE = 'usage: omd-mod-author create DIR [ID] | example DIR NAME | examples DIR | check/test/run/debug/package DIR | cost DIR [COMMAND [ARGS_JSON]] [--runs N] | watch DIR STORE [--once] | report/events STORE | diagnostics STORE [OUTPUT] | explain DENIAL\n';
+const DEFAULT_COST_RUNS = 10;
+const MAX_COST_RUNS = 100;
 
 /** @returns {never} */
 function fail(message) {
@@ -319,8 +321,8 @@ async function packageProject(directory) {
 
 function costProject(directory, args) {
   const at = args.indexOf('--runs');
-  const runs = at === -1 ? '10' : args[at + 1] ?? '';
-  if (!/^[1-9]\d*$/.test(runs) || Number(runs) > 100) fail('cost --runs takes a whole number from 1 to 100');
+  const runs = at === -1 ? String(DEFAULT_COST_RUNS) : args[at + 1] ?? '';
+  if (!/^[1-9]\d*$/.test(runs) || Number(runs) > MAX_COST_RUNS) fail(`cost --runs takes a whole number from 1 to ${MAX_COST_RUNS}`);
   const call = at === -1 ? args : [...args.slice(0, at), ...args.slice(at + 2)];
   if (call.length > 2) fail(USAGE.trim());
   compileJsx(directory);

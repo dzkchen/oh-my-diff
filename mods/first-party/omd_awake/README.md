@@ -14,7 +14,7 @@ turn off.
 
 ## Turn it on
 
-Experimental: OMD+ doesn't install it. Install it from Browse in `/mods`, or run:
+Experimental: OMD+ doesn't install it. Install it from the Available group in `/mods`, or run:
 
 ```sh
 omd install omd_awake

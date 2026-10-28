@@ -572,7 +572,7 @@ impl Session {
     fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
         let path = self.evidence.join(name);
-        match codex_omd::fsio::create_private(&path, &bytes) {
+        match codex_omd::fsio::create_new(&path, &bytes) {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing = std::fs::read(&path).map_err(|e| e.to_string())?;
                 if serde_json::from_slice::<Value>(&existing).is_err() {

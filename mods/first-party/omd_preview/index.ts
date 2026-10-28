@@ -5,6 +5,7 @@ import { SOURCE_BYTES, DRAWN_BYTES, diagram, fences, chunks, presentation, kindO
 const DIR = '.omd/preview';
 const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
+// Bounds one inline view's payload: lines, and bytes once JSON-escaped (quotes and backslashes can double a diff).
 const VIEW_LINES = 2_000;
 const VIEW_ENCODED_BYTES = 60_000;
 const MAX_WATCHES = 8;

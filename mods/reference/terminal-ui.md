@@ -737,7 +737,7 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (four per mod, sixteen in all).
+- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod`, four by default, and sixteen in all).
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.

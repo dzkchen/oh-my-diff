@@ -1754,11 +1754,8 @@ impl ModStore {
                 if actual.trim() != revision {
                     return Err(failure("repository_revision_mismatch"));
                 }
-                let staging = tempfile::Builder::new()
-                    .prefix(&format!(".repository-{}.", &revision[..12]))
-                    .suffix(".tmp")
-                    .tempdir_in(&self.root)?
-                    .keep();
+                let staging =
+                    staging_dir(&self.root, &format!(".repository-{}.", &revision[..12]))?;
                 let result = (|| {
                     let prefix = if subdirectory.is_empty() {
                         String::new()
@@ -1964,11 +1961,10 @@ impl ModStore {
                 "npm_integrity_changed: the registry now serves different content",
             ));
         }
-        let staging = tempfile::Builder::new()
-            .prefix(&format!(".npm-{}.", &digest(expected.as_bytes())[..12]))
-            .suffix(".tmp")
-            .tempdir_in(&self.root)?
-            .keep();
+        let staging = staging_dir(
+            &self.root,
+            &format!(".npm-{}.", &digest(expected.as_bytes())[..12]),
+        )?;
         let result = (|| {
             let archive = npm_fetch(
                 tarball,
@@ -2065,11 +2061,7 @@ impl ModStore {
         }
         sweep_staging(&self.root);
         sweep_staging(&base);
-        let staging = tempfile::Builder::new()
-            .prefix(&format!(".{integrity}."))
-            .suffix(".tmp")
-            .tempdir_in(&base)?
-            .keep();
+        let staging = staging_dir(&base, &format!(".{integrity}."))?;
         let result = (|| {
             copy_file(source, &staging, "mod.json", 8192)?;
             copy_file(
@@ -2155,11 +2147,24 @@ fn lifecycle_refused(id: &str) -> std::io::Error {
     ))
 }
 
+/// A uniquely named `.{prefix}*.tmp` directory in `parent`, kept until the caller renames it or `sweep_staging` does.
+fn staging_dir(parent: &Path, prefix: &str) -> std::io::Result<PathBuf> {
+    Ok(tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".tmp")
+        .tempdir_in(parent)?
+        .keep())
+}
+
+/// Older than any install still writing its staging directory.
+const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Removes `staging_dir` leftovers of crashed installs.
 fn sweep_staging(directory: &Path) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
-    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let cutoff = std::time::SystemTime::now() - STALE_STAGING;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();

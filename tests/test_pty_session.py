@@ -10,6 +10,8 @@ class PtySessionTests(unittest.TestCase):
         self.assertFalse(shows("this mod only works", "mod on"))
         self.assertFalse(shows("a mod once", "mod on"))
         self.assertTrue(shows("ran /plan: done", "/plan:"))
+        self.assertTrue(shows("x Rel oad y", "Reload"))
+        self.assertFalse(shows("Reloaded", "Reload"))
 
 
 if __name__ == "__main__":

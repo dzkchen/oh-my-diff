@@ -45,6 +45,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       for (const [path, reason] of Object.entries(inventory.optional)) {
         process.stderr.write(`Not executed (optional/manual): ${path}: ${reason}\n`);
       }
+      // Import-time lookup of omd-runner: a missing runner fails here once, not in every test file.
       await import('../tests/mod_runner.mjs');
       const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2), ...inventory.tests], { cwd: root, stdio: 'inherit' });
       if (result.error) throw result.error;

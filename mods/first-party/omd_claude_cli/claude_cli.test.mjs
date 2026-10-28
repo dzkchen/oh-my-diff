@@ -112,7 +112,7 @@ test('a CLI that hangs before its request or while acknowledging history replay 
       const started = Date.now();
       const error = await runClaude(prompt, entry, join(root, 'claude'), new AbortController().signal, () => {}, { translated, deadlineMs: 1000 }).then(() => null, failure => failure);
       assert.equal(error?.code, 'claude_upstream_incomplete');
-      assert.match(error.message, /did not finish within .* minutes \(it never sent its request\).*Retry the request/);
+      assert.match(error.message, /did not finish within 0 minutes \(it never sent its request\).*Retry the request/);
       assert.ok(Date.now() - started < 5000);
       for (const name of ['child', 'grandchild']) assert.equal(await alive(name), false, name);
     }

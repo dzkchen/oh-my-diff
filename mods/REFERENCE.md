@@ -93,9 +93,9 @@ follows.
 #### Codex plugins and hooks
 
 Codex 0.164.0 plugins bundle skills, prompts, MCP servers and hook files. Its hooks are external commands or MCP tools
-that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_tool_use`,
-`permission_request`, `post_tool_use`, `pre_compact`, `post_compact`, `session_start`, `session_end`,
-`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
+that return a decision: block a call, add context, or rewrite a tool's input. The hooks are `pre_model_request`,
+`post_model_request`, `pre_tool_use`, `permission_request`, `post_tool_use`, `pre_compact`, `post_compact`,
+`session_start`, `session_end`, `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
 
 A hook can't hold state, stream, draw on screen, route a model or run an agent. When two `pre_tool_use` hooks rewrite
 the same call, the last one to finish wins.
@@ -188,7 +188,7 @@ Capabilities name authority classes. A call or registration outside the package'
 
 | Capability | Grants |
 | --- | --- |
-| `exec` | `exec.run`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
+| `exec` | `exec.run`, `exec.output_page`, `environment.read`, `environment.set`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
 | `history` | the `history` replacement |
 | `outputs` | `tool_output` observers |
@@ -201,15 +201,15 @@ Capabilities name authority classes. A call or registration outside the package'
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `sessions_tools` | tool arguments and outputs in `sessions.read` records, `sessions.snapshot`, `model.fork` and `agents.spawn {parent_history}` (with `sessions`) |
-| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
+| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, `contract.select`, the `contract` event |
 | `builtins` | `api.builtins`, `builtins.invoke`, `commands.invoke` |
 
 #### Capabilities: terminal, threads and registrations
 
 | Capability | Grants |
 | --- | --- |
-| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`; the `component_change` interceptor |
-| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `session.info` and `tools.list` |
+| `terminal` | the `terminal` event and `render` interceptors; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `commands.list`, `commands.describe`, `terminal.import_file`, `terminal.open`, `terminal.prompt`, `terminal.pane`, `terminal.panes`, `terminal.panel`, `terminal.notice`, `terminal.selection`, `terminal.copy`, `terminal.blit`, `terminal.image_sample`; the `component_change` interceptor |
+| `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification`; `threads` also `turns.abort`; `config` also `config.describe`, `config_list` interceptors and `config_change`; `config.write` also `config.set` and `config_set` interceptors; `inventory` also `app.routes`, `session.info` and `tools.list` |
 | `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` and `app.respond`; the `elicitation` interceptor and `elicitation_result` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, `time.sleep`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
@@ -237,7 +237,7 @@ access](#structured-access-structured_access_v1) describe how they are bound and
 | `fs.external` | `root` on `workspace.read`, `workspace.list`, `workspace.stat` and `workspace.transaction` for the manifest's `fs_access` roots |
 | `mcp` | `mcp.connect`, `mcp.disconnect` for the manifest's `mcp_servers` |
 | `policy` | `admission` interceptors and namespace withholding inside the manifest's `policy.namespaces` (`admission_api_policy_v1`) |
-| `request_policy` | a declared final-request policy that refuses every model request unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
+| `request_policy` | a declared final-request policy that refuses every model request except web search unless the mod's required `model_send` interceptor serves (needs `middleware`; `final_request_policy_v1`); shown in the grant exposure text, not an expiring authority grant |
 | `peers` | `peers.list`, `peers.send`, `peer_send` and `peer_receive` interceptors, the `peer_message` and `peer_receipt` events, within the manifest's `peer_access` (`peer_sessions_v1`) |
 | `power` | `power.hold` and `power.release`; lid-closed holds need the deployed broker (`power_hold_v1`) |
 | `autonomous` | `turns.queue`, `turns.queued`, `turns.dequeue`, `turn_stop` interceptors and the `turn_queue` event, within the manifest's `autonomy` limits (`autonomous_turns_v1`) |
@@ -280,7 +280,7 @@ needs `exec`.
 
 #### Ending and showing the grants
 
-`omd-mod trust ... --expires SECONDS` ends the three grants at a time, project scope keeps them to one repository,
+`omd-mod trust ... --expires SECONDS` ends the authority grants at a time, project scope keeps them to one repository,
 and `omd-mod revoke STORE MOD_ID_OR_PACKAGE` disables the mod and drops its grant at once: capabilities and secret
 environment are cleared, and enabling it again needs a new trust or install.
 
@@ -669,6 +669,8 @@ lifecycle callback.
   boundary for slash commands.
 - If more than 64 unannounced changes accumulate, subscribers receive one `source: "rescan"`, `unavailable`
   notification instead.
+- A batch of more than 128 changed paths or 16,000 bytes of path names, or one with a path outside the read scope,
+  arrives as `unavailable` with `reason` `workspace_change_batch_limit` or `workspace_change_scope_unavailable`.
 - The host scans only while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports `unavailable`
   instead of partial coverage.
 
@@ -713,8 +715,8 @@ result.
 
 #### `store.*` operations
 
-`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default) or `user`
-scope.
+`store.get/put/delete/list/export/reset` operate on a per-mod namespace with `repository` (default), `user` or `thread`
+scope (see [Thread-scoped store and `resume`](#thread-scoped-store-and-resume)).
 
 - `put` and `delete` require the current `expected_revision` (`null` to create); a stale revision fails.
 - `reset` needs the current generation.
@@ -747,6 +749,10 @@ attempt's start, so `Date.now()` in arguments replays).
 
 If a retry asks for a different host call, it runs again fresh when every recorded call was read-only; otherwise it
 fails with the transient `state_conflict`, because an operation that already ran is never repeated.
+
+Each commit of `api.state` (and of thread and checkout state) is ordered by a write barrier rather than a full fsync: state
+survives a crash or quit in order, but the last commits can be lost on a power failure. `store.*` data and evidence are
+fully synced.
 
 #### `state_scope` (`state_scopes_v1`)
 
@@ -886,9 +892,9 @@ hashes. Only a selected mod that subscribes to it triggers the index scan.
 
 The independent example also shows a direct transaction for a mod tool.
 
-#### The experimental `process` capability
+#### Managed processes
 
-The experimental `process` capability grants `process.which`, `process.start`, `process.exchange`,
+The `exec` capability grants `process.which`, `process.start`, `process.exchange`,
 `process.status`, and `process.stop`. The host resolves an installed executable and its hash, verifies that
 identity at launch, and runs it in a read-only repository sandbox with restricted network access and a private
 scratch directory.
@@ -939,7 +945,7 @@ Routes are configuration, not names in the API.
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
 roles (lead|worker), tools, mods, grant, credential, data`.
 
-A route entry, with every field the host accepts:
+A route entry:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
@@ -950,6 +956,10 @@ A route entry, with every field the host accepts:
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
 ```
+
+`rates` also accepts optional `cache_write_microusd_per_million`, `provider_billed` (see [Provider-billed
+routes](#provider-billed-routes-provider_billing_v1)) and `external_subscription` (a subscription billed outside OMD:
+its settled charge counts as a subscription list-equivalent, not a task charge, and needs a granted route).
 
 #### Choosing a route
 
@@ -1258,17 +1268,18 @@ A request is refused, visibly as a turn or call error starting `final_request_re
 #### Declared policies (`request_policy`)
 
 A selection trusted with capability `request_policy` (which needs `middleware`) is a declared policy. While it is
-enabled, every request is refused (`request_policy_unavailable`) unless that mod is loaded, healthy and has a
-required interceptor selecting `model_send`, including after a rejected selection, failed activation, fault or
-failed reload.
+enabled, every request except web search is refused (`request_policy_unavailable`) unless that mod is loaded,
+healthy and has a required interceptor selecting `model_send`, including after a rejected selection, failed
+activation, fault or failed reload.
 
 - Image generation and edits and memory summarization pass the stage too (input images arrive as `opaque`).
-  Web search is not policed: it sends recent conversation text and its queries as they are.
+  Web search is never policed or refused by final-request policies, even when the policy has failed: it sends recent
+  conversation text and its queries as they are.
 - While a required `model_send` interceptor or a declared policy exists, realtime calls and their websockets are
   refused (`request_policy_unsupported_transport`, naming the endpoint and the mods whose policy blocks it);
   Responses websockets are always off under OMD.
 - Disable the mod in `/mods` or `/omd` to send again (only the administrator can disable a managed policy).
-- Status `request_policy_unavailable` names the reason every request is being refused, or is `null`.
+- Status `request_policy_unavailable` names the reason every request except web search is being refused, or is `null`.
 - Without `model_send` interceptors or declared policies the stage does not run and the body is untouched.
 
 #### Records and coverage of final-request policy
@@ -1395,7 +1406,7 @@ none starts paid work implicitly.
 - `api.usage.summarize(response)` turns a `model_response` into `{measured, tokens, context, cost, timing, …}`.
   Tokens are provider facts (`measured: false` without usage), `context.ratio` uses the session's context window
   when known, and `cost.source` says whether a charge is projected from configured rates (`configured_rates`),
-  covered by a subscription, synthetic or unknown.
+  reported by the provider (`provider`), covered by a subscription, synthetic or unknown.
 - `api.usage.rateLimits()` reads `account/rateLimits/read` when the mod holds `account`; window expiry stays as the
   provider reports it.
 
@@ -1459,7 +1470,6 @@ A requirement names a receipt kind, a producer (`any`, `lead`, `host`, `integrat
 - A weaker selection needs the confirmation printed by `omd-contract plan`.
 - With no selection nothing is gated.
 - An unavailable selection fails closed.
-- Old `workflow.json` selections are not imported.
 
 #### `receipts.submit`
 
@@ -1545,7 +1555,8 @@ still match; invalid state fails closed.
 #### `agents.spawn`
 
 ```ts
-agents.spawn {role, route, prompt, workspace?, tools?, evidence?, snapshot?, parent_history?}
+agents.spawn {role?, route?, prompt, definition?, workspace?, tools?, evidence?, snapshot?, parent_history?,
+              resolution_context?}
 ```
 
 It starts a read-only or isolated-worktree agent on a worker route under the session's worker limits.
@@ -2397,8 +2408,6 @@ managed process, feeds a terminal raster, or reacts to background events.
 - `framing: "content-length"` (default), `"ndjson"` or `"raw"`;
 - `network: "none"` or `"loopback"`.
 
-The protocol-named transports are removed.
-
 #### `process.exchange`
 
 `process.exchange` returns messages until the next one would push the encoded `messages` past 256 KiB (at most 64,
@@ -2907,7 +2916,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 #### Edits
 
-`edits` apply in order as one revision:
+1 to 256 `edits` (or `undo`, not both) apply in order as one revision:
 
 | Edit | Meaning |
 | --- | --- |
@@ -2928,7 +2937,7 @@ A row pairs a display item with its model items: a message, or a tool call with 
 
 | Error | When |
 | --- | --- |
-| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision` |
+| `history_rewrite_invalid` | `edits` or `undo` without `expectedRevision`, or not exactly one of 1 to 256 `edits` and `undo` |
 | `history_rewrite_busy` | A turn is in progress or agent mail is pending on the thread. The check is repeated atomically when the thread unloads, so a turn that starts meanwhile is never cut off and the thread stays loaded; retry once it is idle |
 | `history_revision_conflict` | A stale `expectedRevision` |
 
@@ -3211,7 +3220,8 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
 so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
 50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
-`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way.
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way. A policy or redaction
+interceptor must therefore be `required`: a busy optional one lets a paste or fill through unmodified.
 
 #### `composer_key` interceptor
 
@@ -4029,7 +4039,7 @@ With the `os` grant, `sandbox: 'none'` starts a listed program unsandboxed with 
 
 Sessions:
 
-- Belong to the calling mod, thread and admitted generation (four per mod, sixteen in all).
+- Belong to the calling mod, thread and admitted generation (`pty_panes_per_mod`, four by default, and sixteen in all).
 - Render only in terminal components owned by that mod.
 - Stop when the thread, repository, permission context or admitted generation changes, or the mod unloads.
 - Queued requests and terminal input retain their original binding and cannot address a replacement session.
@@ -4277,7 +4287,8 @@ omd/recovery/apply {action: 'enable'|'disable'|'reload'|'reset', target}
   `client_surface_operation_unavailable`.
 - `resettable` names the files `/omd` and `omd-mod` can reset; a client reads it but cannot reset them.
 - A source changed after trust keeps its last trusted code running, reports `source_changed: ...` on the mod and
-  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload.
+  `untrusted_source: ...` as `reload_error`, and loads after `omd-mod trust` and a reload. Administered content that
+  no longer matches its pin reports `managed_content_stale: ...` instead and loads after `omd-mod package-sync`.
 
 #### Host notifications and server requests
 
@@ -4407,7 +4418,7 @@ it sandboxed with `network: 'loopback'` (`network`) for a loopback `ws://` liste
 The UI process connects with the SDK in `@oh-my-diff/mod-api/client`:
 
 ```ts
-connect({url, token?, command?, name, renderer, operations?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
+connect({url, token?, command?, name, renderer, operations?, reconnect?, onView, onRoster, onMirrored, onSurfaceCall?, onServerRequest?, onNotification?, onReconnect?, onClose?})
 ```
 
 It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer subprotocol), `unix://PATH` and
@@ -4415,7 +4426,7 @@ It is dependency-free ESM for browsers and Node over `ws://`/`wss://` (bearer su
 
 - The session's `attach`, `update`, `detach`, `read`, `event`, `action` (serialized), `render`, `resource`,
   `recovery` and `request(method, params)` cover every `omd/*` and app-server method.
-- After a disconnect it reconnects with backoff, re-initializes, re-attaches, replays the last update, resumes the
+- After a disconnect it reconnects with backoff (`reconnect: false` turns that off), re-initializes, re-attaches, replays the last update, resumes the
   threads it resumed through `request('thread/resume', …)` and reports `onReconnect({epoch, previousEpoch})`.
 - `unsupported(component, renderer, drawable)` returns null or an `unsupported_element: <type> '<id>': <reason>;
   drawing its fallback "<text>"` error for a component the renderer cannot draw (a type outside `drawable`, a
@@ -4676,8 +4687,8 @@ reports the composed view's diagnostics under `terminal`.
 #### Callback lifetime
 
 - General callbacks get a fresh VM context and activation.
-- A package's later callbacks may reuse its sandboxed runner process and a bounded cache of stripped source and
-  bytecode; runners are never shared between packages.
+- A package's later callbacks may reuse its sandboxed runner process and a bounded
+  bytecode cache; runners are never shared between packages.
 - Work a callback leaves running settles before its result is returned, and a host call from it after the callback
   returned fails that callback.
 - Persist state through `api.state`; module globals do not survive general callbacks.
@@ -4743,8 +4754,8 @@ manifest admits:
   and its `set` lands on the cleared state, even with the value it read; a change of repository during it cancels
   it.
 
-Durable `api.state` is unchanged. Use UI state for open dialogs and filters, and durable state for preferences that
-must survive a restart.
+Saved `api.state` is unchanged. Use UI state for open dialogs and filters, and saved state for preferences that
+must survive a restart (a power failure can lose the last commits; `store.*` data is fully synced).
 
 #### Experimental command views
 
@@ -4805,7 +4816,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 
 | Command | Result |
 | --- | --- |
-| `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
+| `omd-mod-author create DIR [ID]` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author example DIR NAME` | Copy one named author example into a new project |
 | `omd-mod-author examples DIR` | Every public author example |
 | `pnpm check` | Syntax validation, plus strict validation against this exact SDK when TypeScript is installed; prints `check: ok` when it passes |
@@ -4817,7 +4828,7 @@ diagnostics. For packaging and publishing, see [Packaging, publishing and offlin
 | `pnpm watch STORE` | Re-inspects reviewed local source, approves the edited digest, queues reload, and copies the store's declarations into `.omd/` (see [Watch and reload](#watch-and-reload)) |
 | `omd-mod-author report STORE` | Declared-versus-used capabilities, services, operations, and environment |
 | `omd-mod-author events STORE` | Composition order, scope precedence, events, replacements, and conflicts |
-| `omd-mod-author diagnostics STORE OUTPUT` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
+| `omd-mod-author diagnostics STORE [OUTPUT]` | Reproducible JSON bundle with paths, settings, environment, and credentials removed |
 | `omd-mod-author explain DENIAL` | Cause, safe remedy, and the authority boundary for a denial |
 
 #### Author toolchain
@@ -4924,10 +4935,10 @@ Negative tests:
 #### Scenario steps
 
 - Time and events: `invoke(mod, event, name, payload)`, `emit(event, payload)`, `advance(ms)`,
-  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`.
+  `waitUntil(check, until, {everyMs, maxMs})`, `reload()`, `state(mod, {value})` (reads, or first writes, `api.state`).
 - Views and input: `mount(mod)`, `key(mod, name)`, `activate(mod, component)`, `input(mod, component, value)`,
   `select(mod, component, value)`, `pointer(mod, component, {column, row, action})` (with `{client}` for an attached
-  client's event).
+  client's event), `component(mod, module, {instance, props, columns, rows, events})` (steps an `api.component` module).
 - Clients: `attach(name, {renderer})`, `detach(id)`.
 - Interceptors: `intercept(surface, payload, {core: [coreValue(v) | coreError(e)]})`.
 
@@ -5077,7 +5088,7 @@ Diagnostics explain how to narrow or explicitly approve authority, but tooling c
 ### Cost report
 
 `omd-mod-author cost DIR` installs the package alone in a scratch store and measures it in the real host, `--runs`
-times (default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
+times (1-100, default 10), each run starting as a launch does: no warm runners and no inspection shared from an earlier host.
 Name one of the package's commands, with an optional JSON payload, to time its callbacks too.
 
 | Field | Meaning |
@@ -5330,7 +5341,7 @@ and sources, so unblocking and enabling restores it.
 lose credentials and query strings. Its events:
 
 - `install`, `update`, `uninstall`, `rollback`, `enable`, `disable`, `quarantine`, `unblock`, `revoke`, `trust`,
-  `lifecycle`
+  `lifecycle`, `lifecycle_failed` (an uninstall script failed), `managed_deploy`, `managed_sync_refused`
 - `package_refused` (with an error code and the stripped source)
 - `load_denied` (a selection rejected at reload)
 
@@ -5498,7 +5509,8 @@ another request or stream hook holds the runtime.
 When a non-hook callback holds it, such as a tool waiting for the agent it spawned, a mod-spawned agent's request
 and every response stream proceed at once without hooks; other requests wait up to 2 s first.
 
-- Each skip is recorded as `middleware_skipped` with the hook and reason.
+- Each skip is recorded as `intercept_skipped` with the surface and reason (`mod_callback_in_flight` or
+  `mod_runtime_busy`).
 - A skipped or unsubscribed stream runs without stream hooks for the rest of that response.
 - The middleware log records only selections, transformations and fallbacks, and stops growing at 8 MiB.
 - These skips apply to `api.middleware` hooks. Interceptors hold the runtime only while a handler starts or
@@ -5510,7 +5522,7 @@ and every response stream proceed at once without hooks; other requests wait up 
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and
 host-operation provenance when a consumer calls it.
 
-- A nested call shares the initiating callback's cancellation, 128-call and 5 s execution budgets.
+- A nested call shares the initiating callback's cancellation, 512-call and 5 s execution budgets.
 - Recursive providers and chains beyond eight callback frames fail closed.
 - Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation.
 - Offline `host_calls` records the actual mod caller for every mocked operation.
@@ -5592,8 +5604,10 @@ host:
   as a runner grant (`runner_unverified` otherwise, `runner_changed` when the binary changes after verification).
   Only `omd-mod init`, `omd-mod authorize-runner STORE` (the installer runs it after each update) and broker grant
   import grant a runner; trusting or installing packages never does. A missing runner fails with
-  `runner_unavailable`, with no fallback to another program. Compiled modules cached in `<store>/cache/code` are
-  checked for corruption, not origin, so a process that can write the store can change what a trusted mod runs;
+  `runner_unavailable`, with no fallback to another program. The compiled-module cache in `<store>/cache/code` holds
+  only V8 bytecode and is not used while the broker or an administrator policy pins trust: the runner always compiles
+  the trusted package source, so the cache never supplies code text. Without the broker, a process that can write
+  the store can already change trust through `mods.json`, so the cache adds no authority there;
 - accepts a mod selection only when the broker holds the same grant (path, digest, capabilities, scope and secret
   environment), otherwise `grant_not_brokered`; enabling, disabling and settings changes don't touch the grant.
   `trust`, `trust-all`, exact broker grant import and package installs or updates add grants, and only for the
@@ -5788,7 +5802,8 @@ user and project mods; managed packages keep running while the policy lists them
 recovers from every customization.
 
 When a managed package fails, its required interceptors fail closed (`intercept_required_failed`) until an
-administrator changes or rolls back the policy. `omd-mod reset STORE managed.json` then `package-sync` repairs an
+administrator changes or rolls back the policy. An administrator's required `model_send` policy does not cover web
+search, which final-request policies never see. `omd-mod reset STORE managed.json` then `package-sync` repairs an
 unreadable deployment record, and until that sync the policy's targets fail closed as above.
 
 ## Plugin components and shell commands

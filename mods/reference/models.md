@@ -13,7 +13,7 @@ Routes are configuration, not names in the API.
 `<OMD_MOD_STORE>/host.json` lists `routes` with `name, provider, model, reasoning_effort, responses_url, rates,
 roles (lead|worker), tools, mods, grant, credential, data`.
 
-A route entry, with every field the host accepts:
+A route entry:
 
 ```json
 {"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
@@ -24,6 +24,10 @@ A route entry, with every field the host accepts:
            "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
            "input_token_ceiling": 400000, "included_subscription": false}}
 ```
+
+`rates` also accepts optional `cache_write_microusd_per_million`, `provider_billed` (see [Provider-billed
+routes](#provider-billed-routes-provider_billing_v1)) and `external_subscription` (a subscription billed outside OMD:
+its settled charge counts as a subscription list-equivalent, not a task charge, and needs a granted route).
 
 ### Choosing a route
 
@@ -332,17 +336,18 @@ A request is refused, visibly as a turn or call error starting `final_request_re
 ### Declared policies (`request_policy`)
 
 A selection trusted with capability `request_policy` (which needs `middleware`) is a declared policy. While it is
-enabled, every request is refused (`request_policy_unavailable`) unless that mod is loaded, healthy and has a
-required interceptor selecting `model_send`, including after a rejected selection, failed activation, fault or
-failed reload.
+enabled, every request except web search is refused (`request_policy_unavailable`) unless that mod is loaded,
+healthy and has a required interceptor selecting `model_send`, including after a rejected selection, failed
+activation, fault or failed reload.
 
 - Image generation and edits and memory summarization pass the stage too (input images arrive as `opaque`).
-  Web search is not policed: it sends recent conversation text and its queries as they are.
+  Web search is never policed or refused by final-request policies, even when the policy has failed: it sends recent
+  conversation text and its queries as they are.
 - While a required `model_send` interceptor or a declared policy exists, realtime calls and their websockets are
   refused (`request_policy_unsupported_transport`, naming the endpoint and the mods whose policy blocks it);
   Responses websockets are always off under OMD.
 - Disable the mod in `/mods` or `/omd` to send again (only the administrator can disable a managed policy).
-- Status `request_policy_unavailable` names the reason every request is being refused, or is `null`.
+- Status `request_policy_unavailable` names the reason every request except web search is being refused, or is `null`.
 - Without `model_send` interceptors or declared policies the stage does not run and the body is untouched.
 
 ### Records and coverage of final-request policy
@@ -469,7 +474,7 @@ none starts paid work implicitly.
 - `api.usage.summarize(response)` turns a `model_response` into `{measured, tokens, context, cost, timing, …}`.
   Tokens are provider facts (`measured: false` without usage), `context.ratio` uses the session's context window
   when known, and `cost.source` says whether a charge is projected from configured rates (`configured_rates`),
-  covered by a subscription, synthetic or unknown.
+  reported by the provider (`provider`), covered by a subscription, synthetic or unknown.
 - `api.usage.rateLimits()` reads `account/rateLimits/read` when the mod holds `account`; window expiry stays as the
   provider reports it.
 

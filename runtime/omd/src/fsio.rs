@@ -1,19 +1,26 @@
+//! The host's one file writer: every write stages a 0600 temporary beside the target and renames it over, so a crash
+//! leaves the old or the new file, never a torn one.
+
 use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::Path;
 
+/// Staging files start with this; directory scans skip them.
 pub const STAGING_PREFIX: &str = ".tmp";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Durability {
+    /// The data and the rename survive power loss: the file and its directory are synced.
     Durable,
     /// Crash consistency without durability: a write barrier orders the data before the rename (mod state).
     Ordered,
+    /// Atomic but unsynced: a crash leaves the old or new file, power loss may lose the write.
     Volatile,
 }
 
-pub fn write_private(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
+/// Replaces `path` with `value` as JSON, durably.
+pub fn write_json(path: &Path, value: &impl serde::Serialize) -> io::Result<()> {
     write_bytes(path, &serde_json::to_vec(value)?, Durability::Durable)
 }
 
@@ -21,6 +28,7 @@ pub fn write_bytes(path: &Path, bytes: &[u8], durability: Durability) -> io::Res
     write_bytes_before(path, bytes, durability, || Ok(()))
 }
 
+/// Replaces `path`, running `before_replace` once the bytes are staged; its error leaves `path` untouched.
 pub fn write_bytes_before(
     path: &Path,
     bytes: &[u8],
@@ -36,7 +44,8 @@ pub fn write_bytes_before(
     Ok(())
 }
 
-pub fn create_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// Creates `path` durably, failing if it exists; the file is removed again if its directory can't be synced.
+pub fn create_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let (parent, file) = staged(path, bytes, Durability::Durable)?;
     file.persist_noclobber(path).map_err(|error| error.error)?;
     fs::File::open(parent)
@@ -80,6 +89,7 @@ fn barrier(file: &fs::File) -> io::Result<()> {
     }
 }
 
+/// Durably replaces `path` unless it already holds exactly `bytes`.
 pub fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let unchanged = fs::symlink_metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && metadata.len() == bytes.len() as u64)

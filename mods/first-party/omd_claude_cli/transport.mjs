@@ -470,7 +470,7 @@ export async function runClaude(request, entry, claude, signal, onEvent, {
     return responseEvents(relay.capture.message, admission, entry.model, translated.reverse, true, results[0].total_cost_usd, billing);
   } catch (error) {
     if (signal.aborted) throw new Error('claude_request_cancelled');
-    if (expired) throw Object.assign(new Error(`The Claude CLI did not finish within ${deadlineMs / 60_000} minutes (${relay.used ? 'it was still answering' : 'it never sent its request'}), so OMD stopped it. Retry the request; if it keeps happening, run /claude to check the CLI and login, or update the Claude CLI.`), { code: 'claude_upstream_incomplete' });
+    if (expired) throw Object.assign(new Error(`The Claude CLI did not finish within ${Math.round(deadlineMs / 60_000)} minutes (${relay.used ? 'it was still answering' : 'it never sent its request'}), so OMD stopped it. Retry the request; if it keeps happening, run /claude to check the CLI and login, or update the Claude CLI.`), { code: 'claude_upstream_incomplete' });
     throw fault ?? error;
   } finally {
     clearTimeout(deadline);
