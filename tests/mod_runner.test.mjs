@@ -95,9 +95,9 @@ test('the code cache supplies bytecode only and is reported for offered modules'
   const request = { source, filename: 'fixture.ts', capabilities: ['commands'], state: null, settings: {}, event: 'command', name: 'who' };
   const result = spawnSync(runner, [], { input: [offer, request].map(value => JSON.stringify(value) + '\n').join(''), encoding: 'utf8', timeout: 5000 });
   const replies = served(result);
+  assert.equal(replies.at(-1).value, 'trusted');
   const kept = replies.filter(reply => reply.code_cache).map(reply => reply.code_cache);
   assert.deepEqual(kept.map(entry => [entry.key, Object.keys(entry).sort()]), [[key, ['data', 'key']]]);
-  assert.equal(replies.at(-1).value, 'trusted');
   assert.equal(result.status, 0, result.stderr);
 });
 test('a callback clock stands still except across its own sleeps', () => {
