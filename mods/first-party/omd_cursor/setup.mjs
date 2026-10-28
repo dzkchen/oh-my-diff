@@ -16,6 +16,8 @@ const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 const LINK = 'OMD_CURSOR_LINK';
 const RESULT = 'OMD_CURSOR_RESULT';
 const FAILURE = 'OMD_CURSOR_ERROR';
+const INSTALL_TIMEOUT_MS = 120_000;
+const BROKER_TIMEOUT_MS = 600_000;
 
 // O_EXLOCK (macOS open(2)) takes the flock the host holds on store.lock while it writes host.json; Node has no flock.
 const O_EXLOCK = 0x20;
@@ -82,8 +84,8 @@ async function install(directory) {
   const root = join(directory, 'sdk');
   await mkdir(root, { recursive: true, mode: 0o700 });
   await writeFile(join(root, 'package.json'), '{"private": true}\n');
-  try { execFileSync('pnpm', ['add', '--dir', root, `@cursor/sdk@${SDK_VERSION}`], { stdio: ['ignore', 'ignore', 'pipe'] }); }
-  catch (error) { throw new Error(`cursor_sdk_install_failed: pnpm add @cursor/sdk@${SDK_VERSION}: ${String(error.stderr ?? error.message).trim().split('\n').pop()}`); }
+  try { execFileSync('pnpm', ['add', '--dir', root, `@cursor/sdk@${SDK_VERSION}`], { stdio: ['ignore', 'ignore', 'pipe'], timeout: INSTALL_TIMEOUT_MS, killSignal: 'SIGKILL' }); }
+  catch (error) { throw new Error(`cursor_sdk_install_failed: pnpm add @cursor/sdk@${SDK_VERSION}: ${error.code === 'ETIMEDOUT' ? `no answer within ${INSTALL_TIMEOUT_MS / 1000} s; check your network, then run /cursor setup again` : String(error.stderr ?? error.message).trim().split('\n').pop()}`); }
   return join(root, 'node_modules/@cursor/sdk/dist/esm/index.js');
 }
 
@@ -118,9 +120,9 @@ const label = name => name === 'default' ? 'cursor' : `cursor-${name}`;
 function storeSecret(omdMod, store, credential, name) {
   try {
     return JSON.parse(execFileSync(omdMod, ['credentials', store, 'add-secret', PROVIDER, label(name),
-      new URL(credential.backendUrl ?? 'https://api2.cursor.sh').origin], { input: credential.apiKey, stdio: ['pipe', 'pipe', 'pipe'] }));
+      new URL(credential.backendUrl ?? 'https://api2.cursor.sh').origin], { input: credential.apiKey, stdio: ['pipe', 'pipe', 'pipe'], timeout: BROKER_TIMEOUT_MS, killSignal: 'SIGKILL' }));
   } catch (error) {
-    throw new Error(`cursor_secret_not_stored: ${String(error.stderr ?? 'the host broker refused or is unavailable').trim().split('\n').pop()}`);
+    throw new Error(`cursor_secret_not_stored: ${error.code === 'ETIMEDOUT' ? `omd-mod did not answer within ${BROKER_TIMEOUT_MS / 60_000} minutes (an authorization prompt may be unanswered); run /cursor setup again` : String(error.stderr ?? 'the host broker refused or is unavailable').trim().split('\n').pop()}`);
   }
 }
 

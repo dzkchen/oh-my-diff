@@ -1,5 +1,5 @@
 import type { Json, ModAPI } from '../../api.d.ts';
-import { adapterFor, checkedRange, doc, failure, linesOf, number, object, offset, pathFromUri, rewrite, serializedBytes, state, string, textWorkspaceEdit, uri } from './protocol.ts';
+import { adapterFor, checkedRange, doc, failure, linesOf, number, object, offset, pathFromUri, rewrite, serializedBytes, state, string, markSynced, textWorkspaceEdit, uri } from './protocol.ts';
 import type { State } from './protocol.ts';
 import type { Client } from './client.ts';
 
@@ -42,7 +42,7 @@ export function createSemantic(api: ModAPI, client: Client) {
     if (Object.keys(after).length !== scope.length || scope.some(path => !after[path])) return rollback('transaction_result_invalid');
     if (!synchronize(s, scope).ok) return rollback('sync_failed');
     s.preview = null;
-    s.status = 'synced'; s.reason = '';
+    markSynced(s);
     save(s);
     return { status: 'applied', adapter: s.adapter, files: after };
   };
@@ -161,7 +161,7 @@ export function createSemantic(api: ModAPI, client: Client) {
       s.preview = previewActions.length > 0 && serializedBytes(previewActions) <= 16_384 && thread?.ok
         ? { path, source_sha256: source.sha256, source_version: s.documents[path].version, thread_id: thread?.ok ? thread.value : '', range, actions: previewActions }
         : null;
-      s.status = 'synced'; s.reason = ''; save(s);
+      markSynced(s); save(s);
       return { ...result, application: s.preview ? result.application : 'preview_too_large' };
     }
     const raw = response.value === null ? [] : Array.isArray(response.value) ? response.value : [response.value];
@@ -184,6 +184,12 @@ export function createSemantic(api: ModAPI, client: Client) {
       Object.assign(files, read.value.files);
     }
     if (files[path]?.sha256 !== source.sha256) return fallback('source_stale', true);
+    const unopened = names.filter(name => files[name] && !s.documents[name]);
+    if (unopened.length) {
+      const opened = synchronize(s, [path, ...unopened]);
+      if (!opened.ok) return fallback(opened.error, true);
+    }
+    if (s.documents[path]?.sha256 !== source.sha256) return fallback('source_stale', true);
     const locations: { path: string; range: ReturnType<typeof checkedRange>; sha256: string }[] = [];
     for (const target of targets) {
       const file = files[target.path];
@@ -192,7 +198,7 @@ export function createSemantic(api: ModAPI, client: Client) {
       if (!s.documents[target.path] || s.documents[target.path].sha256 !== file.sha256) return fallback('server_location_unobserved_or_stale', true);
       locations.push({ path: target.path, range: selected, sha256: file.sha256 });
     }
-    s.status = 'synced'; s.reason = ''; save(s);
+    markSynced(s); save(s);
     const result = { status: 'ready', adapter, path, source_sha256: source.sha256, source_version: s.documents[path].version, locations };
     return serializedBytes(result) > 32_768 ? fallback('server_locations_output_limit') : result;
   };

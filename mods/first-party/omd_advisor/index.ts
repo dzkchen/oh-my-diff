@@ -102,13 +102,32 @@ export default function activate(api: ModAPI) {
     const lead = object(value) && object(value.thread) ? value.thread.model : null;
     return routes.ok && typeof lead === 'string' && routes.value.find(item => item.name === route)?.model === lead ? lead : null;
   };
-  const conversation = () => {
+  const newest = (text: string, limit: number) => {
+    const starts = [...(text.startsWith('[') ? [1] : []), ...Array.from(text.matchAll(/,\{"/g), match => match.index + 1)];
+    for (const start of starts) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(`[${text.slice(start)}`); } catch { continue; }
+      if (!Array.isArray(parsed)) continue;
+      const kept: string[] = [];
+      let used = 0;
+      for (let index = parsed.length - 1; index >= 0; index--) {
+        const record = redact(JSON.stringify(parsed[index]));
+        used += bytes(record) + 1;
+        if (used > limit) break;
+        kept.unshift(record);
+      }
+      if (kept.length || !parsed.length) return kept.join('\n') || 'empty';
+      break;
+    }
+    return 'omitted: the newest history record exceeds this section\'s budget';
+  };
+  const conversation = (limit: number) => {
     const frozen = api.host.tryCall('sessions.snapshot', {});
     const size = frozen.ok ? api.host.tryCall('evidence.read', { reference: frozen.value.evidence, max_bytes: 1 }) : frozen;
     if (!frozen.ok || !size.ok) return `unavailable: ${size.ok ? '' : size.error}`;
     for (let cursor = Math.max(0, size.value.bytes - 3000); cursor < size.value.bytes; cursor++) {
       const page = api.host.tryCall('evidence.read', { reference: frozen.value.evidence, cursor, max_bytes: 3000 });
-      if (page.ok) return page.value.text;
+      if (page.ok) return newest(page.value.text, limit);
       if (!page.error.includes('cursor_invalid')) return `unavailable: ${page.error}`;
     }
     return 'empty';
@@ -124,18 +143,20 @@ export default function activate(api: ModAPI) {
     const read = small.length ? api.host.tryCall('workspace.read', { paths: small }) : null;
     return paths.map(name => `--- ${name}\n${(read?.ok && read.value.files[name]?.text) || 'not sent: missing, unreadable or over 24 KB'}`).join('\n');
   };
-  const consult = (trigger: string, context: [string, string | (() => string), number][]) => {
+  const consult = (trigger: string, context: [string, string | ((limit: number) => string), number][]) => {
     if (!route) return `Advisor unavailable: ${unrouted()}.`;
     const model = sameModel();
     if (model) return `Advisor skipped: its route uses the lead's model ${model}.`;
     const withheld = ['conversation', 'diff', 'files'].filter(name => !share.has(name));
     const header = `${HEADER}\n${TRIGGERS[trigger]}${withheld.length ? ` Withheld by the user: ${withheld.join(', ')}.` : ''}`;
-    const sections: [string, string | (() => string), number][] = [...context, ...(share.has('conversation') ? [['Recent conversation (newest history records)', conversation, 2500] as [string, () => string, number]] : []), ...(share.has('diff') ? [['Uncommitted diff', diff, 2000] as [string, () => string, number]] : [])];
+    const sections: [string, string | ((limit: number) => string), number][] = [...context, ...(share.has('conversation') ? [['Recent conversation (newest history records)', conversation, 2500] as [string, (limit: number) => string, number]] : []), ...(share.has('diff') ? [['Uncommitted diff', diff, 2000] as [string, () => string, number]] : [])];
     let room = PROMPT_BYTES - bytes(header);
     const body: string[] = [];
     for (const [title, source, max] of sections) {
       if (room < 200) break;
-      const text = clip(`## ${title}\n${redact(typeof source === 'string' ? source : source())}`, Math.min(max, room - 2));
+      const heading = `## ${title}\n`;
+      const cap = Math.min(max, room - 2);
+      const text = clip(heading + redact(typeof source === 'string' ? source : source(cap - bytes(heading))), cap);
       body.push(text);
       room -= bytes(text) + 2;
     }

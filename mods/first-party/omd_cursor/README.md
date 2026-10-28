@@ -12,7 +12,7 @@ Account names start with a letter.
 3. The login mints a Cursor API key (90 days by default). Setup hands it to `omd-mod credentials STORE add-secret omd_cursor cursor ORIGIN`, which stores it as a broker-held secret owned by `omd_cursor` (with the authority broker deployed, this asks for authorization). The key never touches disk, and the mod and the model never receive it: the host injects it only into the route's service process.
 4. Setup lists the models your account can use (at most 16), writes the `cursor` service grant and local token to the store's `host.json`, registers the provider and adds the models to `/model`. Later sessions publish them at start with no step from you.
 
-A denied or abandoned login leaves any existing enrollment and grant untouched. Each setup run is a fresh enrollment that replaces the stored key. Run `/cursor setup` again when the key expires or after changing the SDK dependencies (setup pins them in the service grant).
+Setup gives up after 30 minutes (the pnpm install after 2 minutes, the key hand-off to `omd-mod`, which can wait for your authorization, after 10 minutes) with an error that says to run `/cursor setup` again. A denied, abandoned or timed-out login leaves any existing enrollment and grant untouched. Each setup run is a fresh enrollment that replaces the stored key. Run `/cursor setup` again when the key expires or after changing the SDK dependencies (setup pins them in the service grant).
 
 ## Use it
 

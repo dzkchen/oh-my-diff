@@ -37,6 +37,7 @@ It runs on the worker route you set in `route`, which has no default. Pick one i
 
 - Advice is a second opinion, not an approval. Review and verify yourself.
 - The prompt is capped at 8 KB. Keys, tokens and credentials are redacted first, but that is a pattern filter, not a guarantee.
+- The conversation section holds the newest complete history records that fit 2.5 KB, never a cut-off record; when the newest record alone is larger, the section says so instead.
 - A finding whose quoted evidence isn't found is dropped.
 - The observer, like reviews, runs only after turns that completed.
 - Observer notes are for you only. They never reach the lead or block anything.

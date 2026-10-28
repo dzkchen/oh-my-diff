@@ -1,10 +1,12 @@
 import type { CommandResult, Json, ModAPI, RenderEvent, TerminalComponent } from '../../api.d.ts';
-import { clamp, size, clean } from './text.ts';
+import { clamp, fitView, size, clean } from './text.ts';
 import { SOURCE_BYTES, DRAWN_BYTES, diagram, fences, chunks, presentation, kindOf } from './mermaid.ts';
 
 const DIR = '.omd/preview';
 const TEXT_BYTES = 4_000;
 const DIFF_BYTES = 48_000;
+const VIEW_LINES = 2_000;
+const VIEW_ENCODED_BYTES = 60_000;
 const MAX_WATCHES = 8;
 const RETRY_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
@@ -52,9 +54,9 @@ export default function activate(api: ModAPI) {
 
   const show = (title: string, kind: string, text: string, more = false): CommandResult => {
     const limit = kind === 'diff' ? DIFF_BYTES : TEXT_BYTES;
-    const shown = clamp(clean(text), limit);
+    const shown = fitView(clean(text), limit, VIEW_LINES, VIEW_ENCODED_BYTES);
     save({ inline: { title: clamp(clean(title), 120).text, kind, text: shown.text }, revision: load().revision + 1 });
-    return shown.cut || more ? { display: `Showing the first ${limit / 1000} KB inline; /preview without --inline opens all of it in the browser` } : null;
+    return shown.cut || more ? { display: `Showing only the start inline (at most ${limit / 1000} KB and ${VIEW_LINES} lines); /preview without --inline opens all of it in the browser` } : null;
   };
 
   const responses = (limit: number): string[] => {
@@ -68,9 +70,10 @@ export default function activate(api: ModAPI) {
     return ((listed.value as { data?: Turn[] }).data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));
   };
 
-  const preview = (words: string[]): CommandResult => {
+  const preview = (raw: string): CommandResult => {
+    const words = raw.split(/\s+/).filter(Boolean);
     const inline = words.includes('--inline');
-    const target = words.filter(word => !word.startsWith('--')).join(' ');
+    const target = raw.replace(/(?:^|\s+)--\S+/g, '').trim();
     if (words.some(word => word.startsWith('--') && word !== '--inline' && word !== '--watch')) return { display: USAGE };
     if (target.startsWith('./')) return previewFile(target.slice(2), inline, words.includes('--watch'));
     if (target === 'close') {
@@ -179,7 +182,7 @@ export default function activate(api: ModAPI) {
 
   api.command('preview', value => {
     try {
-      return preview(String(value ?? '').trim().split(/\s+/).filter(Boolean));
+      return preview(String(value ?? '').trim());
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       return { display: `/preview: ${error.message}` };
