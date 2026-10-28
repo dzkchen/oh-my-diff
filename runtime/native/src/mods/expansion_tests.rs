@@ -2402,6 +2402,25 @@ async fn session_snapshots_need_the_sessions_tools_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn evidence_replaces_a_partial_leftover_but_keeps_complete_records() {
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let session = &fixture.lead.session;
+    let path = session.evidence.join("turn-usage-fixture.json");
+    std::fs::write(&path, b"{\"usage\":").unwrap();
+    session
+        .evidence("turn-usage-fixture.json", &json!({"usage": 1}))
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), br#"{"usage":1}"#);
+    assert!(
+        session
+            .evidence("turn-usage-fixture.json", &json!({"usage": 2}))
+            .is_err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn persisted_text_is_skipped_without_interceptors_and_withheld_when_the_runtime_fails() {
     let Some(fixture) = fixture(&[]) else {
         return;

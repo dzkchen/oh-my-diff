@@ -705,26 +705,7 @@ impl Host<'_> {
                     }
                 }
             }
-            let temporary = directory.join(format!(".{digest}.{}.tmp", crate::peers::now_ms()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-                .open(&temporary)
-                .map_err(|error| error.to_string())?;
-            let written = file.write_all(bytes).and_then(|()| file.sync_all());
-            drop(file);
-            if let Err(error) = written {
-                let _ = fs::remove_file(&temporary);
-                return Err(error.to_string());
-            }
-            if let Err(error) = fs::rename(&temporary, &path) {
-                let _ = fs::remove_file(&temporary);
-                return Err(error.to_string());
-            }
-            fs::File::open(&directory)
-                .and_then(|file| file.sync_all())
+            crate::fsio::write_bytes(&path, bytes, crate::fsio::Durability::Durable)
                 .map_err(|error| error.to_string())?;
         }
         Ok(json!({"reference": digest, "sha256": digest}))
@@ -1615,26 +1596,25 @@ impl Host<'_> {
         let mut total = 0;
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(crate::fsio::STAGING_PREFIX)
+            {
+                continue;
+            }
+            match entry.metadata() {
+                Ok(metadata) => total += metadata.len(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            }
             count += 1;
-            total += entry.metadata()?.len();
         }
         if count >= BACKUP_LIMIT || total + bytes.len() as u64 > BACKUP_BYTES {
             return Err(std::io::Error::other("backup_quota"));
         }
         let path = directory.join(format!("{digest}.json"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&bytes)?;
-                file.sync_all()?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(error) => return Err(error),
-        }
+        crate::fsio::write_if_changed(&path, &bytes)?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         Ok(json!({"reference": digest, "sha256": digest}))
     }

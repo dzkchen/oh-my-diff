@@ -6,6 +6,7 @@ use codex_client::Request;
 use codex_client::TransportError;
 use codex_omd::Admission;
 use codex_omd::Task;
+use codex_omd::fsio::Durability;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -58,7 +59,7 @@ fn persist_cost_capture(account: &Account) -> Result<(), TransportError> {
         }
     });
     if due {
-        write_cost_capture(account, false)?;
+        write_cost_capture(account, Durability::Volatile)?;
     }
     Ok(())
 }
@@ -70,25 +71,15 @@ fn flush_cost_capture(account: &Account) -> Result<(), TransportError> {
         .and_then(|mut snapshots| snapshots.remove(&account.cost_capture))
         .is_some_and(|(_, dirty)| dirty);
     if dirty {
-        write_cost_capture(account, true)?;
+        write_cost_capture(account, Durability::Durable)?;
     }
     Ok(())
 }
 
-fn write_cost_capture(account: &Account, durable: bool) -> Result<(), TransportError> {
+fn write_cost_capture(account: &Account, durability: Durability) -> Result<(), TransportError> {
     let bytes =
         serde_json::to_vec(&account.task.cost_capture().map_err(denied)?).map_err(denied)?;
-    let (directory, name) = account
-        .cost_capture
-        .parent()
-        .zip(
-            account
-                .cost_capture
-                .file_name()
-                .and_then(|name| name.to_str()),
-        )
-        .ok_or_else(|| denied("cost_capture_path_invalid"))?;
-    crate::persist(directory, name, &bytes, durable).map_err(denied)
+    codex_omd::fsio::write_bytes(&account.cost_capture, &bytes, durability).map_err(denied)
 }
 
 pub(crate) fn billing(rates: Option<&Rates>) -> &'static str {
@@ -320,7 +311,7 @@ impl Accounts {
             .map_err(|_| "request state poisoned")?
             .billed
             .remove(request_id);
-        write_cost_capture(&account, true).map_err(|error| error.to_string())?;
+        write_cost_capture(&account, Durability::Durable).map_err(|error| error.to_string())?;
         Ok(
             json!({"request_id": request_id, "ledger_request": request, "cost": {"microusd": microusd, "basis": "provider_reported", "source": source}, "attempt": attempt}),
         )

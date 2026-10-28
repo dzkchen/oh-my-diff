@@ -518,9 +518,12 @@ fn publish(
         .into_iter()
         .flatten()
         .filter_map(|item| {
-            item["error"]
-                .as_str()
-                .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
+            item["error"].as_str().map(|error| {
+                (
+                    item["id"].as_str().unwrap_or("mod").to_owned(),
+                    error.to_owned(),
+                )
+            })
         })
         .collect::<Vec<_>>();
     errors.extend(
@@ -533,43 +536,27 @@ fn publish(
                     .as_str()
                     .filter(|reason| !reason.starts_with("shadowed_"))
                     .map(|reason| {
-                        format!(
-                            "{}: {reason}",
+                        (
                             item["id"]
                                 .as_str()
                                 .or(item["path"].as_str())
                                 .unwrap_or("selection")
+                                .to_owned(),
+                            reason.to_owned(),
                         )
                     })
             }),
     );
     if let Some(error) = status["reload_error"].as_str() {
-        errors.push(format!("Reload: {error}"));
+        errors.push(("Reload".to_owned(), error.to_owned()));
     }
     if !errors.is_empty() {
         terminal
             .view
             .title
             .get_or_insert_with(|| "Mod recovery".into());
-        terminal.view.panels.insert(
-            0,
-            codex_omd::ModPanel {
-                title: "Mod errors".into(),
-                lines: errors
-                    .into_iter()
-                    .take(16)
-                    .map(|error| {
-                        error
-                            .chars()
-                            .filter(|c| !c.is_control())
-                            .take(180)
-                            .collect()
-                    })
-                    .collect(),
-            },
-        );
     }
-    views.base(host, terminal, input, rendered_ms);
+    views.base(host, terminal, errors, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
     codex_features::set_removed(

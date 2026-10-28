@@ -1123,12 +1123,8 @@ pub fn materialize(
             .map_err(|error| error.to_string())?;
     let path = directory.join(format!("{digest}.{extension}"));
     if !path.exists() {
-        let mut temporary =
-            tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
-        std::io::Write::write_all(&mut temporary, &bytes).map_err(|error| error.to_string())?;
-        temporary
-            .persist(&path)
-            .map_err(|error| error.error.to_string())?;
+        crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Volatile)
+            .map_err(|error| error.to_string())?;
     }
     Ok(path)
 }

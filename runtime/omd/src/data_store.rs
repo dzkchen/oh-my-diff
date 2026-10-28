@@ -5,7 +5,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -301,18 +300,7 @@ impl DataStore<'_> {
             if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
                 return Err(failure("store_quota"));
             }
-            let temporary = directory.join(format!(".store.json.{}", std::process::id()));
-            let _ = fs::remove_file(&temporary);
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)?;
-            let written = file.write_all(&bytes).and_then(|()| file.sync_all());
-            if let Err(error) = written.and_then(|()| fs::rename(&temporary, &path)) {
-                let _ = fs::remove_file(&temporary);
-                return Err(error);
-            }
+            crate::fsio::write_bytes(&path, &bytes, crate::fsio::Durability::Durable)?;
         }
         Ok(value)
     }

@@ -604,6 +604,7 @@ impl Services {
                 .map_err(|e| e.to_string())?;
         }
         config.permissions.shell_environment_policy.r#set.clear();
+        config.permissions.file_system_helper_sandbox = false;
         config.permissions.shell_environment_policy.r#set.insert(
             "OMD_SERVICE_ROOT".into(),
             snapshot.path().to_string_lossy().into_owned(),

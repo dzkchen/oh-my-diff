@@ -190,7 +190,9 @@ The `composer` event (capability `composer`) reports two kinds of payload:
 `api.intercept('composer_edit', …)` sees every mod write and native fill before it reaches the draft: `{source:
 'mod' | 'paste' | 'history' | 'completion', caller, revision, edit}`. Handlers may change only `edit.text` or
 answer `{deny}`, which leaves the draft unchanged and tells the user. They run while the terminal applies the edit,
-so they get no host operations.
+so they get no host operations. The whole chain, including any wait for a runtime busy with another callback, gets
+50 ms; when that runs out a native fill applies unmodified with a status notice and a mod write is refused with
+`mod_runtime_busy`. While a required interceptor selects `composer_edit`, a native fill is refused the same way.
 
 ### `composer_key` interceptor
 
@@ -223,7 +225,8 @@ Handlers answer:
 - `{focus: id}` to move focus to another of their own components (or `null` to release it);
 - `{scroll: n}` to clamp the offset.
 
-They run while the terminal handles the gesture, so they get no host operations.
+They run while the terminal handles the gesture, so they get no host operations. The whole chain, including any wait
+for a runtime busy with another callback, gets 50 ms; when that runs out the change applies unchanged.
 
 ### Submitted drafts and `prompt_expanded`
 

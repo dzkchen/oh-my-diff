@@ -95,10 +95,6 @@ Mods run on an embedded V8 runner instead of Node, with faster startup and a fra
 
 First public release, labeled beta: OMD Core and OMD+ on Codex 0.163.0 with the stable mod API 1.0.0.
 
-### New
-
-- Redesigned curl installer output: the OMD mark with the version and beta tag, OMD+ listed first, progress and summary on stderr, JSON only with `--json` (#260)
-
 ### Changed
 
 - Mod API `1.0.0` is stable and supported through 2027-10-19: frozen entries keep their shape and a breaking change needs a major version; experimental entries may change

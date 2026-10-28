@@ -1284,6 +1284,8 @@ pub struct ModViewSnapshot {
     pub activity: Vec<ModActivity>,
     #[serde(default)]
     pub diagnostics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<(String, String)>,
 }
 
 fn visible(text: &str, limit: usize) -> bool {
@@ -2451,6 +2453,11 @@ impl ModViewSnapshot {
                 .diagnostics
                 .iter()
                 .any(|diagnostic| !visible(diagnostic, 512))
+            || snapshot.errors.len() > 16
+            || snapshot
+                .errors
+                .iter()
+                .any(|(source, error)| !visible(source, 512) || !visible(error, 512))
             || snapshot.activity.iter().any(|activity| {
                 !visible(&activity.label, 128)
                     || !visible(&activity.tool, 128)

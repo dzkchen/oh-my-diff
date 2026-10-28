@@ -105,10 +105,16 @@ impl Views {
         &self,
         owner: &Host,
         terminal: ModTerminalView,
+        errors: Vec<(String, String)>,
         input: Value,
         rendered_ms: u64,
     ) {
         let quiet = self.quiet.load(Ordering::Acquire);
+        let errors = errors
+            .into_iter()
+            .take(16)
+            .map(|(source, error)| (visible(&source, 512), visible(&error, 512)))
+            .collect::<Vec<_>>();
         self.update(owner, |state| {
             let snapshot = &state.snapshot;
             if !quiet
@@ -117,6 +123,7 @@ impl Views {
                 || snapshot.contributors != terminal.contributors
                 || snapshot.component_owners != terminal.component_owners
                 || snapshot.layout_owner != terminal.layout_owner
+                || snapshot.errors != errors
             {
                 state.snapshot.revision = state.snapshot.revision.saturating_add(1);
             }
@@ -126,6 +133,7 @@ impl Views {
             state.snapshot.contributors = terminal.contributors;
             state.snapshot.component_owners = terminal.component_owners;
             state.snapshot.layout_owner = terminal.layout_owner;
+            state.snapshot.errors = errors;
             state.snapshot.input = input;
             state
                 .diagnostics

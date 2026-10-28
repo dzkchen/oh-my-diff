@@ -24,6 +24,7 @@ const ACRONYMS = new Set(['cli', 'lsp', 'api', 'mcp', 'ui']);
 const REVIEWED = ['update', 'remove', 'rollback', 'trust'];
 const SHOWN = 98;
 const CATALOG = 120;
+const INDEX_BYTES = 65_536;
 const TABS = [{ id: 'installed', title: 'All' }, { id: 'settings', title: 'Settings' }, { id: 'directory', title: 'Directory' }];
 const GROUPS = ['Needs attention', 'On', 'Off'];
 
@@ -52,15 +53,17 @@ export default function activate(api: ModAPI) {
   };
   const ordered = (packages: Listed[]) => packages.sort((a, b) => Number(!a.failed) - Number(!b.failed) || compare(friendly(a.id), friendly(b.id)) || compare(a.scope, b.scope));
   const search = (state: Saved): Saved => {
-    const trimmed = (entry: PackageCatalogEntry): PackageCatalogEntry => ({ ...entry, description: clip(entry.description, 120), versions: entry.versions.filter(item => !item.blocked).slice(0, 1) });
+    const trimmed = ({ id, latest, description, versions, installed }: PackageCatalogEntry): PackageCatalogEntry =>
+      ({ id, latest, description: clip(description, 120), support: null, versions: versions.filter(item => !item.blocked).slice(0, 1), installed });
     const catalog: PackageCatalogEntry[] = [];
-    let cursor: string | undefined;
+    let cursor: string | undefined, received = 0;
     do {
       const found = api.host.tryCall('packages.index', { limit: Math.min(50, CATALOG - catalog.length), ...cursor && { cursor } });
       if (!found.ok) return { ...state, catalog: [], catalogError: found.error };
       catalog.push(...found.value.packages.map(trimmed));
+      received += encoder.encode(JSON.stringify(found.value)).length;
       cursor = found.value.cursor ?? undefined;
-    } while (cursor && catalog.length < CATALOG);
+    } while (cursor && catalog.length < CATALOG && received < INDEX_BYTES);
     return { ...state, catalog, catalogError: null };
   };
   // A successful change reloads mods, which refuses this callback's later panel calls; the host then reruns every open panel's action.

@@ -87,6 +87,23 @@ fn rotating_evidence_is_bounded_by_total_bytes() {
 }
 
 #[test]
+fn put_blob_survives_a_stale_temporary_and_repairs_a_truncated_blob() {
+    with_store(|store| {
+        let digest = hash(b"hello");
+        let directory = store.blob_directory().unwrap();
+        fs::write(
+            directory.join(format!(".{digest}.{}", std::process::id())),
+            b"",
+        )
+        .unwrap();
+        assert_eq!(store.put_blob(b"hello").unwrap(), digest);
+        fs::write(directory.join(format!("{digest}.bin")), b"he").unwrap();
+        assert_eq!(store.put_blob(b"hello").unwrap(), digest);
+        assert_eq!(store.blob(&digest).unwrap(), b"hello");
+    });
+}
+
+#[test]
 fn unsettled_orphans_never_evict_records() {
     with_store(|store| {
         let directory = store.rotating_directory().unwrap();
