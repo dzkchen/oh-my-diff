@@ -2,8 +2,13 @@ import type { Json, ModAPI } from '../../api.d.ts';
 
 type Row = Record<string, any>;
 type Source = 'process' | 'files' | 'github';
-type Mon = { id: string; source: Source; until: string; thread: string; created: number; deadline: number; last_seq: number; status: 'active' | 'done';
-  outcome?: string; summary?: string; delivered?: string; proc?: string; paths?: string[]; debounce_ms?: number; watching?: boolean; repo?: string; kind?: 'run' | 'deployment'; remote?: string; excerpt?: string; watch_id?: string; recheck?: number };
+type Base = { id: string; until: string; thread: string; created: number; deadline: number; last_seq: number; status: 'active' | 'done';
+  outcome?: string; summary?: string; delivered?: string; watching?: boolean; excerpt?: string; recheck?: number };
+type Proc = Base & { source: 'process'; proc: string };
+type Files = Base & { source: 'files'; paths: string[]; debounce_ms: number; watch_id?: string };
+type GitHub = Base & { source: 'github'; repo: string; kind: 'run' | 'deployment'; remote: string };
+type Mon = Proc | Files | GitHub;
+type Fail = { message: string; revoked: boolean };
 type State = { n: number; mons: Mon[]; due?: number };
 
 const SOURCES: Record<Source, string[]> = { process: ['exit', 'success', 'failure'], files: ['change', 'exists', 'absent'], github: ['completed', 'success', 'failure'] };
@@ -23,7 +28,7 @@ const QUEUED = { queued: 'queued for the next turn', duplicate: 'already queued 
 const MAX_PATHS = 8;
 const KEEP_DONE = 8;
 const REPO = /^(?!\.+\/)[\w.-]+\/(?!\.+$)[\w.-]+$/;
-const REVOKED = /grant_expired|not allowed|os_access_denied/;
+const REVOKED = new Set(['grant_expired', 'os_access_denied']);
 const USAGE = '/monitor · allow owner/repo · revoke owner/repo · cancel ID';
 export const BOOT = "import{createInterface as c}from'node:readline';const l=await new Promise(r=>c({input:process.stdin}).once('line',r));process.stdin.destroy();await import('data:text/javascript,'+encodeURIComponent(JSON.parse(l).src))";
 
@@ -39,6 +44,8 @@ const clipEnd = (text: string, bytes: number) => {
 };
 const clamp = (value: unknown, low: number, high: number, fallback: number) => Math.min(high, Math.max(low, Number.isFinite(Number(value)) ? Math.round(Number(value)) : fallback));
 const size = (text: string) => new TextEncoder().encode(text).length;
+const only = <S extends Source>(mons: Mon[], source: S) => mons.filter((m): m is Extract<Mon, { source: S }> => m.source === source);
+const fail = (message: string, error = ''): Fail => ({ message, revoked: REVOKED.has(error.split(':')[0]) });
 const tail = (text: unknown) => String(text ?? '').slice(-SCAN_CHARS).trim().split('\n').slice(-8).join('\n').slice(-EXCERPT_CHARS).replaceAll('`', "'");
 
 export default function activate(api: ModAPI) {
@@ -64,10 +71,10 @@ export default function activate(api: ModAPI) {
   };
   const tag = (m: Mon) => `${m.thread}_${m.id}`;
   const session = (m: Mon) => `mon_${tag(m)}`;
-  const describe = (m: Mon) => m.source === 'process' ? `process ${m.proc}` : m.source === 'files' ? `files ${m.paths!.join(', ')}` : `github ${m.repo} ${m.kind} ${m.remote}`;
+  const describe = (m: Mon) => m.source === 'process' ? `process ${m.proc}` : m.source === 'files' ? `files ${m.paths.join(', ')}` : `github ${m.repo} ${m.kind} ${m.remote}`;
   const grant = () => api.host.tryCall('store.get', { key: 'repos', scope: 'user' });
   const listed = (read: ReturnType<typeof grant>): string[] => read.ok && Array.isArray(read.value?.value) ? read.value.value as string[] : [];
-  const ends = (m: Mon, item: Row) => m.proc === item.id || (item.processId != null && m.proc === String(item.processId));
+  const ends = (m: Proc, item: Row) => m.proc === item.id || (item.processId != null && m.proc === String(item.processId));
 
   const teardown = (m: Mon) => {
     if (m.source === 'github') api.host.tryCall('process.stop', { session: session(m) });
@@ -125,31 +132,31 @@ export default function activate(api: ModAPI) {
     finish(m, verdict(m, code === 0), `${code === null ? `ended without an exit code${status ? ` (status ${status})` : ''}` : `exited with code ${code}`}${detail}`, fires, excerpt);
 
   const reconcile = (mons: Mon[], restarted: boolean, fires: Mon[]) => {
-    const procs = mons.filter(m => m.status === 'active' && m.source === 'process');
+    const procs = only(mons, 'process').filter(m => m.status === 'active');
     const found = procs.length ? activity() : null;
     for (const m of procs) {
-      const p = found?.get(m.proc!);
+      const p = found?.get(m.proc);
       if (p && p.running === false) exited(m, p.exit_code, ' (from turn activity)', fires);
       else if (restarted && found) finish(m, 'source lost', 'the session is gone (OMD restarted or it was closed) and no exit was seen', fires);
     }
     return found;
   };
 
-  const checkFiles = (m: Mon, fires: Mon[]) => {
-    const stat = api.host.tryCall('workspace.stat', { paths: m.paths! });
+  const checkFiles = (m: Files, fires: Mon[]) => {
+    const stat = api.host.tryCall('workspace.stat', { paths: m.paths });
     if (!stat.ok) return;
     const exists = m.until === 'exists';
-    if (m.paths!.every(path => Boolean(stat.value.files[path]) === exists)) finish(m, 'condition met', exists ? 'the files now exist' : 'the files are now absent', fires);
+    if (m.paths.every(path => Boolean(stat.value.files[path]) === exists)) finish(m, 'condition met', exists ? 'the files now exist' : 'the files are now absent', fires);
   };
 
-  const armFiles = (m: Mon, fires: Mon[]) => {
-    const stat = api.host.tryCall('workspace.stat', { paths: m.paths! });
-    if (!stat.ok) return `cannot read the paths: ${stat.error}`;
+  const armFiles = (m: Files, fires: Mon[]) => {
+    const stat = api.host.tryCall('workspace.stat', { paths: m.paths });
+    if (!stat.ok) return fail(`cannot read the paths: ${stat.error}`, stat.error);
     const files = stat.value.files as Record<string, Row | null>;
-    let paths = m.paths!;
+    let paths = m.paths;
     const gone = paths.filter(path => !files[path]);
     if (m.until === 'change') {
-      if (gone.length && !m.watching) return 'every path must exist for until change; use until exists to wait for a file to appear';
+      if (gone.length && !m.watching) return fail('every path must exist for until change; use until exists to wait for a file to appear');
       if (gone.length) {
         finish(m, 'condition met', `removed while OMD was not running: ${gone.join(', ')}`, fires);
         return null;
@@ -161,33 +168,33 @@ export default function activate(api: ModAPI) {
       paths = paths.filter(path => files[path]);
     } else {
       const parents = [...new Set(paths.filter(path => !files[path]).map(path => path.split('/').slice(0, -1).join('/')))];
-      if (parents.includes('')) return 'a file directly in the repository root cannot be awaited; wait for one in a subdirectory';
+      if (parents.includes('')) return fail('a file directly in the repository root cannot be awaited; wait for one in a subdirectory');
       const dirs = parents.length ? api.host.tryCall('workspace.stat', { paths: parents }) : null;
-      if (dirs && (!dirs.ok || parents.some(dir => dirs.value.files[dir]?.kind !== 'dir'))) return 'the parent directory of a missing file must exist';
+      if (dirs && (!dirs.ok || parents.some(dir => dirs.value.files[dir]?.kind !== 'dir'))) return fail('the parent directory of a missing file must exist');
       paths = [...paths.filter(path => files[path]), ...parents];
     }
     const watched = api.host.tryCall('workspace.watch', { paths, recursive: m.until === 'change', debounce_ms: m.debounce_ms, key: `w_${tag(m)}` });
-    if (!watched.ok) return `cannot watch: ${watched.error}`;
+    if (!watched.ok) return fail(`cannot watch: ${watched.error}`, watched.error);
     Object.assign(m, { watching: true, watch_id: watched.value.watch_id });
     if (m.until !== 'change') checkFiles(m, fires);
     return null;
   };
 
-  const armGithub = (m: Mon) => {
-    if (!listed(grant()).includes(m.repo!)) return `permission: ${m.repo} is not allowed; ask the user to run /monitor allow ${m.repo}`;
+  const armGithub = (m: GitHub): Fail | null => {
+    if (!listed(grant()).includes(m.repo)) return { message: `permission: ${m.repo} is not allowed; ask the user to run /monitor allow ${m.repo}`, revoked: true };
     if (api.host.tryCall('process.status', { session: session(m) }).ok) return null;
     const found = api.host.tryCall('process.which', { names: ['node'], sandbox: 'none' });
     const node = found.ok ? found.value.found[0] : null;
-    if (!node) return 'node was not found on PATH, which the GitHub adapter needs';
+    if (!node) return fail('node was not found on PATH, which the GitHub adapter needs');
     const left = Math.max(1, Math.round((m.deadline - Date.now()) / 1000));
     const every = Math.max(pollSeconds, Math.ceil(left / (MAX_POLLS - 1)));
     const started = api.host.tryCall('process.start', { session: session(m), name: 'node', path: node.path, sha256: node.sha256, sandbox: 'none', framing: 'ndjson', notify: ['output', 'exit'],
-      arguments: ['--input-type=module', '-e', BOOT, 'adapter', m.kind!, m.repo!, m.remote!, String(every), String(Math.ceil(left / every) + 1), String(m.deadline)] });
-    if (!started.ok) return `the GitHub adapter did not start: ${started.error.startsWith('process_session_limit_or_duplicate') ? 'OMD allows 5 background processes per mod and 8 in total; cancel a GitHub monitor or wait for one to finish' : started.error}`;
+      arguments: ['--input-type=module', '-e', BOOT, 'adapter', m.kind, m.repo, m.remote, String(every), String(Math.ceil(left / every) + 1), String(m.deadline)] });
+    if (!started.ok) return fail(`the GitHub adapter did not start: ${started.error.startsWith('process_session_limit_or_duplicate') ? 'OMD allows 5 background processes per mod and 8 in total; cancel a GitHub monitor or wait for one to finish' : started.error}`, started.error);
     m.last_seq = 0;
     delete m.recheck;
     const sent = api.host.tryCall('process.exchange', { session: session(m), send: [{ src: api.assets.read('github.mjs').text }], wait_ms: 0 });
-    return sent.ok ? null : `the GitHub adapter did not start: ${sent.error}`;
+    return sent.ok ? null : fail(`the GitHub adapter did not start: ${sent.error}`, sent.error);
   };
 
   const arm = (m: Mon, fires: Mon[]) => m.source === 'files' ? armFiles(m, fires) : m.source === 'github' ? armGithub(m) : null;
@@ -198,7 +205,7 @@ export default function activate(api: ModAPI) {
     return Boolean(m);
   };
 
-  const drain = (m: Mon, fires: Mon[]) => {
+  const drain = (m: GitHub, fires: Mon[]) => {
     for (let reads = 0; reads < 4; reads++) {
       const polled = api.host.tryCall('process.exchange', { session: session(m), wait_ms: 0 });
       if (!polled.ok) return polled.error.includes('process_stopped');
@@ -239,30 +246,32 @@ export default function activate(api: ModAPI) {
     const s = load();
     if (active(s).length >= maxMonitors) return { error: `${maxMonitors} monitors are already active; cancel one or wait for a message` };
     const now = Date.now();
-    const m: Mon = { id: `m${s.n + 1}`, source, until, thread: api.session().thread_id, created: now, deadline: now + Math.round(timeout * 1000), last_seq: 0, status: 'active' };
+    const head = <S extends Source>(kind: S) => ({ id: `m${s.n + 1}`, source: kind, until, thread: api.session().thread_id, created: now, deadline: now + Math.round(timeout * 1000), last_seq: 0, status: 'active' as const });
+    let m: Mon;
     if (source === 'process') {
-      m.proc = String(a.session_id ?? '').trim();
-      if (!/^[\w.-]{1,64}$/.test(m.proc)) return { error: 'session_id must be the session ID exec_command printed for a background command, or its call id' };
+      const proc = String(a.session_id ?? '').trim();
+      if (!/^[\w.-]{1,64}$/.test(proc)) return { error: 'session_id must be the session ID exec_command printed for a background command, or its call id' };
+      m = { ...head(source), proc };
     } else if (source === 'files') {
       const paths = Array.isArray(a.paths) ? a.paths.map(path => String(path).replace(/^(\.\/)+/, '').replace(/\/+$/, '')) : [];
       if (!paths.length || paths.length > MAX_PATHS || paths.some(path => !path || path.length > 256 || path.startsWith('/') || /(^|\/)\.\.(\/|$)|[\0\n]/.test(path))) return { error: `paths: 1 to ${MAX_PATHS} workspace-relative paths without ..` };
-      Object.assign(m, { paths: [...new Set(paths)], debounce_ms: clamp(a.debounce_ms, 100, 10_000, 500) });
+      m = { ...head(source), paths: [...new Set(paths)], debounce_ms: clamp(a.debounce_ms, 100, 10_000, 500) };
     } else {
-      m.repo = String(a.repo ?? '').toLowerCase();
-      m.kind = a.run_id ? 'run' : 'deployment';
-      m.remote = String(a.run_id ?? a.deployment_id ?? '').trim();
-      if (!REPO.test(m.repo) || !/^\d{1,20}$/.test(m.remote) || Boolean(a.run_id) === Boolean(a.deployment_id)) return { error: 'github needs repo (owner/repo) and exactly one numeric run_id or deployment_id' };
+      const repo = String(a.repo ?? '').toLowerCase();
+      const remote = String(a.run_id ?? a.deployment_id ?? '').trim();
+      if (!REPO.test(repo) || !/^\d{1,20}$/.test(remote) || Boolean(a.run_id) === Boolean(a.deployment_id)) return { error: 'github needs repo (owner/repo) and exactly one numeric run_id or deployment_id' };
+      m = { ...head(source), repo, kind: a.run_id ? 'run' : 'deployment', remote };
     }
     const fires: Mon[] = [];
-    const found = source === 'process' ? reconcile([m], false, fires) : null;
+    const found = m.source === 'process' ? reconcile([m], false, fires) : null;
     const armed = arm(m, fires);
     s.n += 1;
     s.mons.push(m);
-    const failed = armed ?? schedule(s);
+    const failed = armed?.message ?? schedule(s);
     if (failed) { teardown(m); return { error: failed }; }
     persist(s);
     if (m.status === 'done') return { id: m.id, status: 'done', outcome: m.outcome!, detail: m.summary! };
-    return { id: m.id, status: 'watching', expires_in_s: Math.round(timeout), note: source === 'process' && found && !found.has(m.proc!)
+    return { id: m.id, status: 'watching', expires_in_s: Math.round(timeout), note: m.source === 'process' && found && !found.has(m.proc)
       ? 'That session was not found in recent turn activity; it fires on exit or at the timeout.' : 'Keep working; the result arrives as a message. Do not poll.' };
   });
 
@@ -280,7 +289,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.on('app_notification', ({ method, params, thread_id, dropped }) => {
-    const procs = active(load()).filter(m => m.source === 'process' && (!thread_id || m.thread === thread_id));
+    const procs = only(active(load()), 'process').filter(m => !thread_id || m.thread === thread_id);
     if (!procs.length) return;
     if (dropped > 0) api.host.tryCall('events.publish', { channel: 'recheck', data: null });
     const item = method === 'item/completed' ? (params as Row | null)?.item as Row | undefined : undefined;
@@ -294,8 +303,8 @@ export default function activate(api: ModAPI) {
     const fires: Mon[] = [];
     if (channel === 'omd_monitor/exit') {
       const item = body.item as Row;
-      for (const m of active(s)) {
-        if (m.source !== 'process' || !ends(m, item)) continue;
+      for (const m of only(active(s), 'process')) {
+        if (!ends(m, item)) continue;
         const seconds = typeof item.durationMs === 'number' ? ` after ${Math.round(item.durationMs / 1000)} s` : '';
         exited(m, item.status === 'declined' ? null : item.exitCode ?? (item.status === 'completed' ? 0 : null), seconds, fires, tail(item.tail), String(item.status ?? ''));
       }
@@ -310,11 +319,11 @@ export default function activate(api: ModAPI) {
 
   api.on('process_event', ({ session: id, kind }) => {
     const s = load();
-    const m = active(s).find(item => item.source === 'github' && session(item) === id);
+    const m = only(active(s), 'github').find(item => session(item) === id);
     if (!m) return;
     const fires: Mon[] = [];
     const read = grant();
-    if (read.ok && !listed(read).includes(m.repo!)) {
+    if (read.ok && !listed(read).includes(m.repo)) {
       finish(m, 'revoked', `permission to monitor ${m.repo} was revoked by the user`, fires);
       commit(s, fires);
       return;
@@ -329,11 +338,11 @@ export default function activate(api: ModAPI) {
 
   api.on('workspace_change', event => {
     const s = load();
-    const mons = active(s).filter(m => m.source === 'files' && m.watching);
+    const mons = only(active(s), 'files').filter(m => m.watching);
     if (!mons.length) return;
     const fires: Mon[] = [];
     for (const m of mons) {
-      const hits = event.changes.filter(change => m.paths!.some(path => change.path === path || change.path.startsWith(`${path}/`)));
+      const hits = event.changes.filter(change => m.paths.some(path => change.path === path || change.path.startsWith(`${path}/`)));
       if (!hits.length && !(event.status === 'unavailable' && (m.until !== 'change' || event.watch_id === m.watch_id))) continue;
       if (m.until !== 'change') checkFiles(m, fires);
       else if (event.source === 'external' || event.watch_id) finish(m, 'condition met', hits.length ? `changed: ${hits.slice(0, 10).map(change => change.path).join(', ')}${hits.length > 10 ? ` and ${hits.length - 10} more` : ''}` : 'files changed (too many to list)', fires);
@@ -349,7 +358,7 @@ export default function activate(api: ModAPI) {
     const fires: Mon[] = [];
     for (const m of mons) {
       if (m.deadline <= Date.now()) finish(m, 'timeout', `no event within ${Math.round((m.deadline - m.created) / 1000)} s`, fires);
-      else if (m.recheck !== undefined && m.recheck <= Date.now()) {
+      else if (m.source === 'github' && m.recheck !== undefined && m.recheck <= Date.now()) {
         drain(m, fires);
         finish(m, 'source lost', LOST, fires);
       }
@@ -367,7 +376,7 @@ export default function activate(api: ModAPI) {
     reconcile(s.mons, restarted, fires);
     for (const m of active(s)) {
       const failed = arm(m, fires);
-      if (failed) finish(m, REVOKED.test(failed) ? 'revoked' : 'source lost', failed, fires);
+      if (failed) finish(m, failed.revoked ? 'revoked' : 'source lost', failed.message, fires);
     }
     commit(s, fires);
   };

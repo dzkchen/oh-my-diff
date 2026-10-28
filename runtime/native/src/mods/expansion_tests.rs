@@ -960,11 +960,17 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
     assert_eq!(
         mods.replace_tool_output(output("call-1", "hello world"))
             .await
+            .map(|r| r.text)
             .as_deref(),
         Some("trimmed 11 read a.txt\n\nlint: provider_not_registered_or_stopped")
     );
     mods.intercept_tool(start("call-2", &READ)).await.unwrap();
-    assert_eq!(mods.replace_tool_output(output("call-2", "ok")).await, None);
+    assert_eq!(
+        mods.replace_tool_output(output("call-2", "ok"))
+            .await
+            .map(|r| r.text),
+        None
+    );
     assert_eq!(
         mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
         ToolInterception::Respond {
@@ -1078,6 +1084,10 @@ impl codex_extension_api::ToolInvoker for RecordingInvoker {
         &'a self,
         request: codex_extension_api::ToolInvocationRequest,
     ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolInvocationOutcome, String>> {
+        let output = match request.arguments["output_bytes"].as_u64() {
+            Some(bytes) => "z".repeat(bytes as usize),
+            None => "second attempt".into(),
+        };
         self.0.lock().unwrap().push((
             request.call_id,
             request.tool,
@@ -1086,7 +1096,7 @@ impl codex_extension_api::ToolInvoker for RecordingInvoker {
         ));
         Box::pin(std::future::ready(Ok(
             codex_extension_api::ToolInvocationOutcome {
-                output: "second attempt".into(),
+                output,
                 success: true,
             },
         )))
@@ -1118,7 +1128,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             id: "retry",
             capabilities: &["interception", "store"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'grown' } }, async (e, next) => {\n    await next(e);\n    return next({ ...e, arguments: { output_bytes: 100000 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
         },
         Package {
             id: "probe",
@@ -1185,12 +1195,37 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             text: "first attempt failed",
             value: None,
         })
-        .await;
+        .await
+        .map(|r| r.text);
     assert_eq!(
         replaced.as_deref(),
         Some("second attempt 14 14"),
         "a retry reports its own complete length and original"
     );
+    static GROWN: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("grown"));
+    assert_eq!(
+        mods.intercept_tool(start("call-grown", &GROWN))
+            .await
+            .unwrap(),
+        ToolInterception::Continue(None)
+    );
+    let grown = mods
+        .replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "call-grown",
+            tool_name: &GROWN,
+            arguments: Some(r#"{"path":"a.txt"}"#),
+            success: false,
+            text: "failed",
+            value: None,
+        })
+        .await
+        .map(|r| (r.text.len(), r.original_bytes));
+    assert_eq!(grown, Some((100_000, 100_000)));
     static CODED: std::sync::LazyLock<ToolName> =
         std::sync::LazyLock::new(|| ToolName::plain("coded"));
     assert_eq!(
@@ -1213,7 +1248,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             text: "Exit code: 0\nOutput:\nx",
             value: Some(&structured),
         })
-        .await;
+        .await
+        .map(|r| r.text);
     assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
     let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
     assert_eq!(
@@ -1235,7 +1271,8 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             text: &long,
             value: Some(&structured),
         })
-        .await;
+        .await
+        .map(|r| r.text);
     assert_eq!(
         omitted.as_deref(),
         Some("null"),
@@ -1243,12 +1280,20 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     );
     assert_eq!(
         invoker.0.lock().unwrap().clone(),
-        vec![(
-            "call-1:retry1".to_owned(),
-            "flaky".to_owned(),
-            json!({"path": "a.txt", "attempt": 2}),
-            false
-        )]
+        vec![
+            (
+                "call-1:retry1".to_owned(),
+                "flaky".to_owned(),
+                json!({"path": "a.txt", "attempt": 2}),
+                false
+            ),
+            (
+                "call-grown:retry1".to_owned(),
+                "grown".to_owned(),
+                json!({"output_bytes": 100000}),
+                false
+            )
+        ]
     );
     assert!(fixture.core.expansion.invoked.lock().unwrap().is_empty());
     fixture
@@ -1274,7 +1319,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
             value: None
         }
     );
-    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
+    assert_eq!(invoker.0.lock().unwrap()[2].0, "mod-probe-0");
     *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
     delivery::publish(
         &fixture.core,
@@ -1287,7 +1332,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     let calls = invoker.0.lock().unwrap().clone();
     assert_eq!(
         calls.iter().map(|call| call.3).collect::<Vec<_>>(),
-        [false, false, true],
+        [false, false, false, true],
         "only calls outside a running tool wait for the turn's tool gate"
     );
     let chain = codex_omd::intercept_shared(
@@ -1386,6 +1431,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     let replaced = mods
         .replace_tool_output(output("call-big", &BIG, complete))
         .await
+        .map(|r| r.text)
         .expect("the interceptor replaces the output");
     let report: Value = serde_json::from_str(&replaced).unwrap();
     assert_eq!(report["seen"], codex_omd::TOOL_OUTPUT_BYTES);
@@ -1439,6 +1485,7 @@ async fn tools_original_keeps_the_complete_output_past_the_interceptor_cap() {
     let early = mods
         .replace_tool_output(output("call-early", &EARLY, "native"))
         .await
+        .map(|r| r.text)
         .expect("the interceptor reports the error");
     assert!(early.starts_with("tool_original_unavailable"), "{early}");
     let ToolInterception::Respond {
@@ -1552,7 +1599,8 @@ async fn replacement_over_the_core_limit_is_dropped_with_a_diagnostic() {
             text: "native",
             value: None,
         })
-        .await;
+        .await
+        .map(|r| r.text);
     assert_eq!(replaced, None);
     assert!(
         mods.views
@@ -3425,7 +3473,8 @@ async fn agent_definitions_are_offered_wrapped_and_observed_without_control() {
             text: r#"{"agent_id":"child","nickname":null}"#,
             value: None,
         })
-        .await,
+        .await
+        .map(|r| r.text),
         None
     );
     let denied = mods

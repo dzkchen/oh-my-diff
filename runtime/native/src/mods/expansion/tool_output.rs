@@ -1,6 +1,7 @@
 use super::*;
 use codex_extension_api::ToolOutputContributor;
 use codex_extension_api::ToolOutputInput;
+use codex_extension_api::ToolOutputReplacement;
 
 use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 
@@ -16,7 +17,7 @@ async fn original(
     owner: &str,
     source: &str,
     call_id: &str,
-    text: &str,
+    text: Arc<str>,
 ) -> Result<Value, String> {
     let scope = lead.session.data.0.clone();
     let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
@@ -26,7 +27,7 @@ async fn original(
     };
     let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
     let (owner, source) = (owner.to_owned(), source.to_owned());
-    let (label, text) = (format!("tool_output:{call_id}"), text.to_owned());
+    let label = format!("tool_output:{call_id}");
     tokio::task::spawn_blocking(move || {
         let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
         if scope.is_none() {
@@ -74,7 +75,7 @@ pub(super) async fn stored(
                 .cloned()
         })
         .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
-    let reference = original(lead, caller.id, caller.source, &input.call_id, &text).await?;
+    let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
     Ok(
         json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
         "bytes": text.len()}),
@@ -96,6 +97,10 @@ impl<'a> Stash<'a> {
             originals.insert(key.clone(), text);
         }
         Self { originals, key }
+    }
+
+    fn latest(&self) -> Option<Arc<str>> {
+        self.originals.lock().ok()?.get(&self.key).cloned()
     }
 }
 
@@ -133,7 +138,7 @@ impl ToolOutputContributor for Mods {
     fn replace_tool_output<'a>(
         &'a self,
         input: ToolOutputInput<'a>,
-    ) -> ExtensionFuture<'a, Option<String>> {
+    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
         Box::pin(async move {
             let diagnostic = |message: String| {
                 self.views
@@ -152,7 +157,7 @@ impl ToolOutputContributor for Mods {
             }
             let mut text = None;
             let mut replaced_by = "feedback".to_owned();
-            let _stash = self
+            let stash = self
                 .pending
                 .lock()
                 .is_ok_and(|pending| pending.contains_key(input.call_id))
@@ -187,7 +192,16 @@ impl ToolOutputContributor for Mods {
                 }
                 _ => {}
             }
-            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(input.text.len());
+            let latest = stash.as_ref().and_then(Stash::latest);
+            let original_text = latest.as_deref().unwrap_or(input.text);
+            let original_bytes = original_text.len();
+            let replaced = |text: Option<String>| {
+                text.map(|text| ToolOutputReplacement {
+                    text,
+                    original_bytes,
+                })
+            };
+            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(original_bytes);
             if text.as_ref().is_some_and(|text| text.len() > limit) {
                 diagnostic(format!(
                     "{replaced_by}: replacement over the {limit}-byte limit dropped"
@@ -195,7 +209,7 @@ impl ToolOutputContributor for Mods {
                 text = None;
             }
             let Some(lead) = input.thread_store.get::<Lead>() else {
-                return text;
+                return replaced(text);
             };
             if text.is_some() && replaced_by != "intercept" {
                 let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
@@ -209,9 +223,10 @@ impl ToolOutputContributor for Mods {
                 .await
                 .ok()
                 .flatten();
+                let kept = latest.clone().unwrap_or_else(|| Arc::from(input.text));
                 if let Some(source) = source
                     && let Err(error) =
-                        original(&lead, &replaced_by, &source, input.call_id, input.text).await
+                        original(&lead, &replaced_by, &source, input.call_id, kept).await
                 {
                     diagnostic(format!("{replaced_by}: original unavailable: {error}"));
                 }
@@ -223,11 +238,11 @@ impl ToolOutputContributor for Mods {
                         &lead,
                         input.call_id,
                         &replaced_by,
-                        input.text,
+                        original_text,
                         text,
                     );
                 }
-                return text;
+                return replaced(text);
             }
             let runtime = self.runtime.clone();
             let observers = tokio::task::spawn_blocking(move || {
@@ -298,11 +313,11 @@ impl ToolOutputContributor for Mods {
                     &lead,
                     input.call_id,
                     &replaced_by,
-                    input.text,
+                    original_text,
                     text,
                 );
             }
-            text
+            replaced(text)
         })
     }
 }

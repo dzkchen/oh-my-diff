@@ -27000,7 +27000,7 @@ index 903df019f91e63a2e9dab600638e969662aed384..cf7e51391abd976d56be9737d633d6d9
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f26edfbd71 100644
+index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1f78950b98b6d082a36ccd9b4c37ca5cf6a8cf81 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,17 +6,23 @@ use codex_extension_api::McpToolResultInput;
@@ -27027,7 +27027,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
 
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -83,6 +89,212 @@ pub(crate) async fn notify_command_start(
+@@ -83,6 +89,214 @@ pub(crate) async fn notify_command_start(
      }
  }
 
@@ -27230,8 +27230,10 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
 +            })
 +            .await;
 +        if let Some(replacement) = replacement {
-+            return (replacement.len() <= codex_extension_api::tool_output_limit(text.len()))
-+                .then_some(replacement);
++            let original_bytes = replacement.original_bytes.max(text.len());
++            return (replacement.text.len()
++                <= codex_extension_api::tool_output_limit(original_bytes))
++            .then_some(replacement.text);
 +        }
 +    }
 +    None
@@ -27240,7 +27242,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -107,7 +319,33 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -107,7 +321,33 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
 
@@ -27275,7 +27277,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -115,6 +353,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -115,6 +355,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -27284,7 +27286,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
      )
      .await;
  }
-@@ -133,10 +373,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -133,10 +375,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -27298,7 +27300,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -144,6 +387,8 @@ async fn notify_tool_finish_parts(
+@@ -144,6 +389,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -27307,7 +27309,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -156,6 +401,8 @@ async fn notify_tool_finish_parts(
+@@ -156,6 +403,8 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -27316,7 +27318,7 @@ index e26d83da6b7e23a88e2c0252703f6c5e5342ad00..1058f2a447731e7782b87e0644a1d7f2
              })
              .await;
      }
-@@ -169,6 +416,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -169,6 +418,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -28224,10 +28226,10 @@ index ebde5a7bdc449a11dc9c1fc1d8475c8e4432010f..d2b63bbcdf4a3bd50c5a4c8e53681acd
  }
 
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1d593794e 100644
+index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..08b0af5a1d81feff6d7056458f026dedea7aba6b 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -842,3 +842,167 @@ fn test_invocation(
+@@ -842,3 +842,174 @@ fn test_invocation(
          },
      }
  }
@@ -28337,20 +28339,26 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1
 +}
 +
 +struct OutputReplacer {
-+    replacement: Option<String>,
++    replacement: Option<(String, usize)>,
 +}
 +
 +impl codex_extension_api::ToolOutputContributor for OutputReplacer {
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: codex_extension_api::ToolOutputInput<'a>,
-+    ) -> codex_extension_api::ExtensionFuture<'a, Option<String>> {
++    ) -> codex_extension_api::ExtensionFuture<'a, Option<codex_extension_api::ToolOutputReplacement>>
++    {
 +        Box::pin(async move {
 +            assert_eq!(
 +                (input.call_id, input.text, input.success),
 +                ("out-call", "ok", true)
 +            );
-+            self.replacement.clone()
++            self.replacement.clone().map(|(text, original_bytes)| {
++                codex_extension_api::ToolOutputReplacement {
++                    text,
++                    original_bytes,
++                }
++            })
 +        })
 +    }
 +}
@@ -28359,8 +28367,9 @@ index 895d8d4b997d5fbd3d5401855f4088ef3d6cfb3a..5002140c69d096127da478b7bd6a82c1
 +async fn tool_output_contributor_replaces_model_visible_text_within_limit() {
 +    let oversize = "x".repeat(codex_extension_api::tool_output_limit("ok".len()) + 1);
 +    for (replacement, expected) in [
-+        (Some("short".to_string()), "short"),
-+        (Some(oversize), "ok"),
++        (Some(("short".to_string(), 0)), "short"),
++        (Some((oversize.clone(), 2)), "ok"),
++        (Some((oversize.clone(), oversize.len())), oversize.as_str()),
 +        (None, "ok"),
 +    ] {
 +        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
@@ -29852,7 +29861,7 @@ index d933738616189c8e8f5a65cf9d2336f18bd7d1f8..857e8752e1190857abda6d1f047baf7a
 +pub use tool_invoker::ToolInvoker;
 +pub use tool_invoker::ToolInvokerSlot;
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f1080e2d6dda 100644
+index dc95f991a4e6e30d45c0404e2486991d6e745d05..b6b74bd5dfe02eb1cb1dd57e41318d6c87e12efe 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -15,17 +15,22 @@ use codex_tools::ToolExecutor;
@@ -29886,7 +29895,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  pub use thread_lifecycle::ThreadIdleCause;
  pub use thread_lifecycle::ThreadIdleInput;
  pub use thread_lifecycle::ThreadOriginator;
-@@ -48,25 +54,53 @@ pub use thread_lifecycle::ThreadReadyInput;
+@@ -48,25 +54,54 @@ pub use thread_lifecycle::ThreadReadyInput;
  pub use thread_lifecycle::ThreadResumeInput;
  pub use thread_lifecycle::ThreadStartInput;
  pub use thread_lifecycle::ThreadStopInput;
@@ -29907,6 +29916,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
 +pub use tool_lifecycle::ToolInterception;
  pub use tool_lifecycle::ToolLifecycleFuture;
 +pub use tool_lifecycle::ToolOutputInput;
++pub use tool_lifecycle::ToolOutputReplacement;
  pub use tool_lifecycle::ToolStartInput;
  pub use tool_lifecycle::ToolTimingBoundary;
  pub use tool_lifecycle::ToolTimingInput;
@@ -29940,7 +29950,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  pub use world_state::PreviousWorldStateSection;
  pub use world_state::RenderedWorldStateFragment;
  pub use world_state::WorldStateContributionInput;
-@@ -255,6 +289,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -255,6 +290,14 @@ pub trait TurnLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -29955,7 +29965,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called before the host drops the completed turn runtime and turn store.
      /// The callback completes before the host emits the turn-complete event.
      fn on_turn_stop<'a>(&'a self, input: TurnStopInput<'a>) -> ExtensionFuture<'a, ()> {
-@@ -280,6 +322,98 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -280,6 +323,98 @@ pub trait TurnLifecycleContributor: Send + Sync {
              let _input = input;
          })
      }
@@ -30054,7 +30064,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
  }
 
  /// Extension contribution that can add turn-local model input.
-@@ -306,6 +440,16 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -306,6 +441,16 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
@@ -30071,7 +30081,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -413,10 +557,26 @@ pub trait ToolContributor: Send + Sync {
+@@ -413,10 +558,26 @@ pub trait ToolContributor: Send + Sync {
  /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
  /// and hooks for policy that changes tool payloads.
  pub trait ToolLifecycleContributor: Send + Sync {
@@ -30098,7 +30108,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -433,6 +593,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -433,6 +594,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -30110,7 +30120,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -463,6 +628,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -463,6 +629,133 @@ pub trait ToolLifecycleContributor: Send + Sync {
      }
  }
 
@@ -30236,7 +30246,7 @@ index dc95f991a4e6e30d45c0404e2486991d6e745d05..5d4b2d5557c0c73936bf573e8252f108
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        _input: ToolOutputInput<'a>,
-+    ) -> ExtensionFuture<'a, Option<String>> {
++    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
 +        Box::pin(std::future::ready(None))
 +    }
 +}
@@ -30270,7 +30280,7 @@ index b614d536f6318d8c50520d0995c96906b826deaf..63f6a4b60471aad8c642f1947d97ef41
  pub struct ThreadStartInput<'a, C> {
      /// Host configuration visible at thread start.
 diff --git a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
-index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722e6824378 100644
+index 21633a185a345b48521b667d8bbbd87802f6fb87..344178be34eb6975e283e6f303232bc44d4075b6 100644
 --- a/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/tool_lifecycle.rs
 @@ -19,6 +19,17 @@ use crate::ExtensionData;
@@ -30307,7 +30317,7 @@ index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722
  /// Input supplied after an MCP server responds, before the host reports completion.
  pub struct McpToolResultInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -194,6 +214,19 @@ pub struct McpToolResultInput<'a> {
+@@ -194,6 +214,25 @@ pub struct McpToolResultInput<'a> {
      pub result: &'a mut CallToolResult,
  }
 
@@ -30324,10 +30334,16 @@ index 21633a185a345b48521b667d8bbbd87802f6fb87..5acfe1f5a583aca24a320810b16d6722
 +    pub value: Option<&'a serde_json::Value>,
 +}
 +
++/// `original_bytes` is the size of the output the text replaces, which a re-run call can grow.
++pub struct ToolOutputReplacement {
++    pub text: String,
++    pub original_bytes: usize,
++}
++
  /// Input supplied when the host finishes executing one tool call.
  pub struct ToolFinishInput<'a> {
      /// Store scoped to the host session runtime.
-@@ -212,6 +245,10 @@ pub struct ToolFinishInput<'a> {
+@@ -212,6 +251,10 @@ pub struct ToolFinishInput<'a> {
      pub source: ToolCallSource,
      /// Host-observed result of the tool call.
      pub outcome: ToolCallOutcome,
@@ -30530,7 +30546,7 @@ index c6c7571de526e67815e9993ae745b8925b5be1d4..5fe40fe0610998e9582f93d0c5169031
 +    pub thread_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44db23f796 100644
+index eabf26998b69b93aa8734558217079fa95ae0ec2..13888084015fa6534d1c76d38e5c1b4972e2370a 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -11,6 +11,8 @@ mod user_instructions;
@@ -30609,7 +30625,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::ThreadIdleCause;
  pub use contributors::ThreadIdleInput;
  pub use contributors::ThreadLifecycleContributor;
-@@ -89,16 +120,34 @@ pub use contributors::ThreadResumeInput;
+@@ -89,16 +120,35 @@ pub use contributors::ThreadResumeInput;
  pub use contributors::ThreadStartInput;
  pub use contributors::ThreadStopInput;
  pub use contributors::TokenUsageContributor;
@@ -30631,6 +30647,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::ToolLifecycleFuture;
 +pub use contributors::ToolOutputContributor;
 +pub use contributors::ToolOutputInput;
++pub use contributors::ToolOutputReplacement;
 +pub use contributors::ToolSpecAdjustment;
 +pub use contributors::ToolSpecContributor;
 +pub use contributors::ToolSpecView;
@@ -30644,7 +30661,7 @@ index eabf26998b69b93aa8734558217079fa95ae0ec2..6348d4dcc65a20ae21ab95c2d12dcb44
  pub use contributors::TurnErrorInput;
  pub use contributors::TurnInputContext;
  pub use contributors::TurnInputContributor;
-@@ -108,8 +157,11 @@ pub use contributors::TurnLifecycleContributor;
+@@ -108,8 +158,11 @@ pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStartPhase;
  pub use contributors::TurnStopInput;
@@ -73530,13 +73547,14 @@ index 0000000000000000000000000000000000000000..88d615bce42a22a149417a38dc838c20
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_output.rs b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af91c941c7
+index 0000000000000000000000000000000000000000..701dea1f7e504beb78e26b1c0e0c3ba0af4c8262
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_output.rs
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,323 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_extension_api::ToolOutputInput;
++use codex_extension_api::ToolOutputReplacement;
 +
 +use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
 +
@@ -73552,7 +73570,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +    owner: &str,
 +    source: &str,
 +    call_id: &str,
-+    text: &str,
++    text: Arc<str>,
 +) -> Result<Value, String> {
 +    let scope = lead.session.data.0.clone();
 +    let initialized = scope.lock().map_err(|_| "data_scope_poisoned")?.is_some();
@@ -73562,7 +73580,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +    };
 +    let (root, thread) = (lead.host.root.clone(), lead.thread.to_string());
 +    let (owner, source) = (owner.to_owned(), source.to_owned());
-+    let (label, text) = (format!("tool_output:{call_id}"), text.to_owned());
++    let label = format!("tool_output:{call_id}");
 +    tokio::task::spawn_blocking(move || {
 +        let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
 +        if scope.is_none() {
@@ -73610,7 +73628,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                .cloned()
 +        })
 +        .ok_or("tool_original_unavailable: only the call's own interceptor chain can read it")?;
-+    let reference = original(lead, caller.id, caller.source, &input.call_id, &text).await?;
++    let reference = original(lead, caller.id, caller.source, &input.call_id, text.clone()).await?;
 +    Ok(
 +        json!({"reference": reference, "sha256": codex_omd::resource_data::hash(text.as_bytes()),
 +        "bytes": text.len()}),
@@ -73632,6 +73650,10 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +            originals.insert(key.clone(), text);
 +        }
 +        Self { originals, key }
++    }
++
++    fn latest(&self) -> Option<Arc<str>> {
++        self.originals.lock().ok()?.get(&self.key).cloned()
 +    }
 +}
 +
@@ -73669,7 +73691,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +    fn replace_tool_output<'a>(
 +        &'a self,
 +        input: ToolOutputInput<'a>,
-+    ) -> ExtensionFuture<'a, Option<String>> {
++    ) -> ExtensionFuture<'a, Option<ToolOutputReplacement>> {
 +        Box::pin(async move {
 +            let diagnostic = |message: String| {
 +                self.views
@@ -73688,7 +73710,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +            }
 +            let mut text = None;
 +            let mut replaced_by = "feedback".to_owned();
-+            let _stash = self
++            let stash = self
 +                .pending
 +                .lock()
 +                .is_ok_and(|pending| pending.contains_key(input.call_id))
@@ -73723,7 +73745,16 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                }
 +                _ => {}
 +            }
-+            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(input.text.len());
++            let latest = stash.as_ref().and_then(Stash::latest);
++            let original_text = latest.as_deref().unwrap_or(input.text);
++            let original_bytes = original_text.len();
++            let replaced = |text: Option<String>| {
++                text.map(|text| ToolOutputReplacement {
++                    text,
++                    original_bytes,
++                })
++            };
++            let limit = codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES.max(original_bytes);
 +            if text.as_ref().is_some_and(|text| text.len() > limit) {
 +                diagnostic(format!(
 +                    "{replaced_by}: replacement over the {limit}-byte limit dropped"
@@ -73731,7 +73762,7 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                text = None;
 +            }
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
-+                return text;
++                return replaced(text);
 +            };
 +            if text.is_some() && replaced_by != "intercept" {
 +                let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
@@ -73745,9 +73776,10 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                .await
 +                .ok()
 +                .flatten();
++                let kept = latest.clone().unwrap_or_else(|| Arc::from(input.text));
 +                if let Some(source) = source
 +                    && let Err(error) =
-+                        original(&lead, &replaced_by, &source, input.call_id, input.text).await
++                        original(&lead, &replaced_by, &source, input.call_id, kept).await
 +                {
 +                    diagnostic(format!("{replaced_by}: original unavailable: {error}"));
 +                }
@@ -73759,11 +73791,11 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                        &lead,
 +                        input.call_id,
 +                        &replaced_by,
-+                        input.text,
++                        original_text,
 +                        text,
 +                    );
 +                }
-+                return text;
++                return replaced(text);
 +            }
 +            let runtime = self.runtime.clone();
 +            let observers = tokio::task::spawn_blocking(move || {
@@ -73834,11 +73866,11 @@ index 0000000000000000000000000000000000000000..236f08ebb882262be675366906abe4af
 +                    &lead,
 +                    input.call_id,
 +                    &replaced_by,
-+                    input.text,
++                    original_text,
 +                    text,
 +                );
 +            }
-+            text
++            replaced(text)
 +        })
 +    }
 +}
@@ -74056,10 +74088,10 @@ index 0000000000000000000000000000000000000000..61aa70f120336e3554fb2880766aa1dc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430eaf58eea0
+index 0000000000000000000000000000000000000000..5245d0a833b466e41de2b6f405278e12dedf0718
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,4693 @@
+@@ -0,0 +1,4742 @@
 +use super::*;
 +use crate::mods::DISPATCHER_TEST;
 +use codex_extension_api::ToolLifecycleContributor as _;
@@ -75022,11 +75054,17 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +    assert_eq!(
 +        mods.replace_tool_output(output("call-1", "hello world"))
 +            .await
++            .map(|r| r.text)
 +            .as_deref(),
 +        Some("trimmed 11 read a.txt\n\nlint: provider_not_registered_or_stopped")
 +    );
 +    mods.intercept_tool(start("call-2", &READ)).await.unwrap();
-+    assert_eq!(mods.replace_tool_output(output("call-2", "ok")).await, None);
++    assert_eq!(
++        mods.replace_tool_output(output("call-2", "ok"))
++            .await
++            .map(|r| r.text),
++        None
++    );
 +    assert_eq!(
 +        mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
 +        ToolInterception::Respond {
@@ -75140,6 +75178,10 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +        &'a self,
 +        request: codex_extension_api::ToolInvocationRequest,
 +    ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolInvocationOutcome, String>> {
++        let output = match request.arguments["output_bytes"].as_u64() {
++            Some(bytes) => "z".repeat(bytes as usize),
++            None => "second attempt".into(),
++        };
 +        self.0.lock().unwrap().push((
 +            request.call_id,
 +            request.tool,
@@ -75148,7 +75190,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +        ));
 +        Box::pin(std::future::ready(Ok(
 +            codex_extension_api::ToolInvocationOutcome {
-+                output: "second attempt".into(),
++                output,
 +                success: true,
 +            },
 +        )))
@@ -75180,7 +75222,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            id: "retry",
 +            capabilities: &["interception", "store"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
++            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    if (first.success) return first;\n    const second = await next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n    const original = api.host.call('tools.original', { call_id: e.call_id });\n    return { ...second, output: `${second.output} ${second.bytes} ${original.bytes}` };\n  });\n  api.intercept('tool', { match: { tool: 'grown' } }, async (e, next) => {\n    await next(e);\n    return next({ ...e, arguments: { output_bytes: 100000 } });\n  });\n  api.intercept('tool', { match: { tool: 'coded' } }, async (e, next) => {\n    const r = await next(e);\n    return { ...r, output: JSON.stringify(r.value ?? null) };\n  });\n}\n",
 +        },
 +        Package {
 +            id: "probe",
@@ -75247,12 +75289,37 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            text: "first attempt failed",
 +            value: None,
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(
 +        replaced.as_deref(),
 +        Some("second attempt 14 14"),
 +        "a retry reports its own complete length and original"
 +    );
++    static GROWN: std::sync::LazyLock<ToolName> =
++        std::sync::LazyLock::new(|| ToolName::plain("grown"));
++    assert_eq!(
++        mods.intercept_tool(start("call-grown", &GROWN))
++            .await
++            .unwrap(),
++        ToolInterception::Continue(None)
++    );
++    let grown = mods
++        .replace_tool_output(codex_extension_api::ToolOutputInput {
++            session_store: &session_store,
++            thread_store: &thread_store,
++            turn_store: &turn_store,
++            turn_id: "turn-1",
++            call_id: "call-grown",
++            tool_name: &GROWN,
++            arguments: Some(r#"{"path":"a.txt"}"#),
++            success: false,
++            text: "failed",
++            value: None,
++        })
++        .await
++        .map(|r| (r.text.len(), r.original_bytes));
++    assert_eq!(grown, Some((100_000, 100_000)));
 +    static CODED: std::sync::LazyLock<ToolName> =
 +        std::sync::LazyLock::new(|| ToolName::plain("coded"));
 +    assert_eq!(
@@ -75275,7 +75342,8 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            text: "Exit code: 0\nOutput:\nx",
 +            value: Some(&structured),
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(seen.as_deref(), Some(r#"{"exit_code":0,"output":"x"}"#));
 +    let long = "y".repeat(codex_omd::TOOL_OUTPUT_BYTES - 8);
 +    assert_eq!(
@@ -75297,7 +75365,8 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            text: &long,
 +            value: Some(&structured),
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(
 +        omitted.as_deref(),
 +        Some("null"),
@@ -75305,12 +75374,20 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +    );
 +    assert_eq!(
 +        invoker.0.lock().unwrap().clone(),
-+        vec![(
-+            "call-1:retry1".to_owned(),
-+            "flaky".to_owned(),
-+            json!({"path": "a.txt", "attempt": 2}),
-+            false
-+        )]
++        vec![
++            (
++                "call-1:retry1".to_owned(),
++                "flaky".to_owned(),
++                json!({"path": "a.txt", "attempt": 2}),
++                false
++            ),
++            (
++                "call-grown:retry1".to_owned(),
++                "grown".to_owned(),
++                json!({"output_bytes": 100000}),
++                false
++            )
++        ]
 +    );
 +    assert!(fixture.core.expansion.invoked.lock().unwrap().is_empty());
 +    fixture
@@ -75336,7 +75413,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            value: None
 +        }
 +    );
-+    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
++    assert_eq!(invoker.0.lock().unwrap()[2].0, "mod-probe-0");
 +    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
 +    delivery::publish(
 +        &fixture.core,
@@ -75349,7 +75426,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +    let calls = invoker.0.lock().unwrap().clone();
 +    assert_eq!(
 +        calls.iter().map(|call| call.3).collect::<Vec<_>>(),
-+        [false, false, true],
++        [false, false, false, true],
 +        "only calls outside a running tool wait for the turn's tool gate"
 +    );
 +    let chain = codex_omd::intercept_shared(
@@ -75448,6 +75525,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +    let replaced = mods
 +        .replace_tool_output(output("call-big", &BIG, complete))
 +        .await
++        .map(|r| r.text)
 +        .expect("the interceptor replaces the output");
 +    let report: Value = serde_json::from_str(&replaced).unwrap();
 +    assert_eq!(report["seen"], codex_omd::TOOL_OUTPUT_BYTES);
@@ -75501,6 +75579,7 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +    let early = mods
 +        .replace_tool_output(output("call-early", &EARLY, "native"))
 +        .await
++        .map(|r| r.text)
 +        .expect("the interceptor reports the error");
 +    assert!(early.starts_with("tool_original_unavailable"), "{early}");
 +    let ToolInterception::Respond {
@@ -75614,7 +75693,8 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            text: "native",
 +            value: None,
 +        })
-+        .await;
++        .await
++        .map(|r| r.text);
 +    assert_eq!(replaced, None);
 +    assert!(
 +        mods.views
@@ -77487,7 +77567,8 @@ index 0000000000000000000000000000000000000000..fa8c4af1bb9e3b2052dc5a52e5ed430e
 +            text: r#"{"agent_id":"child","nickname":null}"#,
 +            value: None,
 +        })
-+        .await,
++        .await
++        .map(|r| r.text),
 +        None
 +    );
 +    let denied = mods
@@ -85043,7 +85124,7 @@ index 0000000000000000000000000000000000000000..9e13ca29890c55e27e0575423e702837
 +v8 = { workspace = true, features = ["v8_enable_sandbox"] }
 diff --git a/codex-rs/omd/runner/src/bootstrap.js b/codex-rs/omd/runner/src/bootstrap.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..07da142dddcc21a83ec9459e8e8fd9846410d219
+index 0000000000000000000000000000000000000000..e8e1a6070ac142c40eabbe0025c5bd199a5582f2
 --- /dev/null
 +++ b/codex-rs/omd/runner/src/bootstrap.js
 @@ -0,0 +1,887 @@
@@ -85387,7 +85468,7 @@ index 0000000000000000000000000000000000000000..07da142dddcc21a83ec9459e8e8fd984
 +    origin: { value: deepFreeze(origin) },
 +    signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
 +    trace: { get: () => trace },
-+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 512 - calls.length); } }) },
++    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, request.max_host_calls - calls.length); } }) },
 +    is: { value: pattern => surfaces(pattern).includes(name) },
 +  });
 +  if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
@@ -113770,7 +113851,7 @@ index 0000000000000000000000000000000000000000..20418c907355ab17029eb283f9c97e70
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a5fcdfcd06681babe1bd32a913c90868bff23214
+index 0000000000000000000000000000000000000000..b3c2344d5c6876dc4ebc5eef3b5a79675a2d1962
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,436 @@
@@ -113969,7 +114050,7 @@ index 0000000000000000000000000000000000000000..a5fcdfcd06681babe1bd32a913c90868
 +        "entrypoint_sha256": digest(loaded.source.as_bytes()),
 +        "package": {"id": loaded.package.id, "version": loaded.package.version},
 +        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
-+        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
++        "hook_budget_ms": loaded.package.hook_budget_ms,"max_host_calls": MAX_HOST_CALLS,"environment":loaded.package.environment});
 +    request["field_policies"] = ModHost::field_policies();
 +    request["surface"] = json!({
 +        "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
@@ -116714,7 +116795,7 @@ index 0000000000000000000000000000000000000000..e25e0ed2ff1e1bb787435731d9ca471e
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4ebe32072a12de86e13cc81dfe71f5d802b6cdbf
+index 0000000000000000000000000000000000000000..a9576fc20581c073f20f81e3abf82fd6ea1cb25f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,2912 @@
@@ -118856,7 +118937,7 @@ index 0000000000000000000000000000000000000000..4ebe32072a12de86e13cc81dfe71f5d8
 +        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
 +            "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
 +                "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
-+            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
++            "hook_budget_ms":1000,"max_host_calls":MAX_HOST_CALLS,"receipts":[],"field_policies":{},"virtual_time_ms":null});
 +        process::evaluate(
 +            &request,
 +            std::time::Duration::from_secs(1),

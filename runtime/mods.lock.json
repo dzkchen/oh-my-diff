@@ -352,11 +352,11 @@
       "extension_type": "mod",
       "files": {
         "github.mjs": "ccb81420d0c4358effc70018c07c84207bb5de89cf995f2d67dbbd516b3b9bd9",
-        "index.ts": "a31aca57277904ffd763681438b744b8e3fd6c857afbfb998e1ecc691cf70439",
+        "index.ts": "69c473898fea075ba4e16008c929fa6e2d2a76e039c7020a97ec3d69c6434a32",
         "mod.json": "e4a645008e0a14bc765389ea1d336f6dc1fa06e79b59475e9734c2bbfaa67ba5"
       },
       "id": "omd_monitor",
-      "package_sha256": "354aeaf434c6b668bc82aaaa12dca8025e6c00e2f0220b14afd0c7ad83e704e8",
+      "package_sha256": "3bcc5a05992e7b033b93c11c0d543537757cf8ee13645e5993fcf2ad72eacd9a",
       "source": "mods/first-party/omd_monitor",
       "version": "1.0.0"
     },

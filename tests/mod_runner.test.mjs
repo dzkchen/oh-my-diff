@@ -288,6 +288,8 @@ test('lifecycle events and interceptors require their capabilities', () => {
   const replayed = run(source, { ...extra, receipts: [{ call: suspended.host_call, value: { result: { text: 'hi!' }, trace: [] } }] });
   assert.deepEqual(replayed.value, { result: { text: 'hi!' } });
   assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
+  const budget = 'export default api => api.intercept("input", (e, next) => ({ text: String(next.budget.hostCalls) }))';
+  assert.deepEqual(run(budget, { ...extra, max_host_calls: 7 }).value, { result: { text: '7' } });
 });
 test('classic hooks map onto native events and interceptors with glob and negated matchers', () => {
   const source = `export default api => {
